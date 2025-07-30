@@ -368,10 +368,17 @@ class HTTPConnectionPool(ConnectionPool, RequestMethods):
 
         # Receive the response from the server
         try:
-            try:  # Python 2.7, use buffering of HTTP responses
-                httplib_response = conn.getresponse(buffering=True)
-            except TypeError:  # Python 2.6 and older
+            # ``buffering`` was removed from ``HTTPConnection.getresponse`` in
+            # Python 3.13. The old requests vendored here still tries to use it
+            # to maintain compatibility with Python 2. For modern Python
+            # versions simply call ``getresponse`` without the argument.
+            if sys.version_info >= (3, 13):
                 httplib_response = conn.getresponse()
+            else:
+                try:  # Python 2.7, use buffering of HTTP responses
+                    httplib_response = conn.getresponse(buffering=True)
+                except TypeError:  # Python 2.6 and older
+                    httplib_response = conn.getresponse()
         except (SocketTimeout, BaseSSLError, SocketError) as e:
             self._raise_timeout(err=e, url=url, timeout_value=read_timeout)
             raise
