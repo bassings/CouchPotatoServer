@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ master, develop ]
+    branches: [ master, develop, feature/github-actions-migration ]
   pull_request:
-    branches: [ master, develop ]
+    branches: [ master, develop, feature/github-actions-migration ]
 
 jobs:
   test:
