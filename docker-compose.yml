@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  couchpotato:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: couchpotato
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/New_York  # Change to your timezone
+    volumes:
+      # Configuration and database
+      - ./data/config:/config
+      - ./data/app_data:/data
+      # Media directories - update these paths to match your setup
+      - ./data/downloads:/downloads
+      - ./data/movies:/movies
+    ports:
+      - "5050:5050"
+    restart: unless-stopped
+    networks:
+      - couchpotato-network
+
+  # Optional: Add a reverse proxy for SSL
+  # nginx:
+  #   image: nginx:alpine
+  #   container_name: couchpotato-nginx
+  #   ports:
+  #     - "443:443"
+  #     - "80:80"
+  #   volumes:
+  #     - ./nginx.conf:/etc/nginx/nginx.conf:ro
+  #     - ./ssl:/etc/nginx/ssl:ro
+  #   depends_on:
+  #     - couchpotato
+  #   networks:
+  #     - couchpotato-network
+
+networks:
+  couchpotato-network:
+    driver: bridge
+
+volumes:
+  couchpotato-config:
+  couchpotato-data:

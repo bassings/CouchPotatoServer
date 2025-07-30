@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  couchpotato:
+    image: couchpotato:python2
+    container_name: couchpotato
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_PATH:-./data/config}:/config
+      - ${DATA_PATH:-./data/app_data}:/data
+      - ${DOWNLOADS_PATH:-./data/downloads}:/downloads
+      - ${MOVIES_PATH:-./data/movies}:/movies
+    ports:
+      - "${PORT:-5050}:5050"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # For testing Python 3 migration (currently fails as expected)
+  couchpotato-python3:
+    image: couchpotato:python3
+    container_name: couchpotato-python3
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=${TZ:-UTC}
+    volumes:
+      - ${CONFIG_PATH:-./data/config}:/config
+      - ${DATA_PATH:-./data/app_data}:/data
+      - ${DOWNLOADS_PATH:-./data/downloads}:/downloads
+      - ${MOVIES_PATH:-./data/movies}:/movies
+    ports:
+      - "${PYTHON3_PORT:-5051}:5050"
+    restart: "no"  # Don't restart as it will fail until migration is complete
+    profiles:
+      - testing  # Only start with --profile testing
