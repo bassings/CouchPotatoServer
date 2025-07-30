@@ -133,10 +133,12 @@ def tryUrlencode(s):
 
         return new[1:]
     else:
-        for letter in ss(s):
+        # ``ss`` returns bytes which results in integers when iterating in
+        # Python 3. Iterate over the unicode string instead.
+        for letter in toUnicode(s):
             try:
                 new += quote_plus(letter)
-            except:
+            except Exception:
                 new += letter
 
     return new

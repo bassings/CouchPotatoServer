@@ -16,7 +16,10 @@
 # You should have received a copy of the GNU Lesser General Public License
 # along with subliminal.  If not, see <http://www.gnu.org/licenses/>.
 from .api import list_subtitles, download_subtitles
-from .async import Pool
+# "async" is a reserved keyword in modern Python, so use importlib to load
+# the module dynamically to maintain compatibility.
+import importlib
+Pool = importlib.import_module('.async', __name__).Pool
 from .core import (SERVICES, LANGUAGE_INDEX, SERVICE_INDEX, SERVICE_CONFIDENCE,
     MATCHING_CONFIDENCE)
 from .infos import __version__
