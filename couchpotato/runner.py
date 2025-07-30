@@ -207,7 +207,7 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
         log.error('Failed getting diskspace: %s', traceback.format_exc())
 
     def customwarn(message, category, filename, lineno, file = None, line = None):
-        log.warning('%s %s %s line:%s', (category, message, filename, lineno))
+        log.warning('%s %s %s line:%s', category, message, filename, lineno)
     warnings.showwarning = customwarn
 
     # Create app
@@ -338,7 +338,7 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
                     msg = e.args[1] if len(e.args) > 1 else str(e)
                     
                 if nr == 48:
-                    log.info('Port (%s) needed for CouchPotato is already in use, try %s more time after few seconds', (config.get('port'), restart_tries))
+                    log.info('Port (%s) needed for CouchPotato is already in use, try %s more time after few seconds', config.get('port'), restart_tries)
                     time.sleep(1)
                     restart_tries -= 1
 

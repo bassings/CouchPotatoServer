@@ -341,7 +341,7 @@ def removePyc(folder, only_excess = True, show_logs = True):
             try:
                 os.remove(full_path)
             except:
-                log.error('Couldn\'t remove %s: %s', (full_path, traceback.format_exc()))
+                log.error('Couldn\'t remove %s: %s', full_path, traceback.format_exc())
 
         for dir_name in dirs:
             full_path = os.path.join(root, dir_name)
@@ -349,7 +349,7 @@ def removePyc(folder, only_excess = True, show_logs = True):
                 try:
                     os.rmdir(full_path)
                 except:
-                    log.error('Couldn\'t remove empty directory %s: %s', (full_path, traceback.format_exc()))
+                    log.error('Couldn\'t remove empty directory %s: %s', full_path, traceback.format_exc())
 
 
 def getFreeSpace(directories):

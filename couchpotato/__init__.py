@@ -44,7 +44,7 @@ class WebHandler(BaseHandler):
         try:
             self.write(views[route](self))
         except:
-            log.error("Failed doing web request '%s': %s", (route, traceback.format_exc()))
+            log.error("Failed doing web request '%s': %s", route, traceback.format_exc())
             self.write({'success': False, 'error': 'Failed returning results'})
 
 
@@ -154,7 +154,7 @@ class KeyHandler(RequestHandler):
                 'api_key': api_key
             })
         except:
-            log.error('Failed doing key request: %s', (traceback.format_exc()))
+            log.error('Failed doing key request: %s', traceback.format_exc())
             self.write({'success': False, 'error': 'Failed returning results'})
 
 

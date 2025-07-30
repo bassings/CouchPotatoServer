@@ -44,7 +44,7 @@ def run_handler(route, kwargs, callback = None):
         res = api[route](**kwargs)
         callback(res, route)
     except:
-        log.error('Failed doing api request "%s": %s', (route, traceback.format_exc()))
+        log.error('Failed doing api request "%s": %s', route, traceback.format_exc())
         callback({'success': False, 'error': 'Failed returning results'}, route)
 
 
@@ -66,7 +66,7 @@ class NonBlockHandler(RequestHandler):
             try:
                 self.finish(response)
             except:
-                log.debug('Failed doing nonblock request, probably already closed: %s', (traceback.format_exc()))
+                log.debug('Failed doing nonblock request, probably already closed: %s', traceback.format_exc())
                 try: self.finish({'success': False, 'error': 'Failed returning results'})
                 except: pass
 
@@ -124,12 +124,12 @@ class ApiHandler(RequestHandler):
             run_handler(route, kwargs, callback = self.taskFinished)
 
         except:
-            log.error('Failed doing api request "%s": %s', (route, traceback.format_exc()))
+            log.error('Failed doing api request "%s": %s', route, traceback.format_exc())
             try:
                 self.write({'success': False, 'error': 'Failed returning results'})
                 self.finish()
             except:
-                log.error('Failed write error "%s": %s', (route, traceback.format_exc()))
+                log.error('Failed write error "%s": %s', route, traceback.format_exc())
 
             self.unlock()
 
@@ -156,7 +156,7 @@ class ApiHandler(RequestHandler):
             except UnicodeDecodeError:
                 log.error('Failed proper encode: %s', traceback.format_exc())
             except:
-                log.debug('Failed doing request, probably already closed: %s', (traceback.format_exc()))
+                log.debug('Failed doing request, probably already closed: %s', traceback.format_exc())
                 try: self.finish({'success': False, 'error': 'Failed returning results'})
                 except: pass
 

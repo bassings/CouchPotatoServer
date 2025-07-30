@@ -25,19 +25,31 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         
         # Determine the Python executable to use
         python_executable = sys.executable
-        if not python_executable or not os.path.exists(python_executable):
+        if not python_executable or python_executable == '' or not os.path.exists(python_executable):
             # Fallback to common Python executable names
-            for candidate in ['python3', 'python']:
+            for candidate in ['python3', 'python', 'python3.8', 'python3.9', 'python3.10', 'python3.11', 'python3.13']:
                 try:
                     result = subprocess.run([candidate, '--version'], 
                                           capture_output=True, timeout=5)
                     if result.returncode == 0:
                         python_executable = candidate
                         break
-                except (subprocess.TimeoutExpired, FileNotFoundError):
+                except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
                     continue
             else:
-                raise Exception("No suitable Python executable found")
+                # As a last resort, try to get it from the current process
+                if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
+                    # We're in a virtual environment
+                    python_executable = 'python'
+                else:
+                    # Try one more fallback using shutil.which
+                    try:
+                        import shutil
+                        python_executable = shutil.which('python3') or shutil.which('python')
+                        if not python_executable:
+                            raise Exception("No suitable Python executable found")
+                    except ImportError:
+                        raise Exception("No suitable Python executable found")
         
         print(f"Using Python executable: {python_executable}")
         
