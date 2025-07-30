@@ -46,7 +46,7 @@ class Scheduler(Plugin):
         self.started = False
 
     def cron(self, identifier = '', handle = None, day = '*', hour = '*', minute = '*'):
-        log.info('Scheduling "%s", cron: day = %s, hour = %s, minute = %s', (identifier, day, hour, minute))
+        log.info('Scheduling "%s", cron: day = %s, hour = %s, minute = %s', identifier, day, hour, minute)
 
         self.remove(identifier)
         self.crons[identifier] = {
@@ -58,7 +58,7 @@ class Scheduler(Plugin):
         }
 
     def interval(self, identifier = '', handle = None, hours = 0, minutes = 0, seconds = 0):
-        log.info('Scheduling %s, interval: hours = %s, minutes = %s, seconds = %s', (identifier, hours, minutes, seconds))
+        log.info('Scheduling %s, interval: hours = %s, minutes = %s, seconds = %s', identifier, hours, minutes, seconds)
 
         self.remove(identifier)
         self.intervals[identifier] = {
