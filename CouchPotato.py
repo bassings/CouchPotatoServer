@@ -1,5 +1,11 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 from __future__ import print_function
+
+import sys
+if sys.version_info < (3, 8):
+    print("Error: Python 3.8 or higher is required")
+    sys.exit(1)
+
 from logging import handlers
 from os.path import dirname
 import logging
@@ -142,7 +148,15 @@ if __name__ == '__main__':
     except socket.error as e:
         # log when socket receives SIGINT, but continue.
         # previous code would have skipped over other types of IO errors too.
-        nr, msg = e
+        try:
+            # In Python 3, socket exceptions don't unpack the same way
+            if hasattr(e, 'errno'):
+                nr = e.errno
+            else:
+                nr = e.args[0] if e.args else 0
+        except (AttributeError, IndexError):
+            nr = 0
+            
         if nr != 4:
             try:
                 l.log.critical(traceback.format_exc())

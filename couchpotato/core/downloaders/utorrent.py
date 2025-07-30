@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 ﻿from base64 import b16encode, b32decode
 from datetime import timedelta
 from hashlib import sha1
@@ -9,7 +10,8 @@ import re
 import stat
 import time
 import urllib
-import urllib2
+import urllib.request
+import urllib.error
 
 from bencode import bencode as benc, bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
@@ -231,7 +233,7 @@ class uTorrentAPI(object):
         self.token = ''
         self.last_time = time.time()
         cookies = cookielib.CookieJar()
-        self.opener = urllib2.build_opener(urllib2.HTTPCookieProcessor(cookies), MultipartPostHandler)
+        self.opener = urllib.request.build_opener(urllib2.HTTPCookieProcessor(cookies), MultipartPostHandler)
         self.opener.addheaders = [('User-agent', 'couchpotato-utorrent-client/1.0')]
         if username and password:
             password_manager = urllib2.HTTPPasswordMgrWithDefaultRealm()
@@ -245,7 +247,7 @@ class uTorrentAPI(object):
         if time.time() > self.last_time + 1800:
             self.last_time = time.time()
             self.token = self.get_token()
-        request = urllib2.Request(self.url + '?token=' + self.token + '&' + action, data)
+        request = urllib.request.Request(self.url + '?token=' + self.token + '&' + action, data)
         try:
             open_request = self.opener.open(request)
             response = open_request.read()
@@ -255,12 +257,12 @@ class uTorrentAPI(object):
                 log.debug('Unknown failure sending command to uTorrent. Return text is: %s', response)
         except httplib.InvalidURL as err:
             log.error('Invalid uTorrent host, check your config %s', err)
-        except urllib2.HTTPError as err:
+        except urllib.error.HTTPError as err:
             if err.code == 401:
                 log.error('Invalid uTorrent Username or Password, check your config')
             else:
                 log.error('uTorrent HTTPError: %s', err)
-        except urllib2.URLError as err:
+        except urllib.error.URLError as err:
             log.error('Unable to connect to uTorrent %s', err)
         return False
 

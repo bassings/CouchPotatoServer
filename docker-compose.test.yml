@@ -1,0 +1,28 @@
+version: '3.8'
+
+services:
+  couchpotato-test:
+    build:
+      context: .
+      dockerfile: Dockerfile.python3
+    container_name: couchpotato-python3-test
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./test-data:/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TZ=UTC
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5050/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    networks:
+      - couchpotato-test
+
+networks:
+  couchpotato-test:
+    driver: bridge 

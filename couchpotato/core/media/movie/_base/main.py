@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import traceback
 import time
 
@@ -244,7 +245,7 @@ class MovieBase(MovieTypeBase):
                     fireEventAsync('movie.searcher.single', movie_dict, on_complete = self.createNotifyFront(media_id))
 
                 except:
-                    print traceback.format_exc()
+                    print(traceback.format_exc())
                     log.error('Can\'t edit non-existing media')
 
             return {

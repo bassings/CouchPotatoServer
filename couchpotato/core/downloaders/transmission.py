@@ -1,10 +1,12 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from base64 import b64encode
 from datetime import timedelta
 import httplib
 import json
 import os.path
 import re
-import urllib2
+import urllib.request
+import urllib.error
 
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, sp
@@ -213,9 +215,9 @@ class TransmissionRPC(object):
         if username and password:
             password_manager = urllib2.HTTPPasswordMgrWithDefaultRealm()
             password_manager.add_password(realm = None, uri = self.url, user = username, passwd = password)
-            opener = urllib2.build_opener(urllib2.HTTPBasicAuthHandler(password_manager))
+            opener = urllib.request.build_opener(urllib2.HTTPBasicAuthHandler(password_manager))
             opener.addheaders = [('User-agent', 'couchpotato-transmission-client/1.0')]
-            urllib2.install_opener(opener)
+            urllib.request.install_opener(opener)
         elif username or password:
             log.debug('User or password missing, not using authentication.')
         self.session = self.get_session()
@@ -223,9 +225,9 @@ class TransmissionRPC(object):
     def _request(self, ojson):
         self.tag += 1
         headers = {'x-transmission-session-id': str(self.session_id)}
-        request = urllib2.Request(self.url, json.dumps(ojson).encode('utf-8'), headers)
+        request = urllib.request.Request(self.url, json.dumps(ojson).encode('utf-8'), headers)
         try:
-            open_request = urllib2.urlopen(request)
+            open_request = urllib.request.urlopen(request)
             response = json.loads(open_request.read())
             log.debug('request: %s', json.dumps(ojson))
             log.debug('response: %s', json.dumps(response))
@@ -238,7 +240,7 @@ class TransmissionRPC(object):
         except httplib.InvalidURL as err:
             log.error('Invalid Transmission host, check your config %s', err)
             return False
-        except urllib2.HTTPError as err:
+        except urllib.error.HTTPError as err:
             if err.code == 401:
                 log.error('Invalid Transmission Username or Password, check your config')
                 return False
@@ -256,7 +258,7 @@ class TransmissionRPC(object):
                     log.error('Unable to get Transmission Session-Id %s', err)
             else:
                 log.error('TransmissionRPC HTTPError: %s', err)
-        except urllib2.URLError as err:
+        except urllib.error.URLError as err:
             log.error('Unable to connect to Transmission %s', err)
 
     def get_session(self):

@@ -1,6 +1,7 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import threading
-from urllib import quote, getproxies
-from urlparse import urlparse
+from urllib.parse import quote, urlparse
+from urllib.request import getproxies
 import os.path
 import time
 import traceback

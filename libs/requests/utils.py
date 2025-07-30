@@ -9,9 +9,41 @@ that are also useful for external consumption.
 
 """
 
-import cgi
+try:
+    import cgi  # Python < 3.13
+except ImportError:
+    # Python 3.13+ removed cgi module
+    import email.message
+    import email.parser
+    
+    class cgi:
+        @staticmethod
+        def parse_header(line):
+            """Parse a Content-Type-like header.
+            
+            Replacement for deprecated cgi.parse_header() in Python 3.13+
+            """
+            parts = line.split(';')
+            main_type = parts[0].strip()
+            params = {}
+            for p in parts[1:]:
+                if '=' in p:
+                    key, value = p.split('=', 1)
+                    key = key.strip()
+                    value = value.strip()
+                    # Remove quotes if present
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    params[key] = value
+            return main_type, params
+
 import codecs
 import collections
+# Python 3.3+ compatibility
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
 import io
 import os
 import platform
@@ -164,7 +196,7 @@ def to_key_val_list(value):
     if isinstance(value, (str, bytes, bool, int)):
         raise ValueError('cannot encode objects that are not 2-tuples')
 
-    if isinstance(value, collections.Mapping):
+    if isinstance(value, Mapping):
         value = value.items()
 
     return list(value)

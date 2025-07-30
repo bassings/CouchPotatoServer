@@ -1,0 +1,1983 @@
+/Users/scott.b/repos/CouchPotatoServer/libs/tornado/web.py:1628: SyntaxWarning: invalid escape sequence '\.'
+  application.add_handlers(r"www\.myhost\.com", [
+/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py:1094: SyntaxWarning: invalid escape sequence '\*'
+  :param \*args: ``*args`` for function
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:149: SyntaxWarning: invalid escape sequence '\*'
+  :param \**conn_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:500: SyntaxWarning: invalid escape sequence '\*'
+  :param \**response_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:781: SyntaxWarning: invalid escape sequence '\*'
+  :param \**kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/poolmanager.py:44: SyntaxWarning: invalid escape sequence '\*'
+  :param \**connection_pool_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/models.py:785: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``json.loads`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:63: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:76: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:89: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:104: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:117: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:130: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:142: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:480: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:490: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:500: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:512: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:522: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:532: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:541: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+07-30 15:35:24 WARNING [33m[couchpotato.core.settings] set::option "core.api_key" isn't writable[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded core: _core[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded core: clientscript[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded core: desktop[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/_base/downloader/main.py line:130[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded core: downloader[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded core: scheduler[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/_base/updater/main.py line:42[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\%' /Users/scott.b/repos/CouchPotatoServer/libs/dateutil/tzwin.py line:82[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\%' /Users/scott.b/repos/CouchPotatoServer/libs/dateutil/tzwin.py line:130[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: automation[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: browser[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: custom[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: dashboard[0m
+07-30 15:35:24 INFO [0m[tato.core._base.scheduler] Scheduling file.cleanup, interval: hours = 24, minutes = 0, seconds = 0[0m
+07-30 15:35:24 ERROR [31m[   couchpotato.core.event] Error in event "schedule.interval", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/_base/scheduler.py", line 69, in interval
+    'job': self.sched.add_interval_job(handle, hours = hours, minutes = minutes, seconds = seconds)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 347, in add_interval_job
+    return self.add_job(trigger, func, args, kwargs, **options)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 285, in add_job
+    if not self.running:
+           ^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 148, in running
+    thread_alive = self._thread and self._thread.isAlive()
+                                    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Thread' object has no attribute 'isAlive'. Did you mean: 'is_alive'?
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: file[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\[' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/log/main.py line:150[0m
+07-30 15:35:24 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'int' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/log/main.py line:171[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: log[0m
+07-30 15:35:24 INFO [0m[  couchpotato.core.loader] Loaded plugin: manage[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py line:239[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\Q' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py line:497[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\Q' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py line:498[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded plugin: quality[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.plugins.renamer: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/renamer.py", line 86
+    async = tryInt(kwargs.get('async', 0))
+          ^
+SyntaxError: invalid syntax
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\,' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:110[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\[' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:111[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:113[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:114[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:115[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:116[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:117[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:118[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:119[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:120[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:121[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:122[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:123[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:126[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:507[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:594[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:735[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:746[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:778[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\-' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:888[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\(' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:904[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:934[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is not" with 'str' literal. Did you mean "!="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py line:416[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\(' /Users/scott.b/repos/CouchPotatoServer/libs/guessit/language.py line:175[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/libs/guessit/textutils.py line:64[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.plugins.scanner: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/scanner.py", line 16, in <module>
+    from subliminal.videos import Video
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/subliminal/__init__.py", line 19
+    from .async import Pool
+          ^^^^^
+SyntaxError: invalid syntax
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:53[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:65[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:66[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:79[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:125[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:149[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:150[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:214[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:215[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:216[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\-' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/score/scores.py line:220[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded plugin: score[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.plugins.subtitle: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/subtitle.py", line 10, in <module>
+    import subliminal
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/subliminal/__init__.py", line 19
+    from .async import Pool
+          ^^^^^
+SyntaxError: invalid syntax
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded plugin: trailer[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded plugin: userscript[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded plugin: wizard[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: blackhole[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/deluge.py line:322[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/hadouken.py line:97[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: nzbvortex[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: pneumatic[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: putio[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/qbittorrent_.py line:80[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/rtorrent_.py line:163[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/sabnzbd.py line:65[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: sabnzbd[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded downloaders: synology[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\s' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/transmission.py line:251[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.downloaders.utorrent: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/downloaders/utorrent.py", line 2
+    ﻿from base64 import b16encode, b32decode
+    ^
+SyntaxError: invalid non-printable character U+FEFF
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: androidpn[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: boxcar2[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'int' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/core/main.py line:116[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: discord[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: email_[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.notifications.emby: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/emby.py", line 60
+    except (urllib.error.URLError, IOError), e:
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/libs/gntp/core.py line:22[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/libs/gntp/core.py line:29[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/libs/gntp/core.py line:33[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: growl[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: homey[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.notifications.join: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/helpers/encoding.py", line 138, in tryUrlencode
+    new += quote_plus(letter)
+           ~~~~~~~~~~^^^^^^^^
+  File "/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/parse.py", line 943, in quote_plus
+    string = quote(string, safe + space, encoding, errors)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/parse.py", line 927, in quote
+    return quote_from_bytes(string, safe)
+  File "/opt/homebrew/Cellar/python@3.13/3.13.5/Frameworks/Python.framework/Versions/3.13/lib/python3.13/urllib/parse.py", line 957, in quote_from_bytes
+    raise TypeError("quote_from_bytes() expected bytes")
+TypeError: quote_from_bytes() expected bytes
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/join.py", line 14, in <module>
+    class Join(Notification):
+    ...<33 lines>...
+            return splitString(self.conf('devices'))
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/join.py", line 20, in Join
+    icon = tryUrlencode('https://raw.githubusercontent.com/CouchPotato/CouchPotatoServer/master/couchpotato/static/images/icons/android.png')
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/helpers/encoding.py", line 140, in tryUrlencode
+    new += letter
+TypeError: can only concatenate str (not "int") to str
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: notifymyandroid[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.notifications.plex: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/plex/__init__.py", line 2, in <module>
+    from .main import Plex
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/plex/main.py", line 6, in <module>
+    from .server import PlexServer
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/notifications/plex/server.py", line 50
+    log.info("Fetching a new X-Plex-Token from plex.tv")
+IndentationError: unexpected indent
+[0m
+INFO: Forcing fresh database creation for Python 3 migration...
+WARNING: Index 'id' already exists, attempting to continue
+INFO: Database created successfully.
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event schedule.interval found, has 1 handlers
+DEBUG: Event result.modify.schedule.interval not in events, returning []
+DEBUG: Event schedule.interval.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event scheduler.interval not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: prowl[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: pushalot[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: pushbullet[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: pushover[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: script[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: slack[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: synoindex[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: telegrambot[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: toasty[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: trakt[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: webhook[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded notifications: xbmc[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media__base_library: library[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.matcher: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/__init__.py", line 2, in <module>
+    from .main import Matcher
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/main.py", line 5, in <module>
+    from couchpotato.core.media._base.matcher.base import MatcherBase
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/base.py", line 2
+    from __future__ import absolute_import, division, print_function, unicode_literals
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: from __future__ imports must occur at the beginning of the file
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.matcher.base: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/__init__.py", line 2, in <module>
+    from .main import Matcher
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/main.py", line 5, in <module>
+    from couchpotato.core.media._base.matcher.base import MatcherBase
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/base.py", line 2
+    from __future__ import absolute_import, division, print_function, unicode_literals
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: from __future__ imports must occur at the beginning of the file
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.matcher.main: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/__init__.py", line 2, in <module>
+    from .main import Matcher
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/main.py", line 5, in <module>
+    from couchpotato.core.media._base.matcher.base import MatcherBase
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/matcher/base.py", line 2
+    from __future__ import absolute_import, division, print_function, unicode_literals
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+SyntaxError: from __future__ imports must occur at the beginning of the file
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'int' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/media/main.py line:286[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/binsearch.py line:46[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/binsearch.py line:49[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/binsearch.py line:53[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.nzb.binsearch: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/binsearch.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\:' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/newznab.py line:105[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.nzb.nzbclub: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/nzbclub.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.alpharatio: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/alpharatio.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.awesomehd: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/awesomehd.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.bithdtv: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/bithdtv.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.bitsoup: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/bitsoup.py", line 4, in <module>
+    from bs4 import BeautifulSoup, SoupStrainer
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\-' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/hd4free.py line:64[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/ilovetorrents.py line:92[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.ilovetorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/ilovetorrents.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.iptorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/iptorrents.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:120[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:76[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:94[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:96[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:98[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py line:100[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.kickasstorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/magnetdl.py line:80[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.magnetdl: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/magnetdl.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.morethantv: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/morethantv.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\w' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/passthepopcorn.py line:163[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\-' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/rarbg.py line:87[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/rarbg.py line:121[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/rarbg.py line:145[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/rarbg.py line:165[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.sceneaccess: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/sceneaccess.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.scenetime: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/scenetime.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\/' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/thepiratebay.py line:79[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/thepiratebay.py line:105[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.thepiratebay: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/thepiratebay.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.torrentbytes: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentbytes.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.torrentleech: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentleech.py", line 30
+    	urlParms = self.buildUrl(title, media, quality)
+    ^
+TabError: inconsistent use of tabs and spaces in indentation
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media._base.providers.torrent.torrentshack: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentshack.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentz.py line:50[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media__base_search: search[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/searcher/main.py line:172[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/searcher/main.py line:173[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/searcher/main.py line:203[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/searcher/main.py line:206[0m
+
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media__base_searcher: searcher[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/_base/main.py line:177[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/_base/main.py line:231[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie__base: _base[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_charts: charts[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie: library[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.automation.bluray: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/bluray.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation: crowdai[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation: flixster[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.automation.goodfilms: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/goodfilms.py", line 2, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation: hummingbird[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\-' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/imdb.py line:101[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/imdb.py line:106[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.automation.imdb: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/imdb.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation: itunes[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.automation.letterboxd: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/automation/letterboxd.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation: popularmovies[0m
+07-30 15:35:25 INFO [0m[tato.core._base.scheduler] Scheduling updater.check, interval: hours = 24, minutes = 0, seconds = 0[0m
+07-30 15:35:25 ERROR [31m[   couchpotato.core.event] Error in event "schedule.interval", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/_base/scheduler.py", line 69, in interval
+    'job': self.sched.add_interval_job(handle, hours = hours, minutes = minutes, seconds = seconds)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 347, in add_interval_job
+    return self.add_job(trigger, func, args, kwargs, **options)
+           ~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 285, in add_job
+    if not self.running:
+           ^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/apscheduler/scheduler.py", line 148, in running
+    thread_alive = self._thread and self._thread.isAlive()
+                                    ^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Thread' object has no attribute 'isAlive'. Did you mean: 'is_alive'?
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_automation_trakt: trakt[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_info: _modifier[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_info: couchpotatoapi[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_info: fanarttv[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/info/omdbapi.py line:142[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> "is" with 'str' literal. Did you mean "=="? /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/info/omdbapi.py line:146[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_info: omdbapi[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_info: themoviedb[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_metadata: mediabrowser[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_metadata: ps3[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\s' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/metadata/wdtv.py line:184[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\g' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/metadata/wdtv.py line:185[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_metadata: wdtv[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_metadata: wmc[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\s' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/metadata/xbmc.py line:232[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\g' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/metadata/xbmc.py line:233[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_metadata: xbmc[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.nzb.binsearch: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/nzb/binsearch.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.nzb.binsearch import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/binsearch.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.nzb.nzbclub: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/nzb/nzbclub.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.nzb.nzbclub import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/nzb/nzbclub.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_nzb: omgwtfnzbs[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.alpharatio: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/alpharatio.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.alpharatio import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/alpharatio.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.awesomehd: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/awesomehd.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.awesomehd import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/awesomehd.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.bithdtv: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/bithdtv.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.bithdtv import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/bithdtv.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.bitsoup: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/bitsoup.py", line 4, in <module>
+    from couchpotato.core.media._base.providers.torrent.bitsoup import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/bitsoup.py", line 4, in <module>
+    from bs4 import BeautifulSoup, SoupStrainer
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: hd4free[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: hdbits[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.ilovetorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/ilovetorrents.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.ilovetorrents import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/ilovetorrents.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.iptorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/iptorrents.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.iptorrents import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/iptorrents.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.kickasstorrents: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/kickasstorrents.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.kickasstorrents import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/kickasstorrents.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.magnetdl: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/magnetdl.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.magnetdl import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/magnetdl.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.morethantv: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/morethantv.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.morethantv import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/morethantv.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: rarbg[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.sceneaccess: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/sceneaccess.py", line 4, in <module>
+    from couchpotato.core.media._base.providers.torrent.sceneaccess import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/sceneaccess.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.scenetime: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/scenetime.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.scenetime import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/scenetime.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.thepiratebay: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/thepiratebay.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.thepiratebay import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/thepiratebay.py", line 5, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.torrentbytes: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/torrentbytes.py", line 3, in <module>
+    from couchpotato.core.media._base.providers.torrent.torrentbytes import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentbytes.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: torrentday[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.torrentleech: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/torrentleech.py", line 4, in <module>
+    from couchpotato.core.media._base.providers.torrent.torrentleech import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentleech.py", line 30
+    	urlParms = self.buildUrl(title, media, quality)
+    ^
+TabError: inconsistent use of tabs and spaces in indentation
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.torrent.torrentshack: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/torrent/torrentshack.py", line 5, in <module>
+    from couchpotato.core.media._base.providers.torrent.torrentshack import Base
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/_base/providers/torrent/torrentshack.py", line 4, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: torrentz[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_torrent: yts[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\s' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/trailer/hdtrailers.py line:119[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.trailer.hdtrailers: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/trailer/hdtrailers.py", line 5, in <module>
+    from bs4 import SoupStrainer, BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: allocine[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: appletrailers[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: criticker[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: filmcentrum[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.userscript.filmstarts: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/userscript/filmstarts.py", line 2, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 ERROR [31m[  couchpotato.core.loader] Can't import couchpotato.core.media.movie.providers.userscript.filmweb: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 59, in run
+    m = self.loadModule(module_name)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/loader.py", line 170, in loadModule
+    return import_module(name)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/importhelper/__init__.py", line 37, in import_module
+    __import__(name)
+    ~~~~~~~~~~^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/userscript/filmweb.py", line 2, in <module>
+    from bs4 import BeautifulSoup
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/bs4/__init__.py", line 175
+    except Exception, e:
+           ^^^^^^^^^^^^
+SyntaxError: multiple exception types must be parenthesized
+[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: flickchart[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: imdb[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: letterboxd[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: moviemeter[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: moviesio[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: reddit[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: rottentomatoes[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\d' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/userscript/tmdb.py line:18[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: tmdb[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: trakt[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\.' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/providers/userscript/youteather.py line:11[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie_providers_userscript: youteather[0m
+07-30 15:35:25 WARNING [33m[       couchpotato.runner] <class 'SyntaxWarning'> invalid escape sequence '\W' /Users/scott.b/repos/CouchPotatoServer/couchpotato/core/media/movie/searcher.py line:320[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie: searcher[0m
+07-30 15:35:25 INFO [0m[  couchpotato.core.loader] Loaded media_movie: suggestion[0m
+07-30 15:35:25 ERROR [31m[   couchpotato.core.event] database.setup: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:35:25 INFO [0m[       couchpotato.runner] Starting server on port 5050[0m
+07-30 15:35:25 ERROR [31m[   couchpotato.core.event] app.load: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:36:13 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event schedule.interval found, has 1 handlers
+DEBUG: Event result.modify.schedule.interval not in events, returning []
+DEBUG: Event schedule.interval.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.options found, has 1 handlers
+DEBUG: Event result.modify.settings.options not in events, returning []
+DEBUG: Event settings.options.after not in events, returning []
+DEBUG: Event settings.register found, has 1 handlers
+DEBUG: Event result.modify.settings.register not in events, returning []
+DEBUG: Event settings.register.after not in events, returning []
+DEBUG: Event settings.save found, has 1 handlers
+DEBUG: Event result.modify.settings.save not in events, returning []
+DEBUG: Event settings.save.after not in events, returning []
+DEBUG: Event database.setup found, has 2 handlers
+DEBUG: Event app.migrate found, has 1 handlers
+DEBUG: Event result.modify.app.migrate not in events, returning []
+DEBUG: Event app.migrate.after not in events, returning []
+DEBUG: Event app.load found, has 14 handlers
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []07-30 15:36:13 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:36:13 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:15 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:15 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:36:15 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    self.handlers['%s.%s' % (priority, self.hash(handler_))] = (handler_, memoize, timeout)
+                                       ~~~~~~~~~^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    return hashlib.md5(str(handler)).hexdigest()
+           ~~~~~~~~~~~^^^^^^^^^^^^^^
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:36:25 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:36:25 ERROR [31m[          couchpotato.api] Failed doing api request "settings": Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/api.py", line 106, in get
+    kwargs[x] = urllib.unquote(self.get_argument(x))
+                ^^^^^^^^^^^^^^
+AttributeError: module 'urllib' has no attribute 'unquote'
+[0m
+07-30 15:36:25 ERROR [31m[          couchpotato.api] Failed doing api request "logging.log": Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/api.py", line 106, in get
+    kwargs[x] = urllib.unquote(self.get_argument(x))
+                ^^^^^^^^^^^^^^
+AttributeError: module 'urllib' has no attribute 'unquote'
+[0m
+07-30 15:42:09 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:42:09 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    event += (handler, True, 1.5)
+    
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    # Python 3 compatibility: encode string before hashing
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:42:09 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:43:04 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:43:04 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    event += (handler, True, 1.5)
+    
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    # Python 3 compatibility: encode string before hashing
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:43:04 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:50:22 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:50:22 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    event += (handler, True, 1.5)
+    
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    # Python 3 compatibility: encode string before hashing
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 15:50:22 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 15:50:22 ERROR [31m[          couchpotato.api] Failed doing api request "settings": Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/api.py", line 106, in get
+AttributeError: module 'urllib' has no attribute 'unquote'
+[0m
+07-30 15:50:22 ERROR [31m[          couchpotato.api] Failed doing api request "logging.log": Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/api.py", line 106, in get
+AttributeError: module 'urllib' has no attribute 'unquote'
+[0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    event += (handler, True, 1.5)
+    
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    # Python 3 compatibility: encode string before hashing
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] Error in event "quality.all", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 957, in get
+    ind = self.indexes_names[index_name]
+          ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+KeyError: 'quality'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/quality/main.py", line 104, in all
+    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                  ~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 960, in get
+    raise IndexNotFoundException(
+        "Index `%s` doesn't exists" % index_name)
+CodernityDB.index.IndexNotFoundException: Index `quality` doesn't exists
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] userscript.get_provider_version: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 107, in fireEvent
+    e.handle(event['handler'], priority = event['priority'])
+    ~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 135, in handle
+    event += (handler, True, 1.5)
+    
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/axl/axel.py", line 115, in hash
+    # Python 3 compatibility: encode string before hashing
+TypeError: Strings must be encoded before hashing
+[0m
+07-30 16:00:34 ERROR [31m[   couchpotato.core.event] Error in event "userscript.get_version", that wasn't caught: Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/event.py", line 16, in runHandler
+    return handler(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/core/plugins/userscript/main.py", line 83, in getVersion
+    for v in versions:
+             ^^^^^^^^
+TypeError: 'NoneType' object is not iterable
+encoding=UTF-8 debug=False args=['--console_log'] app_dir=/Users/scott.b/repos/CouchPotatoServer data_dir=/Users/scott.b/.couchpotato desktop=None options=Namespace(config_file='/Users/scott.b/.couchpotato/settings.conf', console_log=True, daemon=False, data_dir=None, debug=False, pid_file='/Users/scott.b/.couchpotato/couchpotato.pid', quiet=False) [0m
+
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []
+DEBUG: Event clientscript.get_styles.after not in events, returning []
+DEBUG: Event clientscript.get_scripts found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_scripts not in events, returning []
+DEBUG: Event clientscript.get_scripts.after not in events, returning []
+DEBUG: Event profile.all not in events, returning []
+DEBUG: Event quality.all found, has 1 handlers
+DEBUG: Event result.modify.quality.all not in events, returning []
+DEBUG: Event quality.all.after not in events, returning []
+DEBUG: Event category.all not in events, returning []
+DEBUG: Event userscript.get_version found, has 1 handlers
+DEBUG: Event userscript.get_provider_version found, has 14 handlers
+DEBUG: Event result.modify.userscript.get_version not in events, returning []
+DEBUG: Event userscript.get_version.after not in events, returning []
+DEBUG: Event clientscript.get_styles found, has 1 handlers
+DEBUG: Event result.modify.clientscript.get_styles not in events, returning []

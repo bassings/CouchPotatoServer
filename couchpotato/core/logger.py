@@ -1,3 +1,5 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
+from couchpotato.core.compat import iteritems
 import logging
 import re
 
@@ -56,24 +58,36 @@ class CPLog(object):
 
         from couchpotato.core.helpers.encoding import ss, toUnicode
 
-        msg = ss(msg)
+        # Ensure msg is properly handled for Python 3
+        if isinstance(msg, bytes):
+            msg = msg.decode('utf-8', 'replace')
+
+        # Convert to string first for Python 3 compatibility
+        msg = toUnicode(msg)
 
         try:
             if isinstance(replace_tuple, tuple):
-                msg = msg % tuple([ss(x) if not isinstance(x, (int, float)) else x for x in list(replace_tuple)])
+                msg = msg % tuple([toUnicode(x) if not isinstance(x, (int, float)) else x for x in list(replace_tuple)])
             elif isinstance(replace_tuple, dict):
-                msg = msg % dict((k, ss(v) if not isinstance(v, (int, float)) else v) for k, v in replace_tuple.iteritems())
+                msg = msg % dict((k, toUnicode(v) if not isinstance(v, (int, float)) else v) for k, v in iteritems(replace_tuple))
             else:
-                msg = msg % ss(replace_tuple)
+                msg = msg % toUnicode(replace_tuple)
         except Exception as e:
-            self.logger.error('Failed encoding stuff to log "%s": %s' % (msg, e))
+            # Avoid recursion in logging - use direct print
+            try:
+                print('WARNING: Failed encoding log message: %s' % str(e))
+            except:
+                print('WARNING: Failed encoding log message')
+            msg = 'ENCODING_ERROR'
 
         self.setup()
         if not self.is_develop:
 
             for replace in self.replace_private:
-                msg = re.sub('(\?%s=)[^\&]+' % replace, '?%s=xxx' % replace, msg)
-                msg = re.sub('(&%s=)[^\&]+' % replace, '&%s=xxx' % replace, msg)
+                # Use raw string for regex pattern to avoid escape sequence warnings
+                # Ensure we're working with string, not bytes
+                msg = re.sub(r'(\?%s=)[^\&]+' % replace, '?%s=xxx' % replace, str(msg))
+                msg = re.sub(r'(&%s=)[^\&]+' % replace, '&%s=xxx' % replace, str(msg))
 
             # Replace api key
             try:

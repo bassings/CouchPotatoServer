@@ -1,5 +1,6 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from string import ascii_letters, digits
-from urllib import quote_plus
+from couchpotato.core.compat import quote_plus
 import os
 import re
 import traceback
@@ -15,21 +16,22 @@ log = CPLog(__name__)
 
 def toSafeString(original):
     valid_chars = "-_.() %s%s" % (ascii_letters, digits)
-    cleaned_filename = unicodedata.normalize('NFKD', toUnicode(original)).encode('ASCII', 'ignore')
+    cleaned_filename = unicodedata.normalize('NFKD', toUnicode(original)).encode('ASCII', 'ignore').decode('ASCII')
     valid_string = ''.join(c for c in cleaned_filename if c in valid_chars)
     return ' '.join(valid_string.split())
 
 
 def simplifyString(original):
     string = stripAccents(original.lower())
-    string = toSafeString(' '.join(re.split('\W+', string)))
-    split = re.split('\W+|_', string.lower())
+    string = toSafeString(' '.join(re.split(r'\W+', string)))
+    split = re.split(r'\W+|_', string.lower())
     return toUnicode(' '.join(split))
 
 
 def toUnicode(original, *args):
     try:
-        if isinstance(original, unicode):
+        # Use six for Python 2/3 compatibility
+        if isinstance(original, six.text_type):
             return original
         else:
             try:
@@ -51,7 +53,11 @@ def toUnicode(original, *args):
                     except:
                         raise
     except:
-        log.error('Unable to decode value "%s..." : %s ', (repr(original)[:20], traceback.format_exc()))
+        # Avoid logging recursion - print directly to avoid circular dependency
+        try:
+            print('WARNING: Unable to decode value "%s..."' % repr(original)[:20])
+        except:
+            pass
         return 'ERROR DECODING STRING'
 
 
@@ -79,7 +85,8 @@ def sp(path, *args):
     if os.path.sep == '/' and '\\' in path:
         path = '/' + path.replace(':', '').replace('\\', '/')
 
-    path = os.path.normpath(ss(path, *args))
+    # In Python 3, we want string paths, not bytes
+    path = os.path.normpath(toUnicode(path, *args))
 
     # Remove any trailing path separators
     if path != os.path.sep:

@@ -1,0 +1,59 @@
+/Users/scott.b/repos/CouchPotatoServer/libs/tornado/web.py:1628: SyntaxWarning: invalid escape sequence '\.'
+  application.add_handlers(r"www\.myhost\.com", [
+/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py:1084: SyntaxWarning: invalid escape sequence '\*'
+  :param \*args: ``*args`` for function
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:149: SyntaxWarning: invalid escape sequence '\*'
+  :param \**conn_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:500: SyntaxWarning: invalid escape sequence '\*'
+  :param \**response_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/connectionpool.py:781: SyntaxWarning: invalid escape sequence '\*'
+  :param \**kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/packages/urllib3/poolmanager.py:44: SyntaxWarning: invalid escape sequence '\*'
+  :param \**connection_pool_kw:
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/models.py:785: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``json.loads`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:63: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:76: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:89: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:104: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:117: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:130: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/api.py:142: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:480: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:490: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:500: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:512: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:522: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:532: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+/Users/scott.b/repos/CouchPotatoServer/libs/requests/sessions.py:541: SyntaxWarning: invalid escape sequence '\*'
+  :param \*\*kwargs: Optional arguments that ``request`` takes.
+Traceback (most recent call last):
+  File "/Users/scott.b/repos/CouchPotatoServer/CouchPotato.py", line 141, in <module>
+    l.run()
+    ~~~~~^^
+  File "/Users/scott.b/repos/CouchPotatoServer/CouchPotato.py", line 95, in run
+    runCouchPotato(self.options, base_path, sys.argv[1:], data_dir = self.data_dir, log_dir = self.log_dir, Env = Env)
+    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/scott.b/repos/CouchPotatoServer/couchpotato/runner.py", line 143, in runCouchPotato
+    db.open()
+    ~~~~~~~^^
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database_super_thread_safe.py", line 43, in _inner
+    res = f(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database_super_thread_safe.py", line 91, in open
+    res = super(SuperThreadSafeDatabase, self).open(*args, **kwargs)
+  File "/Users/scott.b/repos/CouchPotatoServer/libs/CodernityDB/database.py", line 582, in open
+    raise PreconditionsException("There must be `id` index!")
+CodernityDB.database.PreconditionsException: There must be `id` index!

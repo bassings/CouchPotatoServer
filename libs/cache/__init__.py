@@ -7,7 +7,10 @@
     :license: BSD, see LICENSE for more details.
 """
 from cache.posixemulation import rename
-from itertools import izip
+try:
+    from itertools import izip  # Python 2
+except ImportError:
+    izip = zip  # Python 3
 from time import time
 import os
 import re
@@ -170,7 +173,7 @@ class FileSystemCache(BaseCache):
     #: used for temporary files by the FileSystemCache
     _fs_transaction_suffix = '.__wz_cache'
 
-    def __init__(self, cache_dir, threshold = 500, default_timeout = 300, mode = 0600):
+    def __init__(self, cache_dir, threshold = 500, default_timeout = 300, mode = 0o600):
         BaseCache.__init__(self, default_timeout)
         self._path = cache_dir
         self._threshold = threshold

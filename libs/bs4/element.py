@@ -1,4 +1,9 @@
 import collections
+# Python 3.3+ compatibility
+try:
+    from collections.abc import Callable
+except ImportError:
+    from collections import Callable
 import re
 import sys
 import warnings
@@ -1488,7 +1493,7 @@ class SoupStrainer(object):
             markup = markup_name
             markup_attrs = markup
         call_function_with_tag_data = (
-            isinstance(self.name, collections.Callable)
+            isinstance(self.name, Callable)
             and not isinstance(markup_name, Tag))
 
         if ((not self.name)
@@ -1574,7 +1579,7 @@ class SoupStrainer(object):
             # True matches any non-None value.
             return markup is not None
 
-        if isinstance(match_against, collections.Callable):
+        if isinstance(match_against, Callable):
             return match_against(markup)
 
         # Custom callables take the tag as an argument, but all

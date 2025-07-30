@@ -9,8 +9,8 @@ module.exports = function(grunt){
 	// Configurable paths
 	var config = {
 		python: grunt.file.exists('./_env/bin/python') ? './_env/bin/python' : 'python',
-		// colorful output on travis is not required, so disable it there, using travic'es env var :
-		colorful_tests_output: ! process.env.TRAVIS,
+		    // colorful output on CI is not required, so disable it there, using GitHub Actions env var :
+    colorful_tests_output: ! (process.env.CI || process.env.GITHUB_ACTIONS),
 		tmp: '.tmp',
 		base: 'couchpotato',
 		css_dest: 'couchpotato/static/style/combined.min.css',
@@ -199,7 +199,7 @@ module.exports = function(grunt){
 				verbosity: 2,
 				exe: true,
 				config: './.nosetestsrc',
-				// 'rednose' is a colored output for nose test-runner. But we do not requre colors on travis-ci
+				                // 'rednose' is a colored output for nose test-runner. But we do not require colors on CI
 				rednose: config.colorful_tests_output,
 				externalNose: true,
 			},

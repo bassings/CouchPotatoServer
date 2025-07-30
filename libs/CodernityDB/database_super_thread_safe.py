@@ -23,7 +23,7 @@ from CodernityDB.env import cdb_environment
 cdb_environment['mode'] = "threads"
 cdb_environment['rlock_obj'] = RLock
 
-from database import Database
+from .database import Database
 
 from functools import wraps
 from types import FunctionType, MethodType
@@ -58,7 +58,7 @@ class SuperLock(type):
                     else:
                         # setattr(base, b_attr, SuperLock.wrapper(a))
                         new_attr[b_attr] = SuperLock.wrapper(a)
-        for attr_name, attr_value in attr.iteritems():
+        for attr_name, attr_value in attr.items():  # Python 3 compatible
             if isinstance(attr_value, FunctionType) and not attr_name.startswith('_'):
                 attr_value = SuperLock.wrapper(attr_value)
             new_attr[attr_name] = attr_value
@@ -66,15 +66,13 @@ class SuperLock(type):
         return type.__new__(cls, classname, bases, new_attr)
 
 
-class SuperThreadSafeDatabase(Database):
+class SuperThreadSafeDatabase(Database, metaclass=SuperLock):  # Python 3 metaclass syntax
     """
     Thread safe version that always allows single thread to use db.
     It adds the same lock for all methods, so only one operation can be
     performed in given time. Completely different implementation
     than ThreadSafe version (without super word)
     """
-
-    __metaclass__ = SuperLock
 
     def __init__(self, *args, **kwargs):
         super(SuperThreadSafeDatabase, self).__init__(*args, **kwargs)
@@ -91,15 +89,15 @@ class SuperThreadSafeDatabase(Database):
 
     def open(self, *args, **kwargs):
         res = super(SuperThreadSafeDatabase, self).open(*args, **kwargs)
-        for name in self.indexes_names.iterkeys():
+        for name in self.indexes_names.keys():  # Python 3 compatible
             self.__patch_index_gens(name)
         return res
 
     def create(self, *args, **kwargs):
         res = super(SuperThreadSafeDatabase, self).create(*args, **kwargs)
-        for name in self.indexes_names.iterkeys():
+        for name in self.indexes_names.keys():  # Python 3 compatible
             self.__patch_index_gens(name)
-            return res
+        return res
 
     def add_index(self, *args, **kwargs):
         res = super(SuperThreadSafeDatabase, self).add_index(*args, **kwargs)

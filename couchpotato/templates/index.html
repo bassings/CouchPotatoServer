@@ -30,7 +30,7 @@
 
 		<link href="{{ icon_path }}favicon.ico" rel="icon" type="image/x-icon" />
 
-		{% for url in fireEvent('clientscript.get_scripts', single = True) %}
+		{% for url in (fireEvent('clientscript.get_scripts', single = True) or []) %}
 		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% end %}
 
 		{% if Env.get('dev') %}

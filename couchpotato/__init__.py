@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import os
 import time
 import traceback
@@ -153,7 +154,7 @@ class KeyHandler(RequestHandler):
                 'api_key': api_key
             })
         except:
-            log.error('Failed doing key request: %s', (traceback.format_exc()))
+            log.error('Failed doing key request: %s', (traceback.format_exc(),))
             self.write({'success': False, 'error': 'Failed returning results'})
 
 

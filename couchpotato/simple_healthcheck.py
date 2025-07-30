@@ -1,5 +1,6 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
+from __future__ import absolute_import, division, print_function, unicode_literals
 """
 Simple CouchPotato Health Check
 
@@ -10,7 +11,7 @@ import unittest
 import socket
 import time
 import sys
-from urllib2 import urlopen, HTTPError, URLError
+from urllib.request import urlopen, HTTPError, URLError
 
 
 class SimpleHealthCheck(unittest.TestCase):

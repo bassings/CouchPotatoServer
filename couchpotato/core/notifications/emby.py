@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import json
 import urllib, urllib2
 
@@ -23,15 +24,15 @@ class Emby(Notification):
         data = urllib.urlencode(values)
 
         try:
-            req = urllib2.Request(url, data)
+            req = urllib.request.Request(url, data)
             req.add_header('X-MediaBrowser-Token', apikey)
 
-            response = urllib2.urlopen(req)
+            response = urllib.request.urlopen(req)
             result = response.read()
             response.close()
             return True
 
-        except (urllib2.URLError, IOError), e:
+        except (urllib.error.URLError, IOError) as e:
             return False
 
     def test(self, **kwargs):
@@ -45,18 +46,18 @@ class Emby(Notification):
         data = json.dumps(values)
 
         try:
-            req = urllib2.Request(url, data)
+            req = urllib.request.Request(url, data)
             req.add_header('X-MediaBrowser-Token', apikey)
             req.add_header('Content-Type', 'application/json')
 
-            response = urllib2.urlopen(req)
+            response = urllib.request.urlopen(req)
             result = response.read()
             response.close()
             return {
                 'success': True
             }
 
-        except (urllib2.URLError, IOError), e:
+        except (urllib.error.URLError, IOError), e:
             return False
 
 

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import os
 import sys
 import traceback
@@ -136,7 +137,7 @@ class Loader(object):
             return False
         try:
             # Load single file plugin
-            if isinstance(module.autoload, (str, unicode)):
+            if isinstance(module.autoload, (str, six.text_type)):
                 getattr(module, module.autoload)()
             # Load folder plugin
             else:

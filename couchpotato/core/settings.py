@@ -1,5 +1,5 @@
-from __future__ import with_statement
-import ConfigParser
+from __future__ import absolute_import, division, print_function, unicode_literals
+from couchpotato.core.compat import ConfigParser
 import traceback
 from hashlib import md5
 
@@ -103,7 +103,7 @@ class Settings(object):
                         meta_option_name = option_name + self.optionMetaSuffix()
                         self.setDefault(section_name, meta_option_name, value)
                     else:
-                        self.log.warning('Wrong value for option %s.%s : ui-meta can not be equal to "%s"', (section_name, option_name, value))
+                        self.log.warning('Wrong value for option %s.%s : ui-meta can not be equal to "%s"', section_name, option_name, value)
 
             # Migrate old settings from old location to the new location
             if option.get('migrate_from'):
@@ -120,7 +120,7 @@ class Settings(object):
 
     def set(self, section, option, value):
         if not self.isOptionWritable(section, option):
-            self.log.warning('set::option "%s.%s" isn\'t writable', (section, option))
+            self.log.warning('set::option "%s.%s" isn\'t writable', section, option)
             return None
         if self.isOptionMeta(section, option):
             self.log.warning('set::option "%s.%s" cancelled, since it is a META option', (section, option))
@@ -130,7 +130,7 @@ class Settings(object):
 
     def get(self, option = '', section = 'core', default = None, type = None):
         if self.isOptionMeta(section, option):
-            self.log.warning('get::option "%s.%s" cancelled, since it is a META option', (section, option))
+            self.log.warning('get::option "%s.%s" cancelled, since it is a META option', section, option)
             return None
 
         tp = type
@@ -147,7 +147,7 @@ class Settings(object):
 
     def delete(self, option = '', section = 'core'):
         if not self.isOptionWritable(section, option):
-            self.log.warning('delete::option "%s.%s" isn\'t writable', (section, option))
+            self.log.warning('delete::option "%s.%s" isn\'t writable', section, option)
             return None
 
         if self.isOptionMeta(section, option):
@@ -240,15 +240,15 @@ class Settings(object):
         return values
 
     def save(self):
-        with open(self.file, 'wb') as configfile:
+        with open(self.file, 'w', encoding='utf-8') as configfile:
             self.p.write(configfile)
 
     def addSection(self, section):
-        if not self.p.has_section(section):
+        if self.p and not self.p.has_section(section):
             self.p.add_section(section)
 
     def setDefault(self, section, option, value):
-        if not self.p.has_option(section, option):
+        if self.p and not self.p.has_option(section, option):
             self.p.set(section, option, value)
 
     def setType(self, section, option, type):
@@ -330,7 +330,7 @@ class Settings(object):
         value = kwargs.get('value')
 
         if not self.isOptionWritable(section, option):
-            self.log.warning('Option "%s.%s" isn\'t writable', (section, option))
+            self.log.warning('Option "%s.%s" isn\'t writable', section, option)
             return {
                 'success' : False,
             }
@@ -384,7 +384,7 @@ class Settings(object):
     def optionReadableCheckAndWarn(self, section, option):
         x = self.isOptionReadable(section, option)
         if not x:
-            self.log.warning('Option "%s.%s" isn\'t readable', (section, option))
+            self.log.warning('Option "%s.%s" isn\'t readable', section, option)
         return x
 
     def isOptionWritable(self, section, option):
@@ -422,7 +422,7 @@ class Settings(object):
             propert = db.get('property', identifier)
             fireEvent('database.delete_corrupted', propert.get('_id'))
         except:
-            self.log.debug('Property "%s" doesn\'t exist: %s', (identifier, traceback.format_exc(0)))
+            self.log.debug('Property "%s" doesn\'t exist: %s', identifier, traceback.format_exc(0))
 
         return prop
 

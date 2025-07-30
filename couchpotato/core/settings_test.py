@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import mock
 from mock import patch, Mock, MagicMock
 import unittest

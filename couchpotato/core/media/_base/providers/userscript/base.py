@@ -1,4 +1,6 @@
-from urlparse import urlparse
+from __future__ import absolute_import, division, print_function, unicode_literals
+from urllib.parse import urlparse
+import re
 
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import simplifyString

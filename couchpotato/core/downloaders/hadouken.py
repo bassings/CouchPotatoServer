@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from base64 import b16encode, b32decode, b64encode
 from distutils.version import LooseVersion
 from hashlib import sha1
@@ -5,7 +6,8 @@ import httplib
 import json
 import os
 import re
-import urllib2
+import urllib.request
+import urllib.error
 
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, sp
@@ -224,7 +226,7 @@ class JsonRpcClient(object):
         self.url = url
         self.requestId = 0
 
-        self.opener = urllib2.build_opener()
+        self.opener = urllib.request.build_opener()
         self.opener.addheaders = [
             ('User-Agent', 'couchpotato-hadouken-client/1.0'),
             ('Accept', 'application/json'),
@@ -244,7 +246,7 @@ class JsonRpcClient(object):
             'params': params
         }
 
-        request = urllib2.Request(self.url, data = json.dumps(data))
+        request = urllib.request.Request(self.url, data = json.dumps(data))
 
         try:
             f = self.opener.open(request)
@@ -263,12 +265,12 @@ class JsonRpcClient(object):
             return True
         except httplib.InvalidURL as err:
             log.error('Invalid Hadouken host, check your config %s', err)
-        except urllib2.HTTPError as err:
+        except urllib.error.HTTPError as err:
             if err.code == 401:
                 log.error('Could not authenticate, check your config')
             else:
                 log.error('Hadouken HTTPError: %s', err)
-        except urllib2.URLError as err:
+        except urllib.error.URLError as err:
             log.error('Unable to connect to Hadouken %s', err)
 
         return False

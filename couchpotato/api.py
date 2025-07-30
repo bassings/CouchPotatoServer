@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from functools import wraps
 from threading import Thread
 import json
@@ -8,7 +9,14 @@ import urllib
 from couchpotato.core.helpers.request import getParams
 from couchpotato.core.logger import CPLog
 from tornado.ioloop import IOLoop
-from tornado.web import RequestHandler, asynchronous
+from tornado.web import RequestHandler
+# The 'asynchronous' decorator was removed in newer Tornado versions
+try:
+    from tornado.web import asynchronous
+except ImportError:
+    # For newer Tornado versions, asynchronous is not needed
+    def asynchronous(func):
+        return func
 
 
 log = CPLog(__name__)
@@ -58,7 +66,7 @@ class NonBlockHandler(RequestHandler):
             try:
                 self.finish(response)
             except:
-                log.debug('Failed doing nonblock request, probably already closed: %s', (traceback.format_exc()))
+                log.debug('Failed doing nonblock request, probably already closed: %s', (traceback.format_exc(),))
                 try: self.finish({'success': False, 'error': 'Failed returning results'})
                 except: pass
 
@@ -148,7 +156,7 @@ class ApiHandler(RequestHandler):
             except UnicodeDecodeError:
                 log.error('Failed proper encode: %s', traceback.format_exc())
             except:
-                log.debug('Failed doing request, probably already closed: %s', (traceback.format_exc()))
+                log.debug('Failed doing request, probably already closed: %s', (traceback.format_exc(),))
                 try: self.finish({'success': False, 'error': 'Failed returning results'})
                 except: pass
 

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import collections
 import ctypes
 import hashlib
@@ -12,7 +13,8 @@ import traceback
 from couchpotato.core.helpers.encoding import simplifyString, toSafeString, ss, sp, toUnicode
 from couchpotato.core.logger import CPLog
 import six
-from six.moves import map, zip, filter
+# Python 3 has these built-in, no need for six.moves
+# from six.moves import map, zip, filter
 
 
 log = CPLog(__name__)
@@ -132,7 +134,7 @@ def sha1(text):
 
 def isLocalIP(ip):
     ip = ip.lstrip('htps:/')
-    regex = '/(^127\.)|(^192\.168\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^::1)$/'
+    regex = r'/(^127\.)|(^192\.168\.)|(^10\.)|(^172\.1[6-9]\.)|(^172\.2[0-9]\.)|(^172\.3[0-1]\.)|(^::1)$/'
     return re.search(regex, ip) is not None or 'localhost' in ip or ip[:4] == '127.'
 
 
@@ -194,7 +196,7 @@ def getImdb(txt, check_inside = False, multiple = False):
         output.close()
 
     try:
-        ids = re.findall('(tt\d{4,8})', txt)
+        ids = re.findall(r'(tt\d{4,8})', txt)
 
         if multiple:
             return removeDuplicate(['tt%s' % str(tryInt(x[2:])).rjust(7, '0') for x in ids]) if len(ids) > 0 else []
@@ -329,9 +331,9 @@ def removePyc(folder, only_excess = True, show_logs = True):
 
     for root, dirs, files in os.walk(folder):
 
-        pyc_files = filter(lambda filename: filename.endswith('.pyc'), files)
+        pyc_files = list(filter(lambda filename: filename.endswith('.pyc'), files))
         py_files = set(filter(lambda filename: filename.endswith('.py'), files))
-        excess_pyc_files = filter(lambda pyc_filename: pyc_filename[:-1] not in py_files, pyc_files) if only_excess else pyc_files
+        excess_pyc_files = list(filter(lambda pyc_filename: pyc_filename[:-1] not in py_files, pyc_files)) if only_excess else pyc_files
 
         for excess_pyc_file in excess_pyc_files:
             full_path = os.path.join(root, excess_pyc_file)
@@ -339,7 +341,7 @@ def removePyc(folder, only_excess = True, show_logs = True):
             try:
                 os.remove(full_path)
             except:
-                log.error('Couldn\'t remove %s: %s', (full_path, traceback.format_exc()))
+                log.error('Couldn\'t remove %s: %s', full_path, traceback.format_exc())
 
         for dir_name in dirs:
             full_path = os.path.join(root, dir_name)
@@ -347,7 +349,7 @@ def removePyc(folder, only_excess = True, show_logs = True):
                 try:
                     os.rmdir(full_path)
                 except:
-                    log.error('Couldn\'t remove empty directory %s: %s', (full_path, traceback.format_exc()))
+                    log.error('Couldn\'t remove empty directory %s: %s', full_path, traceback.format_exc())
 
 
 def getFreeSpace(directories):
@@ -364,7 +366,8 @@ def getFreeSpace(directories):
             if os.name == 'nt':
                 _, total, free = ctypes.c_ulonglong(), ctypes.c_ulonglong(), \
                                    ctypes.c_ulonglong()
-                if sys.version_info >= (3,) or isinstance(folder, unicode):
+                # In Python 3, all strings are unicode, so always use the W version
+                if sys.version_info >= (3,) or isinstance(folder, six.text_type):
                     fun = ctypes.windll.kernel32.GetDiskFreeSpaceExW #@UndefinedVariable
                 else:
                     fun = ctypes.windll.kernel32.GetDiskFreeSpaceExA #@UndefinedVariable
@@ -416,4 +419,9 @@ def find(func, iterable):
 def compareVersions(version1, version2):
     def normalize(v):
         return [int(x) for x in re.sub(r'(\.0+)*$','', v).split(".")]
+    
+    # Python 3 compatible cmp function
+    def cmp(a, b):
+        return (a > b) - (a < b)
+    
     return cmp(normalize(version1), normalize(version2))

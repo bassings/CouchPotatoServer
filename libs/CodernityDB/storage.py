@@ -87,7 +87,10 @@ class IU_Storage(object):
         if os.path.exists(os.path.join(self.db_path, self.name + "_stor")):
             raise IOError("Storage already exists!")
         with io.open(os.path.join(self.db_path, self.name + "_stor"), 'wb') as f:
-            f.write(struct.pack("10s90s", self.__version__, '|||||'))
+            # Convert strings to bytes for Python 3 compatibility
+            version_bytes = self.__version__.encode('utf-8') if isinstance(self.__version__, str) else self.__version__
+            separator_bytes = b'|||||'
+            f.write(struct.pack("10s90s", version_bytes, separator_bytes))
             f.close()
         self._f = io.open(os.path.join(
             self.db_path, self.name + "_stor"), 'r+b', buffering=0)

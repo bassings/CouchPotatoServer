@@ -23,7 +23,7 @@ cdb_environment['mode'] = "threads"
 cdb_environment['rlock_obj'] = RLock
 
 
-from database_safe_shared import SafeDatabase
+from .database_safe_shared import SafeDatabase
 
 
 class ThreadSafeDatabase(SafeDatabase):
