@@ -25,31 +25,37 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         
         # Determine the Python executable to use
         python_executable = sys.executable
+        
+        # For Python 3.8 and CI environments, be more aggressive about finding a working executable
         if not python_executable or python_executable == '' or not os.path.exists(python_executable):
-            # Fallback to common Python executable names
-            for candidate in ['python3', 'python', 'python3.8', 'python3.9', 'python3.10', 'python3.11', 'python3.13']:
-                try:
-                    result = subprocess.run([candidate, '--version'], 
-                                          capture_output=True, timeout=5)
-                    if result.returncode == 0:
-                        python_executable = candidate
-                        break
-                except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-                    continue
+            # First try shutil.which for common names
+            import shutil
+            for candidate in ['python3', 'python', f'python{sys.version_info.major}.{sys.version_info.minor}']:
+                found_exe = shutil.which(candidate)
+                if found_exe and os.path.exists(found_exe):
+                    python_executable = found_exe
+                    break
             else:
-                # As a last resort, try to get it from the current process
-                if hasattr(sys, 'real_prefix') or (hasattr(sys, 'base_prefix') and sys.base_prefix != sys.prefix):
-                    # We're in a virtual environment
-                    python_executable = 'python'
-                else:
-                    # Try one more fallback using shutil.which
+                # Fallback to testing candidates directly
+                for candidate in ['python3', 'python', 'python3.8', 'python3.9', 'python3.10', 'python3.11', 'python3.13']:
                     try:
-                        import shutil
-                        python_executable = shutil.which('python3') or shutil.which('python')
-                        if not python_executable:
-                            raise Exception("No suitable Python executable found")
-                    except ImportError:
-                        raise Exception("No suitable Python executable found")
+                        result = subprocess.run([candidate, '--version'], 
+                                              capture_output=True, timeout=5)
+                        if result.returncode == 0:
+                            python_executable = candidate
+                            break
+                    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+                        continue
+                else:
+                    raise Exception("No suitable Python executable found")
+        
+        # Double-check that the executable actually exists and works
+        if python_executable and not os.path.exists(python_executable) and not shutil.which(python_executable):
+            # Try to find it using shutil.which as a last resort
+            import shutil
+            python_executable = shutil.which('python3') or shutil.which('python')
+            if not python_executable:
+                raise Exception(f"Python executable not found: {sys.executable}")
         
         print(f"Using Python executable: {python_executable}")
         
