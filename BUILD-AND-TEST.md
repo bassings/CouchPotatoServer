@@ -85,28 +85,28 @@ docker-compose -f docker-compose.production.yml --profile testing up -d couchpot
 ✓ API Endpoints: Responding correctly
 ```
 
-## Container Registry Preparation
+## Local Development Workflow
 
-### Tagging for Registry
+### Image Management
 ```bash
-# Tag for registry upload
-docker tag couchpotato:python2 your-registry/couchpotato:python2-latest
-docker tag couchpotato:python2 your-registry/couchpotato:python2-v1.0.0
+# List built images
+docker images | grep couchpotato
 
-docker tag couchpotato:python3 your-registry/couchpotato:python3-dev
+# Clean up old images if needed
+docker image prune -f
+
+# Remove specific images
+docker rmi couchpotato:python2
+docker rmi couchpotato:python3
 ```
 
-### Registry Upload
+### Development Workflow
 ```bash
-# Login to registry
-docker login your-registry
+# Rebuild after code changes
+docker build -f Dockerfile.python2 -t couchpotato:python2 .
 
-# Push Python 2 (stable)
-docker push your-registry/couchpotato:python2-latest
-docker push your-registry/couchpotato:python2-v1.0.0
-
-# Push Python 3 (development/testing)
-docker push your-registry/couchpotato:python3-dev
+# Quick test cycle
+docker run --rm -p 5050:5050 couchpotato:python2
 ```
 
 ## Troubleshooting
@@ -167,7 +167,7 @@ docker exec cp-py3 python3 run_all_tests.py
 
 ## Next Steps
 
-1. **Code Migration**: Follow the Python 3 upgrade plan
-2. **Test Validation**: Use the enhanced test suite
-3. **Container Registry**: Upload to your preferred registry
-4. **Production Deployment**: Update your deployment configs
+1. **Code Migration**: Follow the Python 3 upgrade plan in `PYTHON3-UPGRADE-PLAN.md`
+2. **Test Validation**: Use the enhanced test suite during migration
+3. **GitHub Workflow**: Push to bassings/CouchPotatoServer repository
+4. **Local Deployment**: Use Docker Compose for local development
