@@ -168,8 +168,10 @@ class Loader(object):
     def loadModule(self, name):
         try:
             return import_module(name)
-        except ImportError:
+        except (ImportError, SyntaxError):
+            # Skip modules that fail to import in Python 3 to allow partial
+            # functionality during migration.
             log.debug('Skip loading module plugin %s: %s', (name, traceback.format_exc()))
             return None
-        except:
+        except Exception:
             raise
