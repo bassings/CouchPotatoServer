@@ -787,7 +787,7 @@ class Response(object):
     def json(self, **kwargs):
         """Returns the json-encoded content of a response, if any.
 
-        :param \*\*kwargs: Optional arguments that ``json.loads`` takes.
+        :param \\*\\*kwargs: Optional arguments that ``json.loads`` takes.
         """
 
         if not self.encoding and len(self.content) > 3:
