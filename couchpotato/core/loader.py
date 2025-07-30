@@ -71,9 +71,9 @@ class Loader(object):
                         pass
                     # todo:: this needs to be more descriptive.
                     log.error('Import error, remove the empty folder: %s', plugin.get('module'))
-                    log.debug('Can\'t import %s: %s', module_name, traceback.format_exc())
+                    log.debug('Can\'t import %s: %s', (module_name, traceback.format_exc()))
                 except:
-                    log.error('Can\'t import %s: %s', module_name, traceback.format_exc())
+                    log.error('Can\'t import %s: %s', (module_name, traceback.format_exc()))
 
         if did_save:
             fireEvent('settings.save')
@@ -127,7 +127,7 @@ class Loader(object):
                 fireEvent('settings.register', section_name = section['name'], options = options, save = save)
             return True
         except:
-            log.debug('Failed loading settings for "%s": %s', name, traceback.format_exc())
+            log.debug('Failed loading settings for "%s": %s', (name, traceback.format_exc()))
             return False
 
     def loadPlugins(self, module, type, name):
@@ -143,10 +143,10 @@ class Loader(object):
             else:
                 module.autoload()
 
-            log.info('Loaded %s: %s', type, name)
+            log.info('Loaded %s: %s', (type, name))
             return True
         except:
-            log.error('Failed loading plugin "%s": %s', module.__file__, traceback.format_exc())
+            log.error('Failed loading plugin "%s": %s', (module.__file__, traceback.format_exc()))
             return False
 
     def addModule(self, priority, plugin_type, module, name):
@@ -169,7 +169,7 @@ class Loader(object):
         try:
             return import_module(name)
         except ImportError:
-            log.debug('Skip loading module plugin %s: %s', name, traceback.format_exc())
+            log.debug('Skip loading module plugin %s: %s', (name, traceback.format_exc()))
             return None
         except:
             raise
