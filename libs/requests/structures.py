@@ -9,6 +9,11 @@ Data structures that power Requests.
 """
 
 import collections
+# Python 3.3+ compatibility
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
 try:
     from collections.abc import MutableMapping
 except ImportError:
@@ -75,7 +80,7 @@ class CaseInsensitiveDict(MutableMapping):
         )
 
     def __eq__(self, other):
-        if isinstance(other, collections.Mapping):
+        if isinstance(other, Mapping):
             other = CaseInsensitiveDict(other)
         else:
             return NotImplemented

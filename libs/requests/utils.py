@@ -39,6 +39,11 @@ except ImportError:
 
 import codecs
 import collections
+# Python 3.3+ compatibility
+try:
+    from collections.abc import Mapping
+except ImportError:
+    from collections import Mapping
 import io
 import os
 import platform
@@ -191,7 +196,7 @@ def to_key_val_list(value):
     if isinstance(value, (str, bytes, bool, int)):
         raise ValueError('cannot encode objects that are not 2-tuples')
 
-    if isinstance(value, collections.Mapping):
+    if isinstance(value, Mapping):
         value = value.items()
 
     return list(value)
