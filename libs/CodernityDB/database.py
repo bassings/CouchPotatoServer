@@ -1092,7 +1092,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         :param index_name: index name to perform action.
         :param target_funct: target function name (without *run* prefix)
         :param \\*args: ``*args`` for function
-        :param \*\*kwargs: ``**kwargs`` for function
+        :param \\*\\*kwargs: ``**kwargs`` for function
 
         """
         try:
