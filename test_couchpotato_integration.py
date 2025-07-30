@@ -59,9 +59,14 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
             shutil.rmtree(test_data_dir)
         os.makedirs(test_data_dir, exist_ok=True)
         
+        # Build command args and debug them
+        cmd_args = [python_executable, "CouchPotato.py", "--console_log", "--data_dir", test_data_dir]
+        print(f"Command args: {cmd_args}")
+        print(f"python_executable value: '{python_executable}' (type: {type(python_executable)}, len: {len(python_executable)})")
+        
         # Start CouchPotato in background
         cls.process = subprocess.Popen(
-            [python_executable, "CouchPotato.py", "--console_log", "--data_dir", test_data_dir],
+            cmd_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=os.path.dirname(__file__)
