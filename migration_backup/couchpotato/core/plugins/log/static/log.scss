@@ -1,0 +1,190 @@
+@import "_mixins";
+
+.page.log {
+
+	.nav {
+		text-align: right;
+		padding: 0;
+		margin: 0;
+
+		li {
+			display: inline-block;
+			padding: 5px 10px;
+			margin: 0;
+
+			@include media-tablet {
+				&.filter, &:nth-child(7),&:nth-child(8),&:nth-child(9),&:nth-child(10),&:nth-child(11),&:nth-child(12) {
+					display: none;
+				}
+
+				&:last-child {
+					display: inline-block;
+				}
+			}
+
+			&.select, &.clear {
+				cursor: pointer;
+			}
+
+			&:hover:not(.active):not(.filter) {
+				background: rgba(255,255,255,.1);
+			}
+
+			&.active {
+				font-weight: bold;
+				cursor: default;
+				background: rgba(255,255,255,.1);
+			}
+		}
+	}
+
+	.hint {
+		font-style: italic;
+		opacity: .5;
+		margin-top: 3px;
+
+		@include media-tablet {
+			display: none;
+		}
+	}
+
+	.container {
+		padding: $padding;
+		overflow: hidden;
+		line-height: 150%;
+		transform: rotateZ(360deg);
+
+		@include media-phablet {
+			padding: $padding $padding/2;
+		}
+
+		&.loading {
+			text-align: center;
+			font-size: 20px;
+			padding: 100px 50px;
+		}
+
+		select {
+			vertical-align: top;
+		}
+
+		.time {
+			font-size: .75em;
+			border-top: 1px solid transparent;
+			@include theme(border-color, off);
+			padding: 0 3px;
+			font-family: Lucida Console, Monaco, Nimbus Mono L, monospace, serif;
+			display: block;
+			cursor: pointer;
+			position: relative;
+
+			&:hover {
+				@include theme(background, off);
+			}
+
+			&.highlight {
+				@include theme(background, off);
+			}
+
+			span {
+				display: inline-block;
+				padding: 5px 0 3px;
+			}
+
+			.time_type {
+				position: absolute;
+				width: 130px;
+				top: 0;
+				left: 0;
+
+				@include media-tablet {
+					position: static;
+					width: auto;
+				}
+			}
+
+			.message {
+				//white-space: pre-wrap;
+				display: block;
+				margin: 0 0 0 130px;
+
+				@include media-tablet {
+					display: inline;
+					margin: 0 0 0 $padding/3;
+					padding: 0;
+				}
+			}
+
+		}
+
+		.error { color: #FFA4A4; }
+		.debug span { opacity: .6; }
+	}
+
+
+
+	[data-filter=INFO] .error,
+	[data-filter=INFO] .debug,
+	[data-filter=ERROR] .debug,
+	[data-filter=ERROR] .info,
+	[data-filter=DEBUG] .info,
+	[data-filter=DEBUG] .error {
+		display: none;
+	}
+}
+
+.report_popup.report_popup {
+	position: fixed;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	top: 0;
+	z-index: 99999;
+	font-size: 14px;
+	display: flex;
+	justify-content: center;
+	align-items: center;
+	opacity: 1;
+	color: #FFF;
+	pointer-events: auto;
+
+	.button {
+		margin: 10px 0;
+		padding: 10px;
+		color: #FFF;
+		@include theme(background, primary);
+	}
+
+	.bug {
+		width: 80%;
+		height: 80%;
+		max-height: 800px;
+		max-width: 800px;
+
+		display: flex;
+		flex-flow: column nowrap;
+
+		> span {
+			margin: $padding/2 0 $padding 0;
+		}
+
+		textarea {
+			display: block;
+			width: 100%;
+			background: #FFF;
+			padding: 20px;
+			overflow: auto;
+			color: #666;
+			height: 70%;
+			font-size: 12px;
+		}
+	}
+}
+
+.do_report.do_report {
+	z-index: 10000;
+	position: absolute;
+	padding: 10px;
+	@include theme(background, primary);
+	color: #FFF !important;
+}

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 """
 Python 2/3 Compatibility Module for CouchPotato
 
@@ -21,8 +22,8 @@ if PY3:
     
     # Alias for compatibility
     urllib2 = urllib.request
-    urllib2.HTTPError = urllib.error.HTTPError
-    urllib2.URLError = urllib.error.URLError
+    urllib.error.HTTPError = urllib.error.HTTPError
+    urllib.error.URLError = urllib.error.URLError
     ConfigParser = configparser
     
     # String types
@@ -30,6 +31,10 @@ if PY3:
     text_type = str
     binary_type = bytes
     integer_types = int
+    
+    # Python 2 compatibility aliases
+    unicode = str  # In Python 3, str is unicode
+    basestring = str
     
     # Dictionary iteration
     def iteritems(d):
@@ -64,6 +69,7 @@ if PY3:
     from urllib.parse import quote as url_quote
     from urllib.parse import unquote as url_unquote
     from urllib.parse import urlencode as url_encode
+    from urllib.parse import quote_plus
     
 else:
     # Python 2 imports and compatibility
@@ -79,7 +85,7 @@ else:
     
     # Dictionary iteration
     def iteritems(d):
-        return d.iteritems()
+        return iteritems(d)
     
     def iterkeys(d):
         return d.iterkeys()
@@ -110,6 +116,7 @@ else:
     from urllib import quote as url_quote
     from urllib import unquote as url_unquote
     from urllib import urlencode as url_encode
+    from urllib import quote_plus
 
 
 # Common utility functions
@@ -147,5 +154,5 @@ if PY3:
     HTTPError = urllib.error.HTTPError
     URLError = urllib.error.URLError
 else:
-    HTTPError = urllib2.HTTPError
-    URLError = urllib2.URLError
+    HTTPError = urllib.error.HTTPError
+    URLError = urllib.error.URLError

@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from couchpotato import fireEvent
 from couchpotato.core.helpers.variable import splitString
 from couchpotato.core.media._base.providers.userscript.base import UserscriptBase

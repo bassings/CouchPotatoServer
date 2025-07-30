@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 import threading
 import traceback
 
@@ -54,8 +55,11 @@ def addEvent(name, handler, priority = 100):
 
 
 def fireEvent(name, *args, **kwargs):
-    if name not in events: return
+    if name not in events: 
+        print(f"DEBUG: Event {name} not in events, returning []")
+        return []
 
+    print(f"DEBUG: Event {name} found, has {len(events[name])} handlers")
     #log.debug('Firing event %s', name)
     try:
 
@@ -66,6 +70,13 @@ def fireEvent(name, *args, **kwargs):
             'merge': False,  # Merge items
             'in_order': False,  # Fire them in specific order, waits for the other to finish
         }
+
+        # Check if no event handlers exist
+        if name not in events or len(events[name]) == 0:
+            if options.get('single'):
+                return []
+            else:
+                return None
 
         # Do options
         for x in options:
@@ -102,7 +113,7 @@ def fireEvent(name, *args, **kwargs):
             # Fire
             result = e(*args, **kwargs)
 
-        result_keys = result.keys()
+        result_keys = list(result.keys())  # Convert to list for Python 3
         result_keys.sort(key = natsortKey)
 
         if options['single'] and not options['merge']:
@@ -118,6 +129,10 @@ def fireEvent(name, *args, **kwargs):
                     errorHandler(r[1])
                 else:
                     log.debug('Assume disabled eventhandler for: %s', name)
+            
+            # Return empty list if no results found for single events
+            if results is None:
+                results = []
 
         else:
             results = []
@@ -136,16 +151,16 @@ def fireEvent(name, *args, **kwargs):
                     results.reverse()
 
                     merged = {}
-                    for result in results:
-                        merged = mergeDicts(merged, result, prepend_list = True)
+                    for result_item in results:
+                        merged = mergeDicts(merged, result_item, prepend_list = True)
 
                     results = merged
                 # Lists
                 elif isinstance(results[0], list):
                     merged = []
-                    for result in results:
-                        if result not in merged:
-                            merged += result
+                    for result_item in results:
+                        if result_item not in merged:
+                            merged += result_item
 
                     results = merged
 

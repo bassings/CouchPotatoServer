@@ -1,5 +1,5 @@
-from __future__ import with_statement
-import ConfigParser
+from __future__ import absolute_import, division, print_function, unicode_literals
+from couchpotato.core.compat import ConfigParser
 import traceback
 from hashlib import md5
 
@@ -240,15 +240,15 @@ class Settings(object):
         return values
 
     def save(self):
-        with open(self.file, 'wb') as configfile:
+        with open(self.file, 'w', encoding='utf-8') as configfile:
             self.p.write(configfile)
 
     def addSection(self, section):
-        if not self.p.has_section(section):
+        if self.p and not self.p.has_section(section):
             self.p.add_section(section)
 
     def setDefault(self, section, option, value):
-        if not self.p.has_option(section, option):
+        if self.p and not self.p.has_option(section, option):
             self.p.set(section, option, value)
 
     def setType(self, section, option, type):

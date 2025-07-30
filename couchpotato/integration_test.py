@@ -1,4 +1,5 @@
 #!/usr/bin/env python2
+from __future__ import absolute_import, division, print_function, unicode_literals
 """
 CouchPotato Integration Tests
 
@@ -11,8 +12,8 @@ import threading
 import time
 import socket
 import json
-from urllib2 import urlopen, Request, HTTPError, URLError
-from urlparse import urljoin
+from urllib.request import urlopen, Request, HTTPError, URLError
+from urllib.parse import urljoin
 
 from couchpotato.environment import Env
 from couchpotato.runner import runCouchPotato

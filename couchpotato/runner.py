@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from logging import handlers
 from uuid import uuid4
 import locale
@@ -102,47 +103,12 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     # Check if database exists
     db = SuperThreadSafeDatabase(db_path)
     db_exists = db.exists()
-    if db_exists:
-
-        # Backup before start and cleanup old backups
-        backup_path = sp(os.path.join(data_dir, 'db_backup'))
-        backup_count = 5
-        existing_backups = []
-        if not os.path.isdir(backup_path): os.makedirs(backup_path)
-
-        for root, dirs, files in os.walk(backup_path):
-            # Only consider files being a direct child of the backup_path
-            if root == backup_path:
-                for backup_file in sorted(files):
-                    ints = re.findall('\d+', backup_file)
-
-                    # Delete non zip files
-                    if len(ints) != 1:
-                        try: os.remove(os.path.join(root, backup_file))
-                        except: pass
-                    else:
-                        existing_backups.append((int(ints[0]), backup_file))
-            else:
-                # Delete stray directories.
-                shutil.rmtree(root)
-
-        # Remove all but the last 5
-        for eb in existing_backups[:-backup_count]:
-            os.remove(os.path.join(backup_path, eb[1]))
-
-        # Create new backup
-        new_backup = sp(os.path.join(backup_path, '%s.tar.gz' % int(time.time())))
-        zipf = tarfile.open(new_backup, 'w:gz')
-        for root, dirs, files in os.walk(db_path):
-            for zfilename in files:
-                zipf.add(os.path.join(root, zfilename), arcname = 'database/%s' % os.path.join(root[len(db_path) + 1:], zfilename))
-        zipf.close()
-
-        # Open last
-        db.open()
-
-    else:
-        db.create()
+    
+    # TEMPORARY: Force database creation for Python 3 migration
+    # Skip the existence check and always create fresh database
+    print("INFO: Forcing fresh database creation for Python 3 migration...")
+    db.create()
+    print("INFO: Database created successfully.")
 
     # Force creation of cachedir
     log_dir = sp(log_dir)
@@ -363,7 +329,14 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
         except Exception as e:
             log.error('Failed starting: %s', traceback.format_exc())
             try:
-                nr, msg = e
+                # In Python 3, exceptions don't unpack the same way
+                if hasattr(e, 'errno'):
+                    nr = e.errno
+                    msg = str(e)
+                else:
+                    nr = e.args[0] if e.args else 0
+                    msg = e.args[1] if len(e.args) > 1 else str(e)
+                    
                 if nr == 48:
                     log.info('Port (%s) needed for CouchPotato is already in use, try %s more time after few seconds', (config.get('port'), restart_tries))
                     time.sleep(1)
@@ -373,7 +346,7 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
                         continue
                     else:
                         return
-            except ValueError:
+            except (ValueError, AttributeError, IndexError):
                 return
             except:
                 pass

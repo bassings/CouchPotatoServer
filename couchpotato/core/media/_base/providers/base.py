@@ -1,4 +1,5 @@
-from urlparse import urlparse
+from __future__ import absolute_import, division, print_function, unicode_literals
+from urllib.parse import urlparse
 import json
 import re
 from requests import HTTPError

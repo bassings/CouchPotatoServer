@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from apscheduler.scheduler import Scheduler as Sched
 from couchpotato.core.event import addEvent
 from couchpotato.core.logger import CPLog

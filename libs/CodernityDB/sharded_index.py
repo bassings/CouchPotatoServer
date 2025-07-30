@@ -20,6 +20,13 @@ from CodernityDB.index import Index
 # from CodernityDB.env import cdb_environment
 # import warnings
 
+# Python 3 compatibility
+try:
+    basestring
+except NameError:
+    # Python 3
+    basestring = str
+
 
 class ShardedIndex(Index):
 

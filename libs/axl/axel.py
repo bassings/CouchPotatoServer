@@ -12,7 +12,10 @@
 # Source: http://pypi.python.org/pypi/axel
 # Docs:   http://packages.python.org/axel
 
-from Queue import Empty, Queue
+try:
+    from queue import Empty, Queue  # Python 3
+except ImportError:
+    from Queue import Empty, Queue  # Python 2
 import hashlib
 import sys
 import threading
@@ -109,7 +112,11 @@ class Event(object):
         self.memoize = {}
 
     def hash(self, handler):
-        return hashlib.md5(str(handler)).hexdigest()
+        # Python 3 compatibility: encode string before hashing
+        handler_str = str(handler)
+        if isinstance(handler_str, str):
+            handler_str = handler_str.encode('utf-8')
+        return hashlib.md5(handler_str).hexdigest()
 
     def handle(self, handler, priority = 0):
         """ Registers a handler. The handler can be transmitted together
@@ -162,6 +169,8 @@ class Event(object):
                 t.start()
 
             handler_keys = self.handlers.keys()
+            # Python 3 compatibility: convert dict_keys to list before sorting
+            handler_keys = list(handler_keys)
             handler_keys.sort(key = natsortKey)
 
             for handler in handler_keys:

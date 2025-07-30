@@ -1,3 +1,4 @@
+from __future__ import absolute_import, division, print_function, unicode_literals
 from datetime import timedelta, datetime
 from urlparse import urlparse
 import traceback
@@ -44,11 +45,12 @@ class PlexServer(object):
         else:
             #Fetch X-Plex-Token if it doesn't exist but a username/password do
             if not self.plex.conf('auth_token') and (self.plex.conf('username') and self.plex.conf('password')):
-                import urllib2, base64
+                import urllib.request
+import urllib.error, base64
                 log.info("Fetching a new X-Plex-Token from plex.tv")
                 username = self.plex.conf('username')
                 password = self.plex.conf('password')
-                req = urllib2.Request("https://plex.tv/users/sign_in.xml", data="")
+                req = urllib.request.Request("https://plex.tv/users/sign_in.xml", data="")
                 authheader = "Basic %s" % base64.encodestring('%s:%s' % (username, password))[:-1]
                 req.add_header("Authorization", authheader)
                 req.add_header("X-Plex-Device-Name", "CouchPotato")
@@ -57,8 +59,8 @@ class PlexServer(object):
                 req.add_header("X-Plex-Version", "1.0")
 
                 try:
-                    response = urllib2.urlopen(req)
-                except urllib2.URLError, e:
+                    response = urllib.request.urlopen(req)
+                except urllib.error.URLError as e:
                     log.info('Error fetching token from plex.tv: %s', traceback.format_exc())
 
                 try:
