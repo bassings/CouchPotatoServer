@@ -13,6 +13,7 @@ import requests
 import signal
 import os
 import sys
+import shutil
 
 class CouchPotatoIntegrationTest(unittest.TestCase):
     """Integration tests for CouchPotato web server"""
@@ -22,9 +23,33 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         """Start CouchPotato server for testing"""
         print("🚀 Starting CouchPotato server for integration tests...")
         
+        # Determine the Python executable to use
+        python_executable = sys.executable
+        if not python_executable or not os.path.exists(python_executable):
+            # Fallback to common Python executable names
+            for candidate in ['python3', 'python']:
+                try:
+                    result = subprocess.run([candidate, '--version'], 
+                                          capture_output=True, timeout=5)
+                    if result.returncode == 0:
+                        python_executable = candidate
+                        break
+                except (subprocess.TimeoutExpired, FileNotFoundError):
+                    continue
+            else:
+                raise Exception("No suitable Python executable found")
+        
+        print(f"Using Python executable: {python_executable}")
+        
+        # Use fresh test data directory to avoid database conflicts
+        test_data_dir = os.path.join(os.path.dirname(__file__), 'test_data')
+        if os.path.exists(test_data_dir):
+            shutil.rmtree(test_data_dir)
+        os.makedirs(test_data_dir, exist_ok=True)
+        
         # Start CouchPotato in background
         cls.process = subprocess.Popen(
-            [sys.executable, "CouchPotato.py", "--console_log"],
+            [python_executable, "CouchPotato.py", "--console_log", "--data_dir", test_data_dir],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             cwd=os.path.dirname(__file__)
@@ -42,6 +67,23 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
                 pass
             time.sleep(1)
         else:
+            # Server failed to start, try to get some output for debugging
+            if cls.process.poll() is None:  # Process is still running
+                print("❌ Server process is running but not responding on port 5050")
+                cls.process.terminate()
+                try:
+                    stdout, stderr = cls.process.communicate(timeout=3)
+                    print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000])
+                    print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000])
+                except subprocess.TimeoutExpired:
+                    cls.process.kill()
+                    print("Process had to be killed - was hanging")
+            else:
+                # Process has terminated
+                stdout, stderr = cls.process.communicate()
+                print("❌ Server process terminated. Output:")
+                print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000])
+                print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000])
             cls.tearDownClass()
             raise Exception("Server failed to start within 30 seconds")
     
@@ -56,6 +98,15 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 cls.process.kill()
                 cls.process.wait()
+        
+        # Clean up test data directory
+        test_data_dir = os.path.join(os.path.dirname(__file__), 'test_data')
+        if os.path.exists(test_data_dir):
+            try:
+                shutil.rmtree(test_data_dir)
+                print("🧹 Cleaned up test data directory")
+            except OSError as e:
+                print(f"⚠️  Warning: Could not clean up test data directory: {e}")
     
     def test_web_server_responds(self):
         """Test that the web server responds to requests"""
