@@ -29,7 +29,7 @@ jobs:
         node-version: ${{ matrix.node-version }}
 
     - name: Cache Node.js dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.npm
         key: ${{ runner.os }}-node-${{ matrix.node-version }}-${{ hashFiles('**/package.json') }}
@@ -38,7 +38,7 @@ jobs:
           ${{ runner.os }}-node-
 
     - name: Cache Python dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cache/pip
@@ -128,7 +128,7 @@ jobs:
         node-version: 20
 
     - name: Cache Node.js dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: ~/.npm
         key: ${{ runner.os }}-node-20-${{ hashFiles('**/package.json') }}
