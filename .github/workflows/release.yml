@@ -36,11 +36,12 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install lxml pyopenssl requests
+        pip install lxml pyopenssl requests chardet
         npm install
 
     - name: Run tests
       run: |
+        export PYTHONPATH="${PYTHONPATH}:./libs"
         python test_python3_compatibility.py
         python test_couchpotato_integration.py
 

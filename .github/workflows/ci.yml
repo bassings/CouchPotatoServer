@@ -56,17 +56,21 @@ jobs:
     - name: Install Python dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install lxml pyopenssl requests
+        pip install lxml pyopenssl requests chardet
         if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
 
     - name: Install Node.js dependencies
       run: npm install
 
     - name: Run Python compatibility tests
-      run: python test_python3_compatibility.py
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:./libs"
+        python test_python3_compatibility.py
 
     - name: Run integration tests
-      run: python test_couchpotato_integration.py
+      run: |
+        export PYTHONPATH="${PYTHONPATH}:./libs"
+        python test_couchpotato_integration.py
 
     - name: Run Grunt tests
       run: |
@@ -78,6 +82,7 @@ jobs:
 
     - name: Test CouchPotato startup
       run: |
+        export PYTHONPATH="${PYTHONPATH}:./libs"
         timeout 30s python CouchPotato.py --console_log &
         sleep 20
         curl -f http://localhost:5050/ || echo "Startup test completed"
@@ -134,11 +139,12 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install lxml pyopenssl requests coveralls
+        pip install lxml pyopenssl requests chardet coveralls
         npm install
 
     - name: Generate coverage
       run: |
+        export PYTHONPATH="${PYTHONPATH}:./libs"
         npx grunt coverage
         python -m coverage run test_python3_compatibility.py
         python -m coverage run -a test_couchpotato_integration.py
