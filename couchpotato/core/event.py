@@ -2,7 +2,12 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import threading
 import traceback
 
-from axl.axel import Event
+# Import the Event class from our bundled axl library. Some test environments
+# don't prepend the `libs` directory to ``sys.path`` which means the plain
+# ``axl`` package cannot be resolved. Using the explicit ``libs`` package
+# ensures the import works both when running tests directly and when
+# CouchPotato inserts the libs directory at runtime.
+from libs.axl.axel import Event
 from couchpotato.core.helpers.variable import mergeDicts, natsortKey
 from couchpotato.core.logger import CPLog
 
