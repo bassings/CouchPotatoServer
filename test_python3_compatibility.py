@@ -22,8 +22,12 @@ import tempfile
 import inspect
 from io import StringIO
 
-# Add the project root to Python path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+# Add the project root and bundled libraries to Python path so that modules like
+# ``CodernityDB`` and ``axl`` can be imported in isolation without running the
+# CouchPotato bootstrap script which normally adjusts ``sys.path``.
+ROOT_DIR = os.path.dirname(__file__)
+sys.path.insert(0, ROOT_DIR)
+sys.path.insert(0, os.path.join(ROOT_DIR, 'libs'))
 
 class Python3CompatibilityTest(unittest.TestCase):
     """Test Python 3 compatibility fixes"""
