@@ -42,8 +42,8 @@ jobs:
     - name: Run tests
       run: |
         export PYTHONPATH="${PYTHONPATH}:./libs"
-        python test_python3_compatibility.py
-        python test_couchpotato_integration.py
+        python -W ignore::SyntaxWarning test_python3_compatibility.py
+        python -W ignore::SyntaxWarning test_couchpotato_integration.py
 
     - name: Build assets
       run: |

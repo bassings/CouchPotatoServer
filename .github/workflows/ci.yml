@@ -65,12 +65,12 @@ jobs:
     - name: Run Python compatibility tests
       run: |
         export PYTHONPATH="${PYTHONPATH}:./libs"
-        python test_python3_compatibility.py
+        python -W ignore::SyntaxWarning test_python3_compatibility.py
 
     - name: Run integration tests
       run: |
         export PYTHONPATH="${PYTHONPATH}:./libs"
-        python test_couchpotato_integration.py
+        python -W ignore::SyntaxWarning test_couchpotato_integration.py
 
     - name: Run Grunt tests
       run: |
@@ -83,7 +83,7 @@ jobs:
     - name: Test CouchPotato startup
       run: |
         export PYTHONPATH="${PYTHONPATH}:./libs"
-        timeout 30s python CouchPotato.py --console_log &
+        timeout 30s python -W ignore::SyntaxWarning CouchPotato.py --console_log &
         sleep 20
         curl -f http://localhost:5050/ || echo "Startup test completed"
         pkill -f CouchPotato.py || true
@@ -146,8 +146,8 @@ jobs:
       run: |
         export PYTHONPATH="${PYTHONPATH}:./libs"
         npx grunt coverage
-        python -m coverage run test_python3_compatibility.py
-        python -m coverage run -a test_couchpotato_integration.py
+        python -W ignore::SyntaxWarning -m coverage run test_python3_compatibility.py
+        python -W ignore::SyntaxWarning -m coverage run -a test_couchpotato_integration.py
 
     - name: Upload coverage to Coveralls
       env:
