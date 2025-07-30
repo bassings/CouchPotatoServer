@@ -14,9 +14,17 @@ events = {}
 def runHandler(name, handler, *args, **kwargs):
     try:
         return handler(*args, **kwargs)
-    except:
+    except Exception as e:
         from couchpotato.environment import Env
-        log.error('Error in event "%s", that wasn\'t caught: %s %s', (name, traceback.format_exc(), Env.all() if not Env.get('dev') else ''))
+        # Log the error with more detail for debugging
+        error_msg = str(e)
+        full_trace = traceback.format_exc()
+        env_info = Env.all() if not Env.get('dev') else ''
+        log.error('Error in event "%s", that wasn\'t caught: %s %s %s', (name, error_msg, full_trace, env_info))
+        # Also print to console for debugging in CI
+        print(f"EVENT ERROR: {name} - {error_msg}")
+        print(f"FULL TRACEBACK: {full_trace}")
+        raise e  # Re-raise to prevent silent failures
 
 
 def addEvent(name, handler, priority = 100):
