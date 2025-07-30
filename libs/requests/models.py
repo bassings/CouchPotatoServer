@@ -170,7 +170,7 @@ class RequestHooksMixin(object):
         if event not in self.hooks:
             raise ValueError('Unsupported event specified, with event name "%s"' % (event))
 
-                    if isinstance(hook, Callable):
+        if isinstance(hook, Callable):
             self.hooks[event].append(hook)
         elif hasattr(hook, '__iter__'):
             self.hooks[event].extend(h for h in hook if isinstance(h, Callable))
