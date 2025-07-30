@@ -57,7 +57,7 @@ class Emby(Notification):
                 'success': True
             }
 
-        except (urllib.error.URLError, IOError), e:
+        except (urllib.error.URLError, IOError) as e:
             return False
 
 
