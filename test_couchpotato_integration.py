@@ -60,7 +60,7 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         print(f"Using Python executable: {python_executable}")
         
         # Use fresh test data directory to avoid database conflicts
-        test_data_dir = os.path.join(os.path.dirname(__file__), 'test_data')
+        test_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_data'))
         if os.path.exists(test_data_dir):
             shutil.rmtree(test_data_dir)
         os.makedirs(test_data_dir, exist_ok=True)
@@ -75,7 +75,7 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
             cmd_args,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=os.path.dirname(__file__)
+            cwd=os.path.abspath(os.path.dirname(__file__))
         )
         
         # Wait for server to start
@@ -123,7 +123,7 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
                 cls.process.wait()
         
         # Clean up test data directory
-        test_data_dir = os.path.join(os.path.dirname(__file__), 'test_data')
+        test_data_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), 'test_data'))
         if os.path.exists(test_data_dir):
             try:
                 shutil.rmtree(test_data_dir)
