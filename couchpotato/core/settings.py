@@ -123,7 +123,7 @@ class Settings(object):
             self.log.warning('set::option "%s.%s" isn\'t writable', section, option)
             return None
         if self.isOptionMeta(section, option):
-            self.log.warning('set::option "%s.%s" cancelled, since it is a META option', section, option)
+            self.log.warning('set::option "%s.%s" cancelled, since it is a META option', (section, option))
             return None
 
         return self.p.set(section, option, value)
@@ -151,7 +151,7 @@ class Settings(object):
             return None
 
         if self.isOptionMeta(section, option):
-            self.log.warning('set::option "%s.%s" cancelled, since it is a META option', section, option)
+            self.log.warning('set::option "%s.%s" cancelled, since it is a META option', (section, option))
             return None
 
         self.p.remove_option(section, option)
