@@ -104,8 +104,19 @@ jobs:
     - name: Test Docker container
       run: |
         docker compose -f docker-compose.test.yml up -d
-        sleep 30
-        curl -f http://localhost:5050/ || exit 1
+        for i in {1..10}; do
+          if curl -fs http://localhost:5050/ > /dev/null; then
+            echo "Container is ready"
+            break
+          fi
+          if [ "$i" -eq 10 ]; then
+            echo "Container failed to start"
+            docker compose -f docker-compose.test.yml logs
+            docker compose -f docker-compose.test.yml down
+            exit 1
+          fi
+          sleep 10
+        done
         docker compose -f docker-compose.test.yml logs
         docker compose -f docker-compose.test.yml down
 
