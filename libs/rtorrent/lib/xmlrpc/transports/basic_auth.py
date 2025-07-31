@@ -75,7 +75,12 @@ class BasicAuthTransport(xmlrpclib.Transport):
             self.send_auth(h)
             self.send_content(h, request_body)
 
-            response = h.getresponse(buffering=True)
+            # ``buffering`` was removed from ``HTTPConnection.getresponse`` in
+            # Python 3.13. The vendored version of xmlrpc still tries to use it
+            # for compatibility with very old Python releases. Calling
+            # ``getresponse`` without the argument works on all modern Python
+            # versions so we simply do that unconditionally.
+            response = h.getresponse()
             if response.status == 200:
                 self.verbose = verbose
                 return self.parse_response(response)
