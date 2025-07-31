@@ -35,7 +35,7 @@ print_error() {
 cleanup() {
     print_status "Cleaning up..."
     docker compose -f docker-compose.test.yml down 2>/dev/null || true
-    rm -rf test-data/database test-data/logs test-data/cache test-data/settings.conf 2>/dev/null || true
+    rm -rf test-data/ 2>/dev/null || true
 }
 
 # Set trap for cleanup
@@ -60,9 +60,11 @@ echo "  Architecture: $(uname -m)"
 echo "  Docker Version: $(docker --version)"
 echo "  Docker Compose Version: $(docker compose version)"
 
-# Clean previous test data
+# Clean previous test data and ensure test-data directory exists
 print_status "Cleaning previous test data..."
 cleanup
+print_status "Creating fresh test-data directory..."
+mkdir -p test-data/{database,logs,cache}
 
 # Test 1: Basic Docker Build
 print_status "Test 1: Building Docker image..."

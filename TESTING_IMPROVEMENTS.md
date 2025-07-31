@@ -91,7 +91,8 @@ Enhanced CI workflow with better Docker testing:
 3. **Manual Docker Test (GitHub Actions Style):**
    ```bash
    docker compose -f docker-compose.test.yml down
-   rm -rf test-data/database test-data/logs test-data/cache test-data/settings.conf
+   rm -rf test-data/
+   mkdir -p test-data/{database,logs,cache}
    docker compose -f docker-compose.test.yml up -d
    
    # Wait for container (mimic GitHub Actions timeout)
