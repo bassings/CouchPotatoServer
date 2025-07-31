@@ -29,7 +29,6 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         # For Python 3.8 and CI environments, be more aggressive about finding a working executable
         if not python_executable or python_executable == '' or not os.path.exists(python_executable):
             # First try shutil.which for common names
-            import shutil
             for candidate in ['python3', 'python', f'python{sys.version_info.major}.{sys.version_info.minor}']:
                 found_exe = shutil.which(candidate)
                 if found_exe and os.path.exists(found_exe):
@@ -52,7 +51,6 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         # Double-check that the executable actually exists and works
         if python_executable and not os.path.exists(python_executable) and not shutil.which(python_executable):
             # Try to find it using shutil.which as a last resort
-            import shutil
             python_executable = shutil.which('python3') or shutil.which('python')
             if not python_executable:
                 raise Exception(f"Python executable not found: {sys.executable}")
@@ -71,10 +69,14 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
         print(f"python_executable value: '{python_executable}' (type: {type(python_executable)}, len: {len(python_executable)})")
         
         # Start CouchPotato in background
+        # In CI the server can be quite verbose which may quickly fill the
+        # default PIPE buffers and block the process.  We don't need the server
+        # output for the happy path, so direct it to ``DEVNULL`` to avoid
+        # potential deadlocks when large amounts of log data are written.
         cls.process = subprocess.Popen(
             cmd_args,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.STDOUT,
             cwd=os.path.abspath(os.path.dirname(__file__))
         )
         
