@@ -218,7 +218,7 @@ class FileSystemCache(BaseCache):
                 pass
 
     def _get_filename(self, key):
-        hash = md5(key).hexdigest()
+        hash = md5(key.encode('utf-8')).hexdigest()
         return os.path.join(self._path, hash)
 
     def get(self, key):

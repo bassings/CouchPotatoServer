@@ -16,7 +16,7 @@ class MediaIndex(MultiTreeBasedIndex):
         super(MediaIndex, self).__init__(*args, **kwargs)
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
 
     def make_key_value(self, data):
         if data.get('_t') == 'media' and (data.get('identifier') or data.get('identifiers')):
@@ -27,7 +27,7 @@ class MediaIndex(MultiTreeBasedIndex):
 
             ids = []
             for x in identifiers:
-                ids.append(md5('%s-%s' % (x, identifiers[x])).hexdigest())
+                ids.append(md5('%s-%s' % (x, identifiers[x])).encode('utf-8').hexdigest())
 
             return ids, None
 
@@ -40,11 +40,11 @@ class MediaStatusIndex(TreeBasedIndex):
         super(MediaStatusIndex, self).__init__(*args, **kwargs)
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
 
     def make_key_value(self, data):
         if data.get('_t') == 'media' and data.get('status'):
-            return md5(data.get('status')).hexdigest(), None
+            return md5(data.get('status').encode('utf-8')).hexdigest(), None
 
 
 class MediaTypeIndex(TreeBasedIndex):
@@ -55,11 +55,11 @@ class MediaTypeIndex(TreeBasedIndex):
         super(MediaTypeIndex, self).__init__(*args, **kwargs)
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
 
     def make_key_value(self, data):
         if data.get('_t') == 'media' and data.get('type'):
-            return md5(data.get('type')).hexdigest(), None
+            return md5(data.get('type').encode('utf-8')).hexdigest(), None
 
 
 class TitleSearchIndex(MultiTreeBasedIndex):
@@ -197,4 +197,4 @@ class MediaTagIndex(MultiTreeBasedIndex):
             return list(tags), None
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
