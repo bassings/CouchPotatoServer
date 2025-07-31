@@ -108,16 +108,27 @@ jobs:
         docker run --rm couchpotatoserver-couchpotato-test:latest ls -la /app
         docker run --rm couchpotatoserver-couchpotato-test:latest ls -la /data
 
+    - name: Test container startup in foreground
+      run: |
+        echo "Testing container startup in foreground to see logs..."
+        timeout 30s docker run --rm -p 5050:5050 couchpotatoserver-couchpotato-test:latest || echo "Container exited (expected)"
+
     - name: Test Docker container startup
       run: |
         echo "Starting Docker container..."
         docker compose -f docker-compose.test.yml up -d
         
         echo "Checking container immediately after start..."
-        sleep 5
+        sleep 2
         echo "Container status:"
         docker compose -f docker-compose.test.yml ps
         echo "Container logs:"
+        docker compose -f docker-compose.test.yml logs
+        
+        sleep 3
+        echo "Container status after 5 seconds:"
+        docker compose -f docker-compose.test.yml ps
+        echo "Container logs after 5 seconds:"
         docker compose -f docker-compose.test.yml logs
         
         echo "Waiting for container to be ready..."
