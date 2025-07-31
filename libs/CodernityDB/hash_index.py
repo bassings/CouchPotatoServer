@@ -288,6 +288,18 @@ class IU_HashIndex(Index):
                 location = _next  # go to next record
 
     def update(self, doc_id, key, u_start=0, u_size=0, u_status='o'):
+        # Ensure doc_id is bytes for struct packing
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        elif not isinstance(doc_id, bytes):
+            doc_id = str(doc_id).encode('utf-8')
+        
+        # Ensure key is bytes for struct packing
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        elif not isinstance(key, bytes):
+            key = str(key).encode('utf-8')
+        
         # Ensure status is a single byte character
         if isinstance(u_status, str):
             u_status = u_status.encode('utf-8')[0:1]
@@ -317,6 +329,18 @@ class IU_HashIndex(Index):
         return True
 
     def insert(self, doc_id, key, start, size, status='o'):
+        # Ensure doc_id is bytes for struct packing
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        elif not isinstance(doc_id, bytes):
+            doc_id = str(doc_id).encode('utf-8')
+        
+        # Ensure key is bytes for struct packing
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        elif not isinstance(key, bytes):
+            key = str(key).encode('utf-8')
+        
         # Ensure status is a single byte character
         if isinstance(status, str):
             status = status.encode('utf-8')[0:1]
