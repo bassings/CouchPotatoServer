@@ -422,7 +422,7 @@ class Settings(object):
             propert = db.get('property', identifier)
             fireEvent('database.delete_corrupted', propert.get('_id'))
         except:
-            self.log.debug('Property "%s" doesn\'t exist: %s', identifier, traceback.format_exc())
+            self.log.debug('Property "%s" doesn\'t exist: %s' % (identifier, traceback.format_exc()))
 
         return prop
 

@@ -731,7 +731,10 @@ class IU_UniqueHashIndex(IU_HashIndex):
     def make_key_value(self, data):
         _id = data['_id']
         try:
-            _id = bytes(data['_id'])
+            if isinstance(_id, str):
+                _id = _id.encode('utf-8')
+            else:
+                _id = bytes(data['_id'])
         except:
             raise IndexPreconditionsException(
                 "_id must be valid string/bytes object")
