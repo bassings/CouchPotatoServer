@@ -733,8 +733,10 @@ class IU_UniqueHashIndex(IU_HashIndex):
         try:
             if isinstance(_id, str):
                 _id = _id.encode('utf-8')
+            elif isinstance(_id, bytes):
+                _id = _id
             else:
-                _id = bytes(data['_id'])
+                _id = str(_id).encode('utf-8')
         except:
             raise IndexPreconditionsException(
                 "_id must be valid string/bytes object")

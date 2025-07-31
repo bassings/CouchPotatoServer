@@ -932,7 +932,12 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
             raise PreconditionsException("Can't update without _rev or _id")
         _rev = data['_rev']
         try:
-            _rev = bytes(_rev)
+            if isinstance(_rev, str):
+                _rev = _rev.encode('utf-8')
+            elif isinstance(_rev, bytes):
+                _rev = _rev
+            else:
+                _rev = str(_rev).encode('utf-8')
         except:
             self.__not_opened()
             raise PreconditionsException(
@@ -1147,8 +1152,19 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         _id = data['_id']
         _rev = data['_rev']
         try:
-            _id = bytes(_id)
-            _rev = bytes(_rev)
+            if isinstance(_id, str):
+                _id = _id.encode('utf-8')
+            elif isinstance(_id, bytes):
+                _id = _id
+            else:
+                _id = str(_id).encode('utf-8')
+            
+            if isinstance(_rev, str):
+                _rev = _rev.encode('utf-8')
+            elif isinstance(_rev, bytes):
+                _rev = _rev
+            else:
+                _rev = str(_rev).encode('utf-8')
         except:
             raise PreconditionsException(
                 "`_id` and `_rev` must be valid bytes object")
