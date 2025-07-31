@@ -610,6 +610,14 @@ class IU_UniqueHashIndex(IU_HashIndex):
             rev = rev.encode('utf-8')
         elif not isinstance(rev, bytes):
             rev = str(rev).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(u_status, str):
+            u_status = u_status.encode('utf-8')[0:1]
+        elif isinstance(u_status, bytes):
+            u_status = u_status[0:1]
+        else:
+            u_status = str(u_status).encode('utf-8')[0:1]
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -642,6 +650,14 @@ class IU_UniqueHashIndex(IU_HashIndex):
             rev = rev.encode('utf-8')
         elif not isinstance(rev, bytes):
             rev = str(rev).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(status, str):
+            status = status.encode('utf-8')[0:1]
+        elif isinstance(status, bytes):
+            status = status[0:1]
+        else:
+            status = str(status).encode('utf-8')[0:1]
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
