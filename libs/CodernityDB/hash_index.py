@@ -605,6 +605,11 @@ class IU_UniqueHashIndex(IU_HashIndex):
         return self.buckets.tell() - self.entry_line_size, l_key, rev, start, size, status, _next
 
     def update(self, key, rev, u_start=0, u_size=0, u_status='o'):
+        # Ensure rev is bytes for struct packing
+        if isinstance(rev, str):
+            rev = rev.encode('utf-8')
+        elif not isinstance(rev, bytes):
+            rev = str(rev).encode('utf-8')
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -632,6 +637,11 @@ class IU_UniqueHashIndex(IU_HashIndex):
         return True
 
     def insert(self, key, rev, start, size, status='o'):
+        # Ensure rev is bytes for struct packing
+        if isinstance(rev, str):
+            rev = rev.encode('utf-8')
+        elif not isinstance(rev, bytes):
+            rev = str(rev).encode('utf-8')
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
