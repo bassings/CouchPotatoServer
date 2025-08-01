@@ -13,9 +13,10 @@ echo "🧹 Cleaning up existing containers..."
 docker-compose -f docker-compose.test.yml down --remove-orphans 2>/dev/null || true
 docker container rm -f couchpotato-python3-test 2>/dev/null || true
 
-# Create test data directory
-echo "📁 Creating test data directory..."
-mkdir -p test-data
+# Clean and create test data directory
+echo "📁 Cleaning and creating test data directory..."
+rm -rf test-data/
+mkdir -p test-data/{database,logs,cache}
 
 # Build the Docker image
 echo "🔨 Building Docker image with Python 3.13..."

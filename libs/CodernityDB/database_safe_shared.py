@@ -36,6 +36,9 @@ class th_safe_gen:
 
     def next(self):
         return next(self.__gen)
+    
+    def __next__(self):
+        return next(self.__gen)
 
     @staticmethod
     def wrapper(method, index_name, meth_name, l=None):

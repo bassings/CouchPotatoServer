@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   couchpotato-test:
     build:
@@ -8,8 +6,6 @@ services:
     container_name: couchpotato-python3-test
     ports:
       - "5050:5050"
-    volumes:
-      - ./test-data:/data
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=UTC

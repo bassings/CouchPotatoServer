@@ -57,4 +57,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD curl -f http://localhost:5050/ || exit 1
 
 # Default command
-CMD ["python3", "CouchPotato.py", "--data_dir=/data", "--console_log"] 
+CMD ["python3", "-W", "ignore::SyntaxWarning", "CouchPotato.py", "--data_dir=/data", "--console_log"] 

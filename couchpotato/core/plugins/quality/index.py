@@ -12,8 +12,8 @@ class QualityIndex(HashIndex):
         super(QualityIndex, self).__init__(*args, **kwargs)
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
 
     def make_key_value(self, data):
         if data.get('_t') == 'quality' and data.get('identifier'):
-            return md5(data.get('identifier')).hexdigest(), None
+            return md5(data.get('identifier').encode('utf-8')).hexdigest(), None

@@ -288,6 +288,25 @@ class IU_HashIndex(Index):
                 location = _next  # go to next record
 
     def update(self, doc_id, key, u_start=0, u_size=0, u_status='o'):
+        # Ensure doc_id is bytes for struct packing
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        elif not isinstance(doc_id, bytes):
+            doc_id = str(doc_id).encode('utf-8')
+        
+        # Ensure key is bytes for struct packing
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        elif not isinstance(key, bytes):
+            key = str(key).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(u_status, str):
+            u_status = u_status.encode('utf-8')[0:1]
+        elif isinstance(u_status, bytes):
+            u_status = u_status[0:1]
+        else:
+            u_status = str(u_status).encode('utf-8')[0:1]
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -310,6 +329,26 @@ class IU_HashIndex(Index):
         return True
 
     def insert(self, doc_id, key, start, size, status='o'):
+        # Ensure doc_id is bytes for struct packing
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        elif not isinstance(doc_id, bytes):
+            doc_id = str(doc_id).encode('utf-8')
+        
+        # Ensure key is bytes for struct packing
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        elif not isinstance(key, bytes):
+            key = str(key).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(status, str):
+            status = status.encode('utf-8')[0:1]
+        elif isinstance(status, bytes):
+            status = status[0:1]
+        else:
+            status = str(status).encode('utf-8')[0:1]
+        
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -605,6 +644,19 @@ class IU_UniqueHashIndex(IU_HashIndex):
         return self.buckets.tell() - self.entry_line_size, l_key, rev, start, size, status, _next
 
     def update(self, key, rev, u_start=0, u_size=0, u_status='o'):
+        # Ensure rev is bytes for struct packing
+        if isinstance(rev, str):
+            rev = rev.encode('utf-8')
+        elif not isinstance(rev, bytes):
+            rev = str(rev).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(u_status, str):
+            u_status = u_status.encode('utf-8')[0:1]
+        elif isinstance(u_status, bytes):
+            u_status = u_status[0:1]
+        else:
+            u_status = str(u_status).encode('utf-8')[0:1]
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -632,6 +684,19 @@ class IU_UniqueHashIndex(IU_HashIndex):
         return True
 
     def insert(self, key, rev, start, size, status='o'):
+        # Ensure rev is bytes for struct packing
+        if isinstance(rev, str):
+            rev = rev.encode('utf-8')
+        elif not isinstance(rev, bytes):
+            rev = str(rev).encode('utf-8')
+        
+        # Ensure status is a single byte character
+        if isinstance(status, str):
+            status = status.encode('utf-8')[0:1]
+        elif isinstance(status, bytes):
+            status = status[0:1]
+        else:
+            status = str(status).encode('utf-8')[0:1]
         start_position = self._calculate_position(key)
         self.buckets.seek(start_position)
         curr_data = self.buckets.read(self.bucket_line_size)
@@ -731,7 +796,12 @@ class IU_UniqueHashIndex(IU_HashIndex):
     def make_key_value(self, data):
         _id = data['_id']
         try:
-            _id = bytes(data['_id'])
+            if isinstance(_id, str):
+                _id = _id.encode('utf-8')
+            elif isinstance(_id, bytes):
+                _id = _id
+            else:
+                _id = str(_id).encode('utf-8')
         except:
             raise IndexPreconditionsException(
                 "_id must be valid string/bytes object")

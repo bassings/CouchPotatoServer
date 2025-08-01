@@ -422,7 +422,7 @@ class Settings(object):
             propert = db.get('property', identifier)
             fireEvent('database.delete_corrupted', propert.get('_id'))
         except:
-            self.log.debug('Property "%s" doesn\'t exist: %s', identifier, traceback.format_exc(0))
+            self.log.debug('Property "%s" doesn\'t exist: %s' % (identifier, traceback.format_exc()))
 
         return prop
 
@@ -454,8 +454,8 @@ class PropertyIndex(HashIndex):
         super(PropertyIndex, self).__init__(*args, **kwargs)
 
     def make_key(self, key):
-        return md5(key).hexdigest()
+        return md5(key.encode('utf-8')).hexdigest()
 
     def make_key_value(self, data):
         if data.get('_t') == 'property':
-            return md5(data['identifier']).hexdigest(), None
+            return md5(data['identifier'].encode('utf-8')).hexdigest(), None

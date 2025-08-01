@@ -16,3 +16,6 @@ nosetests.xml
 /.vs
 
 .DS_Store
+
+# Test data directory
+test-data/
