@@ -124,6 +124,18 @@ jobs:
         echo "Container logs after 15 seconds:"
         docker logs test-container || echo "No logs available"
         docker stop test-container || echo "Container already stopped"
+        
+    - name: Test container without volume mount
+      run: |
+        echo "Testing container without volume mount..."
+        docker run --rm -p 5050:5050 --name test-container-no-volume couchpotatoserver-couchpotato-test:latest &
+        sleep 5
+        echo "Container logs after 5 seconds (no volume):"
+        docker logs test-container-no-volume || echo "No logs available"
+        sleep 10
+        echo "Container logs after 15 seconds (no volume):"
+        docker logs test-container-no-volume || echo "No logs available"
+        docker stop test-container-no-volume || echo "Container already stopped"
 
     - name: Test Docker container startup
       run: |
