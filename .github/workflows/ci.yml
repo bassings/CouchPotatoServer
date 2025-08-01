@@ -112,6 +112,18 @@ jobs:
       run: |
         echo "Testing container startup in foreground to see logs..."
         timeout 30s docker run --rm -p 5050:5050 couchpotatoserver-couchpotato-test:latest || echo "Container exited (expected)"
+        
+    - name: Test container with more detailed logging
+      run: |
+        echo "Testing container with more detailed logging..."
+        docker run --rm -p 5050:5050 --name test-container couchpotatoserver-couchpotato-test:latest &
+        sleep 5
+        echo "Container logs after 5 seconds:"
+        docker logs test-container || echo "No logs available"
+        sleep 10
+        echo "Container logs after 15 seconds:"
+        docker logs test-container || echo "No logs available"
+        docker stop test-container || echo "Container already stopped"
 
     - name: Test Docker container startup
       run: |
