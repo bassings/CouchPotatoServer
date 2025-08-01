@@ -101,64 +101,10 @@ jobs:
     - name: Build Docker image
       run: docker compose -f docker-compose.test.yml build
 
-    - name: Test Docker image
-      run: |
-        echo "Testing Docker image..."
-        docker run --rm couchpotatoserver-couchpotato-test:latest python3 --version
-        docker run --rm couchpotatoserver-couchpotato-test:latest ls -la /app
-        docker run --rm couchpotatoserver-couchpotato-test:latest ls -la /data
-
-    - name: Test container startup in foreground
-      run: |
-        echo "Testing container startup in foreground to see logs..."
-        timeout 30s docker run --rm -p 5050:5050 couchpotatoserver-couchpotato-test:latest || echo "Container exited (expected)"
-        
-    - name: Test container with more detailed logging
-      run: |
-        echo "Testing container with more detailed logging..."
-        docker run --rm -p 5050:5050 --name test-container couchpotatoserver-couchpotato-test:latest &
-        sleep 5
-        echo "Container logs after 5 seconds:"
-        docker logs test-container || echo "No logs available"
-        sleep 10
-        echo "Container logs after 15 seconds:"
-        docker logs test-container || echo "No logs available"
-        docker stop test-container || echo "Container already stopped"
-        
-    - name: Test container without volume mount
-      run: |
-        echo "Testing container without volume mount..."
-        docker run --rm -p 5050:5050 --name test-container-no-volume couchpotatoserver-couchpotato-test:latest &
-        sleep 5
-        echo "Container logs after 5 seconds (no volume):"
-        docker logs test-container-no-volume || echo "No logs available"
-        sleep 10
-        echo "Container logs after 15 seconds (no volume):"
-        docker logs test-container-no-volume || echo "No logs available"
-        docker stop test-container-no-volume || echo "Container already stopped"
-
     - name: Test Docker container startup
       run: |
-        echo "Setting up test data directory with correct permissions..."
-        mkdir -p test-data/{database,logs,cache}
-        chmod -R 755 test-data
-        chown -R 1000:1000 test-data || echo "chown failed (expected in CI)"
-        
         echo "Starting Docker container..."
         docker compose -f docker-compose.test.yml up -d
-        
-        echo "Checking container immediately after start..."
-        sleep 2
-        echo "Container status:"
-        docker compose -f docker-compose.test.yml ps
-        echo "Container logs:"
-        docker compose -f docker-compose.test.yml logs
-        
-        sleep 3
-        echo "Container status after 5 seconds:"
-        docker compose -f docker-compose.test.yml ps
-        echo "Container logs after 5 seconds:"
-        docker compose -f docker-compose.test.yml logs
         
         echo "Waiting for container to be ready..."
         for i in {1..15}; do
@@ -167,16 +113,7 @@ jobs:
           # Check if container is running
           if ! docker compose -f docker-compose.test.yml ps | grep -q "Up"; then
             echo "ERROR: Container is not running"
-            echo "Container status:"
-            docker compose -f docker-compose.test.yml ps
-            echo "Container logs:"
             docker compose -f docker-compose.test.yml logs
-            echo "Docker system info:"
-            docker system info
-            echo "Available memory:"
-            free -h
-            echo "Available disk space:"
-            df -h
             exit 1
           fi
           
