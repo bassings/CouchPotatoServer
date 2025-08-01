@@ -139,6 +139,11 @@ jobs:
 
     - name: Test Docker container startup
       run: |
+        echo "Setting up test data directory with correct permissions..."
+        mkdir -p test-data/{database,logs,cache}
+        chmod -R 755 test-data
+        chown -R 1000:1000 test-data || echo "chown failed (expected in CI)"
+        
         echo "Starting Docker container..."
         docker compose -f docker-compose.test.yml up -d
         
