@@ -6,13 +6,10 @@ services:
     container_name: couchpotato-python3-test
     ports:
       - "5050:5050"
-    volumes:
-      - ./test-data:/data
     environment:
       - PYTHONUNBUFFERED=1
       - TZ=UTC
     restart: unless-stopped
-    user: "1000:1000"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5050/"]
       interval: 30s
