@@ -1,7 +1,7 @@
 # CouchPotato Docker Container
 # Based on Python 3.12 Alpine Linux for better security and smaller size
 
-FROM python:3.13-alpine
+FROM python:3.12-alpine
 
 # Set version label
 LABEL version="1.0.0"
