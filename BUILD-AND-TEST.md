@@ -1,5 +1,30 @@
 # Build and Test Instructions
 
+## CI Status and Quick Tests
+
+CI (pytest + Docker E2E):
+
+![CI](https://github.com/bassings/CouchPotatoServer/actions/workflows/ci.yml/badge.svg?branch=v2-to-v3-upgrade)
+
+Run tests locally (Python 3):
+
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.in pytest
+PYTHONPATH=./libs python -m pytest -q
+
+# Or via tox
+pip install tox && tox -q -e py312 -e py313
+```
+
+Docker E2E (Python 3 image):
+
+```bash
+docker build -f Dockerfile.python3 -t couchpotato:py3 .
+docker run -d --name couchpotato -p 5050:5050 couchpotato:py3
+python3 couchpotato/simple_healthcheck.py
+```
+
 ## Quick Start
 
 ### 1. Build Both Containers
