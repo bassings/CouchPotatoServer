@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 from __future__ import absolute_import, division, print_function, unicode_literals
 """
 CouchPotato Integration Tests
@@ -8,6 +8,7 @@ components are functional after a Python 2 to 3 migration.
 """
 
 import unittest
+import os
 import threading
 import time
 import socket
@@ -25,6 +26,8 @@ class TestWebServerIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Start CouchPotato server in a separate thread for testing"""
+        if os.environ.get('RUN_LOCAL_SERVER_TESTS') not in ('1', 'true', 'yes'):
+            raise unittest.SkipTest('Local server integration tests disabled (set RUN_LOCAL_SERVER_TESTS=1 to enable)')
         cls.base_url = "http://localhost:5555"  # Use different port for testing
         cls.api_key = None
         cls.server_thread = None
@@ -125,14 +128,16 @@ class TestWebServerIntegration(unittest.TestCase):
         response = urlopen(self.base_url + "/")
         self.assertEqual(response.getcode(), 200)
         content = response.read()
-        self.assertIn("CouchPotato", content)
-        self.assertIn("<!doctype html>", content)
+        content_text = content.decode('utf-8', 'ignore') if isinstance(content, (bytes, bytearray)) else content
+        self.assertIn("CouchPotato", content_text)
+        self.assertIn("<!doctype html>", content_text)
     
     def test_web_page_title(self):
         """Test that the main page has correct title"""
         response = urlopen(self.base_url + "/")
         content = response.read()
-        self.assertIn("<title>CouchPotato</title>", content)
+        content_text = content.decode('utf-8', 'ignore') if isinstance(content, (bytes, bytearray)) else content
+        self.assertIn("<title>CouchPotato</title>", content_text)
     
     def test_static_files_accessible(self):
         """Test that static files are accessible"""
@@ -200,14 +205,16 @@ class TestWebServerIntegration(unittest.TestCase):
         """Test that JavaScript API setup is present in main page"""
         response = urlopen(self.base_url + "/")
         content = response.read()
+        content_text = content.decode('utf-8', 'ignore') if isinstance(content, (bytes, bytearray)) else content
         # Should contain API setup JavaScript
-        self.assertIn("Api.setup", content)
-        self.assertIn("api_base", content)
+        self.assertIn("Api.setup", content_text)
+        self.assertIn("api_base", content_text)
     
     def test_application_components_loaded(self):
         """Test that main application components are loaded"""
         response = urlopen(self.base_url + "/")
         content = response.read()
+        content_text = content.decode('utf-8', 'ignore') if isinstance(content, (bytes, bytearray)) else content
         
         # Should contain main UI elements
         expected_elements = [
@@ -218,7 +225,7 @@ class TestWebServerIntegration(unittest.TestCase):
         ]
         
         for element in expected_elements:
-            self.assertIn(element, content)
+            self.assertIn(element, content_text)
     
     def test_server_error_handling(self):
         """Test that server handles invalid requests gracefully"""

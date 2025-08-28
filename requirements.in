@@ -1,0 +1,25 @@
+# High-level application dependencies for CouchPotato (py3)
+# Pinned and compiled via pip-tools to requirements.txt
+
+# Core runtime
+requests
+tornado
+beautifulsoup4
+lxml
+python-dateutil
+chardet
+certifi
+oauthlib
+httplib2
+pyasn1
+rsa
+
+# Optional and plugins
+gntp
+subliminal
+guessit
+enzyme
+
+# Testing tools
+pytest
+mock

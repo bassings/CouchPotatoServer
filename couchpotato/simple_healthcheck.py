@@ -1,4 +1,4 @@
-#!/usr/bin/env python2
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 from __future__ import absolute_import, division, print_function, unicode_literals
 """
@@ -36,6 +36,7 @@ class SimpleHealthCheck(unittest.TestCase):
         try:
             response = urlopen(self.base_url + "/", timeout=self.timeout)
             content = response.read()
+            text = content.decode('utf-8', 'ignore') if isinstance(content, (bytes, bytearray)) else content
             
             # Check for essential elements
             required_elements = [
@@ -46,7 +47,7 @@ class SimpleHealthCheck(unittest.TestCase):
             ]
             
             for element in required_elements:
-                self.assertIn(element, content)
+                self.assertIn(element, text)
                 
             print("✓ Web page loads with correct content")
                 
