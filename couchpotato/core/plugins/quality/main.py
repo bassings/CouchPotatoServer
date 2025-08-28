@@ -101,7 +101,23 @@ class QualityPlugin(Plugin):
 
         temp = []
         for quality in self.qualities:
-            quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+            try:
+                quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+            except RecordNotFound:
+                # Fallback: not yet in DB; use defaults and queue fill
+                quality_doc = {
+                    'identifier': quality.get('identifier'),
+                    'size_min': tryInt(quality.get('size')[0]),
+                    'size_max': tryInt(quality.get('size')[1]),
+                }
+                try:
+                    db.insert({
+                        '_t': 'quality',
+                        'order': self.qualities.index(quality),
+                        **quality_doc
+                    })
+                except Exception:
+                    pass
             q = mergeDicts(quality, quality_doc)
             temp.append(q)
 
@@ -537,5 +553,4 @@ class QualityPlugin(Plugin):
             return True
         else:
             log.error('Quality test failed: %s out of %s succeeded', (correct, len(tests)))
-
 

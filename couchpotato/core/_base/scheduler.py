@@ -1,5 +1,10 @@
 from __future__ import absolute_import, division, print_function, unicode_literals
 from apscheduler.scheduler import Scheduler as Sched
+import threading
+
+# APScheduler 2.x uses Thread.isAlive(), which is removed in Python 3.12+
+if not hasattr(threading.Thread, 'isAlive') and hasattr(threading.Thread, 'is_alive'):
+    threading.Thread.isAlive = threading.Thread.is_alive  # type: ignore[attr-defined]
 from couchpotato.core.event import addEvent
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
