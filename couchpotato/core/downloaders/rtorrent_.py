@@ -272,37 +272,72 @@ class rTorrent(DownloaderBase):
         if not self.connect():
             return []
 
+        release_downloads = ReleaseDownloadList(self)
+
         try:
-            torrents = self.rt.get_torrents()
-
-            release_downloads = ReleaseDownloadList(self)
-
-            for torrent in torrents:
-                if torrent.info_hash in ids:
-                    torrent_directory = os.path.normpath(torrent.directory)
+            if self._rt_adapter:
+                # Adapter path: use multicall to fetch details
+                for t in self._rt_adapter.list_torrents_full():
+                    if t['hash'] not in ids:
+                        continue
+                    torrent_directory = os.path.normpath(t['directory'])
                     torrent_files = []
-
-                    for file in torrent.get_files():
-                        if not os.path.normpath(file.path).startswith(torrent_directory):
-                            file_path = os.path.join(torrent_directory, file.path.lstrip('/'))
+                    for p in t['files']:
+                        pnorm = os.path.normpath(p)
+                        if not pnorm.startswith(torrent_directory):
+                            file_path = os.path.join(torrent_directory, p.lstrip('/'))
                         else:
-                            file_path = file.path
-
+                            file_path = p
                         torrent_files.append(sp(file_path))
 
+                    # Map status
+                    if not t['complete']:
+                        status = 'busy'
+                    elif t['open']:
+                        status = 'seeding'
+                    else:
+                        status = 'completed'
+
+                    timeleft = -1
+                    if t['down_rate'] > 0:
+                        timeleft = str(timedelta(seconds=float(t['left_bytes']) / max(1.0, float(t['down_rate']))))
+
                     release_downloads.append({
-                        'id': torrent.info_hash,
-                        'name': torrent.name,
-                        'status': self.getTorrentStatus(torrent),
-                        'seed_ratio': torrent.ratio,
-                        'original_status': torrent.state,
-                        'timeleft': str(timedelta(seconds = float(torrent.left_bytes) / torrent.down_rate)) if torrent.down_rate > 0 else -1,
-                        'folder': sp(torrent.directory),
-                        'files': torrent_files
+                        'id': t['hash'],
+                        'name': t['name'],
+                        'status': status,
+                        'seed_ratio': t['ratio'],
+                        'original_status': t['state'],
+                        'timeleft': timeleft,
+                        'folder': sp(torrent_directory),
+                        'files': torrent_files,
                     })
+                return release_downloads
+            else:
+                # Vendored path
+                torrents = self.rt.get_torrents()
+                for torrent in torrents:
+                    if torrent.info_hash in ids:
+                        torrent_directory = os.path.normpath(torrent.directory)
+                        torrent_files = []
+                        for file in torrent.get_files():
+                            if not os.path.normpath(file.path).startswith(torrent_directory):
+                                file_path = os.path.join(torrent_directory, file.path.lstrip('/'))
+                            else:
+                                file_path = file.path
+                            torrent_files.append(sp(file_path))
 
-            return release_downloads
-
+                        release_downloads.append({
+                            'id': torrent.info_hash,
+                            'name': torrent.name,
+                            'status': self.getTorrentStatus(torrent),
+                            'seed_ratio': torrent.ratio,
+                            'original_status': torrent.state,
+                            'timeleft': str(timedelta(seconds = float(torrent.left_bytes) / torrent.down_rate)) if torrent.down_rate > 0 else -1,
+                            'folder': sp(torrent_directory),
+                            'files': torrent_files
+                        })
+                return release_downloads
         except Exception as err:
             log.error('Failed to get status from rTorrent: %s', err)
             return []

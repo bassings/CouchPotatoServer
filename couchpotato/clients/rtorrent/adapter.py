@@ -65,3 +65,55 @@ class RTorrentAdapter:
     def get_stats(self) -> Dict[str, Any]:
         version = self._t.call('system.client_version')
         return {'version': version}
+
+    def list_torrents_full(self) -> List[Dict[str, Any]]:
+        """Return detailed info for torrents using multicall.
+
+        Attempts d.multicall2 first, falling back to d.multicall.
+        For each torrent, fetches file paths via f.multicall2/f.multicall.
+        """
+        fields = ['d.hash=', 'd.name=', 'd.directory=', 'd.ratio=', 'd.state=',
+                  'd.complete=', 'd.open=', 'd.left_bytes=', 'd.down.rate=']
+        try:
+            rows = self._t.call('d.multicall2', '', 'main', *fields)
+        except Exception:
+            # Older API
+            rows = self._t.call('d.multicall', 'main', *fields)
+
+        results: List[Dict[str, Any]] = []
+        for row in rows or []:
+            # row is a list aligned with fields
+            try:
+                (h, name, directory, ratio, state, complete, open_, left, down_rate) = row
+            except Exception:
+                # Defensive: skip malformed rows
+                continue
+
+            # files
+            try:
+                files = self._t.call('f.multicall2', h, '', 'f.path=')
+            except Exception:
+                files = self._t.call('f.multicall', h, 'f.path=')
+
+            file_paths = []
+            for f in files or []:
+                # f may be a list with first element the path
+                if isinstance(f, (list, tuple)) and f:
+                    file_paths.append(str(f[0]))
+                elif isinstance(f, (str, bytes)):
+                    file_paths.append(f.decode('utf-8', 'ignore') if isinstance(f, (bytes, bytearray)) else f)
+
+            results.append({
+                'hash': h,
+                'name': name,
+                'directory': directory,
+                'ratio': ratio,
+                'state': state,
+                'complete': bool(complete),
+                'open': bool(open_),
+                'left_bytes': int(left) if left is not None else 0,
+                'down_rate': int(down_rate) if down_rate is not None else 0,
+                'files': file_paths,
+            })
+
+        return results
