@@ -16,10 +16,19 @@ def add_coloring_to_emit_ansi(fn):
         else:
             color = '\x1b[0m'  # normal
 
-        if not args[1].msg.startswith(color):
-            args[1].msg = color + args[1].msg + '\x1b[0m'
+        try:
+            msg = args[1].msg
+            if isinstance(msg, str) and not msg.startswith(color):
+                args[1].msg = color + msg + '\x1b[0m'
+        except Exception:
+            # Be defensive; never break logging due to coloring
+            pass
 
-        return fn(*args)
+        try:
+            return fn(*args)
+        except Exception:
+            # Ignore logging errors (e.g., stream closed during interpreter shutdown)
+            return None
     return new
 
 logging.StreamHandler.emit = add_coloring_to_emit_ansi(logging.StreamHandler.emit)
