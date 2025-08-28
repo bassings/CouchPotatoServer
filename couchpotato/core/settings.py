@@ -182,7 +182,8 @@ class Settings(object):
         value = self.p.get(section, option)
 
         if value:
-            return map(str.strip, str.split(value, self.directories_delimiter))
+            # In Python 3, map returns an iterator; return a concrete list
+            return list(map(str.strip, str.split(value, self.directories_delimiter)))
         return []
 
     def getUnicode(self, section, option):
