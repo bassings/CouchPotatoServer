@@ -54,8 +54,10 @@ jobs:
         with:
           name: pytest-report-${{ matrix.python-version }}
           path: pytest-report.xml
-
-      # Note: JUnit report uploaded as artifact; inspect for details
+      - name: Print pytest summary
+        if: always()
+        run: |
+          python scripts/print_pytest_summary.py || true
 
   docker-e2e:
     name: Docker E2E (Python 3 image)
