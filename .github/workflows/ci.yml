@@ -55,39 +55,7 @@ jobs:
           name: pytest-report-${{ matrix.python-version }}
           path: pytest-report.xml
 
-      - name: Summarize failures in logs
-        if: always()
-        run: |
-          if [ -f pytest-report.xml ]; then
-            python - <<'PY'
-            import xml.etree.ElementTree as ET
-            try:
-                tree = ET.parse('pytest-report.xml')
-                root = tree.getroot()
-                # Print totals if available
-                ts = root.find('testsuite') or root
-                if ts is not None:
-                    tests = ts.get('tests') or ts.attrib.get('tests')
-                    errors = ts.get('errors') or ts.attrib.get('errors')
-                    failures = ts.get('failures') or ts.attrib.get('failures')
-                    skipped = ts.get('skipped') or ts.attrib.get('skipped')
-                    print(f"Total: tests={tests} failures={failures} errors={errors} skipped={skipped}")
-                failures = []
-                for case in root.iter('testcase'):
-                    for tag in ('failure','error'):
-                        fe = case.find(tag)
-                        if fe is not None:
-                            failures.append((case.get('classname',''), case.get('name',''), fe.get('message',''), (fe.text or '').strip()[:2000]))
-                if failures:
-                    print('=== Pytest Failures Summary ===')
-                    for i,(cls,name,msg,text) in enumerate(failures,1):
-                        print(f'[{i}] {cls}::{name}\nMessage: {msg}\n{text}\n')
-                else:
-                    print('No failures/errors found in pytest-report.xml')
-            except Exception as e:
-                print('Could not parse pytest-report.xml:', e)
-            PY
-          fi
+      # Note: JUnit report uploaded as artifact; inspect for details
 
   docker-e2e:
     name: Docker E2E (Python 3 image)
