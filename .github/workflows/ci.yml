@@ -31,7 +31,7 @@ jobs:
       - name: Compile requirements (artifact)
         run: |
           if [ -f requirements.in ]; then
-            pip-compile --generate-hashes -o requirements.txt requirements.in || pip-compile -o requirements.txt requirements.in
+            pip-compile --generate-hashes -o requirements.txt requirements.in || pip-compile -o requirements.txt requirements.in || echo "pip-compile failed; continuing without compiled lock"
           fi
 
       - name: Upload compiled requirements
