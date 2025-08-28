@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "couchpotato-server"
+version = "0.0.0.dev0"
+description = "CouchPotato Server (Python 3 fork)"
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "GPL-3.0-or-later" }
+authors = [{ name = "CouchPotato contributors" }]
+keywords = ["couchpotato", "movies", "download", "torrents", "nzb"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Development Status :: 3 - Alpha",
+  "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
+  "Intended Audience :: End Users/Desktop",
+  "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/bassings/CouchPotatoServer"
+Issues = "https://github.com/bassings/CouchPotatoServer/issues"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["couchpotato*"]
+exclude = [
+  "couchpotato.out",
+]
+

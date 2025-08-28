@@ -1,0 +1,5 @@
+recursive-include couchpotato/templates *.html
+recursive-include couchpotato/static *.*
+recursive-include couchpotato *.py
+exclude libs/**
+exclude couchpotato.out
