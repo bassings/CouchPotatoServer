@@ -266,7 +266,14 @@ class rTorrent(DownloaderBase):
                 return False
 
         if data.get('protocol') == 'torrent':
-            info = bdecode(filedata)["info"]
+            decoded = bdecode(filedata)
+            # Support both str and bytes keys from bencodepy/bencode
+            if isinstance(decoded, dict):
+                info = decoded.get('info') if 'info' in decoded else decoded.get(b'info')
+            else:
+                info = None
+            if info is None:
+                raise KeyError('info')
             torrent_hash = sha1(bencode(info)).hexdigest().upper()
 
             # Convert base 32 to hex

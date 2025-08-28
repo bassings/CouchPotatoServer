@@ -2,6 +2,7 @@ import os
 import types
 
 from couchpotato.runner import runCouchPotato, getOptions
+from couchpotato.core.settings import Settings
 from couchpotato.environment import Env
 
 
@@ -51,6 +52,12 @@ def test_runner_prepares_dirs_and_env(monkeypatch, tmp_path):
 
     # Patch IOLoop class used by runner (imported inside runCouchPotato)
     monkeypatch.setattr('tornado.ioloop.IOLoop', _DummyIOLoopClass, raising=True)
+
+    # Ensure Settings is initialized with a file path used by loader/plugins
+    s = Settings()
+    s.setFile(os.path.join(data_dir, 'settings.conf'))
+    from couchpotato.environment import Env as _Env
+    _Env.set('settings', s)
 
     # Execute and expect SystemExit from dummy loop
     try:
