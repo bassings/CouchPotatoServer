@@ -7,6 +7,7 @@ the web interface is accessible.
 """
 
 import unittest
+import os
 import subprocess
 import time
 import requests
@@ -21,6 +22,8 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Start CouchPotato server for testing"""
+        if os.environ.get('RUN_INTEGRATION') not in ('1', 'true', 'yes'):
+            raise unittest.SkipTest('Integration test disabled (set RUN_INTEGRATION=1 to enable)')
         print("🚀 Starting CouchPotato server for integration tests...")
         
         # Determine the Python executable to use
@@ -98,8 +101,10 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
                 cls.process.terminate()
                 try:
                     stdout, stderr = cls.process.communicate(timeout=3)
-                    print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000])
-                    print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000])
+                    if stdout:
+                        print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000] if isinstance(stdout, (bytes, bytearray)) else str(stdout)[:1000])
+                    if stderr:
+                        print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000] if isinstance(stderr, (bytes, bytearray)) else str(stderr)[:1000])
                 except subprocess.TimeoutExpired:
                     cls.process.kill()
                     print("Process had to be killed - was hanging")
@@ -107,10 +112,12 @@ class CouchPotatoIntegrationTest(unittest.TestCase):
                 # Process has terminated
                 stdout, stderr = cls.process.communicate()
                 print("❌ Server process terminated. Output:")
-                print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000])
-                print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000])
-            cls.tearDownClass()
-            raise Exception("Server failed to start within 30 seconds")
+                if stdout:
+                    print("STDOUT:", stdout.decode('utf-8', errors='ignore')[:1000] if isinstance(stdout, (bytes, bytearray)) else str(stdout)[:1000])
+                if stderr:
+                    print("STDERR:", stderr.decode('utf-8', errors='ignore')[:1000] if isinstance(stderr, (bytes, bytearray)) else str(stderr)[:1000])
+                cls.tearDownClass()
+                raise Exception("Server failed to start within 30 seconds")
     
     @classmethod
     def tearDownClass(cls):
