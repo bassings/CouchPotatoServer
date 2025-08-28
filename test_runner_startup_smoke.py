@@ -31,6 +31,12 @@ class _DummyLoop:
         pass
 
 
+class _DummyIOLoopClass:
+    @classmethod
+    def current(cls):
+        return _DummyLoop()
+
+
 def test_runner_prepares_dirs_and_env(monkeypatch, tmp_path):
     base_path = os.path.abspath(os.path.dirname(__file__))
     data_dir = tmp_path.as_posix()
@@ -43,8 +49,8 @@ def test_runner_prepares_dirs_and_env(monkeypatch, tmp_path):
     # Monkeypatch server + ioloop to prevent real startup
     monkeypatch.setattr('couchpotato.runner.HTTPServer', _DummyHTTPServer)
 
-    dummy_mod = types.SimpleNamespace(current=lambda: _DummyLoop())
-    monkeypatch.setattr('tornado.ioloop', dummy_mod, raising=True)
+    # Patch IOLoop class used by runner (imported inside runCouchPotato)
+    monkeypatch.setattr('tornado.ioloop.IOLoop', _DummyIOLoopClass, raising=True)
 
     # Execute and expect SystemExit from dummy loop
     try:
@@ -61,4 +67,3 @@ def test_runner_prepares_dirs_and_env(monkeypatch, tmp_path):
     assert Env.get('data_dir') == data_dir
     assert Env.get('app_dir')
     assert Env.get('log_path').endswith('CouchPotato.log')
-

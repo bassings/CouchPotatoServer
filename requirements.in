@@ -25,6 +25,7 @@ html5lib
 \# SOAP client (replaces vendored suds)
 suds-community
 APScheduler==2.1.2
+bencode.py
 
 # Testing tools
 pytest

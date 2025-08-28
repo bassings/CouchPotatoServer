@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 from base64 import b16encode, b32decode
 from datetime import timedelta
 from hashlib import sha1
-from urlparse import urlparse
+from urllib.parse import urlparse
 import os
 import re
 
