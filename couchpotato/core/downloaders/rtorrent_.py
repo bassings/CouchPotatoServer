@@ -11,8 +11,21 @@ from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
-from bencode import bencode, bdecode
-from rtorrent import RTorrent
+try:
+    import bencodepy as _bencode
+    def bencode(obj):
+        return _bencode.encode(obj)
+    def bdecode(data):
+        return _bencode.decode(data)
+except Exception:
+    from bencode import bencode, bdecode
+import socket
+try:
+    import xmlrpc.client as xclient
+except ImportError:  # pragma: no cover - legacy
+    import xmlrpclib as xclient  # type: ignore
+import requests
+from requests.auth import HTTPBasicAuth, HTTPDigestAuth
 from couchpotato.clients.rtorrent.adapter import RTorrentAdapter
 
 
@@ -83,8 +96,8 @@ class rTorrent(DownloaderBase):
 
     def connect(self, reconnect = False):
         # Already connected?
-        if not reconnect and self.rt is not None:
-            return self.rt
+        if not reconnect and self._rt_adapter is not None:
+            return True
 
         url = cleanHost(self.conf('host'), protocol = True, ssl = self.conf('ssl'))
 
@@ -93,48 +106,101 @@ class rTorrent(DownloaderBase):
             url = url.replace('httprpc://', 'httprpc+https://')
 
         parsed = urlparse(url)
+        scheme = parsed.scheme
+        rpc_url = self.conf('rpc_url') or 'RPC2'
 
-        # rpc_url is only used on http/https scgi pass-through
-        if parsed.scheme in ['http', 'https']:
-            url += self.conf('rpc_url')
+        # Build HTTP(S) endpoint when applicable
+        if scheme.startswith('httprpc'):
+            target_scheme = 'https' if '+' in scheme and 'https' in scheme else 'http'
+            base = f"{target_scheme}://{parsed.netloc}"
+            http_url = base + '/plugins/httprpc/action.php'
+        elif scheme in ['http', 'https']:
+            http_url = url + rpc_url
+        else:
+            http_url = None
 
-        # Construct client
-        self.rt = RTorrent(
-            url, self.getAuth(),
-            verify_ssl=self.getVerifySsl()
-        )
+        class _HTTPXMLRPCTransport(object):
+            def __init__(self, url, auth_tuple, verify_ssl):
+                self._url = url
+                self._verify = verify_ssl
+                self._session = requests.Session()
+                if auth_tuple and isinstance(auth_tuple, tuple) and len(auth_tuple) == 3:
+                    method, user, pwd = auth_tuple
+                    if method == 'basic':
+                        self._session.auth = HTTPBasicAuth(user, pwd)
+                    elif method == 'digest':
+                        self._session.auth = HTTPDigestAuth(user, pwd)
+                self._headers = {'Content-Type': 'text/xml'}
+
+            def call(self, method, *args):
+                body = xclient.dumps(args, methodname=method, allow_none=True)
+                r = self._session.post(self._url, data=body, headers=self._headers, verify=self._verify, timeout=15)
+                r.raise_for_status()
+                data = r.content
+                if data.startswith(b'HTTP/'):
+                    parts = data.split(b'\r\n\r\n', 1)
+                    data = parts[1] if len(parts) > 1 else data
+                return xclient.loads(data)[0][0]
+
+        class _SCGITransport(object):
+            def __init__(self, host, port):
+                self._host = host
+                self._port = int(port)
+
+            def _build_netstring(self, headers: dict) -> bytes:
+                items = []
+                for k, v in headers.items():
+                    items.append(k)
+                    items.append(v)
+                payload = ('\x00'.join(items) + '\x00').encode('utf-8')
+                return str(len(payload)).encode('ascii') + b':' + payload + b','
+
+            def call(self, method, *args):
+                body_bytes = xclient.dumps(args, methodname=method, allow_none=True).encode('utf-8')
+                headers = {
+                    'CONTENT_LENGTH': str(len(body_bytes)),
+                    'SCGI': '1',
+                    'REQUEST_METHOD': 'POST',
+                    'REQUEST_URI': '/RPC2'
+                }
+                netstr = self._build_netstring(headers)
+                to_send = netstr + body_bytes
+                s = socket.create_connection((self._host, self._port), timeout=15)
+                try:
+                    s.sendall(to_send)
+                    chunks = []
+                    while True:
+                        data = s.recv(65536)
+                        if not data:
+                            break
+                        chunks.append(data)
+                    resp = b''.join(chunks)
+                finally:
+                    s.close()
+                if resp.startswith(b'HTTP/'):
+                    parts = resp.split(b'\r\n\r\n', 1)
+                    resp = parts[1] if len(parts) > 1 else resp
+                return xclient.loads(resp)[0][0]
 
         self.error_msg = ''
         try:
-            self.rt.connection.verify()
-        except AssertionError as e:
-            self.error_msg = e.message
-            self.rt = None
+            if scheme == 'scgi':
+                host = parsed.hostname or 'localhost'
+                port = parsed.port or 5000
+                transport = _SCGITransport(host, port)
+            elif http_url:
+                transport = _HTTPXMLRPCTransport(http_url, self.getAuth(), self.getVerifySsl())
+            else:
+                raise AssertionError('Unsupported rTorrent scheme: %s' % scheme)
 
-        # Build adapter transport if connected
-        if self.rt is not None:
-            client = self.rt.connection.client
-
-            class _XmlRpcTransport(object):
-                def __init__(self, client):
-                    self._client = client
-                def call(self, method, *args):
-                    obj = self._client
-                    for part in method.split('.'):  # support dotted RPC names
-                        obj = getattr(obj, part)
-                    # Wrap raw bytes for load/raw methods into xmlrpc Binary
-                    if args and isinstance(args[0], (bytes, bytearray)) and method.startswith('load'):
-                        try:
-                            import xmlrpc.client as xclient
-                        except ImportError:
-                            import xmlrpclib as xclient  # type: ignore
-                        new_args = (xclient.Binary(args[0]),) + args[1:]
-                        return obj(*new_args)
-                    return obj(*args)
-
-            self._rt_adapter = RTorrentAdapter(_XmlRpcTransport(client))
-
-        return self.rt
+            adapter = RTorrentAdapter(transport)
+            _ = adapter.get_stats()
+            self._rt_adapter = adapter
+            return True
+        except Exception as e:
+            self.error_msg = str(e)
+            self._rt_adapter = None
+            return False
 
     def test(self):
         """ Check if connection works
