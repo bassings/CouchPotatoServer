@@ -1,7 +1,19 @@
 import logging
 
+logging.raiseExceptions = False
+
 def add_coloring_to_emit_ansi(fn):
     def new(*args):
+        try:
+            handler = args[0]
+            record = args[1]
+            # If stream is unavailable/closed, skip emitting
+            stream = getattr(handler, 'stream', None)
+            if stream is not None and getattr(stream, 'closed', False):
+                return None
+        except Exception:
+            pass
+
         levelno = args[1].levelno
         if(levelno >= 50):
             color = '\x1b[31m' # red
@@ -21,13 +33,11 @@ def add_coloring_to_emit_ansi(fn):
             if isinstance(msg, str) and not msg.startswith(color):
                 args[1].msg = color + msg + '\x1b[0m'
         except Exception:
-            # Be defensive; never break logging due to coloring
             pass
 
         try:
             return fn(*args)
         except Exception:
-            # Ignore logging errors (e.g., stream closed during interpreter shutdown)
             return None
     return new
 
