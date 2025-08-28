@@ -13,6 +13,7 @@ import tarfile
 import shutil
 
 from CodernityDB.database_super_thread_safe import SuperThreadSafeDatabase
+from couchpotato.db.adapter import DBAdapter
 from argparse import ArgumentParser
 from cache import FileSystemCache
 from couchpotato import KeyHandler, LoginHandler, LogoutHandler
@@ -127,7 +128,7 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     Env.set('app_dir', sp(base_path))
     Env.set('data_dir', sp(data_dir))
     Env.set('log_path', sp(os.path.join(log_dir, 'CouchPotato.log')))
-    Env.set('db', db)
+    Env.set('db', DBAdapter(db))
     Env.set('http_opener', session)
     Env.set('cache_dir', cache_dir)
     Env.set('cache', FileSystemCache(python_cache))
