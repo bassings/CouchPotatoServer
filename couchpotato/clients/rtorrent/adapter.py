@@ -28,6 +28,15 @@ class RTorrentAdapter:
             pass
         return res
 
+    def add_torrent_file(self, data: bytes, start: bool = True) -> Any:
+        """Add a torrent file by raw bytes using rTorrent's raw methods.
+
+        - start=True uses 'load.raw_start'
+        - start=False uses 'load.raw'
+        """
+        method = 'load.raw_start' if start else 'load.raw'
+        return self._t.call(method, data)
+
     def remove_torrent(self, torrent_hash: str, delete_data: bool = False) -> Any:
         # d.erase removes the torrent; deletion of data is often done via 'd.delete_tied' or manual file ops
         return self._t.call('d.erase', torrent_hash)

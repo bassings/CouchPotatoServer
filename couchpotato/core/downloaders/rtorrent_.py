@@ -122,6 +122,14 @@ class rTorrent(DownloaderBase):
                     obj = self._client
                     for part in method.split('.'):  # support dotted RPC names
                         obj = getattr(obj, part)
+                    # Wrap raw bytes for load/raw methods into xmlrpc Binary
+                    if args and isinstance(args[0], (bytes, bytearray)) and method.startswith('load'):
+                        try:
+                            import xmlrpc.client as xclient
+                        except ImportError:
+                            import xmlrpclib as xclient  # type: ignore
+                        new_args = (xclient.Binary(args[0]),) + args[1:]
+                        return obj(*new_args)
                     return obj(*args)
 
             self._rt_adapter = RTorrentAdapter(_XmlRpcTransport(client))
@@ -202,12 +210,13 @@ class rTorrent(DownloaderBase):
             # Send request to rTorrent
             try:
                 # Send torrent to rTorrent
-                torrent = self.rt.load_torrent(filedata, verify_retries=10)
-
-                if not torrent:
-                    log.error('Unable to find the torrent, did it fail to load?')
-                    return False
-
+                if self._rt_adapter:
+                    self._rt_adapter.add_torrent_file(filedata, start=not self.conf('paused', default=0))
+                else:
+                    torrent = self.rt.load_torrent(filedata, verify_retries=10)
+                    if not torrent:
+                        log.error('Unable to find the torrent, did it fail to load?')
+                        return False
             except Exception as err:
                 log.error('Failed to send torrent to rTorrent: %s', err)
                 return False
@@ -226,7 +235,7 @@ class rTorrent(DownloaderBase):
 
             # Start torrent
             if not self.conf('paused', default = 0):
-                # Adapter path already started via load.start
+                # Adapter path already started via load.start/raw_start
                 if not self._rt_adapter:
                     torrent.start()
 
