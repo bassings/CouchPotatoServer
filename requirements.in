@@ -3,7 +3,8 @@
 
 # Core runtime
 requests
-tornado
+# Tornado web framework (runtime)
+tornado>=6.3
 beautifulsoup4
 lxml
 python-dateutil
