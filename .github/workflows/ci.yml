@@ -64,7 +64,14 @@ import xml.etree.ElementTree as ET
 try:
     tree = ET.parse('pytest-report.xml')
     root = tree.getroot()
-    ns = ''
+    # Print totals if available
+    ts = root.find('testsuite') or root
+    if ts is not None:
+        tests = ts.get('tests') or ts.attrib.get('tests')
+        errors = ts.get('errors') or ts.attrib.get('errors')
+        failures = ts.get('failures') or ts.attrib.get('failures')
+        skipped = ts.get('skipped') or ts.attrib.get('skipped')
+        print(f"Total: tests={tests} failures={failures} errors={errors} skipped={skipped}")
     failures = []
     for case in root.iter('testcase'):
         for tag in ('failure','error'):
