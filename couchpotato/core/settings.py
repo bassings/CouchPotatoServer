@@ -186,7 +186,12 @@ class Settings(object):
         return []
 
     def getUnicode(self, section, option):
-        value = self.p.get(section, option).decode('unicode_escape')
+        value = self.p.get(section, option)
+        # Py2 stored bytes; Py3 returns str. Decode only when bytes-like.
+        try:
+            value = value.decode('unicode_escape') if hasattr(value, 'decode') else value
+        except Exception:
+            pass
         return toUnicode(value).strip()
 
     def getValues(self):
