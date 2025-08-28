@@ -32,15 +32,7 @@ jobs:
           # Strip prefixes like v1.2.3 or testpypi-1.2.3
           if [[ "$TAG" == v* ]]; then VER="${TAG#v}"; else VER="${TAG#testpypi-}"; fi
           echo "Setting version=$VER from tag=$TAG"
-          python - <<'PY'
-import toml, sys
-from pathlib import Path
-p = Path('pyproject.toml')
-d = toml.loads(p.read_text())
-d['project']['version'] = sys.argv[1]
-p.write_text(toml.dumps(d))
-PY
-          python pyproject.toml "$VER"
+          python -c "import toml, sys; from pathlib import Path; p = Path('pyproject.toml'); d = toml.loads(p.read_text()); d['project']['version'] = sys.argv[1]; p.write_text(toml.dumps(d))" "$VER"
 
       - name: Build sdist and wheel
         run: python -m build
