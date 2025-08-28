@@ -11,53 +11,34 @@ We have migrated from Travis CI to GitHub Actions for continuous integration and
 ### 1. CI Workflow (`.github/workflows/ci.yml`)
 
 **Triggers:**
-- Push to `master` or `develop` branches
-- Pull requests to `master` or `develop` branches
+- Push to `master` or `v2-to-v3-upgrade`
+- Pull requests targeting these branches
 
 **Features:**
-- **Multi-version testing**: Tests Python 3.8, 3.9, 3.10, 3.11, and 3.13
-- **Node.js testing**: Tests with Node.js 18 and 20
-- **Dependency caching**: Caches pip and npm dependencies for faster builds
-- **Python compatibility tests**: Runs our comprehensive Python 3 compatibility test suite
-- **Integration tests**: Tests the full application startup and web interface
-- **Grunt tests**: Runs existing JavaScript/CSS build and test processes
-- **Coverage reporting**: Uploads coverage to Coveralls (master branch only)
+- Python matrix: 3.12 and 3.13
+- Tox + pytest with JUnit report artifacts
+- Docker E2E smoke job (build + basic healthcheck)
+- Optional pip-compile lock artifact (non-blocking)
 
 **Jobs:**
-1. **test**: Main testing matrix across Python and Node.js versions
-2. **docker-test**: Tests Docker container builds and functionality
-3. **coverage**: Generates and uploads coverage reports
+1. tests: Tox matrix with JUnit artifact upload
+2. docker-e2e: Build runtime image and run a simple healthcheck
+3. build-artifacts: Build sdist/wheel and upload artifacts
 
-### 2. Docker Workflow (`.github/workflows/docker.yml`)
-
-**Triggers:**
-- Push to `master` branch (excluding documentation changes)
-- Weekly scheduled builds (Sundays at 6 AM UTC)
-
-**Features:**
-- **Multi-platform builds**: Builds for `linux/amd64` and `linux/arm64`
-- **Docker Hub integration**: Pushes images to Docker Hub
-- **Build caching**: Uses GitHub Actions cache for faster builds
-- **Container testing**: Tests the built container before pushing
-
-**Images produced:**
-- `bassings/couchpotato:develop` - Latest development build
-- `bassings/couchpotato:master` - Latest master branch build
-
-### 3. Release Workflow (`.github/workflows/release.yml`)
+### 2. Publish Workflow (`.github/workflows/publish.yml`)
 
 **Triggers:**
-- Push of tags starting with `v` (e.g., `v1.0.0`)
+- Push of tags:
+  - `testpypi-*` → publishes to TestPyPI
+  - `v*` → publishes to PyPI
 
 **Features:**
-- **Automated releases**: Creates GitHub releases with changelogs
-- **Release artifacts**: Builds and uploads `.tar.gz` and `.zip` archives
-- **Docker releases**: Builds and pushes tagged Docker images
-- **Multi-platform Docker**: Supports AMD64 and ARM64 architectures
+- Injects version from tag into `pyproject.toml`
+- Builds and publishes sdist/wheel
 
-**Release artifacts:**
-- Source code archives (tar.gz, zip)
-- Docker images: `bassings/couchpotato:vX.X.X` and `bassings/couchpotato:latest`
+### (Deprecated) Docker-specific and Release workflows
+
+Older docs referenced separate Docker and release workflows. The current setup uses a single CI workflow plus a tag-based publish workflow as described above.
 
 ## Required Secrets
 
@@ -67,13 +48,9 @@ To use all workflows, configure these repository secrets:
 - `DOCKER_USERNAME`: Docker Hub username
 - `DOCKER_PASSWORD`: Docker Hub password or access token
 
-### Coveralls (Optional, for coverage reporting)
-- `COVERALLS_REPO_TOKEN`: Coveralls repository token (GitHub token is used by default)
-
-**Note**: Coverage reporting is now configured in the CI workflow. To enable:
-1. Add this repository to [Coveralls.io](https://coveralls.io)
-2. Add the `COVERALLS_REPO_TOKEN` secret to your GitHub repository
-3. The coverage badge will automatically update after the next CI run
+### PyPI / TestPyPI (Optional)
+- `PYPI_API_TOKEN`: PyPI API token
+- `TEST_PYPI_API_TOKEN`: TestPyPI API token
 
 ## Environment Variables
 
