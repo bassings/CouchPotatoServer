@@ -1,6 +1,11 @@
 import os
 import sys
 import pytest
+import threading
+
+# Compatibility shim for APScheduler 2.x on modern Python
+if not hasattr(threading.Thread, 'isAlive') and hasattr(threading.Thread, 'is_alive'):
+    threading.Thread.isAlive = threading.Thread.is_alive  # type: ignore[attr-defined]
 
 
 @pytest.fixture(autouse=True)
@@ -18,4 +23,3 @@ def _ensure_libs_on_path(monkeypatch):
 def pytest_configure(config):
     config.addinivalue_line("markers", "integration: integration tests")
     config.addinivalue_line("markers", "e2e: end-to-end tests")
-

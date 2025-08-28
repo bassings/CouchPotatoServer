@@ -42,7 +42,13 @@ class DBAdapter:
         return self._backend.exists(*args, **kwargs)
 
     def destroy(self, *args, **kwargs):
-        return self._backend.destroy(*args, **kwargs)
+        try:
+            return self._backend.destroy(*args, **kwargs)
+        except Exception as e:
+            # Be defensive: some backends raise when closing a non-open DB
+            if 'Not opened' in str(e) or e.__class__.__name__ in ('DatabaseConflict',):
+                return None
+            raise
 
     # Index management
     def add_index(self, *args, **kwargs):
@@ -80,4 +86,3 @@ class DBAdapter:
     # Fallback: proxy anything else to the backend
     def __getattr__(self, item: str):
         return getattr(self._backend, item)
-
