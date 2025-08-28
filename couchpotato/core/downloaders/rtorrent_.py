@@ -180,12 +180,13 @@ class rTorrent(DownloaderBase):
             torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             # Send request to rTorrent
             try:
-                torrent = self.rt.load_magnet(data.get('url'), torrent_hash)
-
-                if not torrent:
-                    log.error('Unable to find the torrent, did it fail to load?')
-                    return False
-
+                if self._rt_adapter:
+                    self._rt_adapter.add_torrent(data.get('url'), start=not self.conf('paused', default=0))
+                else:
+                    torrent = self.rt.load_magnet(data.get('url'), torrent_hash)
+                    if not torrent:
+                        log.error('Unable to find the torrent, did it fail to load?')
+                        return False
             except Exception as err:
                 log.error('Failed to send magnet to rTorrent: %s', err)
                 return False
@@ -225,7 +226,9 @@ class rTorrent(DownloaderBase):
 
             # Start torrent
             if not self.conf('paused', default = 0):
-                torrent.start()
+                # Adapter path already started via load.start
+                if not self._rt_adapter:
+                    torrent.start()
 
             return self.downloadReturnId(torrent_hash)
 

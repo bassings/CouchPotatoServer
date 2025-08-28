@@ -20,8 +20,7 @@ class RTorrentAdapter:
         self._t = transport
 
     def add_torrent(self, magnet_or_url: str, start: bool = True, label: Optional[str] = None) -> Any:
-        method = 'load.start' if start else 'load
-'
+        method = 'load.start' if start else 'load'
         res = self._t.call(method, magnet_or_url)
         if label:
             # In rTorrent, custom1 is commonly used as label
@@ -48,4 +47,3 @@ class RTorrentAdapter:
     def get_stats(self) -> Dict[str, Any]:
         version = self._t.call('system.client_version')
         return {'version': version}
-
