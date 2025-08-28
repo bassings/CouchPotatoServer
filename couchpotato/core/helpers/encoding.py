@@ -103,13 +103,15 @@ def sp(path, *args):
 
 
 def ek(original, *args):
-    if isinstance(original, (str, unicode)):
+    # In Py3, str is text and bytes/bytearray need decoding.
+    if isinstance(original, str):
+        return original
+    if isinstance(original, (bytes, bytearray)):
         try:
             from couchpotato.environment import Env
             return original.decode(Env.get('encoding'), 'ignore')
         except UnicodeDecodeError:
             raise
-
     return original
 
 

@@ -20,6 +20,8 @@ subliminal
 guessit
 enzyme
 html5lib
+\# SOAP client (replaces vendored suds)
+suds-community
 
 # Testing tools
 pytest
