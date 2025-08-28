@@ -19,6 +19,7 @@ gntp
 subliminal
 guessit
 enzyme
+html5lib
 
 # Testing tools
 pytest
