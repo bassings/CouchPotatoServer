@@ -29,4 +29,6 @@ bencode.py
 
 # Testing tools
 pytest
+pytest-cov
 mock
+coveralls
