@@ -46,7 +46,14 @@ jobs:
           PYVER=${{ matrix.python-version }}
           ENV_NAME=py${PYVER/./}
           echo "Running tox -e ${ENV_NAME}"
-          tox -q -e ${ENV_NAME}
+          tox -q -e ${ENV_NAME} -- -q -ra --junitxml=pytest-report.xml
+
+      - name: Upload pytest report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-report-${{ matrix.python-version }}
+          path: pytest-report.xml
 
   docker-e2e:
     name: Docker E2E (Python 3 image)
