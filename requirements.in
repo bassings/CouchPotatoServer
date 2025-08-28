@@ -9,6 +9,7 @@ lxml
 python-dateutil
 chardet
 certifi
+six
 oauthlib
 httplib2
 pyasn1
