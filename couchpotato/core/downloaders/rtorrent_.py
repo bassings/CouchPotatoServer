@@ -231,7 +231,10 @@ class rTorrent(DownloaderBase):
                     torrent.set_custom(1, self.conf('label'))
 
             if self.conf('directory'):
-                torrent.set_directory(self.conf('directory'))
+                if self._rt_adapter and torrent_hash:
+                    self._rt_adapter.set_directory(torrent_hash, self.conf('directory'))
+                else:
+                    torrent.set_directory(self.conf('directory'))
 
             # Start torrent
             if not self.conf('paused', default = 0):
@@ -308,13 +311,19 @@ class rTorrent(DownloaderBase):
         if not self.connect():
             return False
 
-        torrent = self.rt.find_torrent(release_download['id'])
-        if torrent is None:
-            return False
-
-        if pause:
-            return torrent.pause()
-        return torrent.resume()
+        if self._rt_adapter:
+            if pause:
+                self._rt_adapter.pause_torrent(release_download['id'])
+            else:
+                self._rt_adapter.resume_torrent(release_download['id'])
+            return True
+        else:
+            torrent = self.rt.find_torrent(release_download['id'])
+            if torrent is None:
+                return False
+            if pause:
+                return torrent.pause()
+            return torrent.resume()
 
     def removeFailed(self, release_download):
         log.info('%s failed downloading, deleting...', release_download['name'])

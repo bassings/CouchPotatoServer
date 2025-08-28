@@ -44,6 +44,15 @@ class RTorrentAdapter:
     def set_label(self, torrent_hash: str, label: str) -> Any:
         return self._t.call('d.custom1.set', torrent_hash, label)
 
+    def set_directory(self, torrent_hash: str, directory: str) -> Any:
+        return self._t.call('d.directory.set', torrent_hash, directory)
+
+    def pause_torrent(self, torrent_hash: str) -> Any:
+        return self._t.call('d.pause', torrent_hash)
+
+    def resume_torrent(self, torrent_hash: str) -> Any:
+        return self._t.call('d.resume', torrent_hash)
+
     def get_torrent(self, torrent_hash: str) -> Dict[str, Any]:
         # Minimal info via individual calls; real impl can use d.multicall2
         name = self._t.call('d.name', torrent_hash)
