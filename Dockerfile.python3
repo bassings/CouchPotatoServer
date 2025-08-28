@@ -36,11 +36,7 @@ COPY --chown=${CP_USER}:${CP_USER} . ${CP_HOME}/
 
 # Install Python dependencies
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-    lxml \
-    pyopenssl \
-    requests \
-    && pip install --no-cache-dir -r requirements.txt 2>/dev/null || echo "No requirements.txt found"
+    pip install --no-cache-dir -r requirements.in || true
 
 # Create data directory structure
 RUN mkdir -p ${CP_DATA}/{database,logs,cache} && \
