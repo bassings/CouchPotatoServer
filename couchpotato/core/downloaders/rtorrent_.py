@@ -13,6 +13,7 @@ from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
 from bencode import bencode, bdecode
 from rtorrent import RTorrent
+from couchpotato.clients.rtorrent.adapter import RTorrentAdapter
 
 
 log = CPLog(__name__)
@@ -24,6 +25,7 @@ class rTorrent(DownloaderBase):
 
     protocol = ['torrent', 'torrent_magnet']
     rt = None
+    _rt_adapter = None
     error_msg = ''
 
     # Migration url to host options
@@ -108,6 +110,21 @@ class rTorrent(DownloaderBase):
         except AssertionError as e:
             self.error_msg = e.message
             self.rt = None
+
+        # Build adapter transport if connected
+        if self.rt is not None:
+            client = self.rt.connection.client
+
+            class _XmlRpcTransport(object):
+                def __init__(self, client):
+                    self._client = client
+                def call(self, method, *args):
+                    obj = self._client
+                    for part in method.split('.'):  # support dotted RPC names
+                        obj = getattr(obj, part)
+                    return obj(*args)
+
+            self._rt_adapter = RTorrentAdapter(_XmlRpcTransport(client))
 
         return self.rt
 
@@ -197,7 +214,11 @@ class rTorrent(DownloaderBase):
         try:
             # Set label
             if self.conf('label'):
-                torrent.set_custom(1, self.conf('label'))
+                # Prefer adapter call by hash when available
+                if self._rt_adapter and torrent_hash:
+                    self._rt_adapter.set_label(torrent_hash, self.conf('label'))
+                else:
+                    torrent.set_custom(1, self.conf('label'))
 
             if self.conf('directory'):
                 torrent.set_directory(self.conf('directory'))
@@ -311,7 +332,11 @@ class rTorrent(DownloaderBase):
                 except OSError:
                     log.info('Directory "%s" contains extra files, unable to remove', torrent.directory)
 
-        torrent.erase() # just removes the torrent, doesn't delete data
+        # Prefer adapter removal by hash when available
+        if self._rt_adapter:
+            self._rt_adapter.remove_torrent(release_download['id'])
+        else:
+            torrent.erase() # just removes the torrent, doesn't delete data
 
         return True
 
