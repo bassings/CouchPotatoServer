@@ -59,6 +59,12 @@ jobs:
         run: |
           python scripts/print_pytest_summary.py || true
 
+      - name: Upload coverage to Coveralls
+        if: github.ref == 'refs/heads/master' && always()
+        uses: coverallsapp/github-action@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
   docker-e2e:
     name: Docker E2E (Python 3 image)
     runs-on: ubuntu-latest

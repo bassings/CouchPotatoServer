@@ -4,7 +4,7 @@ CouchPotato
 [![Join the chat at https://gitter.im/CouchPotato/CouchPotatoServer](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/CouchPotato/CouchPotatoServer?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![CI](https://github.com/bassings/CouchPotatoServer/actions/workflows/ci.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/ci.yml)
 [![Docker](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml)
-[![Coverage Status](https://coveralls.io/repos/bassings/CouchPotatoServer/badge.svg?branch=master&service=github)](https://coveralls.io/github/bassings/CouchPotatoServer?branch=master)
+[![Coverage Status](https://img.shields.io/badge/coverage-coming%20soon-lightgrey.svg)](https://github.com/bassings/CouchPotatoServer)
 
 CouchPotato (CP) is an automatic NZB and torrent downloader. You can keep a "movies I want"-list and it will search for NZBs/torrents of these movies every X hours.
 Once a movie is found, it will send it to SABnzbd or download the torrent to a specified directory.
@@ -123,7 +123,18 @@ python3 test_python3_compatibility.py
 
 # Run integration tests  
 python3 test_couchpotato_integration.py
+
+# Run tests with coverage
+pytest --cov=couchpotato --cov-report=html
 ```
+
+### Coverage Reporting
+
+Coverage reporting is configured but requires setup on Coveralls.io:
+
+1. Go to [Coveralls.io](https://coveralls.io) and add this repository
+2. Add the `COVERALLS_REPO_TOKEN` secret to your GitHub repository
+3. The coverage badge will automatically update after the next CI run
 
 ## Contributing
 

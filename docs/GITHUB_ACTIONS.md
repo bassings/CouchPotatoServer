@@ -70,6 +70,11 @@ To use all workflows, configure these repository secrets:
 ### Coveralls (Optional, for coverage reporting)
 - `COVERALLS_REPO_TOKEN`: Coveralls repository token (GitHub token is used by default)
 
+**Note**: Coverage reporting is now configured in the CI workflow. To enable:
+1. Add this repository to [Coveralls.io](https://coveralls.io)
+2. Add the `COVERALLS_REPO_TOKEN` secret to your GitHub repository
+3. The coverage badge will automatically update after the next CI run
+
 ## Environment Variables
 
 The workflows automatically set these environment variables:
@@ -110,6 +115,9 @@ python test_python3_compatibility.py
 
 # Integration tests
 python test_couchpotato_integration.py
+
+# Run tests with coverage
+pytest --cov=couchpotato --cov-report=html
 
 # Grunt tests (requires Node.js and npm)
 npm install
