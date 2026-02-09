@@ -167,11 +167,16 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # Serve cached files (posters, etc.) directly
         if route.startswith('file.cache/'):
             from starlette.responses import FileResponse
+            import glob
             filename = route.split('/')[-1]
             cache_dir = toUnicode(Env.get('cache_dir'))
             file_path = os.path.join(cache_dir, filename)
             if os.path.isfile(file_path):
                 return FileResponse(file_path)
+            # Try with common extensions (URLs often omit the extension)
+            matches = glob.glob(file_path + '.*')
+            if matches:
+                return FileResponse(matches[0])
             return JSONResponse(content={'success': False, 'error': 'File not found'}, status_code=404)
 
         # Check nonblock routes (long-poll support)
