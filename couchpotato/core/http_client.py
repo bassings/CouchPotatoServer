@@ -181,8 +181,8 @@ class HttpClient:
             }
             method = 'post' if len(data) > 0 or files else 'get'
 
-            log.info('Opening url: %s %s, data: %s',
-                     (method, url, [x for x in data.keys()] if isinstance(data, dict) else 'with data'))
+            data_keys = [x for x in data.keys()] if isinstance(data, dict) else 'with data'
+            log.info('Opening url: %s %s, data: %s', method, url, data_keys)
             response = r.request(method, url, **kwargs)
 
             status_code = response.status_code

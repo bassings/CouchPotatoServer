@@ -80,7 +80,15 @@ def mergeDicts(a, b, prepend_list = False):
 
 
 def removeListDuplicates(seq):
-    return list(dict.fromkeys(seq))
+    try:
+        return list(dict.fromkeys(seq))
+    except TypeError:
+        # Fallback for unhashable items (dicts, lists)
+        seen = []
+        for item in seq:
+            if item not in seen:
+                seen.append(item)
+        return seen
 
 
 def flattenList(l):
