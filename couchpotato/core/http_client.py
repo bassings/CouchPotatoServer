@@ -3,6 +3,7 @@
 Provides retry logic via tenacity, rate limiting per host, and proxy support.
 """
 
+import threading
 import time
 import traceback
 from urllib.parse import quote, urlparse
@@ -41,6 +42,7 @@ class HttpClient:
         self.last_use_queue = {}
         self.failed_request = {}
         self.failed_disabled = {}
+        self._lock = threading.Lock()
         self._shutting_down = False
 
     def shutdown(self):
@@ -63,32 +65,34 @@ class HttpClient:
 
     def _check_disabled(self, host, show_error=True):
         """Check if a host is temporarily disabled due to failures."""
-        disabled_time = self.failed_disabled.get(host, 0)
-        if disabled_time > 0:
-            if disabled_time > (time.time() - DISABLE_DURATION):
-                msg = f'Disabled calls to {host} for 15 minutes because so many failed requests.'
-                log.info2(msg)
-                if not show_error:
-                    raise Exception(msg)
-                return True
-            else:
-                self.failed_request.pop(host, None)
-                self.failed_disabled.pop(host, None)
+        with self._lock:
+            disabled_time = self.failed_disabled.get(host, 0)
+            if disabled_time > 0:
+                if disabled_time > (time.time() - DISABLE_DURATION):
+                    msg = f'Disabled calls to {host} for 15 minutes because so many failed requests.'
+                    log.info2(msg)
+                    if not show_error:
+                        raise Exception(msg)
+                    return True
+                else:
+                    self.failed_request.pop(host, None)
+                    self.failed_disabled.pop(host, None)
         return False
 
     def _record_failure(self, host, status_code=None):
         """Track failed requests per host, disable after threshold."""
         try:
-            if status_code == 429:
-                self.failed_request[host] = 1
-                self.failed_disabled[host] = time.time()
-                return
+            with self._lock:
+                if status_code == 429:
+                    self.failed_request[host] = 1
+                    self.failed_disabled[host] = time.time()
+                    return
 
-            count = self.failed_request.get(host, 0) + 1
-            self.failed_request[host] = count
+                count = self.failed_request.get(host, 0) + 1
+                self.failed_request[host] = count
 
-            if count > MAX_FAILURES_BEFORE_DISABLE and not isLocalIP(host):
-                self.failed_disabled[host] = time.time()
+                if count > MAX_FAILURES_BEFORE_DISABLE and not isLocalIP(host):
+                    self.failed_disabled[host] = time.time()
         except Exception:
             log.debug('Failed logging failed requests for host %s: %s', host, traceback.format_exc())
 
@@ -98,15 +102,17 @@ class HttpClient:
             return
 
         try:
-            if host not in self.last_use_queue:
-                self.last_use_queue[host] = []
-
-            self.last_use_queue[host].append(url)
+            with self._lock:
+                if host not in self.last_use_queue:
+                    self.last_use_queue[host] = []
+                self.last_use_queue[host].append(url)
 
             while not self._shutting_down:
-                wait = (self.last_use.get(host, 0) - time.time()) + self.time_between_calls
+                with self._lock:
+                    wait = (self.last_use.get(host, 0) - time.time()) + self.time_between_calls
+                    is_front = self.last_use_queue.get(host, [None])[0] == url
 
-                if self.last_use_queue[host][0] != url:
+                if not is_front:
                     time.sleep(0.1)
                     continue
 
@@ -114,8 +120,9 @@ class HttpClient:
                     log.debug('Waiting for rate limit, %d seconds', max(1, wait))
                     time.sleep(min(wait, 30))
                 else:
-                    self.last_use_queue[host] = self.last_use_queue[host][1:]
-                    self.last_use[host] = time.time()
+                    with self._lock:
+                        self.last_use_queue[host] = self.last_use_queue[host][1:]
+                        self.last_use[host] = time.time()
                     break
         except Exception:
             log.error('Failed handling waiting call: %s', traceback.format_exc())
@@ -193,7 +200,8 @@ class HttpClient:
                 response.raise_for_status()
                 result = response.content  # shouldn't reach here normally
 
-            self.failed_request[host] = 0
+            with self._lock:
+                self.failed_request[host] = 0
         except (OSError, MaxRetryError, Timeout):
             if show_error:
                 log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
@@ -201,5 +209,6 @@ class HttpClient:
             self._record_failure(host, status_code)
             raise
 
-        self.last_use[host] = time.time()
+        with self._lock:
+            self.last_use[host] = time.time()
         return result

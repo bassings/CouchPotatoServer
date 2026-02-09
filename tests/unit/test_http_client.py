@@ -1,4 +1,5 @@
 """Tests for couchpotato.core.http_client.HttpClient"""
+import threading
 import time
 from unittest.mock import MagicMock, patch
 
@@ -137,3 +138,55 @@ class TestHttpClient:
         assert not client._shutting_down
         client.shutdown()
         assert client._shutting_down
+
+    def test_concurrent_record_failure_no_corruption(self, mock_env):
+        """Concurrent _record_failure calls should not corrupt shared dicts."""
+        env, session, response = mock_env
+        client = HttpClient()
+        errors = []
+
+        def record_many(host_suffix):
+            try:
+                for i in range(100):
+                    client._record_failure(f'host-{host_suffix}.com')
+            except Exception as e:
+                errors.append(e)
+
+        with patch('couchpotato.core.http_client.isLocalIP', return_value=False):
+            threads = [threading.Thread(target=record_many, args=(i,)) for i in range(10)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert not errors
+        # Each host should have exactly 100 failures recorded
+        for i in range(10):
+            assert client.failed_request[f'host-{i}.com'] == 100
+
+    def test_concurrent_check_disabled_no_crash(self, mock_env):
+        """Concurrent _check_disabled calls should not raise."""
+        env, session, response = mock_env
+        client = HttpClient()
+        errors = []
+
+        # Pre-populate some disabled hosts
+        for i in range(5):
+            client.failed_disabled[f'host-{i}.com'] = time.time()
+        for i in range(5, 10):
+            client.failed_disabled[f'host-{i}.com'] = time.time() - DISABLE_DURATION - 1
+
+        def check_many():
+            try:
+                for i in range(10):
+                    client._check_disabled(f'host-{i}.com')
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=check_many) for _ in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert not errors
