@@ -17,7 +17,6 @@ from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
 from dateutil.parser import parse
-from couchpotato.lib.git.repository import LocalRepository
 import version
 
 
@@ -37,7 +36,7 @@ class Updater(Plugin):
         elif os.path.isdir(os.path.join(Env.get('app_dir'), '.git')):
             git_default = 'git'
             git_command = self.conf('git_command', default = git_default)
-            git_command = git_command if git_command != git_default and (os.path.isfile(git_command) or re.match('^[a-zA-Z0-9_/\.\-]+$', git_command)) else git_default
+            git_command = git_command if git_command != git_default and (os.path.isfile(git_command) or re.match(r'^[a-zA-Z0-9_/\.\-]+$', git_command)) else git_default
             self.updater = GitUpdater(git_command)
         else:
             self.updater = SourceUpdater()
@@ -205,6 +204,7 @@ class GitUpdater(BaseUpdater):
     new_repo = 'CouchPotato/CouchPotatoServer'
 
     def __init__(self, git_command):
+        from couchpotato.lib.git.repository import LocalRepository
         self.repo = LocalRepository(Env.get('app_dir'), command = git_command)
 
         remote_name = 'origin'

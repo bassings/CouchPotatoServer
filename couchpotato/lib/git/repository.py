@@ -22,7 +22,7 @@
 # ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 # (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 # SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-from collections import Sequence
+from collections.abc import Sequence
 import re
 import os
 import subprocess
@@ -345,7 +345,7 @@ class LocalRepository(Repository):
                                                      "--no-ff" if not allowFastForward else None,
                                                      "--log" if log else None,
                                                      ("-m \"%s\"" % message) if message is not None else None))
-        except GitCommandFailedException, e:
+        except GitCommandFailedException as e:
             # git-merge tends to ignore the stderr rule...
             output = e.stdout + e.stderr
             if 'conflict' in output.lower():
