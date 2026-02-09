@@ -131,28 +131,31 @@ class Logging(Plugin):
 
     def toList(self, log_content = ''):
 
-        logs_raw = re.split(r'\[0m\n', toUnicode(log_content))
+        log_content = toUnicode(log_content)
+        # Strip ANSI escape codes if present
+        log_content = re.sub(r'\x1b\[\d*m', '', log_content)
 
         logs = []
-        re_split = r'\x1b'
-        for log_line in logs_raw:
-            split = re.split(re_split, log_line)
-            if split and len(split) == 3:
-                try:
-                    date, time, log_type = splitString(split[0], ' ')
-                    timestamp = '%s %s' % (date, time)
-                except:
-                    timestamp = 'UNKNOWN'
-                    log_type = 'UNKNOWN'
+        # Match log lines: "MM-DD HH:MM:SS LEVEL [module] message"
+        # Continuation lines (starting with whitespace) are appended to previous entry
+        log_pattern = re.compile(r'^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(DEBUG|INFO|WARNING|ERROR|CRITICAL)\s+(.*)$')
 
-                message = ''.join(split[1]) if len(split) > 1 else split[0]
-                message = re.sub('\[\d+m\[', '[', message)
+        current_entry = None
+        for line in log_content.split('\n'):
+            match = log_pattern.match(line)
+            if match:
+                if current_entry:
+                    logs.append(current_entry)
+                current_entry = {
+                    'time': match.group(1),
+                    'type': match.group(2),
+                    'message': match.group(3)
+                }
+            elif current_entry and line.strip():
+                current_entry['message'] += '\n' + line
 
-                logs.append({
-                    'time': timestamp,
-                    'type': log_type,
-                    'message': message
-                })
+        if current_entry:
+            logs.append(current_entry)
 
         return logs
 
@@ -167,7 +170,7 @@ class Logging(Plugin):
             try:
 
                 # Create empty file for current logging
-                if x is 0:
+                if x == 0:
                     self.createFile(path, '')
                 else:
                     os.remove(path)
