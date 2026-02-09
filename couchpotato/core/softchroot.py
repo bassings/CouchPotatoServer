@@ -38,7 +38,7 @@ class SoftChroot:
             # enabling soft-chroot:
             if not os.path.isdir(chdir):
                 raise SoftChrootInitError(2, 'SOFT-CHROOT is requested, but the folder doesn\'t exist', orig_chdir)
-            
+
             self.enabled = True
             self.chdir = chdir.rstrip(os.path.sep) + os.path.sep
         else:

@@ -7,14 +7,14 @@ from couchpotato import CPLog
 
 
 try:
-    import xml.etree.cElementTree as etree
+    import xml.etree.ElementTree as etree
 except ImportError:
     import xml.etree.ElementTree as etree
 
 log = CPLog(__name__)
 
 
-class PlexServer(object):
+class PlexServer:
     def __init__(self, plex):
         self.plex = plex
 
@@ -44,7 +44,9 @@ class PlexServer(object):
         else:
             #Fetch X-Plex-Token if it doesn't exist but a username/password do
             if not self.plex.conf('auth_token') and (self.plex.conf('username') and self.plex.conf('password')):
-                import urllib.request, urllib.error, base64
+                import urllib.request
+                import urllib.error
+                import base64
                 log.info("Fetching a new X-Plex-Token from plex.tv")
                 username = self.plex.conf('username')
                 password = self.plex.conf('password')

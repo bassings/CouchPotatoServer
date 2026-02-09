@@ -10,7 +10,7 @@ class SearcherBase(Plugin):
     in_progress = False
 
     def __init__(self):
-        super(SearcherBase, self).__init__()
+        super().__init__()
 
         addEvent('searcher.progress', self.getProgress)
         addEvent('%s.searcher.progress' % self.getType(), self.getProgress)

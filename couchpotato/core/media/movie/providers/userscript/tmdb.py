@@ -14,7 +14,7 @@ class TMDB(UserscriptBase):
     includes = ['*://www.themoviedb.org/movie/*']
 
     def getMovie(self, url):
-        match = re.search('(?P<id>\d+)', url)
+        match = re.search(r'(?P<id>\d+)', url)
         movie = fireEvent('movie.info_by_tmdb', identifier = match.group('id'), extended = False, merge = True)
 
         if movie['imdb']:

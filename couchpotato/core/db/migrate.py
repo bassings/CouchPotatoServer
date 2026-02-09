@@ -18,7 +18,7 @@ if os.path.isdir(libs_path) and libs_path not in sys.path:
     sys.path.insert(0, os.path.abspath(libs_path))
 
 
-def read_codernity_docs(source_path: str) -> List[Dict]:
+def read_codernity_docs(source_path: str) -> list[dict]:
     """Read all documents from a CodernityDB database.
 
     Args:
@@ -63,7 +63,7 @@ def _decode_bytes(value):
     return value
 
 
-def clean_doc_for_sqlite(doc: Dict) -> Dict:
+def clean_doc_for_sqlite(doc: dict) -> dict:
     """Clean a CodernityDB document for SQLite insertion.
 
     Removes CodernityDB internal fields and ensures JSON-serializable data.
@@ -80,7 +80,7 @@ def clean_doc_for_sqlite(doc: Dict) -> Dict:
     return cleaned
 
 
-def migrate(source_path: str, dest_path: str, verbose: bool = False) -> Tuple[int, Counter]:
+def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[int, Counter]:
     """Migrate a CodernityDB database to SQLite.
 
     Args:

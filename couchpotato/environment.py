@@ -8,7 +8,7 @@ from couchpotato.core.settings import Settings
 from couchpotato.core.softchroot import SoftChroot
 
 
-class Env(object):
+class Env:
 
     _appname = 'CouchPotato'
 

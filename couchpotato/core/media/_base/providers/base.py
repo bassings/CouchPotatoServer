@@ -314,7 +314,7 @@ class ResultList(list):
         self.quality = quality
         self.kwargs = kwargs
 
-        super(ResultList, self).__init__()
+        super().__init__()
 
     def extend(self, results):
         for r in results:
@@ -344,7 +344,7 @@ class ResultList(list):
             self.found(new_result)
             self.result_ids.append(result['id'])
 
-            super(ResultList, self).append(new_result)
+            super().append(new_result)
 
     def fillResult(self, result):
 

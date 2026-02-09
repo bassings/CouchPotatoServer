@@ -162,7 +162,7 @@ class Updater(Plugin):
         if not Env.get('dev') and not Env.get('desktop'):
             removePyc(Env.get('app_dir'), show_logs = False)
 
-        return super(Updater, self).doShutdown(*args, **kwargs)
+        return super().doShutdown(*args, **kwargs)
 
 
 class BaseUpdater(Plugin):

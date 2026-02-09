@@ -8,7 +8,7 @@ class QualityIndex(HashIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(QualityIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()

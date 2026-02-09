@@ -21,7 +21,7 @@ class MovieBase(MovieTypeBase):
     def __init__(self):
 
         # Initialize this type
-        super(MovieBase, self).__init__()
+        super().__init__()
         self.initType()
 
         addApiView('movie.add', self.addView, docs = {

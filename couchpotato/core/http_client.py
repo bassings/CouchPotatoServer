@@ -193,7 +193,7 @@ class HttpClient:
                 result = response.content  # shouldn't reach here normally
 
             self.failed_request[host] = 0
-        except (IOError, MaxRetryError, Timeout):
+        except (OSError, MaxRetryError, Timeout):
             if show_error:
                 log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
 

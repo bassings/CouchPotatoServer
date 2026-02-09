@@ -6,7 +6,7 @@ from couchpotato.core.logger import CPLog
 log = CPLog(__name__)
 
 
-class RSS(object):
+class RSS:
 
     def getTextElements(self, xml, path):
         """ Find elements and return tree"""

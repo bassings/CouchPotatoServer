@@ -15,10 +15,10 @@ def settings_with_types(config_file):
     from couchpotato.core.settings import Settings
     from couchpotato.core.event import events
     events.clear()
-    
+
     s = Settings()
     s.setFile(config_file)
-    
+
     # Add a section with various types
     s.addSection('test')
     s.p.set('test', 'enabled', 'True')
@@ -30,7 +30,7 @@ def settings_with_types(config_file):
     s.p.set('test', 'disabled', 'False')
     s.p.set('test', 'zero', '0')
     s.p.set('test', 'one', '1')
-    
+
     s.setType('test', 'enabled', 'bool')
     s.setType('test', 'count', 'int')
     s.setType('test', 'ratio', 'float')
@@ -40,7 +40,7 @@ def settings_with_types(config_file):
     s.setType('test', 'disabled', 'bool')
     s.setType('test', 'zero', 'bool')
     s.setType('test', 'one', 'bool')
-    
+
     events.clear()
     return s
 

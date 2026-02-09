@@ -101,7 +101,7 @@ class Base(NZBProvider, RSS):
                     description = self.getTextElement(nzb_details, 'description')
 
                     # Extract a password from the description
-                    password = re.search('(?:' + self.passwords_regex + ')(?: *)(?:\:|\=)(?: *)(.*?)\<br\>|\n|$', description, flags = re.I).group(1)
+                    password = re.search('(?:' + self.passwords_regex + ')(?: *)(?:\\:|\\=)(?: *)(.*?)\\<br\\>|\n|$', description, flags = re.I).group(1)
                     if password:
                         name += ' {{%s}}' % password.strip()
                 except:
@@ -164,7 +164,7 @@ class Base(NZBProvider, RSS):
         hosts = self.getHosts()
 
         for host in hosts:
-            result = super(Base, self).belongsTo(url, host = host['host'], provider = provider)
+            result = super().belongsTo(url, host = host['host'], provider = provider)
             if result:
                 return result
 

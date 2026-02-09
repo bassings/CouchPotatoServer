@@ -6,7 +6,8 @@ import time
 import uuid
 from hashlib import md5
 from string import ascii_letters
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, List, Optional
+from collections.abc import Iterator
 
 from couchpotato.core.db.interface import DatabaseInterface
 
@@ -27,8 +28,8 @@ class SQLiteAdapter(DatabaseInterface):
     """
 
     def __init__(self):
-        self._conn: Optional[sqlite3.Connection] = None
-        self._path: Optional[str] = None
+        self._conn: sqlite3.Connection | None = None
+        self._path: str | None = None
         self._indexes: dict = {}  # name -> index config (for compat)
 
     @property
@@ -80,19 +81,19 @@ class SQLiteAdapter(DatabaseInterface):
             self._conn.close()
             self._conn = None
 
-    def _doc_from_row(self, row) -> Dict:
+    def _doc_from_row(self, row) -> dict:
         """Convert a database row back to a document dict."""
         data = json.loads(row['data'])
         data['_id'] = row['_id']
         data['_rev'] = row['_rev']
         return data
 
-    def _doc_to_json(self, data: Dict) -> str:
+    def _doc_to_json(self, data: dict) -> str:
         """Serialize document data to JSON, excluding _id and _rev."""
         d = {k: v for k, v in data.items() if k not in ('_id', '_rev')}
         return json.dumps(d, default=str)
 
-    def get(self, index_name: str, key: Any, with_doc: bool = False) -> Dict:
+    def get(self, index_name: str, key: Any, with_doc: bool = False) -> dict:
         """Get document(s) by index lookup.
 
         For the 'id' index, looks up by _id directly.
@@ -119,7 +120,7 @@ class SQLiteAdapter(DatabaseInterface):
             return self.get('id', result['_id'])
         return result
 
-    def insert(self, data: Dict) -> Dict:
+    def insert(self, data: dict) -> dict:
         conn = self._get_conn()
         doc_id = data.get('_id', _generate_id())
         doc_rev = _generate_rev()
@@ -139,7 +140,7 @@ class SQLiteAdapter(DatabaseInterface):
 
         return {'_id': doc_id, '_rev': doc_rev}
 
-    def update(self, data: Dict) -> Dict:
+    def update(self, data: dict) -> dict:
         conn = self._get_conn()
         doc_id = data.get('_id')
         if not doc_id:
@@ -166,7 +167,7 @@ class SQLiteAdapter(DatabaseInterface):
 
         return {'_id': doc_id, '_rev': doc_rev}
 
-    def delete(self, data: Dict) -> bool:
+    def delete(self, data: dict) -> bool:
         conn = self._get_conn()
         doc_id = data.get('_id')
         if not doc_id:
@@ -181,13 +182,13 @@ class SQLiteAdapter(DatabaseInterface):
         return cursor.rowcount > 0
 
     def all(self, index_name: str, limit: int = -1, offset: int = 0,
-            with_doc: bool = False) -> Iterator[Dict]:
+            with_doc: bool = False) -> Iterator[dict]:
         return self.query(index_name, limit=limit, offset=offset, with_doc=with_doc)
 
     def query(self, index_name: str, key: Any = None,
               start: Any = None, end: Any = None,
               limit: int = -1, offset: int = 0,
-              with_doc: bool = False) -> Iterator[Dict]:
+              with_doc: bool = False) -> Iterator[dict]:
         results = self._query_index(index_name, key=key, start=start, end=end,
                                      limit=limit, offset=offset)
         for row in results:
@@ -201,7 +202,7 @@ class SQLiteAdapter(DatabaseInterface):
 
     def _query_index(self, index_name: str, key: Any = None,
                      start: Any = None, end: Any = None,
-                     limit: int = -1, offset: int = 0) -> List[Dict]:
+                     limit: int = -1, offset: int = 0) -> list[dict]:
         """Translate CodernityDB index queries to SQL."""
         conn = self._get_conn()
         params: list = []
@@ -416,7 +417,7 @@ class SQLiteAdapter(DatabaseInterface):
         rows = conn.execute(sql, params).fetchall()
         return [self._doc_from_row(row) for row in rows]
 
-    def _update_denormalized(self, doc_id: str, data: Dict):
+    def _update_denormalized(self, doc_id: str, data: dict):
         """Update denormalized lookup tables."""
         conn = self._get_conn()
 
@@ -458,7 +459,7 @@ class SQLiteAdapter(DatabaseInterface):
         conn = self._get_conn()
         conn.execute("VACUUM")
 
-    def get_by_identifier(self, provider: str, identifier: str) -> Dict:
+    def get_by_identifier(self, provider: str, identifier: str) -> dict:
         """Get a media document by provider and identifier.
 
         This replaces the CodernityDB MediaIndex multi-key lookup.
@@ -474,7 +475,7 @@ class SQLiteAdapter(DatabaseInterface):
             raise KeyError(f"No media found for {provider}={identifier}")
         return self._doc_from_row(row)
 
-    def insert_bulk(self, documents: List[Dict]) -> int:
+    def insert_bulk(self, documents: list[dict]) -> int:
         """Insert multiple documents efficiently.
 
         Returns the number of documents inserted.

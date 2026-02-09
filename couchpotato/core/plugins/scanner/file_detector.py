@@ -63,7 +63,7 @@ class FileDetectorMixin:
         return True
 
     def isSampleFile(self, filename):
-        is_sample = re.search('(^|[\W_])sample\d*[\W_]', filename.lower())
+        is_sample = re.search(r'(^|[\W_])sample\d*[\W_]', filename.lower())
         if is_sample:
             log.debug('Is sample file: %s', filename)
         return is_sample
@@ -120,7 +120,7 @@ class FileDetectorMixin:
 
     def getTrailers(self, files):
         def test(s):
-            return (re.search('(^|[\W_])trailer\d*[\W_]', s.lower())
+            return (re.search(r'(^|[\W_])trailer\d*[\W_]', s.lower())
                     and self.filesizeBetween(s, self.file_sizes['trailer']))
         return set(filter(test, files))
 
@@ -131,7 +131,7 @@ class FileDetectorMixin:
 
         images = {
             'backdrop': set(filter(
-                lambda s: (re.search('(^|[\W_])fanart|backdrop\d*[\W_]', s.lower())
+                lambda s: (re.search(r'(^|[\W_])fanart|backdrop\d*[\W_]', s.lower())
                            and self.filesizeBetween(s, self.file_sizes['backdrop'])),
                 files,
             ))

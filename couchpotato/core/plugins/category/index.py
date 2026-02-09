@@ -6,7 +6,7 @@ class CategoryIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = 'i'
-        super(CategoryIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return key
@@ -21,7 +21,7 @@ class CategoryMediaIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(CategoryMediaIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return str(key)

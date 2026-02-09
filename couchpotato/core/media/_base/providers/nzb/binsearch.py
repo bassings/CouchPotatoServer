@@ -42,14 +42,14 @@ class Base(NZBProvider):
 
                     nzb_id = row.find('input', attrs = {'type': 'checkbox'})['name']
                     info = row.find('span', attrs = {'class':'d'})
-                    size_match = re.search('size:.(?P<size>[0-9\.]+.[GMB]+)', info.text)
+                    size_match = re.search(r'size:.(?P<size>[0-9\.]+.[GMB]+)', info.text)
 
                     age = 0
-                    try: age = re.search('(?P<size>\d+d)', row.find_all('td')[-1:][0].text).group('size')[:-1]
+                    try: age = re.search(r'(?P<size>\d+d)', row.find_all('td')[-1:][0].text).group('size')[:-1]
                     except: pass
 
                     def extra_check(item):
-                        parts = re.search('available:.(?P<parts>\d+)./.(?P<total>\d+)', info.text)
+                        parts = re.search(r'available:.(?P<parts>\d+)./.(?P<total>\d+)', info.text)
                         total = float(tryInt(parts.group('total')))
                         parts = float(tryInt(parts.group('parts')))
 

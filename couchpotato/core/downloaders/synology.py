@@ -80,7 +80,7 @@ class Synology(DownloaderBase):
 
     def getEnabledProtocol(self):
         if self.conf('use_for') == 'both':
-            return super(Synology, self).getEnabledProtocol()
+            return super().getEnabledProtocol()
         elif self.conf('use_for') == 'torrent':
             return ['torrent', 'torrent_magnet']
         else:
@@ -95,17 +95,17 @@ class Synology(DownloaderBase):
         elif data:
             for_protocol.append(data.get('protocol'))
 
-        return super(Synology, self).isEnabled(manual, data) and\
-               ((self.conf('use_for') in for_protocol))
+        return super().isEnabled(manual, data) and\
+               (self.conf('use_for') in for_protocol)
 
 
-class SynologyRPC(object):
+class SynologyRPC:
 
     """SynologyRPC lite library"""
 
     def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None):
 
-        super(SynologyRPC, self).__init__()
+        super().__init__()
 
         self.download_url = 'http://%s:%s/webapi/DownloadStation/task.cgi' % (host, port)
         self.auth_url = 'http://%s:%s/webapi/auth.cgi' % (host, port)

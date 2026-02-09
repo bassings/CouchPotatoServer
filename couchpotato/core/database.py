@@ -16,7 +16,7 @@ from couchpotato.core.helpers.variable import getImdb, tryInt, randomString
 log = CPLog(__name__)
 
 
-class Database(object):
+class Database:
 
     indexes = None
     db = None
@@ -621,7 +621,7 @@ class Database(object):
 
             except OperationalError:
                 log.error('Migrating from faulty database, probably a (too) old version: %s', traceback.format_exc())
-                
+
                 rename_old = True
             except:
                 log.error('Migration failed: %s', traceback.format_exc())

@@ -115,7 +115,7 @@ class HDTrailers(TrailerProvider):
     def movieUrlName(self, string):
         safe_chars = ascii_letters + digits + ' '
         r = ''.join([char if char in safe_chars else ' ' for char in string])
-        name = re.sub('\s+' , '-', r).lower()
+        name = re.sub(r'\s+' , '-', r).lower()
 
         try:
             int(name)

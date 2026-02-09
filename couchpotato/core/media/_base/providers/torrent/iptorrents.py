@@ -49,7 +49,7 @@ class Base(TorrentProvider):
         current_page = 1
         while current_page <= pages and not self.shuttingDown():
             data = self.getHTMLData(base_url % (freeleech, current_page), headers = self.getRequestHeaders())
-            
+
             if data:
                 html = BeautifulSoup(data)
 
@@ -62,7 +62,7 @@ class Base(TorrentProvider):
                             pages = int(final_page_link.string)
 
                     result_table = html.find('table', id="torrents")
-                    
+
                     if not result_table or 'nothing found!' in data.lower():
                         return
 
@@ -104,7 +104,7 @@ class Base(TorrentProvider):
         return {
             'Cookie': self.conf('cookiesetting') or ''
         }
-    
+
     def download(self, url = '', nzb_id = ''):
         try:
             return self.urlopen(url, headers=self.getRequestHeaders())

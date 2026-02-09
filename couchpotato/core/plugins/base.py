@@ -19,7 +19,7 @@ from jinja2 import Environment as _JinjaEnv, FileSystemLoader as _JinjaFSLoader
 log = CPLog(__name__)
 
 
-class Plugin(object):
+class Plugin:
 
     _class_name = None
     _database = None
@@ -35,7 +35,7 @@ class Plugin(object):
     http_time_between_calls = 0
 
     def __new__(cls, *args, **kwargs):
-        new_plugin = super(Plugin, cls).__new__(cls)
+        new_plugin = super().__new__(cls)
         new_plugin.registerPlugin()
 
         return new_plugin

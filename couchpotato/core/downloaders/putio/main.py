@@ -26,7 +26,7 @@ class PutIO(DownloaderBase):
         addApiView('downloader.putio.credentials', self.getCredentials)
         addEvent('putio.download', self.putioDownloader)
 
-        return super(PutIO, self).__init__()
+        return super().__init__()
 
     # This is a recusive function to check for the folders
     def recursionFolder(self, client, folder = 0, tfolder = ''):

@@ -1,7 +1,8 @@
 """CodernityDB adapter implementing DatabaseInterface."""
 import os
 import sys
-from typing import Any, Dict, Iterator
+from typing import Any, Dict
+from collections.abc import Iterator
 
 from couchpotato.core.db.interface import DatabaseInterface
 
@@ -50,30 +51,30 @@ class CodernityDBAdapter(DatabaseInterface):
         if self._db and self._db.opened:
             self._db.close()
 
-    def get(self, index_name: str, key: Any, with_doc: bool = False) -> Dict:
+    def get(self, index_name: str, key: Any, with_doc: bool = False) -> dict:
         try:
             return self._db.get(index_name, key, with_doc=with_doc)
         except (RecordNotFound, RecordDeleted) as e:
             raise KeyError(str(e)) from e
 
-    def insert(self, data: Dict) -> Dict:
+    def insert(self, data: dict) -> dict:
         return self._db.insert(data)
 
-    def update(self, data: Dict) -> Dict:
+    def update(self, data: dict) -> dict:
         return self._db.update(data)
 
-    def delete(self, data: Dict) -> bool:
+    def delete(self, data: dict) -> bool:
         return self._db.delete(data)
 
     def all(self, index_name: str, limit: int = -1, offset: int = 0,
-            with_doc: bool = False) -> Iterator[Dict]:
+            with_doc: bool = False) -> Iterator[dict]:
         return self._db.all(index_name, limit=limit, offset=offset,
                            with_doc=with_doc)
 
     def query(self, index_name: str, key: Any = None,
               start: Any = None, end: Any = None,
               limit: int = -1, offset: int = 0,
-              with_doc: bool = False) -> Iterator[Dict]:
+              with_doc: bool = False) -> Iterator[dict]:
         if key is not None:
             return self._db.get_many(index_name, key=key, limit=limit,
                                      offset=offset, with_doc=with_doc)

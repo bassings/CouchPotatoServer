@@ -55,7 +55,7 @@ class NZBGet(DownloaderBase):
                 log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
-        except socket.error:
+        except OSError:
             log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
             return False
         except xmlrpclib.ProtocolError as e:
@@ -96,7 +96,7 @@ class NZBGet(DownloaderBase):
                 log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
-        except socket.error:
+        except OSError:
             log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
             return False
         except xmlrpclib.ProtocolError as e:
@@ -126,7 +126,7 @@ class NZBGet(DownloaderBase):
                 log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
-        except socket.error:
+        except OSError:
             log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
             return []
         except xmlrpclib.ProtocolError as e:
@@ -211,7 +211,7 @@ class NZBGet(DownloaderBase):
                 log.debug('Successfully connected to NZBGet')
             else:
                 log.info('Successfully connected to NZBGet, but unable to send a message')
-        except socket.error:
+        except OSError:
             log.error('NZBGet is not responding. Please ensure that NZBGet is running and host setting is correct.')
             return False
         except xmlrpclib.ProtocolError as e:

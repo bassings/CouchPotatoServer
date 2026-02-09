@@ -25,7 +25,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
     in_progress = False
 
     def __init__(self):
-        super(MovieSearcher, self).__init__()
+        super().__init__()
 
         addEvent('movie.searcher.all', self.searchAll)
         addEvent('movie.searcher.all_view', self.searchAllView)
@@ -316,7 +316,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         for raw_title in media['info']['titles']:
             for movie_title in possibleTitles(raw_title):
-                movie_words = re.split('\W+', simplifyString(movie_title))
+                movie_words = re.split(r'\W+', simplifyString(movie_title))
 
                 if fireEvent('searcher.correct_name', nzb['name'], movie_title, single = True):
                     # if no IMDB link, at least check year range 1
@@ -395,7 +395,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 self.single(media, manual = manual, force_download = force_download)
 
                 return True
-            
+
             return False
         except:
             log.error('Failed searching for next release: %s', traceback.format_exc())

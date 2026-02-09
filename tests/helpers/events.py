@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 class MockEventBus:
     """A test double for the CouchPotato event system.
-    
+
     Tracks all fired events and registered listeners, allowing tests
     to verify event-driven behavior without the full app running.
     """

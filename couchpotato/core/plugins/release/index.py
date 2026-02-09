@@ -9,7 +9,7 @@ class ReleaseIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(ReleaseIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return key
@@ -24,7 +24,7 @@ class ReleaseStatusIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(ReleaseStatusIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()
@@ -39,7 +39,7 @@ class ReleaseIDIndex(HashIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(ReleaseIDIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()
@@ -54,7 +54,7 @@ class ReleaseDownloadIndex(HashIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(ReleaseDownloadIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.lower().encode('utf-8')).hexdigest()

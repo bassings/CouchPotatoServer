@@ -39,7 +39,7 @@ class Base(TorrentMagnetProvider):
     ]
 
     def __init__(self):
-        super(Base, self).__init__()
+        super().__init__()
 
         addEvent('app.test', self.doTest)
 
@@ -74,7 +74,7 @@ class Base(TorrentMagnetProvider):
 
                     entries = results_table.find_all('tr')
                     for result in entries[1:]:
-                        link = result.find(href = re.compile('torrent\/\d+\/'))
+                        link = result.find(href = re.compile(r'torrent\/\d+\/'))
                         download = result.find(href = re.compile('magnet:'))
 
                         try:
@@ -100,7 +100,7 @@ class Base(TorrentMagnetProvider):
                                 return confirmed + trusted + vip + moderated
 
                             results.append({
-                                'id': re.search('/(?P<id>\d+)/', link['href']).group('id'),
+                                'id': re.search(r'/(?P<id>\d+)/', link['href']).group('id'),
                                 'name': str(link.string),
                                 'url': download['href'],
                                 'detail_url': self.getDomain(link['href']),
@@ -115,7 +115,7 @@ class Base(TorrentMagnetProvider):
                     log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def isEnabled(self):
-        return super(Base, self).isEnabled() and self.getDomain()
+        return super().isEnabled() and self.getDomain()
 
     def correctProxy(self, data):
         if isinstance(data, bytes):

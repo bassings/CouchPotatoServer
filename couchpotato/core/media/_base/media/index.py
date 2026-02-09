@@ -12,7 +12,7 @@ class MediaIndex(MultiTreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(MediaIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()
@@ -36,7 +36,7 @@ class MediaStatusIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(MediaStatusIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()
@@ -51,7 +51,7 @@ class MediaTypeIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(MediaTypeIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return md5(key.encode('utf-8')).hexdigest()
@@ -70,7 +70,7 @@ from couchpotato.core.helpers.encoding import simplifyString"""
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(TitleSearchIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         self.__l = kwargs.get('w_len', 2)
 
     def make_key_value(self, data):
@@ -107,7 +107,7 @@ from couchpotato.core.helpers.encoding import toUnicode, simplifyString"""
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(TitleIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return self.simplify(key)
@@ -140,7 +140,7 @@ from couchpotato.core.helpers.encoding import toUnicode, simplifyString"""
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '1s'
-        super(StartsWithIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return self.first(key)
@@ -167,7 +167,7 @@ class MediaChildrenIndex(TreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(MediaChildrenIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key(self, key):
         return key
@@ -184,7 +184,7 @@ class MediaTagIndex(MultiTreeBasedIndex):
 
     def __init__(self, *args, **kwargs):
         kwargs['key_format'] = '32s'
-        super(MediaTagIndex, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     def make_key_value(self, data):
         if data.get('_t') == 'media' and data.get('tags') and len(data.get('tags', [])) > 0:

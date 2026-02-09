@@ -200,12 +200,12 @@ class Transmission(DownloaderBase):
         return self.trpc.remove_torrent(release_download['id'], delete_files)
 
 
-class TransmissionRPC(object):
+class TransmissionRPC:
 
     """TransmissionRPC lite library"""
     def __init__(self, host = 'http://localhost', port = 9091, rpc_url = 'transmission', username = None, password = None):
 
-        super(TransmissionRPC, self).__init__()
+        super().__init__()
 
         self.url = host + ':' + str(port) + '/' + rpc_url + '/rpc'
         self.tag = 0

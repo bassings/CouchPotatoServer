@@ -19,24 +19,24 @@ log = CPLog(__name__)
 class FolderScannerMixin:
     """Mixin providing directory scanning, file grouping, and identifier creation."""
 
-    clean = ('([ _\,\.\(\)\[\]\-]|^)(3d|hsbs|sbs|half.sbs|full.sbs|ou|half.ou|full.ou|extended|extended.cut|directors.cut|french|fr|swedisch|sw|danish|dutch|nl|swesub|subs|spanish|german|ac3|dts|custom|dc|divx|divx5|dsr|dsrip|dutch|dvd|dvdr|dvdrip|dvdscr|dvdscreener|screener|dvdivx|cam|fragment|fs|hdtv|hdrip'
-            '|hdtvrip|webdl|web.dl|webrip|web.rip|internal|limited|multisubs|ntsc|ogg|ogm|pal|pdtv|proper|repack|rerip|retail|r3|r5|bd5|se|svcd|swedish|german|read.nfo|nfofix|unrated|ws|telesync|ts|telecine|tc|brrip|bdrip|video_ts|audio_ts|480p|480i|576p|576i|720p|720i|1080p|1080i|hrhd|hrhdtv|hddvd|bluray|x264|h264|x265|h265|xvid|xvidvd|xxx|www.www|hc|\[.*\])(?=[ _\,\.\(\)\[\]\-]|$)')
+    clean = (r'([ _\,\.\(\)\[\]\-]|^)(3d|hsbs|sbs|half.sbs|full.sbs|ou|half.ou|full.ou|extended|extended.cut|directors.cut|french|fr|swedisch|sw|danish|dutch|nl|swesub|subs|spanish|german|ac3|dts|custom|dc|divx|divx5|dsr|dsrip|dutch|dvd|dvdr|dvdrip|dvdscr|dvdscreener|screener|dvdivx|cam|fragment|fs|hdtv|hdrip'
+            r'|hdtvrip|webdl|web.dl|webrip|web.rip|internal|limited|multisubs|ntsc|ogg|ogm|pal|pdtv|proper|repack|rerip|retail|r3|r5|bd5|se|svcd|swedish|german|read.nfo|nfofix|unrated|ws|telesync|ts|telecine|tc|brrip|bdrip|video_ts|audio_ts|480p|480i|576p|576i|720p|720i|1080p|1080i|hrhd|hrhdtv|hddvd|bluray|x264|h264|x265|h265|xvid|xvidvd|xxx|www.www|hc|\[.*\])(?=[ _\,\.\(\)\[\]\-]|$)')
 
     multipart_regex = [
-        '[ _\.-]+cd[ _\.-]*([0-9a-d]+)',
-        '[ _\.-]+dvd[ _\.-]*([0-9a-d]+)',
-        '[ _\.-]+part[ _\.-]*([0-9a-d]+)',
-        '[ _\.-]+dis[ck][ _\.-]*([0-9a-d]+)',
-        'cd[ _\.-]*([0-9a-d]+)$',
-        'dvd[ _\.-]*([0-9a-d]+)$',
-        'part[ _\.-]*([0-9a-d]+)$',
-        'dis[ck][ _\.-]*([0-9a-d]+)$',
-        '()[ _\.-]+([0-9]*[abcd]+)(\.....?)$',
-        '([a-z])([0-9]+)(\.....?)$',
-        '()([ab])(\.....?)$',
+        r'[ _\.-]+cd[ _\.-]*([0-9a-d]+)',
+        r'[ _\.-]+dvd[ _\.-]*([0-9a-d]+)',
+        r'[ _\.-]+part[ _\.-]*([0-9a-d]+)',
+        r'[ _\.-]+dis[ck][ _\.-]*([0-9a-d]+)',
+        r'cd[ _\.-]*([0-9a-d]+)$',
+        r'dvd[ _\.-]*([0-9a-d]+)$',
+        r'part[ _\.-]*([0-9a-d]+)$',
+        r'dis[ck][ _\.-]*([0-9a-d]+)$',
+        r'()[ _\.-]+([0-9]*[abcd]+)(\.....?)$',
+        r'([a-z])([0-9]+)(\.....?)$',
+        r'()([ab])(\.....?)$',
     ]
 
-    cp_imdb = '\.cp\((?P<id>tt[0-9]+),?\s?(?P<random>[A-Za-z0-9]+)?\)'
+    cp_imdb = r'\.cp\((?P<id>tt[0-9]+),?\s?(?P<random>[A-Za-z0-9]+)?\)'
 
     def scan(self, folder=None, files=None, release_download=None, simple=False,
              newer_than=0, return_ignored=True, check_file_date=True, on_found=None):
@@ -272,7 +272,7 @@ class FolderScannerMixin:
                 break
 
             for file_type in group['files']:
-                if not file_type is 'leftover':
+                if file_type is not 'leftover':
                     group['files']['leftover'] -= set(group['files'][file_type])
                     group['files'][file_type] = list(group['files'][file_type])
             group['files']['leftover'] = list(group['files']['leftover'])
@@ -455,7 +455,7 @@ class FolderScannerMixin:
         return 1
 
     def findYear(self, text):
-        matches = re.findall('(\(|\[)(?P<year>19[0-9]{2}|20[0-9]{2})(\]|\))', text)
+        matches = re.findall(r'(\(|\[)(?P<year>19[0-9]{2}|20[0-9]{2})(\]|\))', text)
         if matches:
             return matches[-1][1]
 
@@ -480,7 +480,7 @@ class FolderScannerMixin:
                 log.debug('Could not detect via guessit "%s": %s', file_name, traceback.format_exc())
 
         release_name = os.path.basename(release_name.replace('\\', '/'))
-        cleaned = ' '.join(re.split('\W+', simplifyString(release_name)))
+        cleaned = ' '.join(re.split(r'\W+', simplifyString(release_name)))
         cleaned = re.sub(self.clean, ' ', cleaned)
 
         year = None

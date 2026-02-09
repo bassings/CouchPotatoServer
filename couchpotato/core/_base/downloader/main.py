@@ -126,7 +126,7 @@ class DownloaderBase(Provider):
         return is_correct
 
     def magnetToTorrent(self, magnet_link):
-        torrent_hash = re.findall('urn:btih:([\w]{32,40})', magnet_link)[0].upper()
+        torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', magnet_link)[0].upper()
 
         # Convert base 32 to hex
         if len(torrent_hash) == 32:
@@ -171,7 +171,7 @@ class DownloaderBase(Provider):
         if not data: data = {}
 
         d_manual = self.conf('manual', default = False)
-        return super(DownloaderBase, self).isEnabled() and \
+        return super().isEnabled() and \
             (d_manual and manual or d_manual is False) and \
             (not data or self.isCorrectProtocol(data.get('protocol')))
 
@@ -207,7 +207,7 @@ class ReleaseDownloadList(list):
         self.provider = provider
         self.kwargs = kwargs
 
-        super(ReleaseDownloadList, self).__init__()
+        super().__init__()
 
     def extend(self, results):
         for r in results:
@@ -215,7 +215,7 @@ class ReleaseDownloadList(list):
 
     def append(self, result):
         new_result = self.fillResult(result)
-        super(ReleaseDownloadList, self).append(new_result)
+        super().append(new_result)
 
     def fillResult(self, result):
 

@@ -43,7 +43,7 @@ class Trakt(Automation, TraktBase):
     }
 
     def __init__(self):
-        super(Trakt, self).__init__()
+        super().__init__()
 
         addApiView('automation.trakt.auth_url', self.getAuthorizationUrl)
         addApiView('automation.trakt.credentials', self.getCredentials)

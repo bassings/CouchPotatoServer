@@ -213,7 +213,7 @@ class MediaParserMixin:
                     txt = output.read()
                     output.close()
 
-                    idx_langs = re.findall('\nid: (\w+)', txt)
+                    idx_langs = re.findall('\nid: (\\w+)', txt)
 
                     sub_file = '%s.sub' % os.path.splitext(extra)[0]
                     if len(idx_langs) > 0 and os.path.isfile(sub_file):
@@ -242,7 +242,7 @@ class MediaParserMixin:
 
     def getGroup(self, file):
         try:
-            match = re.findall('\-([A-Z0-9]+)[\.\/]', file, re.I)
+            match = re.findall(r'\-([A-Z0-9]+)[\.\/]', file, re.I)
             return match[-1] or ''
         except:
             return ''

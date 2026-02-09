@@ -105,7 +105,7 @@ class Base(TorrentProvider):
         hosts = self.getHosts()
 
         for host in hosts:
-            result = super(Base, self).belongsTo(url, host = host['host'], provider = provider)
+            result = super().belongsTo(url, host = host['host'], provider = provider)
             if result:
                 return result
 

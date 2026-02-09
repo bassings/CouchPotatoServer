@@ -35,7 +35,7 @@ from couchpotato.core.helpers.variable import getDataDir, removePyc
 removePyc(base_path)
 
 
-class Loader(object):
+class Loader:
 
     do_restart = False
 
@@ -145,11 +145,11 @@ if __name__ == '__main__':
         l.run()
     except KeyboardInterrupt:
         pass
-    except select.error:
+    except OSError:
         pass
     except SystemExit:
         raise
-    except socket.error as e:
+    except OSError as e:
         # log when socket receives SIGINT, but continue.
         # previous code would have skipped over other types of IO errors too.
         try:
@@ -160,7 +160,7 @@ if __name__ == '__main__':
                 nr = e.args[0] if e.args else 0
         except (AttributeError, IndexError):
             nr = 0
-            
+
         if nr != 4:
             try:
                 l.log.critical(traceback.format_exc())

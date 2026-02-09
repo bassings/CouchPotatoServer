@@ -25,11 +25,11 @@ class Base(TorrentProvider):
     cat_backup_id = None
 
     def _searchOnTitle(self, title, media, quality, results):
-	urlParms = self.buildUrl(title, media, quality)
+        urlParms = self.buildUrl(title, media, quality)
         url = self.urls['search'] % (urlParms[1], urlParms[0])
 
         data = self.getHTMLData(url)
-	jsonResults = json.loads(data)
+        jsonResults = json.loads(data)
 
         if jsonResults:
 

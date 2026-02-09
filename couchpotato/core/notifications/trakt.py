@@ -23,7 +23,7 @@ class Trakt(Notification, TraktBase):
         if not data: data = {}
 
         if listener == 'test':
-            result = self.call((self.urls['test']))
+            result = self.call(self.urls['test'])
 
             return result
 

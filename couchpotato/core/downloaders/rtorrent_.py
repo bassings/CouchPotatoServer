@@ -27,7 +27,7 @@ class rTorrent(DownloaderBase):
 
     # Migration url to host options
     def __init__(self):
-        super(rTorrent, self).__init__()
+        super().__init__()
 
         addEvent('app.load', self.migrate)
         addEvent('setting.save.rtorrent.*.after', self.settingsChanged)

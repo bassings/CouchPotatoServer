@@ -122,7 +122,7 @@ class Blackhole(DownloaderBase):
         """
 
         if self.conf('use_for') == 'both':
-            return super(Blackhole, self).getEnabledProtocol()
+            return super().getEnabledProtocol()
         elif self.conf('use_for') == 'torrent':
             return ['torrent', 'torrent_magnet']
         else:
@@ -142,8 +142,8 @@ class Blackhole(DownloaderBase):
         elif data:
             for_protocol.append(data.get('protocol'))
 
-        return super(Blackhole, self).isEnabled(manual, data) and \
-            ((self.conf('use_for') in for_protocol))
+        return super().isEnabled(manual, data) and \
+            (self.conf('use_for') in for_protocol)
 
 
 config = [{

@@ -10,7 +10,7 @@ log = CPLog(__name__)
 class Matcher(MatcherBase):
 
     def __init__(self):
-        super(Matcher, self).__init__()
+        super().__init__()
 
         self.caper = Caper()
 

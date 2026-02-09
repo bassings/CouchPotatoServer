@@ -1,7 +1,7 @@
 #import sys
 import os
 
-import mock
+from unittest import mock
 import unittest
 from unittest import TestCase
 

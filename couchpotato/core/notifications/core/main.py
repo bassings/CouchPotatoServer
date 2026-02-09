@@ -37,7 +37,7 @@ class CoreNotifier(Notification):
     ]
 
     def __init__(self):
-        super(CoreNotifier, self).__init__()
+        super().__init__()
 
         addEvent('notify', self.notify)
         addEvent('notify.frontend', self.frontend)

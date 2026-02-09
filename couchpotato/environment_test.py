@@ -1,6 +1,6 @@
 import unittest
 from unittest import TestCase
-import mock
+from unittest import mock
 
 from couchpotato.environment import Env
 

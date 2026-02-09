@@ -16,7 +16,7 @@ DEFAULT_BACKEND = 'codernity'
 ENV_VAR = 'CP_DATABASE_BACKEND'
 
 
-def get_backend(backend: Optional[str] = None) -> str:
+def get_backend(backend: str | None = None) -> str:
     """Determine which database backend to use.
 
     Priority:
@@ -29,7 +29,7 @@ def get_backend(backend: Optional[str] = None) -> str:
     return os.environ.get(ENV_VAR, DEFAULT_BACKEND).lower()
 
 
-def create_adapter(backend: Optional[str] = None) -> DatabaseInterface:
+def create_adapter(backend: str | None = None) -> DatabaseInterface:
     """Create a database adapter instance.
 
     Args:

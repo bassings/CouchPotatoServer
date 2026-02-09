@@ -56,9 +56,9 @@ class YTSPopular(Automation):
             imdb = self.search(el['title'], el['year'])
             if imdb and self.isMinimalMovie(imdb):
                 movies.append(imdb['imdb'])
-        
+
         return movies
-            
+
 
 config = [{
     'name': 'ytspopular',

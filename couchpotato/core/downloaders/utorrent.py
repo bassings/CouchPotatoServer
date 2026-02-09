@@ -223,11 +223,11 @@ class uTorrent(DownloaderBase):
                 #Windows only needs S_IWRITE, but we bitwise-or with current perms to preserve other permission bits on Linux
                 os.chmod(filepath, stat.S_IWRITE | os.stat(filepath).st_mode)
 
-class uTorrentAPI(object):
+class uTorrentAPI:
 
     def __init__(self, host = 'localhost', port = 8000, username = None, password = None):
 
-        super(uTorrentAPI, self).__init__()
+        super().__init__()
 
         self.url = 'http://' + str(host) + ':' + str(port) + '/gui/'
         self.token = ''

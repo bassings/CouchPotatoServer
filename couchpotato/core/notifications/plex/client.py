@@ -9,7 +9,7 @@ import requests
 log = CPLog(__name__)
 
 
-class PlexClientProtocol(object):
+class PlexClientProtocol:
     def __init__(self, plex):
         self.plex = plex
 

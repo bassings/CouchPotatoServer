@@ -11,7 +11,7 @@ from couchpotato.core.logger import CPLog
 log = CPLog(__name__)
 
 
-class Loader(object):
+class Loader:
 
     def __init__(self):
         self.plugins = {}

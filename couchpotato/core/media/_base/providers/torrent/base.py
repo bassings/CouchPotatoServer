@@ -25,7 +25,7 @@ class TorrentProvider(YarrProvider):
             try:
                 cache_key = md5(url)
                 data = self.getCache(cache_key, url)
-            except IOError:
+            except OSError:
                 log.error('Failed to open %s.', url)
                 return False
 

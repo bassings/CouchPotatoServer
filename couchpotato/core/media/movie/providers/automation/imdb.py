@@ -79,12 +79,12 @@ class IMDBWatchlist(IMDBBase):
 
             try:
                 # Get list ID
-                ids = re.findall('(?:list/|list_id=)([a-zA-Z0-9\-_]{11})', watchlist_url)
+                ids = re.findall(r'(?:list/|list_id=)([a-zA-Z0-9\-_]{11})', watchlist_url)
                 if len(ids) == 1:
                     watchlist_url = 'http://www.imdb.com/list/%s/?view=compact&sort=created:asc' % ids[0]
                 # Try find user id with watchlist
                 else:
-                    userids = re.findall('(ur\d{7,9})', watchlist_url)
+                    userids = re.findall(r'(ur\d{7,9})', watchlist_url)
                     if len(userids) == 1:
                         watchlist_url = 'http://www.imdb.com/user/%s/watchlist?view=compact&sort=created:asc' % userids[0]
             except:

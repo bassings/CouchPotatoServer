@@ -203,7 +203,7 @@ class Deluge(DownloaderBase):
         return self.drpc.remove_torrent(release_download['id'], remove_local_data = delete_files)
 
 
-class DelugeRPC(object):
+class DelugeRPC:
 
     host = 'localhost'
     port = 58846
@@ -212,7 +212,7 @@ class DelugeRPC(object):
     client = None
 
     def __init__(self, host = 'localhost', port = 58846, username = None, password = None):
-        super(DelugeRPC, self).__init__()
+        super().__init__()
 
         self.host = host
         self.port = port

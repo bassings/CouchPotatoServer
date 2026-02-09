@@ -235,7 +235,7 @@ class QualityPlugin(Plugin):
             files.extend(extra.get('titles'))
 
         for cur_file in files:
-            words = re.split('\W+', cur_file.lower())
+            words = re.split(r'\W+', cur_file.lower())
             name_year = fireEvent('scanner.name_year', cur_file, file_name = cur_file, single = True)
             threed_words = words
             if name_year and name_year.get('name'):
@@ -493,8 +493,8 @@ class QualityPlugin(Plugin):
             '/volume1/Public/3D/Moviename/Moviename (2009).3D.SBS.ts': {'size': 7500, 'quality': '1080p', 'is_3d': True},
             '/volume1/Public/Moviename/Moviename (2009).ts': {'size': 7500, 'quality': '1080p'},
             '/movies/BluRay HDDVD H.264 MKV 720p EngSub/QuiQui le fou (criterion collection #123, 1915)/QuiQui le fou (1915) 720p x264 BluRay.mkv': {'size': 5500, 'quality': '720p'},
-            'C:\\movies\QuiQui le fou (collection #123, 1915)\QuiQui le fou (1915) 720p x264 BluRay.mkv': {'size': 5500, 'quality': '720p'},
-            'C:\\movies\QuiQui le fou (collection #123, 1915)\QuiQui le fou (1915) half-sbs 720p x264 BluRay.mkv': {'size': 5500, 'quality': '720p', 'is_3d': True},
+            'C:\\movies\\QuiQui le fou (collection #123, 1915)\\QuiQui le fou (1915) 720p x264 BluRay.mkv': {'size': 5500, 'quality': '720p'},
+            'C:\\movies\\QuiQui le fou (collection #123, 1915)\\QuiQui le fou (1915) half-sbs 720p x264 BluRay.mkv': {'size': 5500, 'quality': '720p', 'is_3d': True},
             'Moviename 2014 720p HDCAM XviD DualAudio': {'size': 4000, 'quality': 'cam'},
             'Moviename (2014) - 720p CAM x264': {'size': 2250, 'quality': 'cam'},
             'Movie Name (2014).mp4': {'size': 750, 'quality': 'brrip'},

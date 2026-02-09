@@ -49,7 +49,7 @@ def nameScore(name, year, preferred_words):
             score += 5
 
         # Contains preferred word
-        nzb_words = re.split('\W+', simplifyString(name))
+        nzb_words = re.split(r'\W+', simplifyString(name))
         score += 100 * len(list(set(nzb_words) & set(preferred_words)))
 
         return score
@@ -61,8 +61,8 @@ def nameScore(name, year, preferred_words):
 
 def nameRatioScore(nzb_name, movie_name):
     try:
-        nzb_words = re.split('\W+', fireEvent('scanner.create_file_identifier', nzb_name, single = True))
-        movie_words = re.split('\W+', simplifyString(movie_name))
+        nzb_words = re.split(r'\W+', fireEvent('scanner.create_file_identifier', nzb_name, single = True))
+        movie_words = re.split(r'\W+', simplifyString(movie_name))
 
         left_over = set(nzb_words) - set(movie_words)
         return 10 - len(left_over)
@@ -75,7 +75,7 @@ def nameRatioScore(nzb_name, movie_name):
 def namePositionScore(nzb_name, movie_name):
     score = 0
 
-    nzb_words = re.split('\W+', simplifyString(nzb_name))
+    nzb_words = re.split(r'\W+', simplifyString(nzb_name))
     qualities = fireEvent('quality.all', single = True)
 
     try:
@@ -121,7 +121,7 @@ def namePositionScore(nzb_name, movie_name):
             name, sc = value.split(':')
             allowed.append(name)
 
-        inbetween = re.split('\W+', after_name.split(found_quality)[0].strip())
+        inbetween = re.split(r'\W+', after_name.split(found_quality)[0].strip())
 
         score -= (10 * len(set(inbetween) - set(allowed)))
 
@@ -145,8 +145,8 @@ def providerScore(provider):
 def duplicateScore(nzb_name, movie_name):
 
     try:
-        nzb_words = re.split('\W+', simplifyString(nzb_name))
-        movie_words = re.split('\W+', simplifyString(movie_name))
+        nzb_words = re.split(r'\W+', simplifyString(nzb_name))
+        movie_words = re.split(r'\W+', simplifyString(movie_name))
 
         # minus for duplicates
         duplicates = [x for i, x in enumerate(nzb_words) if nzb_words[i:].count(x) > 1]
@@ -210,13 +210,13 @@ def sceneScore(nzb_name):
     for name in check_names:
 
         # Strip twice, remove possible file extensions
-        name = name.lower().strip(' "\'\.-_\[\]')
-        name = re.sub('\.([a-z0-9]{0,4})$', '', name)
-        name = name.strip(' "\'\.-_\[\]')
+        name = name.lower().strip(' "\'\\.-_\\[\\]')
+        name = re.sub(r'\.([a-z0-9]{0,4})$', '', name)
+        name = name.strip(' "\'\\.-_\\[\\]')
 
         # Make sure year and groupname is in there
         year = re.findall('(?P<year>19[0-9]{2}|20[0-9]{2})', name)
-        group = re.findall('\-([a-z0-9]+)$', name)
+        group = re.findall(r'\-([a-z0-9]+)$', name)
 
         if len(year) > 0 and len(group) > 0:
             try:

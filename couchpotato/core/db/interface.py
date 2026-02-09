@@ -1,6 +1,7 @@
 """Abstract database interface for CouchPotatoServer."""
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Dict, Optional
+from collections.abc import Iterator
 
 
 class DatabaseInterface(ABC):
@@ -22,7 +23,7 @@ class DatabaseInterface(ABC):
         """Close the database."""
 
     @abstractmethod
-    def get(self, index_name: str, key: Any, with_doc: bool = False) -> Dict:
+    def get(self, index_name: str, key: Any, with_doc: bool = False) -> dict:
         """Get a single document by key from the named index.
 
         Args:
@@ -38,7 +39,7 @@ class DatabaseInterface(ABC):
         """
 
     @abstractmethod
-    def insert(self, data: Dict) -> Dict:
+    def insert(self, data: dict) -> dict:
         """Insert a new document.
 
         Args:
@@ -49,7 +50,7 @@ class DatabaseInterface(ABC):
         """
 
     @abstractmethod
-    def update(self, data: Dict) -> Dict:
+    def update(self, data: dict) -> dict:
         """Update an existing document.
 
         Args:
@@ -60,7 +61,7 @@ class DatabaseInterface(ABC):
         """
 
     @abstractmethod
-    def delete(self, data: Dict) -> bool:
+    def delete(self, data: dict) -> bool:
         """Delete a document.
 
         Args:
@@ -72,7 +73,7 @@ class DatabaseInterface(ABC):
 
     @abstractmethod
     def all(self, index_name: str, limit: int = -1, offset: int = 0,
-            with_doc: bool = False) -> Iterator[Dict]:
+            with_doc: bool = False) -> Iterator[dict]:
         """Iterate over all documents in an index.
 
         Args:
@@ -89,7 +90,7 @@ class DatabaseInterface(ABC):
     def query(self, index_name: str, key: Any = None,
               start: Any = None, end: Any = None,
               limit: int = -1, offset: int = 0,
-              with_doc: bool = False) -> Iterator[Dict]:
+              with_doc: bool = False) -> Iterator[dict]:
         """Query an index with optional range parameters.
 
         Args:

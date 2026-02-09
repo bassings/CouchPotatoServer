@@ -12,7 +12,7 @@ class Plex(Notification):
     http_time_between_calls = 0
 
     def __init__(self):
-        super(Plex, self).__init__()
+        super().__init__()
 
         self.server = PlexServer(self)
 

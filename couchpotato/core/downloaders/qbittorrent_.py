@@ -23,7 +23,7 @@ class qBittorrent(DownloaderBase):
     qb = None
 
     def __init__(self):
-        super(qBittorrent, self).__init__()
+        super().__init__()
 
     def connect(self):
         if self.qb is not None:

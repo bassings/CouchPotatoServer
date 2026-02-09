@@ -228,8 +228,8 @@ class XBMC(MovieMetaData):
         # Clean up the xml and return it
         nfoxml = xml.dom.minidom.parseString(tostring(nfoxml))
         xml_string = nfoxml.toprettyxml(indent = '  ')
-        text_re = re.compile('>\n\s+([^<>\s].*?)\n\s+</', re.DOTALL)
-        xml_string = text_re.sub('>\g<1></', xml_string)
+        text_re = re.compile('>\n\\s+([^<>\\s].*?)\n\\s+</', re.DOTALL)
+        xml_string = text_re.sub(r'>\g<1></', xml_string)
 
         return xml_string.encode('utf-8')
 

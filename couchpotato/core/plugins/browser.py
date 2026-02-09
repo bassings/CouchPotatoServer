@@ -79,7 +79,7 @@ class FileBrowser(Plugin):
     def view(self, path = '/', show_hidden = True, **kwargs):
 
         soft_chroot = Env.get('softchroot')
-        
+
         home = getUserDir()
         if soft_chroot.enabled:
             if not soft_chroot.is_subdir(home):

@@ -1,5 +1,5 @@
-import mock
-from mock import patch, Mock, MagicMock
+from unittest import mock
+from unittest.mock import patch, Mock, MagicMock
 import unittest
 from unittest import TestCase
 

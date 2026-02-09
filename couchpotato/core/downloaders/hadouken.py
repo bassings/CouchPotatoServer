@@ -223,7 +223,7 @@ class Hadouken(DownloaderBase):
         return self.hadouken_api.remove(release_download['id'], remove_data = delete_files)
 
 
-class JsonRpcClient(object):
+class JsonRpcClient:
     def __init__(self, url, auth_header = None):
         self.url = url
         self.requestId = 0
@@ -278,7 +278,7 @@ class JsonRpcClient(object):
         return False
 
 
-class HadoukenAPI(object):
+class HadoukenAPI:
     def __init__(self, rpc_client):
         self.rpc = rpc_client
 
@@ -344,7 +344,7 @@ class HadoukenAPI(object):
         pass
 
 
-class TorrentItem(object):
+class TorrentItem:
     @property
     def info_hash(self):
         pass
@@ -488,7 +488,7 @@ class TorrentItemv4(TorrentItem):
         return 0
 
 
-class HadoukenAPIv4(object):
+class HadoukenAPIv4:
     def add_file(self, data, params):
         return self.rpc.invoke('torrents.addFile', [b64encode(data), params])
 
