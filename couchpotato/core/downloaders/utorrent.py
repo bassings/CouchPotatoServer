@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 import urllib.error
 
-from bencode import bencode as benc, bdecode
+from bencodepy import encode as benc, decode as bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, ss, sp
 from couchpotato.core.helpers.variable import tryInt, tryFloat, cleanHost

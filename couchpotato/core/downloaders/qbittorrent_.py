@@ -4,7 +4,7 @@ from datetime import timedelta
 import os
 import re
 
-from bencode import bencode, bdecode
+from bencodepy import encode as bencode, decode as bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost

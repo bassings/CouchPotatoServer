@@ -15,7 +15,7 @@ from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownlo
 from couchpotato.core.helpers.encoding import isInt, sp
 from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
-from bencode import bencode as benc, bdecode
+from bencodepy import encode as benc, decode as bdecode
 
 
 log = CPLog(__name__)

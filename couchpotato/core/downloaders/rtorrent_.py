@@ -10,7 +10,7 @@ from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
-from bencode import bencode, bdecode
+from bencodepy import encode as bencode, decode as bdecode
 from rtorrent import RTorrent
 
 

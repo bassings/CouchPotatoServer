@@ -5,7 +5,7 @@ import os.path
 import re
 import traceback
 
-from bencode import bencode as benc, bdecode
+from bencodepy import encode as benc, decode as bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, sp
 from couchpotato.core.helpers.variable import tryFloat, cleanHost
