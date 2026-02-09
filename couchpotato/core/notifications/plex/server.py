@@ -1,5 +1,5 @@
 from datetime import timedelta, datetime
-from urlparse import urlparse
+from urllib.parse import urlparse
 import traceback
 
 from couchpotato.core.helpers.variable import cleanHost
@@ -44,13 +44,12 @@ class PlexServer(object):
         else:
             #Fetch X-Plex-Token if it doesn't exist but a username/password do
             if not self.plex.conf('auth_token') and (self.plex.conf('username') and self.plex.conf('password')):
-                import urllib.request
-import urllib.error, base64
+                import urllib.request, urllib.error, base64
                 log.info("Fetching a new X-Plex-Token from plex.tv")
                 username = self.plex.conf('username')
                 password = self.plex.conf('password')
-                req = urllib.request.Request("https://plex.tv/users/sign_in.xml", data="")
-                authheader = "Basic %s" % base64.encodestring('%s:%s' % (username, password))[:-1]
+                req = urllib.request.Request("https://plex.tv/users/sign_in.xml", data=b"")
+                authheader = "Basic %s" % base64.b64encode(('%s:%s' % (username, password)).encode()).decode()
                 req.add_header("Authorization", authheader)
                 req.add_header("X-Plex-Device-Name", "CouchPotato")
                 req.add_header("X-Plex-Product", "CouchPotato Notifier")

@@ -76,7 +76,7 @@ class qBittorrent(DownloaderBase):
             # Send request to qBittorrent directly as a magnet
             try:
                 self.qb.download_from_link(data.get('url'), label=self.conf('label'))
-                torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
+                torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
                 log.info('Torrent [magnet] sent to QBittorrent successfully.')
                 return self.downloadReturnId(torrent_hash)
 

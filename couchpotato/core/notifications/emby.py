@@ -1,5 +1,7 @@
 import json
-import urllib, urllib2
+import urllib.parse
+import urllib.request
+import urllib.error
 
 from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
@@ -19,11 +21,9 @@ class Emby(Notification):
 
         host = cleanHost(host)
         url = '%semby/Library/Movies/Updated' % (host)
-        values = {}
-        data = urllib.urlencode(values)
 
         try:
-            req = urllib.request.Request(url, data)
+            req = urllib.request.Request(url, data=b'')
             req.add_header('X-MediaBrowser-Token', apikey)
 
             response = urllib.request.urlopen(req)
@@ -42,7 +42,7 @@ class Emby(Notification):
         host = cleanHost(host)
         url = '%semby/Notifications/Admin' % (host)
         values = {'Name': 'CouchPotato', 'Description': message, 'ImageUrl': 'https://raw.githubusercontent.com/CouchPotato/CouchPotatoServer/master/couchpotato/static/images/notify.couch.small.png'}
-        data = json.dumps(values)
+        data = json.dumps(values).encode('utf-8')
 
         try:
             req = urllib.request.Request(url, data)

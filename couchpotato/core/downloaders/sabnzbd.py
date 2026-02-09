@@ -61,7 +61,7 @@ class Sabnzbd(DownloaderBase):
             req_params['name'] = data.get('url')
 
         try:
-            if nzb_filename and req_params.get('mode') is 'addfile':
+            if nzb_filename and req_params.get('mode') == 'addfile':
                 sab_data = self.call(req_params, files = {'nzbfile': (ss(nzb_filename), filedata)})
             else:
                 sab_data = self.call(req_params)

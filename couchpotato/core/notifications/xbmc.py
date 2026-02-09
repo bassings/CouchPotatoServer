@@ -3,6 +3,7 @@ import json
 import socket
 import traceback
 import urllib
+import urllib.parse
 
 from couchpotato.core.helpers.variable import splitString, getTitle
 from couchpotato.core.logger import CPLog
@@ -135,7 +136,7 @@ class XBMC(Notification):
         server = 'http://%s/xbmcCmds/' % host
 
         # Notification(title, message [, timeout , image])
-        cmd = "xbmcHttp?command=ExecBuiltIn(Notification(%s,%s,'',%s))" % (urllib.quote(getTitle(data)), urllib.quote(data['message']), urllib.quote(self.getNotificationImage('medium')))
+        cmd = "xbmcHttp?command=ExecBuiltIn(Notification(%s,%s,'',%s))" % (urllib.parse.quote(getTitle(data)), urllib.parse.quote(data['message']), urllib.parse.quote(self.getNotificationImage('medium')))
         server += cmd
 
         # I have no idea what to set to, just tried text/plain and seems to be working :)
@@ -145,7 +146,7 @@ class XBMC(Notification):
 
         # authentication support
         if self.conf('password'):
-            base64string = base64.encodestring('%s:%s' % (self.conf('username'), self.conf('password'))).replace('\n', '')
+            base64string = base64.b64encode(('%s:%s' % (self.conf('username'), self.conf('password'))).encode()).decode()
             headers['Authorization'] = 'Basic %s' % base64string
 
         try:
@@ -199,7 +200,7 @@ class XBMC(Notification):
         }
 
         if self.conf('password'):
-            base64string = base64.encodestring('%s:%s' % (self.conf('username'), self.conf('password'))).replace('\n', '')
+            base64string = base64.b64encode(('%s:%s' % (self.conf('username'), self.conf('password'))).encode()).decode()
             headers['Authorization'] = 'Basic %s' % base64string
 
         try:

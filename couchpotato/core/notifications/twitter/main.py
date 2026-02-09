@@ -1,4 +1,4 @@
-from urlparse import parse_qsl
+from urllib.parse import parse_qsl
 
 from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import tryUrlencode

@@ -1,7 +1,10 @@
 from base64 import b16encode, b32decode, b64encode
-from distutils.version import LooseVersion
+try:
+    from packaging.version import Version as LooseVersion
+except ImportError:
+    from distutils.version import LooseVersion
 from hashlib import sha1
-import httplib
+import http.client as httplib
 import json
 import os
 import re
@@ -93,7 +96,7 @@ class Hadouken(DownloaderBase):
         torrent_filename = self.createFileName(data, filedata, media)
 
         if data.get('protocol') == 'torrent_magnet':
-            torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
+            torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             torrent_params['trackers'] = self.torrent_trackers
             torrent_params['name'] = torrent_filename
         else:

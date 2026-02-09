@@ -1,4 +1,4 @@
-from urlparse import urlparse
+from urllib.parse import urlparse
 import re
 import traceback
 

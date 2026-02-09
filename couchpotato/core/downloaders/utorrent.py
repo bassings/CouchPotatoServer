@@ -1,14 +1,15 @@
 from base64 import b16encode, b32decode
 from datetime import timedelta
 from hashlib import sha1
-import cookielib
-import httplib
+import http.cookiejar as cookielib
+import http.client as httplib
 import json
 import os
 import re
 import stat
 import time
 import urllib
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -84,7 +85,7 @@ class uTorrent(DownloaderBase):
             return False
 
         if data.get('protocol') == 'torrent_magnet':
-            torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
+            torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             torrent_params['trackers'] = '%0D%0A%0D%0A'.join(self.torrent_trackers)
         else:
             info = bdecode(filedata)['info']
@@ -232,12 +233,12 @@ class uTorrentAPI(object):
         self.token = ''
         self.last_time = time.time()
         cookies = cookielib.CookieJar()
-        self.opener = urllib.request.build_opener(urllib2.HTTPCookieProcessor(cookies), MultipartPostHandler)
+        self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cookies), MultipartPostHandler)
         self.opener.addheaders = [('User-agent', 'couchpotato-utorrent-client/1.0')]
         if username and password:
-            password_manager = urllib2.HTTPPasswordMgrWithDefaultRealm()
+            password_manager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
             password_manager.add_password(realm = None, uri = self.url, user = username, passwd = password)
-            self.opener.add_handler(urllib2.HTTPBasicAuthHandler(password_manager))
+            self.opener.add_handler(urllib.request.HTTPBasicAuthHandler(password_manager))
         elif username or password:
             log.debug('User or password missing, not using authentication.')
         self.token = self.get_token()
@@ -271,15 +272,15 @@ class uTorrentAPI(object):
         return token
 
     def add_torrent_uri(self, filename, torrent, add_folder = False):
-        action = 'action=add-url&s=%s' % urllib.quote(torrent)
+        action = 'action=add-url&s=%s' % urllib.parse.quote(torrent)
         if add_folder:
-            action += '&path=%s' % urllib.quote(filename)
+            action += '&path=%s' % urllib.parse.quote(filename)
         return self._request(action)
 
     def add_torrent_file(self, filename, filedata, add_folder = False):
         action = 'action=add-file'
         if add_folder:
-            action += '&path=%s' % urllib.quote(filename)
+            action += '&path=%s' % urllib.parse.quote(filename)
         return self._request(action, {'torrent_file': (ss(filename), filedata)})
 
     def set_torrent(self, hash, params):

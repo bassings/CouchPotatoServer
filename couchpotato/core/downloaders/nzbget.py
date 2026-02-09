@@ -4,7 +4,7 @@ import re
 import shutil
 import socket
 import traceback
-import xmlrpclib
+import xmlrpc.client as xmlrpclib
 
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import ss, sp

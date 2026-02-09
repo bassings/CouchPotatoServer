@@ -1,7 +1,7 @@
 from base64 import b16encode, b32decode
 from datetime import timedelta
 from hashlib import sha1
-from urlparse import urlparse
+from urllib.parse import urlparse
 import os
 import re
 
@@ -159,7 +159,7 @@ class rTorrent(DownloaderBase):
         # Try download magnet torrents
         if data.get('protocol') == 'torrent_magnet':
             # Send magnet to rTorrent
-            torrent_hash = re.findall('urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
+            torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             # Send request to rTorrent
             try:
                 torrent = self.rt.load_magnet(data.get('url'), torrent_hash)

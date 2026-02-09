@@ -318,7 +318,7 @@ class DelugeRPC(object):
     def _check_torrent(self, magnet, torrent):
         # Torrent not added, check if it already existed.
         if magnet:
-            torrent_hash = re.findall('urn:btih:([\w]{32,40})', torrent)[0]
+            torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', torrent)[0]
         else:
             info = bdecode(torrent)["info"]
             torrent_hash = sha1(benc(info)).hexdigest()

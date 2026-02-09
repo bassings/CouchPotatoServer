@@ -1,6 +1,6 @@
 from base64 import b64encode
 from datetime import timedelta
-import httplib
+import http.client as httplib
 import json
 import os.path
 import re
@@ -212,9 +212,9 @@ class TransmissionRPC(object):
         self.session_id = 0
         self.session = {}
         if username and password:
-            password_manager = urllib2.HTTPPasswordMgrWithDefaultRealm()
+            password_manager = urllib.request.HTTPPasswordMgrWithDefaultRealm()
             password_manager.add_password(realm = None, uri = self.url, user = username, passwd = password)
-            opener = urllib.request.build_opener(urllib2.HTTPBasicAuthHandler(password_manager))
+            opener = urllib.request.build_opener(urllib.request.HTTPBasicAuthHandler(password_manager))
             opener.addheaders = [('User-agent', 'couchpotato-transmission-client/1.0')]
             urllib.request.install_opener(opener)
         elif username or password:
@@ -247,7 +247,7 @@ class TransmissionRPC(object):
                 msg = str(err.read())
                 try:
                     self.session_id = \
-                        re.search('X-Transmission-Session-Id:\s*(\w+)', msg).group(1)
+                        re.search(r'X-Transmission-Session-Id:\s*(\w+)', msg).group(1)
                     log.debug('X-Transmission-Session-Id: %s', self.session_id)
 
                     # #resend request with the updated header
