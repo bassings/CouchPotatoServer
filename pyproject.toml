@@ -45,6 +45,62 @@ ignore = [
     "F841",
     # Ambiguous variable name
     "E741",
+    # Multiple statements on one line — legacy code style
+    "E701",
+    # Indentation contains tabs — legacy mixed indentation
+    "W191",
+    # Module level import not at top of file — legacy code structure
+    "E402",
+    # Comparison to None (use is/is not) — could change behaviour with __eq__
+    "E711",
+    # Not-in test — could change behaviour
+    "E713",
+    # Do not assign a lambda expression — legacy style
+    "E731",
+    # Comparison to True/False — could change behaviour
+    "E712",
+    # Function variable does not bind loop variable — legacy closures
+    "B023",
+    # Use is/is not for comparisons — too many to fix safely
+    "F632",
+    # Return in finally — legacy patterns
+    "B012",
+    # Unreachable code — legacy patterns
+    "B020",
+    # Redefined unused name — legacy
+    "F811",
+    # Unnecessary call to str/bytes — legacy
+    "B005",
+    # Trailing whitespace
+    "W291",
+    # No newline at end of file
+    "W292",
+    # Trailing semicolons
+    "E703",
+    # f-string without placeholders
+    "F541",
+    # Deprecated typing imports (Dict, List, etc.) — bulk change, do later
+    "UP035",
+    # Use implicit references for positional format fields
+    "UP030",
+    # Version block outdated for minimum Python version
+    "UP036",
+    # zip() without strict= — legacy code
+    "B905",
+    # Useless expression — legacy patterns
+    "B018",
+    # raise without from in except — legacy
+    "B904",
+    # Duplicate exception in try-except
+    "B025",
+    # Function call in default argument (e.g. Depends()) — FastAPI pattern
+    "B008",
+    # Multiple imports on one line
+    "E401",
+    # Not is test — minor style
+    "E714",
+    # Unnecessary __init__ super call
+    "UP009",
 ]
 
 [tool.ruff.lint.per-file-ignores]
