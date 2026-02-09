@@ -1,0 +1,33 @@
+# CouchPotatoServer - Python dependencies
+# Replaces vendored libraries from libs/
+
+# Core Network
+requests==2.32.5
+tornado==6.5.4
+certifi==2026.1.4
+
+# Parsing
+beautifulsoup4==4.14.3
+html5lib==1.1
+guessit==3.8.0
+chardet==5.2.0
+
+# Utilities
+APScheduler==3.11.2
+python-dateutil==2.9.0.post0
+rsa==4.9.1
+oauthlib==3.3.1
+enzyme==0.5.2
+
+# Transitive (pinned for reproducibility)
+urllib3==2.6.3
+idna==3.11
+charset_normalizer==3.4.4
+soupsieve==2.8.3
+webencodings==0.5.1
+pyasn1==0.6.2
+six==1.17.0
+babelfish==0.6.1
+rebulk==3.2.0
+tzlocal==5.3.1
+typing-extensions==4.15.0
