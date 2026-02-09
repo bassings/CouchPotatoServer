@@ -193,16 +193,10 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     }
 
     # Create FastAPI application
-    application = create_app(api_key, web_base)
-    Env.set('app', application)
-
-    # Static file mounting
-    from fastapi.staticfiles import StaticFiles
-    static_path = '%sstatic/' % web_base
     static_dir = sp(os.path.join(base_path, 'couchpotato', 'static'))
-    if os.path.isdir(static_dir):
-        application.mount(static_path.rstrip('/'), StaticFiles(directory=static_dir), name='static')
-    Env.set('static_path', static_path)
+    application = create_app(api_key, web_base, static_dir=static_dir)
+    Env.set('app', application)
+    Env.set('static_path', '%sstatic/' % web_base)
 
     # Load configs & plugins
     loader = Env.get('loader')

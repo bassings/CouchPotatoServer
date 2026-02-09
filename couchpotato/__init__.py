@@ -129,9 +129,14 @@ addView('database', databaseManage)
 
 # --- FastAPI Route Handlers ---
 
-def create_app(api_key: str, web_base: str) -> FastAPI:
+def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(docs_url=None, redoc_url=None)
+
+    # Mount static files BEFORE catch-all routes so they take priority
+    if static_dir and os.path.isdir(static_dir):
+        from fastapi.staticfiles import StaticFiles
+        app.mount(web_base + 'static', StaticFiles(directory=static_dir), name='static')
 
     api_base = '%sapi/%s' % (web_base, api_key)
 
@@ -233,7 +238,10 @@ def create_app(api_key: str, web_base: str) -> FastAPI:
         # Page not found - redirect to SPA
         index_url = web_base
         url = request.url.path[len(index_url):]
-        if url[:3] != 'api':
+        if url.startswith('static/'):
+            # Let static file mount handle it (shouldn't reach here if mount works)
+            return Response(content='Not found', status_code=404)
+        elif url[:3] != 'api':
             return RedirectResponse(url=index_url + '#' + url.lstrip('/'))
         else:
             if not Env.get('dev'):
