@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13']
       fail-fast: false
 
     steps:
@@ -35,10 +35,14 @@ jobs:
         pip install -r requirements-dev.txt
 
     - name: Run tests
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
       run: |
-        python -m pytest tests/ -v --tb=short
+        python -m pytest tests/ -v --tb=short -W ignore::SyntaxWarning
 
     - name: Check core modules import
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
       run: |
         python -c "
         import sys

@@ -6,9 +6,6 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
-  schedule:
-    # Weekly builds on Sundays at 6 AM UTC
-    - cron: '0 6 * * 0'
 
 jobs:
   docker-build:
@@ -27,15 +24,10 @@ jobs:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Extract branch name
-      id: extract_branch
-      run: echo "branch=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
-
     - name: Build and test Docker image
       uses: docker/build-push-action@v6
       with:
         context: .
-        file: ./Dockerfile.python3
         load: true
         tags: bassings/couchpotato:test
         cache-from: type=gha
@@ -43,32 +35,22 @@ jobs:
 
     - name: Test Docker image
       run: |
-        # Start container
         docker run -d --name couchpotato-test -p 5051:5050 bassings/couchpotato:test
-        
-        # Wait for startup
         sleep 30
-        
-        # Test web interface
-        curl -f http://localhost:5051/ || exit 1
-        
-        # Check logs for errors
+        curl -f http://localhost:5051/ || (docker logs couchpotato-test && exit 1)
         docker logs couchpotato-test
-        
-        # Cleanup
         docker stop couchpotato-test
         docker rm couchpotato-test
 
     - name: Build and push to Docker Hub
-      if: github.event_name != 'pull_request'
+      if: github.event_name != 'pull_request' && secrets.DOCKER_USERNAME != ''
       uses: docker/build-push-action@v6
       with:
         context: .
-        file: ./Dockerfile.python3
         push: true
         tags: |
           bassings/couchpotato:develop
-          bassings/couchpotato:${{ steps.extract_branch.outputs.branch }}
+          bassings/couchpotato:latest
         platforms: linux/amd64,linux/arm64
         cache-from: type=gha
-        cache-to: type=gha,mode=max 
+        cache-to: type=gha,mode=max
