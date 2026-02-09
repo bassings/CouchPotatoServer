@@ -35,21 +35,21 @@ class WdtvLive(MovieMetaData):
         try:
             el = SubElement(nfoxml, 'title')
             el.text = toUnicode(getTitle(data))
-        except:
+        except Exception:
             pass
 
         # IMDB id
         try:
             el = SubElement(nfoxml, 'id')
             el.text = toUnicode(data['identifier'])
-        except:
+        except Exception:
             pass
 
         # Runtime
         try:
             runtime = SubElement(nfoxml, 'runtime')
             runtime.text = '%s min' % movie_info.get('runtime')
-        except:
+        except Exception:
             pass
 
         # Other values
@@ -65,7 +65,7 @@ class WdtvLive(MovieMetaData):
                 if movie_info.get(type):
                     el = SubElement(nfoxml, name)
                     el.text = toUnicode(movie_info.get(type, ''))
-            except:
+            except Exception:
                 pass
 
         # Rating
@@ -77,7 +77,7 @@ class WdtvLive(MovieMetaData):
                 votes = SubElement(nfoxml, 'votes')
                 votes.text = str(v)
                 break
-            except:
+            except Exception:
                 log.debug('Failed adding rating info from %s: %s', rating_type, traceback.format_exc())
 
         # Genre

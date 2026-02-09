@@ -14,7 +14,7 @@ class RSS:
         textelements = []
         try:
             elements = xml.findall(path)
-        except:
+        except Exception:
             return
         for element in elements:
             textelements.append(element.text)
@@ -25,7 +25,7 @@ class RSS:
         elements = None
         try:
             elements = xml.findall(path)
-        except:
+        except Exception:
             pass
 
         return elements
@@ -35,7 +35,7 @@ class RSS:
 
         try:
             return xml.find(path)
-        except:
+        except Exception:
             return
 
     def getTextElement(self, xml, path):
@@ -43,7 +43,7 @@ class RSS:
 
         try:
             return xml.find(path).text
-        except:
+        except Exception:
             return
 
     def getItems(self, data, path = 'channel/item'):

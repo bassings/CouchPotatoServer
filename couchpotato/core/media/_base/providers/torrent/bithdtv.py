@@ -67,7 +67,7 @@ class Base(TorrentProvider):
                         'get_more_info': self.getMoreInfo,
                     })
 
-            except:
+            except Exception:
                 log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def getRequestHeaders(self):
@@ -88,7 +88,7 @@ class Base(TorrentProvider):
     def download(self, url = '', nzb_id = ''):
         try:
             return self.urlopen(url, headers=self.getRequestHeaders())
-        except:
+        except Exception:
             log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'

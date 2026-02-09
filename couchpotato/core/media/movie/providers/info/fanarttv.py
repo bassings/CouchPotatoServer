@@ -41,7 +41,7 @@ class FanartTV(MovieProvider):
         except HTTPError as e:
             log.debug('Failed getting extra art for %s: %s',
                       (identifier, e))
-        except:
+        except Exception:
             log.error('Failed getting extra art for %s: %s',
                       (identifier, traceback.format_exc()))
             return {}

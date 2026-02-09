@@ -53,7 +53,7 @@ class Base(TorrentProvider):
                         'seeders': tryInt(tds[len(tds)-2].string),
                         'leechers': tryInt(tds[len(tds)-1].string),
                     })
-            except:
+            except Exception:
                 log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
 

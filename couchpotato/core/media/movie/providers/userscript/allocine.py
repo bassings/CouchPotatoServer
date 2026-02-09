@@ -20,7 +20,7 @@ class AlloCine(UserscriptBase):
 
         try:
             data = self.getUrl(url)
-        except:
+        except Exception:
             return
 
         try:
@@ -31,6 +31,6 @@ class AlloCine(UserscriptBase):
             name = page_title[0].strip()
             year = page_title[1].strip()[-4:]
             return self.search(name, year)
-        except:
+        except Exception:
             log.error('Failed parsing page for title and year: %s', traceback.format_exc())
 

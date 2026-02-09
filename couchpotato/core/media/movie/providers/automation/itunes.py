@@ -58,7 +58,7 @@ class ITunes(Automation, RSS):
                         if imdb and self.isMinimalMovie(imdb):
                             movies.append(imdb['imdb'])
 
-            except:
+            except Exception:
                 log.error('Failed loading iTunes rss feed: %s %s', url, traceback.format_exc())
 
         return movies

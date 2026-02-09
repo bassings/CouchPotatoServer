@@ -80,7 +80,7 @@ class Base(TorrentProvider):
                         'score': torrentscore
                     })
 
-            except:
+            except Exception:
                 log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
 

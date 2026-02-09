@@ -71,14 +71,14 @@ class Core(Plugin):
             if sys.version_info >= (2, 7, 9):
                 import ssl
                 ssl._create_default_https_context = ssl._create_unverified_context
-        except:
+        except Exception:
             log.debug('Failed setting default ssl context: %s', traceback.format_exc())
 
     def dependencies(self):
 
         # Check if lxml is available
         try: from lxml import etree
-        except: log.error('LXML not available, please install for better/faster scraping support: `http://lxml.de/installation.html`')
+        except Exception: log.error('LXML not available, please install for better/faster scraping support: `http://lxml.de/installation.html`')
 
         try:
             import OpenSSL
@@ -90,9 +90,9 @@ class Core(Plugin):
             try:
                 import ssl
                 log.debug('OpenSSL detected: pyopenssl (%s) using OpenSSL (%s)', v, ssl.OPENSSL_VERSION)
-            except:
+            except Exception:
                 pass
-        except:
+        except Exception:
             log.error('OpenSSL not available, please install for better requests validation: `https://pyopenssl.readthedocs.org/en/latest/install.html`: %s', traceback.format_exc())
 
     def md5Password(self, value):
@@ -175,7 +175,7 @@ class Core(Plugin):
         try:
             import _thread
             _thread.interrupt_main()
-        except:
+        except Exception:
             log.error('Failed shutting down the server: %s', traceback.format_exc())
 
         fireEvent('app.after_shutdown', restart = restart)
@@ -188,10 +188,10 @@ class Core(Plugin):
             url = self.createBaseUrl()
             try:
                 webbrowser.open(url, 2, 1)
-            except:
+            except Exception:
                 try:
                     webbrowser.open(url, 1, 1)
-                except:
+                except Exception:
                     log.error('Could not launch a browser.')
 
     def createBaseUrl(self):

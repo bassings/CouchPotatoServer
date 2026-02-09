@@ -58,7 +58,7 @@ class Pushbullet(Notification):
 
             if kwargs.get('device_iden') is None:
                 try: del kwargs['device_iden']
-                except: pass
+                except Exception: pass
 
             return self.getJsonData(self.url % method, cache_timeout = -1, headers = headers, data = kwargs)
 

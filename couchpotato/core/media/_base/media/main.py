@@ -98,7 +98,7 @@ class MediaPlugin(MediaBase):
             try:
                 media['status'] = 'done'
                 db.update(media)
-            except:
+            except Exception:
                 pass
 
     def refresh(self, id = '', **kwargs):
@@ -129,7 +129,7 @@ class MediaPlugin(MediaBase):
 
             return handler
 
-        except:
+        except Exception:
             log.error('Refresh handler for non existing media: %s', traceback.format_exc())
 
     def addSingleRefreshView(self):
@@ -153,7 +153,7 @@ class MediaPlugin(MediaBase):
 
                 # Attach category
                 try: media['category'] = db.get('id', media.get('category_id'))
-                except: pass
+                except Exception: pass
 
                 media['releases'] = fireEvent('release.for_media', media['_id'], single = True)
 
@@ -161,7 +161,7 @@ class MediaPlugin(MediaBase):
 
         except (RecordNotFound, RecordDeleted):
             log.error('Media with id "%s" not found', media_id)
-        except:
+        except Exception:
             raise
 
     def getView(self, id = None, **kwargs):
@@ -205,7 +205,7 @@ class MediaPlugin(MediaBase):
         for x in identifiers:
             try:
                 return db.get('media', '%s-%s' % (x, identifiers[x]), with_doc = with_doc)
-            except:
+            except Exception:
                 pass
 
         log.debug('No media found with identifiers: %s', identifiers)
@@ -471,7 +471,7 @@ class MediaPlugin(MediaBase):
 
                     if deleted:
                         fireEvent('notify.frontend', type = 'media.deleted', data = media)
-            except:
+            except Exception:
                 log.error('Failed deleting media: %s', traceback.format_exc())
 
         return True
@@ -542,7 +542,7 @@ class MediaPlugin(MediaBase):
                         self.tag(media_id, 'recent', update_edited = True)
 
                 return m['status']
-            except:
+            except Exception:
                 log.error('Failed restatus: %s', traceback.format_exc())
 
     def tag(self, media_id, tag, update_edited = False):
@@ -562,7 +562,7 @@ class MediaPlugin(MediaBase):
                     db.update(m)
 
                 return True
-            except:
+            except Exception:
                 log.error('Failed tagging: %s', traceback.format_exc())
 
         return False
@@ -583,7 +583,7 @@ class MediaPlugin(MediaBase):
                     db.update(m)
 
                 return True
-            except:
+            except Exception:
                 log.error('Failed untagging: %s', traceback.format_exc())
 
         return False

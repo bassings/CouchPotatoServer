@@ -84,7 +84,7 @@ class Updater(Plugin):
 
             if do_check:
                 Env.prop(self.last_check, value = now)
-        except:
+        except Exception:
             log.error('Failed checking last time to update: %s', traceback.format_exc())
 
         if do_check and self.isEnabled() and self.check() and self.conf('automatic') and not self.updater.update_failed:
@@ -97,7 +97,7 @@ class Updater(Plugin):
                         info = self.updater.info()
                         version_date = datetime.fromtimestamp(info['update_version']['date'])
                         fireEvent('updater.updated', 'CouchPotato: Updated to a new version with hash "%s", this version is from %s' % (info['update_version']['hash'], version_date), data = info)
-                except:
+                except Exception:
                     log.error('Failed notifying for update: %s', traceback.format_exc())
 
                 fireEventAsync('app.restart')
@@ -126,7 +126,7 @@ class Updater(Plugin):
         info = {}
         try:
             info = self.updater.info()
-        except:
+        except Exception:
             log.error('Failed getting updater info: %s', traceback.format_exc())
 
         self._lock.release()
@@ -221,7 +221,7 @@ class GitUpdater(BaseUpdater):
             self.repo.pull()
 
             return True
-        except:
+        except Exception:
             log.error('Failed updating via GIT: %s', traceback.format_exc())
 
         self.update_failed = True
@@ -328,7 +328,7 @@ class SourceUpdater(BaseUpdater):
                 self.createFile(self.version_file, json.dumps(self.update_version))
 
                 return True
-        except:
+        except Exception:
             log.error('Failed updating: %s', traceback.format_exc())
 
         self.update_failed = True
@@ -365,7 +365,7 @@ class SourceUpdater(BaseUpdater):
                             existing_files.remove(tofile)
                         except ValueError:
                             pass
-                    except:
+                    except Exception:
                         log.error('Failed overwriting file "%s": %s', tofile, traceback.format_exc())
                         return False
 
@@ -376,7 +376,7 @@ class SourceUpdater(BaseUpdater):
 
             try:
                 os.remove(still_exists)
-            except:
+            except Exception:
                 log.error('Failed removing non-used file: %s', traceback.format_exc())
 
         return True
@@ -418,7 +418,7 @@ class SourceUpdater(BaseUpdater):
                 self.update_version = latest
 
             self.last_check = time.time()
-        except:
+        except Exception:
             log.error('Failed updating via source: %s', traceback.format_exc())
 
         return self.update_version is not None
@@ -433,7 +433,7 @@ class SourceUpdater(BaseUpdater):
                 'hash': commit['sha'],
                 'date': int(time.mktime(parse(commit['commit']['committer']['date']).timetuple())),
             }
-        except:
+        except Exception:
             log.error('Failed getting latest request from github: %s', traceback.format_exc())
 
         return {}
@@ -455,7 +455,7 @@ class DesktopUpdater(BaseUpdater):
 
             self.desktop._esky.auto_update(callback = do_restart)
             return
-        except:
+        except Exception:
             self.update_failed = True
 
         return False
@@ -481,7 +481,7 @@ class DesktopUpdater(BaseUpdater):
                 }
 
             self.last_check = time.time()
-        except:
+        except Exception:
             log.error('Failed updating desktop: %s', traceback.format_exc())
 
         return self.update_version is not None

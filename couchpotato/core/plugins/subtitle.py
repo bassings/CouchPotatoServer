@@ -44,7 +44,7 @@ class Subtitle(Plugin):
 
             return True
 
-        except:
+        except Exception:
             log.error('Failed searching for subtitle: %s', traceback.format_exc())
 
         return False

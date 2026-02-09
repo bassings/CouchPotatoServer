@@ -51,7 +51,7 @@ class TorrentProvider(YarrProvider):
                 data = ''
                 try:
                     data = self.urlopen(proxy, timeout = 3, show_error = False)
-                except:
+                except Exception:
                     log.debug('Failed %s proxy %s: %s', self.getName(), proxy, traceback.format_exc())
 
                 if isinstance(data, bytes):

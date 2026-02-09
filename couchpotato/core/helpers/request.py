@@ -31,7 +31,7 @@ def getParams(params):
                 else:
                     try:
                         current[item]
-                    except:
+                    except Exception:
                         current[item] = {}
 
                     current = current[item]
@@ -62,7 +62,7 @@ def dictToList(params):
                     new_value = [dictToList(value[k]) for k in sorted_keys]
                 else:
                     new_value = value
-            except:
+            except Exception:
                 new_value = value
 
             new[x] = new_value

@@ -113,10 +113,10 @@ class Plugin:
 
                 try:
                     p.chmod(Env.getPermission('file'))
-                except:
+                except Exception:
                     log.error('Failed writing permission to file "%s": %s', p, traceback.format_exc())
 
-            except:
+            except Exception:
                 log.error('Unable to write file "%s": %s', p, traceback.format_exc())
                 if p.is_file():
                     p.unlink()
@@ -145,13 +145,13 @@ class Plugin:
 
                     try:
                         Path(subfolder).rmdir()
-                    except:
+                    except Exception:
                         if show_error:
                             log.info2('Couldn\'t remove directory %s: %s', subfolder, traceback.format_exc())
 
         try:
             folder_path.rmdir()
-        except:
+        except Exception:
             if show_error:
                 log.error('Couldn\'t remove empty directory %s: %s', folder_path, traceback.format_exc())
 
@@ -189,7 +189,7 @@ class Plugin:
         else:
             try:
                 self._running.remove(value)
-            except:
+            except Exception:
                 log.error("Something went wrong when finishing the plugin function. Could not find the 'is_running' key")
 
     def getCache(self, cache_key, url = None, **kwargs):
@@ -215,7 +215,7 @@ class Plugin:
                 if data and cache_timeout > 0 and use_cache:
                     self.setCache(cache_key, data, timeout = cache_timeout)
                 return data
-            except:
+            except Exception:
                 if not kwargs.get('show_error', True):
                     raise
 
@@ -289,10 +289,10 @@ class Plugin:
         if file_too_new:
             try:
                 time_string = time.ctime(file_time[0])
-            except:
+            except Exception:
                 try:
                     time_string = time.ctime(file_time[1])
-                except:
+                except Exception:
                     time_string = 'unknown'
 
             return file_too_new, time_string

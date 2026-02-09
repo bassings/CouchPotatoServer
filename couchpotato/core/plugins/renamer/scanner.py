@@ -41,7 +41,7 @@ class ScannerMixin:
                     ds = rel['download_info'].get('status_support')
                     if ds is False or ds == 'False':
                         no_status_support.append(ss(rel['download_info'].get('downloader')))
-            except:
+            except Exception:
                 log.error('Error getting download IDs from database')
                 self.checking_snatched = False
                 return False
@@ -148,7 +148,7 @@ class ScannerMixin:
                         else:
                             scan_required = True
 
-            except:
+            except Exception:
                 log.error('Failed checking for release in downloader: %s', traceback.format_exc())
 
             for release_download in scan_releases:
@@ -168,7 +168,7 @@ class ScannerMixin:
 
             self.checking_snatched = False
             return True
-        except:
+        except Exception:
             log.error('Failed checking snatched: %s', traceback.format_exc())
 
         self.checking_snatched = False
@@ -181,7 +181,7 @@ class ScannerMixin:
         if release_download and release_download.get('id'):
             try:
                 rls = db.get('release_download', '%s-%s' % (release_download.get('downloader'), release_download.get('id')), with_doc=True)['doc']
-            except:
+            except Exception:
                 log.error('Download ID %s from downloader %s not found in releases', release_download.get('id'), release_download.get('downloader'))
 
         if rls:

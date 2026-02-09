@@ -93,7 +93,7 @@ class Release(Plugin):
                     if doc.get('status') == 'ignore':
                         doc['status'] = 'ignored'
                         db.update(doc)
-                except:
+                except Exception:
                     log.error('Failed fixing mis-status tag: %s', traceback.format_exc())
             except ValueError:
                 fireEvent('database.delete_corrupted', release.get('key'), traceback_error = traceback.format_exc(0))
@@ -102,7 +102,7 @@ class Release(Plugin):
                 db.delete(doc)
                 log.debug('Deleted orphaned release: %s', doc)
                 reindex += 1
-            except:
+            except Exception:
                 log.debug('Failed cleaning up orphaned releases: %s', traceback.format_exc())
 
         if reindex > 0:
@@ -141,7 +141,7 @@ class Release(Plugin):
                 # Add movie if it doesn't exist
                 try:
                     media = db.get('media', 'imdb-%s' % group['identifier'], with_doc = True)['doc']
-                except:
+                except Exception:
                     media = fireEvent('movie.add', params = {
                         'identifier': group['identifier'],
                         'profile_id': None,
@@ -156,7 +156,7 @@ class Release(Plugin):
                             'last_edit': int(time.time()),
                             'status': 'done',
                         })
-                    except:
+                    except Exception:
                         log.error('Failed updating existing release: %s', traceback.format_exc())
                 else:
 
@@ -175,7 +175,7 @@ class Release(Plugin):
                     try:
                         r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
                         r['media_id'] = media['_id']
-                    except:
+                    except Exception:
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
 
@@ -192,7 +192,7 @@ class Release(Plugin):
                 fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)
 
                 return True
-            except:
+            except Exception:
                 log.error('Failed: %s', traceback.format_exc())
 
         return False
@@ -213,7 +213,7 @@ class Release(Plugin):
         except RecordDeleted:
             log.debug('Already deleted: %s', release_id)
             return True
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return False
@@ -242,7 +242,7 @@ class Release(Plugin):
                 db.update(rel)
 
             return True
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return False
@@ -259,7 +259,7 @@ class Release(Plugin):
             return {
                 'success': True
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -292,7 +292,7 @@ class Release(Plugin):
                 'success': success == True
             }
 
-        except:
+        except Exception:
             log.error('Couldn\'t find release with id: %s: %s', id, traceback.format_exc())
             return {
                 'success': False
@@ -311,7 +311,7 @@ class Release(Plugin):
         if data.get('download') and (ismethod(data.get('download')) or isfunction(data.get('download'))):
             try:
                 filedata = data.get('download')(url = data.get('url'), nzb_id = data.get('id'))
-            except:
+            except Exception:
                 log.error('Tried to download, but the "%s" provider gave an error: %s', data.get('protocol'), traceback.format_exc())
                 return False
 
@@ -334,7 +334,7 @@ class Release(Plugin):
 
                 try:
                     rls = db.get('release_identifier', md5(data['url']), with_doc = True)['doc']
-                except:
+                except Exception:
                     log.error('No release found to store download information in')
                     return False
 
@@ -373,7 +373,7 @@ class Release(Plugin):
                     # Assume release downloaded
                     self.updateStatus(rls['_id'], status = 'downloaded')
 
-            except:
+            except Exception:
                 log.error('Failed storing download status: %s', traceback.format_exc())
                 return False
 
@@ -441,7 +441,7 @@ class Release(Plugin):
 
                 is_3d = False
                 try: is_3d = quality['custom']['3d']
-                except: pass
+                except Exception: pass
 
                 for rel in search_results:
 
@@ -462,12 +462,12 @@ class Release(Plugin):
                     try:
                         release['download_info'] = rel['download_info']
                         del rel['download_info']
-                    except:
+                    except Exception:
                         pass
 
                     try:
                         rls = db.get('release_identifier', rel_identifier, with_doc = True)['doc']
-                    except:
+                    except Exception:
                         rls = db.insert(release)
                         rls.update(release)
 
@@ -478,7 +478,7 @@ class Release(Plugin):
                                 continue
 
                             rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], (str, unicode)) else rel[info]
-                        except:
+                        except Exception:
                             log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
                     db.update(rls)
@@ -490,7 +490,7 @@ class Release(Plugin):
                         found_releases.append(rel_identifier)
 
                 return found_releases
-            except:
+            except Exception:
                 log.error('Failed: %s', traceback.format_exc())
 
         return []
@@ -526,7 +526,7 @@ class Release(Plugin):
                 fireEvent('notify.frontend', type = 'release.update_status', data = rel)
 
             return True
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return False

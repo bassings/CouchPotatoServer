@@ -31,7 +31,7 @@ class Scheduler(Plugin):
                 job = getattr(self, cron_type)[identifier]['job']
                 job.remove()
                 log.debug('%s unscheduled %s', cron_type.capitalize(), identifier)
-            except:
+            except Exception:
                 pass
 
     def doShutdown(self, *args, **kwargs):

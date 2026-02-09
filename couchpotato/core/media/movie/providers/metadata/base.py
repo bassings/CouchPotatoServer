@@ -29,7 +29,7 @@ class MovieMetaData(MetaDataBase):
         # Update library to get latest info
         try:
             group['media'] = fireEvent('movie.update', group['media'].get('_id'), identifier = getIdentifier(group['media']), extended = True, single = True)
-        except:
+        except Exception:
             log.error('Failed to update movie, before creating metadata: %s', traceback.format_exc())
 
         root_name = toUnicode(self.getRootName(group))
@@ -41,7 +41,7 @@ class MovieMetaData(MetaDataBase):
         for file_type in ['nfo']:
             try:
                 self._createType(meta_name, root, movie_info, group, file_type, 0)
-            except:
+            except Exception:
                 log.error('Unable to create %s file: %s', 'nfo', traceback.format_exc())
 
         for file_type in ['thumbnail', 'fanart', 'banner', 'disc_art', 'logo', 'clear_art', 'landscape', 'extra_thumbs', 'extra_fanart']:
@@ -55,7 +55,7 @@ class MovieMetaData(MetaDataBase):
 
                 for i in range(num_images):
                     self._createType(meta_name, root, movie_info, group, file_type, i)
-            except:
+            except Exception:
                 log.error('Unable to create %s file: %s', file_type, traceback.format_exc())
 
     def _createType(self, meta_name, root, movie_info, group, file_type, i):  # Get file path
@@ -80,14 +80,14 @@ class MovieMetaData(MetaDataBase):
 
                     # Try and copy stats seperately
                     try: shutil.copystat(content, name)
-                    except: pass
+                    except Exception: pass
                 else:
                     self.createFile(name, content)
                     group['renamed_files'].append(name)
 
                 try:
                     os.chmod(sp(name), Env.getPermission('file'))
-                except:
+                except Exception:
                     log.debug('Failed setting permissions for %s: %s', name, traceback.format_exc())
 
     def getRootName(self, data = None):
@@ -143,7 +143,7 @@ class MovieMetaData(MetaDataBase):
             images = movie_info['images'][wanted_file_type]
             file_path = fireEvent('file.download', url = images[i], single = True)
             return file_path
-        except:
+        except Exception:
             pass
 
     def getFanart(self, movie_info = None, data = None, i = 0):

@@ -71,7 +71,7 @@ class MovieBase(MovieTypeBase):
                     log.error(msg)
                     fireEvent('notify.frontend', type = 'movie.is_tvshow', message = msg)
                     return False
-            except:
+            except Exception:
                 pass
 
         info = params.get('info')
@@ -109,9 +109,9 @@ class MovieBase(MovieTypeBase):
 
             # Update movie info
             try: del info['in_wanted']
-            except: pass
+            except Exception: pass
             try: del info['in_library']
-            except: pass
+            except Exception: pass
             media['info'] = info
 
             new = False
@@ -124,9 +124,9 @@ class MovieBase(MovieTypeBase):
                     previous_profile = m.get('profile_id')
                 except RecordNotFound:
                     pass
-                except:
+                except Exception:
                     log.error('Failed getting previous profile: %s', traceback.format_exc())
-            except:
+            except Exception:
                 new = True
                 m = db.insert(media)
 
@@ -161,7 +161,7 @@ class MovieBase(MovieTypeBase):
                 db.update(m)
             else:
                 try: del params['info']
-                except: pass
+                except Exception: pass
                 log.debug('Movie already exists, not updating: %s', params)
                 added = False
 
@@ -197,7 +197,7 @@ class MovieBase(MovieTypeBase):
                 fireEvent('notify.frontend', type = 'movie.added', data = movie_dict, message = message)
 
             return movie_dict
-        except:
+        except Exception:
             log.error('Failed adding media: %s', traceback.format_exc())
 
     def addView(self, **kwargs):
@@ -242,14 +242,14 @@ class MovieBase(MovieTypeBase):
                     movie_dict = fireEvent('media.get', m['_id'], single = True)
                     fireEventAsync('movie.searcher.single', movie_dict, on_complete = self.createNotifyFront(media_id))
 
-                except:
+                except Exception:
                     print(traceback.format_exc())
                     log.error('Can\'t edit non-existing media')
 
             return {
                 'success': True,
             }
-        except:
+        except Exception:
             log.error('Failed editing media: %s', traceback.format_exc())
 
         return {
@@ -285,9 +285,9 @@ class MovieBase(MovieTypeBase):
 
             # Don't need those here
             try: del info['in_wanted']
-            except: pass
+            except Exception: pass
             try: del info['in_library']
-            except: pass
+            except Exception: pass
 
             if not info or len(info) == 0:
                 log.error('Could not update, no movie info to work with: %s', identifier)
@@ -309,7 +309,7 @@ class MovieBase(MovieTypeBase):
             self.getPoster(media, image_urls)
 
             db.update(media)
-        except:
+        except Exception:
             log.error('Failed update media: %s', traceback.format_exc())
 
         self.releaseLock(lock_key)
@@ -340,7 +340,7 @@ class MovieBase(MovieTypeBase):
                 db.update(media)
 
             return dates
-        except:
+        except Exception:
             log.error('Failed updating release dates: %s', traceback.format_exc())
 
         return {}

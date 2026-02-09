@@ -99,7 +99,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 except IndexError:
                     log.error('Forcing library update for %s, if you see this often, please report: %s', getIdentifier(media), traceback.format_exc())
                     fireEvent('movie.update', media_id)
-                except:
+                except Exception:
                     log.error('Search failed for %s: %s', getIdentifier(media), traceback.format_exc())
 
                 self.in_progress['to_go'] -= 1
@@ -400,7 +400,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 return True
 
             return False
-        except:
+        except Exception:
             log.error('Failed searching for next release: %s', traceback.format_exc())
             return False
 

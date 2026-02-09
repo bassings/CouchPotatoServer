@@ -17,7 +17,7 @@ class AppleTrailers(UserscriptBase):
 
         try:
             data = self.getUrl(url)
-        except:
+        except Exception:
             return
 
         try:
@@ -30,6 +30,6 @@ class AppleTrailers(UserscriptBase):
             year = tryInt(data['page']['release_date'][0:4])
 
             return self.search(name, year)
-        except:
+        except Exception:
             log.error('Failed getting apple trailer info: %s', traceback.format_exc())
             return None

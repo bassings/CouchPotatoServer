@@ -186,7 +186,7 @@ class Manage(Plugin):
                     db.reindex()
 
             Env.prop(last_update_key, time.time())
-        except:
+        except Exception:
             log.error('Failed updating library: %s', traceback.format_exc())
 
         while self.in_progress and len(self.in_progress) > 0 and not self.shuttingDown():
@@ -255,7 +255,7 @@ class Manage(Plugin):
     def directories(self):
         try:
             return self.conf('library', default = [])
-        except:
+        except Exception:
             pass
 
         return []

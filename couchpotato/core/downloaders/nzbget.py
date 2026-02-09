@@ -142,7 +142,7 @@ class NZBGet(DownloaderBase):
             groups = rpc.listgroups()
             queue = rpc.postqueue(0)
             history = rpc.history()
-        except:
+        except Exception:
             log.error('Failed getting data: %s', traceback.format_exc(1))
             return []
 
@@ -151,7 +151,7 @@ class NZBGet(DownloaderBase):
         for nzb in groups:
             try:
                 nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
-            except:
+            except Exception:
                 nzb_id = nzb['NZBID']
 
             if nzb_id in ids:
@@ -160,7 +160,7 @@ class NZBGet(DownloaderBase):
                 try:
                     if nzb['ActiveDownloads'] > 0 and nzb['DownloadRate'] > 0 and not (status['DownloadPaused'] or status['Download2Paused']):
                         timeleft = str(timedelta(seconds = nzb['RemainingSizeMB'] / status['DownloadRate'] * 2 ^ 20))
-                except:
+                except Exception:
                     pass
 
                 release_downloads.append({
@@ -184,7 +184,7 @@ class NZBGet(DownloaderBase):
         for nzb in history:
             try:
                 nzb_id = [param['Value'] for param in nzb['Parameters'] if param['Name'] == 'couchpotato'][0]
-            except:
+            except Exception:
                 nzb_id = nzb['NZBID']
 
             if nzb_id in ids:
@@ -234,7 +234,7 @@ class NZBGet(DownloaderBase):
 
             if nzb_id and path and rpc.editqueue('HistoryDelete', 0, "", [tryInt(nzb_id)]):
                 shutil.rmtree(path, True)
-        except:
+        except Exception:
             log.error('Failed deleting: %s', traceback.format_exc(0))
             return False
 

@@ -59,7 +59,7 @@ class ProfilePlugin(Plugin):
                 if media.get('profile_id') not in profile_ids:
                     media['profile_id'] = default_id
                     db.update(media)
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         # Cleanup profiles that have empty qualites
@@ -71,7 +71,7 @@ class ProfilePlugin(Plugin):
                     p = db.get('id', profile.get('_id'))
                     p['qualities'] = [x for x in p['qualities'] if (x != '' and x != '-1')]
                     db.update(p)
-            except:
+            except Exception:
                 log.error('Failed: %s', traceback.format_exc())
 
     def allView(self, **kwargs):
@@ -120,7 +120,7 @@ class ProfilePlugin(Plugin):
             try:
                 p = db.get('id', id)
                 profile['order'] = tryInt(kwargs.get('order', p.get('order', 999)))
-            except:
+            except Exception:
                 p = db.insert(profile)
 
             p.update(profile)
@@ -130,7 +130,7 @@ class ProfilePlugin(Plugin):
                 'success': True,
                 'profile': p
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -159,7 +159,7 @@ class ProfilePlugin(Plugin):
             return {
                 'success': True
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -189,7 +189,7 @@ class ProfilePlugin(Plugin):
                 'success': success,
                 'message': message
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -251,7 +251,7 @@ class ProfilePlugin(Plugin):
                 order += 1
 
             return True
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return False

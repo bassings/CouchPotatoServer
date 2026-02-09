@@ -44,7 +44,7 @@ class Base(TorrentProvider):
                     log.error('Error searching hdbits: %s' % result['message'])
                 else:
                     return result['data']
-        except:
+        except Exception:
             pass
 
         return None
@@ -67,7 +67,7 @@ class Base(TorrentProvider):
                         'seeders': tryInt(result['seeders']),
                         'leechers': tryInt(result['leechers'])
                     })
-            except:
+            except Exception:
                 log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
 

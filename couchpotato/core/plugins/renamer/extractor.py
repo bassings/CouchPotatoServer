@@ -65,7 +65,7 @@ class ExtractorMixin:
                         if self.conf('unrar_modify_date'):
                             try:
                                 os.utime(extr_file_path, (os.path.getatime(archive['file']), os.path.getmtime(archive['file'])))
-                            except:
+                            except Exception:
                                 log.error('Rar modify date enabled, but failed: %s', traceback.format_exc())
                         extr_files.append(extr_file_path)
                 del rar_handle

@@ -66,11 +66,11 @@ class Pneumatic(DownloaderBase):
                         log.info('File %s already exists.', full_path)
                         return self.downloadReturnId('')
 
-                except:
+                except Exception:
                     log.error('Failed to download .strm: %s', traceback.format_exc())
                     pass
 
-            except:
+            except Exception:
                 log.info('Failed to download file %s: %s', data.get('name'), traceback.format_exc())
                 return False
         return False

@@ -57,7 +57,7 @@ class FolderScannerMixin:
                     files.extend([sp(os.path.join(sp(root), ss(filename))) for filename in walk_files])
                     if self.shuttingDown():
                         break
-            except:
+            except Exception:
                 log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
 
             log.debug('Found %s files to scan and group in %s', len(files), folder)
@@ -183,7 +183,7 @@ class FolderScannerMixin:
         while True and not self.shuttingDown():
             try:
                 identifier, group = movie_files.popitem()
-            except:
+            except Exception:
                 break
 
             if check_file_date:
@@ -226,7 +226,7 @@ class FolderScannerMixin:
         while True and not self.shuttingDown():
             try:
                 identifier, group = valid_files.popitem()
-            except:
+            except Exception:
                 break
 
             if return_ignored is False and identifier in ignored_identifiers:
@@ -324,7 +324,7 @@ class FolderScannerMixin:
                         log.debug('Found movie via nfo file: %s', nf)
                         nfo_file = nf
                         break
-            except:
+            except Exception:
                 pass
 
         if not imdb_id:
@@ -335,7 +335,7 @@ class FolderScannerMixin:
                         if imdb_id:
                             log.debug('Found movie via imdb in filename: %s', nfo_file)
                             break
-            except:
+            except Exception:
                 pass
 
         if not imdb_id:
@@ -343,7 +343,7 @@ class FolderScannerMixin:
                 if len(identifier) > 2:
                     try:
                         filename = list(group['files'].get('movie'))[0]
-                    except:
+                    except Exception:
                         filename = None
 
                     name_year = self.getReleaseNameYear(identifier, file_name=filename if not group['is_dvd'] else None)
@@ -368,7 +368,7 @@ class FolderScannerMixin:
             try:
                 db = get_db()
                 return db.get('media', 'imdb-%s' % imdb_id, with_doc=True)['doc']
-            except:
+            except Exception:
                 log.debug('Movie "%s" not in library, just getting info', imdb_id)
                 return {
                     'identifier': imdb_id,
@@ -392,7 +392,7 @@ class FolderScannerMixin:
     def removeCPTag(self, name):
         try:
             return re.sub(self.cp_imdb, '', name).strip()
-        except:
+        except Exception:
             pass
         return name
 
@@ -408,7 +408,7 @@ class FolderScannerMixin:
         try:
             path_split = splitString(identifier, os.path.sep)
             identifier = path_split[-2] if len(path_split) > 1 and len(path_split[-2]) > len(path_split[-1]) else path_split[-1]
-        except:
+        except Exception:
             pass
 
         identifier = self.removeMultipart(identifier)
@@ -439,7 +439,7 @@ class FolderScannerMixin:
                 found = re.sub(regex, '', name)
                 if found != name:
                     name = found
-            except:
+            except Exception:
                 pass
         return name
 
@@ -450,7 +450,7 @@ class FolderScannerMixin:
                 if found:
                     return found.group(1)
                 return 1
-            except:
+            except Exception:
                 pass
         return 1
 
@@ -476,7 +476,7 @@ class FolderScannerMixin:
                         'name': guessit.get('title'),
                         'year': guessit.get('year'),
                     }
-            except:
+            except Exception:
                 log.debug('Could not detect via guessit "%s": %s', file_name, traceback.format_exc())
 
         release_name = os.path.basename(release_name.replace('\\', '/'))
@@ -501,7 +501,7 @@ class FolderScannerMixin:
                         'name': movie_name,
                         'year': int(year),
                     }
-            except:
+            except Exception:
                 pass
 
         if not cp_guess:
@@ -511,7 +511,7 @@ class FolderScannerMixin:
                     'name': movie_name,
                     'year': int(year) if movie_name[:4] != year else 0,
                 }
-            except:
+            except Exception:
                 pass
 
         if cp_guess.get('year') == guess.get('year') and len(cp_guess.get('name', '')) > len(guess.get('name', '')):

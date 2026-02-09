@@ -83,14 +83,14 @@ class FileDetectorMixin:
             file_size = []
         try:
             return file_size.get('min', 0) < self.getFileSize(file) < file_size.get('max', 100000)
-        except:
+        except Exception:
             log.error('Couldn\'t get filesize of %s.', file)
         return False
 
     def getFileSize(self, file):
         try:
             return os.path.getsize(file) / 1024 / 1024
-        except:
+        except Exception:
             return None
 
     def getSamples(self, files):

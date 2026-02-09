@@ -88,7 +88,7 @@ class Database:
                     db.add_index(index_instance)
                     db.reindex_index(index_name)
 
-        except:
+        except Exception:
             log.error('Failed adding index %s: %s', index_name, traceback.format_exc())
 
     def deleteDocument(self, **kwargs):
@@ -104,7 +104,7 @@ class Database:
             return {
                 'success': True
             }
-        except:
+        except Exception:
             return {
                 'success': False,
                 'error': traceback.format_exc()
@@ -124,7 +124,7 @@ class Database:
                 'success': True,
                 'document': document
             }
-        except:
+        except Exception:
             return {
                 'success': False,
                 'error': traceback.format_exc()
@@ -157,7 +157,7 @@ class Database:
             log.debug('Deleted corrupted document "%s": %s', _id, traceback_error)
             corrupted = db.get('id', _id, with_storage = False)
             db._delete_id_index(corrupted.get('_id'), corrupted.get('_rev'), None)
-        except:
+        except Exception:
             log.debug('Failed deleting corrupted: %s', traceback.format_exc())
 
     def reindex(self, **kwargs):
@@ -166,7 +166,7 @@ class Database:
         try:
             db = self.getDB()
             db.reindex()
-        except:
+        except Exception:
             log.error('Failed index: %s', traceback.format_exc())
             success = False
 
@@ -206,7 +206,7 @@ class Database:
                         db.destroy_index(index_name)
                     except IndexNotFoundException:
                         pass
-                    except:
+                    except Exception:
                         log.error('Failed removing old index %s', index_name)
 
                 # Add them again
@@ -220,7 +220,7 @@ class Database:
                         db.reindex_index(index_name)
                     except IndexConflict:
                         pass
-                    except:
+                    except Exception:
                         log.error('Failed adding index %s', index_name)
                         raise
 
@@ -228,7 +228,7 @@ class Database:
             else:
                 log.error('Failed compact: %s', traceback.format_exc())
 
-        except:
+        except Exception:
             log.error('Failed compact: %s', traceback.format_exc())
 
         return {
@@ -324,7 +324,7 @@ class Database:
 
                     try:
                         c.execute('SELECT %s FROM `%s`' % ('`' + '`,`'.join(rows) + '`', ml))
-                    except:
+                    except Exception:
                         # ignore faulty destination_id database
                         if ml == 'category':
                             migrate_data[ml] = {}
@@ -584,7 +584,7 @@ class Database:
                             try:
                                 release['download_info'] = rel['info']['download_info']
                                 del rel['download_info']
-                            except:
+                            except Exception:
                                 pass
 
                             # Add files
@@ -611,7 +611,7 @@ class Database:
                                 rls = db.get('release_identifier', rel.get('identifier'), with_doc = True)['doc']
                                 rls.update(release)
                                 db.update(rls)
-                            except:
+                            except Exception:
                                 db.insert(release)
 
                 log.info('Total migration took %s', time.time() - migrate_start)
@@ -623,7 +623,7 @@ class Database:
                 log.error('Migrating from faulty database, probably a (too) old version: %s', traceback.format_exc())
 
                 rename_old = True
-            except:
+            except Exception:
                 log.error('Migration failed: %s', traceback.format_exc())
 
 

@@ -27,7 +27,7 @@ class MoverMixin:
                 try:
                     log.info('Moving "%s" to "%s"', old, dest)
                     shutil.move(old, dest)
-                except:
+                except Exception:
                     exists = os.path.exists(dest)
                     if exists and os.path.getsize(old) == os.path.getsize(dest):
                         log.error('Successfully moved file "%s", but something went wrong: %s', dest, traceback.format_exc())
@@ -43,18 +43,18 @@ class MoverMixin:
                 log.info('Reverse symlink "%s" to "%s"', old, dest)
                 try:
                     shutil.move(old, dest)
-                except:
+                except Exception:
                     log.error('Moving "%s" to "%s" went wrong: %s', old, dest, traceback.format_exc())
                 try:
                     symlink(dest, old)
-                except:
+                except Exception:
                     log.error('Error while linking "%s" back to "%s": %s', dest, old, traceback.format_exc())
             else:
                 log.info('Linking "%s" to "%s"', old, dest)
                 try:
                     log.debug('Hardlinking file "%s" to "%s"...', old, dest)
                     link(old, dest)
-                except:
+                except Exception:
                     log.debug('Couldn\'t hardlink file "%s" to "%s". Symlinking instead. Error: %s.', old, dest, traceback.format_exc())
                     shutil.copy(old, dest)
                     try:
@@ -62,16 +62,16 @@ class MoverMixin:
                         symlink(dest, old_link)
                         os.unlink(old)
                         os.rename(old_link, old)
-                    except:
+                    except Exception:
                         log.error('Couldn\'t symlink file "%s" to "%s". Copied instead. Error: %s. ', old, dest, traceback.format_exc())
 
             try:
                 os.chmod(dest, Env.getPermission('file'))
                 if os.name == 'nt' and self.conf('ntfs_permission'):
                     os.popen('icacls "' + dest + '"* /reset /T')
-            except:
+            except Exception:
                 log.debug('Failed setting permissions for file: %s, %s', dest, traceback.format_exc(1))
-        except:
+        except Exception:
             log.error('Couldn\'t move file "%s" to "%s": %s', old, dest, traceback.format_exc())
             raise
 

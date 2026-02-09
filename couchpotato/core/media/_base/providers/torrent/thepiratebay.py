@@ -69,7 +69,7 @@ class Base(TorrentMagnetProvider):
 
                     try:
                         total_pages = len(soup.find('div', attrs = {'align': 'center'}).find_all('a'))
-                    except:
+                    except Exception:
                         pass
 
                     entries = results_table.find_all('tr')
@@ -79,7 +79,7 @@ class Base(TorrentMagnetProvider):
 
                         try:
                             size = re.search('Size (?P<size>.+),', str(result.select('font.detDesc')[0])).group('size')
-                        except:
+                        except Exception:
                             continue
 
                         if link and download:
@@ -111,7 +111,7 @@ class Base(TorrentMagnetProvider):
                                 'get_more_info': self.getMoreInfo
                             })
 
-                except:
+                except Exception:
                     log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def isEnabled(self):
@@ -129,7 +129,7 @@ class Base(TorrentMagnetProvider):
         description = ''
         try:
             description = toUnicode(nfo_pre.text)
-        except:
+        except Exception:
             pass
 
         item['description'] = description
@@ -144,7 +144,7 @@ class Base(TorrentMagnetProvider):
                 if 'value="test+search"' in data:
                     log.info('Success %s', url)
                     continue
-            except:
+            except Exception:
                 log.error('%s', traceback.format_exc(0))
 
 

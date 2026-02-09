@@ -87,7 +87,7 @@ class IMDBWatchlist(IMDBBase):
                     userids = re.findall(r'(ur\d{7,9})', watchlist_url)
                     if len(userids) == 1:
                         watchlist_url = 'http://www.imdb.com/user/%s/watchlist?view=compact&sort=created:asc' % userids[0]
-            except:
+            except Exception:
                 log.error('Failed getting id from watchlist: %s', traceback.format_exc())
 
             index += 1
@@ -115,7 +115,7 @@ class IMDBWatchlist(IMDBBase):
 
                     start = len(movies)
 
-                except:
+                except Exception:
                     log.error('Failed loading IMDB watchlist: %s %s', watchlist_url, traceback.format_exc())
                     break
 
@@ -146,7 +146,7 @@ class IMDBAutomation(IMDBBase):
                         if self.shuttingDown():
                             break
 
-                except:
+                except Exception:
                     log.error('Failed loading IMDB chart results from %s: %s', url, traceback.format_exc())
 
         return movies
@@ -188,7 +188,7 @@ class IMDBCharts(IMDBBase):
 
                         if self.shuttingDown():
                             break
-                except:
+                except Exception:
                     log.error('Failed loading IMDB chart results from %s: %s', url, traceback.format_exc())
 
                 self.setCache(cache_key, chart['list'], timeout = 259200)

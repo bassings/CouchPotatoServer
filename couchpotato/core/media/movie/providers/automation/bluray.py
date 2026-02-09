@@ -47,7 +47,7 @@ class Bluray(Automation, RSS):
                                 page_year = tryInt(h3.get_text()[-4:])
                                 if page_year > 0 and page_year < self.getMinimal('year'):
                                     brk = True
-                            except:
+                            except Exception:
                                 log.error('Failed determining page year: %s', traceback.format_exc())
                                 brk = True
                                 break
@@ -76,10 +76,10 @@ class Bluray(Automation, RSS):
                                 if imdb:
                                     if self.isMinimalMovie(imdb):
                                         movies.append(imdb['imdb'])
-                        except:
+                        except Exception:
                             log.debug('Error parsing movie html: %s', traceback.format_exc())
                             break
-                except:
+                except Exception:
                     log.debug('Error loading page %s: %s', page, traceback.format_exc())
                     break
 

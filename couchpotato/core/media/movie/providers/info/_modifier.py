@@ -112,7 +112,7 @@ class MovieResultModifier(Plugin):
                     temp['in_wanted'] = media
 
                     try: temp['in_wanted']['profile'] = db.get('id', media['profile_id'])
-                    except: temp['in_wanted']['profile'] = {'label': ''}
+                    except Exception: temp['in_wanted']['profile'] = {'label': ''}
 
                 for release in fireEvent('release.for_media', media['_id'], single = True):
                     if release.get('status') == 'done':
@@ -121,7 +121,7 @@ class MovieResultModifier(Plugin):
                             temp['in_library']['releases'] = []
 
                         temp['in_library']['releases'].append(release)
-        except:
+        except Exception:
             log.error('Tried getting more info on searched movies: %s', traceback.format_exc())
 
         return temp

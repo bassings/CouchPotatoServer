@@ -149,7 +149,7 @@ class QualityPlugin(Plugin):
                 return {
                     'success': True
                 }
-            except:
+            except Exception:
                 log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -164,7 +164,7 @@ class QualityPlugin(Plugin):
             if len(self.qualities) > len(existing):
                 log.error('Filling in new qualities')
                 self.fill(reorder = True)
-        except:
+        except Exception:
             log.error('Failed filling quality database with new qualities: %s', traceback.format_exc())
 
     def fill(self, reorder = False):
@@ -208,7 +208,7 @@ class QualityPlugin(Plugin):
                 order += 1
 
             return True
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return False
@@ -436,7 +436,7 @@ class QualityPlugin(Plugin):
                 return True
 
             return False
-        except:
+        except Exception:
             return False
 
     def isHigher(self, quality, compare_with, profile = None):
@@ -446,7 +446,7 @@ class QualityPlugin(Plugin):
         # Try to find quality in profile, if not found: a quality we do not want is lower than anything else
         try:
             quality_order = [i for i, identifier in enumerate(profile['qualities']) if identifier == quality['identifier'] and bool(profile['3d'][i] if profile.get('3d') else 0) == bool(quality.get('is_3d', 0))][0]
-        except:
+        except Exception:
             log.debug('Quality %s not found in profile identifiers %s', quality['identifier'] + (' 3D' if quality.get('is_3d', 0) else ''), \
                 [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])])
             return 'lower'
@@ -454,7 +454,7 @@ class QualityPlugin(Plugin):
         # Try to find compare quality in profile, if not found: anything is higher than a not wanted quality
         try:
             compare_order = [i for i, identifier in enumerate(profile['qualities']) if identifier == compare_with['identifier'] and bool(profile['3d'][i] if profile.get('3d') else 0) == bool(compare_with.get('is_3d', 0))][0]
-        except:
+        except Exception:
             log.debug('Compare quality %s not found in profile identifiers %s', compare_with['identifier'] + (' 3D' if compare_with.get('is_3d', 0) else ''), \
                 [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])])
             return 'higher'

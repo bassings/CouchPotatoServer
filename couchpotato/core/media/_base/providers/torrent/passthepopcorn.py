@@ -98,7 +98,7 @@ class Base(TorrentProvider):
                         'extra_check': extra_check,
                     })
 
-        except:
+        except Exception:
             log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def torrentMeetsQualitySpec(self, torrent, quality):
@@ -181,7 +181,7 @@ class Base(TorrentProvider):
             if json.loads(output).get('Result', '').lower() == 'ok':
                 self.login_errors = 0
                 return True
-        except:
+        except Exception:
             pass
 
         self.login_errors += 1

@@ -36,7 +36,7 @@ class Pushover(Notification):
                 data = api_data)
             log.info2('Pushover responded with: %s', data)
             return True
-        except:
+        except Exception:
             return False
 
 

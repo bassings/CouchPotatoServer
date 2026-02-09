@@ -105,10 +105,10 @@ class Env:
         try:
             try:
                 parent = os.getppid()
-            except:
+            except Exception:
                 parent = None
             return '%d %s' % (os.getpid(), '(%d)' % parent if parent and parent > 1 else '')
-        except:
+        except Exception:
             return 0
 
     @staticmethod

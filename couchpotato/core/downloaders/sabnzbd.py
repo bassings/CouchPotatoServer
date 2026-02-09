@@ -68,7 +68,7 @@ class Sabnzbd(DownloaderBase):
         except URLError:
             log.error('Failed sending release, probably wrong HOST: %s', traceback.format_exc(0))
             return False
-        except:
+        except Exception:
             log.error('Failed sending release, use API key, NOT the NZB key: %s', traceback.format_exc(0))
             return False
 
@@ -104,7 +104,7 @@ class Sabnzbd(DownloaderBase):
             })
             if not sab_data:
                 return False
-        except:
+        except Exception:
             return False
 
         return True
@@ -125,7 +125,7 @@ class Sabnzbd(DownloaderBase):
             queue = self.call({
                 'mode': 'queue',
             })
-        except:
+        except Exception:
             log.error('Failed getting queue: %s', traceback.format_exc(1))
             return []
 
@@ -135,7 +135,7 @@ class Sabnzbd(DownloaderBase):
                 'mode': 'history',
                 'limit': 15,
             })
-        except:
+        except Exception:
             log.error('Failed getting history json: %s', traceback.format_exc(1))
             return []
 
@@ -193,7 +193,7 @@ class Sabnzbd(DownloaderBase):
                 'del_files': '1',
                 'value': release_download['id']
             }, use_json = False)
-        except:
+        except Exception:
             log.error('Failed deleting: %s', traceback.format_exc(0))
             return False
 
@@ -209,7 +209,7 @@ class Sabnzbd(DownloaderBase):
                 'del_files': '0',
                 'value': release_download['id']
             }, use_json = False)
-        except:
+        except Exception:
             log.error('Failed removing: %s', traceback.format_exc(0))
             return False
 

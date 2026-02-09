@@ -78,7 +78,7 @@ class HDTrailers(TrailerProvider):
                     try:
                         for trailer in trailerLinks:
                             results[trailer].insert(0, trailer.parent['href'])
-                    except:
+                    except Exception:
                         pass
 
         except AttributeError:
@@ -120,5 +120,5 @@ class HDTrailers(TrailerProvider):
         try:
             int(name)
             return '-' + name
-        except:
+        except Exception:
             return name

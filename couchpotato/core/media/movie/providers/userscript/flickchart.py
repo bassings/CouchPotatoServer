@@ -20,7 +20,7 @@ class Flickchart(UserscriptBase):
 
         try:
             data = self.getUrl(url)
-        except:
+        except Exception:
             return
 
         try:
@@ -31,6 +31,6 @@ class Flickchart(UserscriptBase):
             year_name = fireEvent('scanner.name_year', page_title[0], single = True)
 
             return self.search(year_name.get('name'), year_name.get('year'))
-        except:
+        except Exception:
             log.error('Failed parsing page for title and year: %s', traceback.format_exc())
 

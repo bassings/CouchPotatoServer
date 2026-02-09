@@ -139,7 +139,7 @@ class Settings:
 
             # Use Pydantic coercion for typed values
             return _coerce_value(raw_value, tp)
-        except:
+        except Exception:
             return default
 
     def delete(self, option='', section='core'):
@@ -159,19 +159,19 @@ class Settings:
     def getBool(self, section, option):
         try:
             return _coerce_value(self.p.get(section, option), 'bool')
-        except:
+        except Exception:
             return False
 
     def getInt(self, section, option):
         try:
             return _coerce_value(self.p.get(section, option), 'int')
-        except:
+        except Exception:
             return 0
 
     def getFloat(self, section, option):
         try:
             return _coerce_value(self.p.get(section, option), 'float')
-        except:
+        except Exception:
             return 0.0
 
     def getDirectories(self, section, option):
@@ -206,7 +206,7 @@ class Settings:
                 if self.getType(section, option_name) == 'directory' and value:
                     try:
                         value = soft_chroot.abs2chroot(value)
-                    except:
+                    except Exception:
                         value = ""
 
                 if self.getType(section, option_name) == 'directories':
@@ -214,7 +214,7 @@ class Settings:
                         value = []
                     try:
                         value = list(map(soft_chroot.abs2chroot, value))
-                    except:
+                    except Exception:
                         value = []
 
                 values[section][option_name] = value
@@ -241,7 +241,7 @@ class Settings:
     def getType(self, section, option):
         try:
             return self.types[section][option]
-        except:
+        except Exception:
             return 'unicode'
 
     def addOptions(self, section_name, options):
@@ -331,7 +331,7 @@ class Settings:
         meta = 'section_hidden' + self.optionMetaSuffix()
         try:
             return not self.p.getboolean(section, meta)
-        except:
+        except Exception:
             return True
 
     def isOptionReadable(self, section, option):
@@ -359,7 +359,7 @@ class Settings:
         except ValueError:
             propert = db.get('property', identifier)
             fireEvent('database.delete_corrupted', propert.get('_id'))
-        except:
+        except Exception:
             self.log.debug('Property "%s" doesn\'t exist: %s' % (identifier, traceback.format_exc()))
 
         return prop
@@ -376,7 +376,7 @@ class Settings:
                 'value': toUnicode(value),
             })
             db.update(p['doc'])
-        except:
+        except Exception:
             db.insert({
                 '_t': 'property',
                 'identifier': identifier,

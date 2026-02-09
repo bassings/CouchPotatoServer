@@ -29,7 +29,7 @@ class MediaBase(Plugin):
                 if media:
                     event_name = '%s.searcher.single' % media.get('type')
                     fireEventAsync(event_name, media, on_complete = self.createNotifyFront(media_id), manual = True)
-            except:
+            except Exception:
                 log.error('Failed creating onComplete: %s', traceback.format_exc())
 
         return onComplete
@@ -42,7 +42,7 @@ class MediaBase(Plugin):
                 if media:
                     event_name = '%s.update' % media.get('type')
                     fireEvent('notify.frontend', type = event_name, data = media)
-            except:
+            except Exception:
                 log.error('Failed creating onComplete: %s', traceback.format_exc())
 
         return notifyFront

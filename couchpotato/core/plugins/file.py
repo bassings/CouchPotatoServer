@@ -55,7 +55,7 @@ class FileManager(Plugin):
                     file_path = os.path.join(cache_dir, f)
                     if toUnicode(file_path) not in files:
                         os.remove(file_path)
-        except:
+        except Exception:
             log.error('Failed removing unused file: %s', traceback.format_exc())
 
     def showCacheFile(self, route, **kwargs):
@@ -80,7 +80,7 @@ class FileManager(Plugin):
 
         try:
             filedata = self.urlopen(url, **urlopen_kwargs)
-        except:
+        except Exception:
             log.error('Failed downloading file %s: %s', url, traceback.format_exc())
             return False
 

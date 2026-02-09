@@ -55,7 +55,7 @@ class UserscriptBase(Provider):
     def getMovie(self, url):
         try:
             data = self.getUrl(url)
-        except:
+        except Exception:
             data = ''
         return self.getInfo(getImdb(data))
 

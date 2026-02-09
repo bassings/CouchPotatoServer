@@ -154,7 +154,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     except SoftChrootInitError as exc:
         log.error(exc)
         return
-    except:
+    except Exception:
         log.error('Unable to check whether SOFT-CHROOT is defined')
         return
 
@@ -164,7 +164,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         if available_space < 100:
             log.error('Shutting down as CP needs some space to work. Only %sMB left', available_space)
             return
-    except:
+    except Exception:
         log.error('Failed getting diskspace: %s', traceback.format_exc())
 
     def customwarn(message, category, filename, lineno, file=None, line=None):
@@ -215,7 +215,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     # Some logging and fire load event
     try:
         log.info('Starting server on port %(port)s', config)
-    except:
+    except Exception:
         pass
     fireEventAsync('app.load')
 

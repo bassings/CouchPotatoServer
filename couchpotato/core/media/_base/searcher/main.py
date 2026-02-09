@@ -158,11 +158,11 @@ class Searcher(SearcherBase):
 
         # Match names between "
         try: check_names.append(re.search(r'([\'"])[^\1]*\1', check_name).group(0))
-        except: pass
+        except Exception: pass
 
         # Match longest name between []
         try: check_names.append(max(re.findall(r'[^[]*\[([^]]*)\]', check_name), key = len).strip())
-        except: pass
+        except Exception: pass
 
         for check_name in removeDuplicate(check_names):
             check_movie = fireEvent('scanner.name_year', check_name, single = True)
@@ -173,7 +173,7 @@ class Searcher(SearcherBase):
 
                 if len(check_words) > 0 and len(movie_words) > 0 and len(list(set(check_words) - set(movie_words))) == 0:
                     return True
-            except:
+            except Exception:
                 pass
 
         return False
@@ -183,7 +183,7 @@ class Searcher(SearcherBase):
         # Make sure it has required words
         words = splitString(self.conf('%s_words' % conf, section = 'searcher').lower())
         try: words = removeDuplicate(words + splitString(media['category'][conf].lower()))
-        except: pass
+        except Exception: pass
 
         req_match = 0
         for req_set in words:

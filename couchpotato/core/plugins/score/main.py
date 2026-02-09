@@ -22,7 +22,7 @@ class Score(Plugin):
         # Merge global and category
         preferred_words = splitString(Env.setting('preferred_words', section = 'searcher').lower())
         try: preferred_words = removeDuplicate(preferred_words + splitString(movie['category']['preferred'].lower()))
-        except: pass
+        except Exception: pass
 
         score = nameScore(toUnicode(nzb['name']), movie['info']['year'], preferred_words)
 
@@ -37,7 +37,7 @@ class Score(Plugin):
             try:
                 score += nzb.get('seeders') * 100 / 15
                 score += nzb.get('leechers') * 100 / 30
-            except:
+            except Exception:
                 pass
 
         # Provider score
@@ -49,7 +49,7 @@ class Score(Plugin):
         # Merge global and category
         ignored_words = splitString(Env.setting('ignored_words', section = 'searcher').lower())
         try: ignored_words = removeDuplicate(ignored_words + splitString(movie['category']['ignored'].lower()))
-        except: pass
+        except Exception: pass
 
         # Partial ignored words
         score += partialIgnoredScore(nzb['name'], getTitle(movie), ignored_words)

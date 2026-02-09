@@ -46,7 +46,7 @@ class Base(NZBProvider):
 
                     age = 0
                     try: age = re.search(r'(?P<size>\d+d)', row.find_all('td')[-1:][0].text).group('size')[:-1]
-                    except: pass
+                    except Exception: pass
 
                     def extra_check(item):
                         parts = re.search(r'available:.(?P<parts>\d+)./.(?P<total>\d+)', info.text)
@@ -73,7 +73,7 @@ class Base(NZBProvider):
                         'extra_check': extra_check
                     })
 
-            except:
+            except Exception:
                 log.error('Failed to parse HTML response from BinSearch: %s', traceback.format_exc())
 
     def download(self, url = '', nzb_id = ''):
@@ -85,7 +85,7 @@ class Base(NZBProvider):
 
         try:
             return self.urlopen(url, data = data, show_error = False)
-        except:
+        except Exception:
             log.error('Failed getting nzb from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'

@@ -172,7 +172,7 @@ class uTorrent(DownloaderBase):
                 try:
                     torrent_files = json.loads(self.utorrent_api.get_files(torrent[0]))
                     torrent_files = [sp(os.path.join(torrent[26], torrent_file[0])) for torrent_file in torrent_files['files'][1]]
-                except:
+                except Exception:
                     log.debug('Failed getting files from torrent: %s', torrent[2])
 
                 status = 'busy'

@@ -131,7 +131,7 @@ class Userscript(Plugin):
                 if imdb and b64encode(imdb) in ['dHQxMjI5MjM4', 'dHQyMzgxMjQ5']:
                     success += 1
                     continue
-            except:
+            except Exception:
                 log.error('Failed userscript test "%s": %s', x, traceback.format_exc())
 
             log.error('Failed userscript test "%s"', x)

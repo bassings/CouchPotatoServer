@@ -12,7 +12,7 @@ class Filmstarts(UserscriptBase):
 	def getMovie(self, url):
 		try:
 			data = self.getUrl(url)
-		except:
+		except Exception:
 			return
 
 		html = BeautifulSoup(data)

@@ -56,7 +56,7 @@ def list_subtitles(paths, languages=None, services=None, force=True, multi=False
         try:
             result = consume_task(task, service_instances)
             results.append((task.video, result))
-        except:
+        except Exception:
             logger.error(u'Error consuming task %r' % task, exc_info=True)
     for service_instance in service_instances.itervalues():
         service_instance.terminate()
@@ -102,7 +102,7 @@ def download_subtitles(paths, languages=None, services=None, force=True, multi=F
         try:
             result = consume_task(task, service_instances)
             results.append((task.video, result))
-        except:
+        except Exception:
             logger.error(u'Error consuming task %r' % task, exc_info=True)
     for service_instance in service_instances.itervalues():
         service_instance.terminate()

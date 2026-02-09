@@ -57,7 +57,7 @@ class Connection(object):
     def test(self):
         try:
             self.verify()
-        except:
+        except Exception:
             return False
 
         return True

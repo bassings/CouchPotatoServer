@@ -48,7 +48,7 @@ class Base(TorrentProvider):
                         'leechers': torrent['leechers'],
                     }
                     results.append(currentResult)
-            except:
+            except Exception:
                 log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
     def getLoginParams(self):

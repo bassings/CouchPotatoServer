@@ -74,7 +74,7 @@ class Base(NZBProvider, RSS):
 
             try:
                 link = self.getElement(nzb, 'enclosure').attrib['url']
-            except:
+            except Exception:
                 link = self.getTextElement(nzb, 'link')
 
             if '://' not in detail_url:
@@ -104,7 +104,7 @@ class Base(NZBProvider, RSS):
                     password = re.search('(?:' + self.passwords_regex + ')(?: *)(?:\\:|\\=)(?: *)(.*?)\\<br\\>|\n|$', description, flags = re.I).group(1)
                     if password:
                         name += ' {{%s}}' % password.strip()
-                except:
+                except Exception:
                     log.debug('Error getting details of "%s": %s', name, traceback.format_exc())
 
             results.append({
@@ -134,19 +134,19 @@ class Base(NZBProvider, RSS):
         for nr in range(len(hosts)):
 
             try: key = api_keys[nr]
-            except: key = ''
+            except Exception: key = ''
 
             try: host = hosts[nr]
-            except: host = ''
+            except Exception: host = ''
 
             try: score = tryInt(extra_score[nr])
-            except: score = 0
+            except Exception: score = 0
 
             try: custom_tag = custom_tags[nr]
-            except: custom_tag = ''
+            except Exception: custom_tag = ''
 
             try: custom_category = custom_categories[nr].replace(" ", ",")
-            except: custom_category = ''
+            except Exception: custom_category = ''
 
             list.append({
                 'use': uses[nr],

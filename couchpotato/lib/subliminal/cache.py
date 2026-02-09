@@ -80,7 +80,7 @@ class Cache(object):
     def cached_func_key(self, func, cls=None):
         try:
             cls = func.im_class
-        except:
+        except Exception:
             pass
         return ('%s.%s' % (cls.__module__, cls.__name__), func.__name__)
 

@@ -74,7 +74,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             for filename in ignore_file:
                 try:
                     os.remove(filename)
-                except:
+                except Exception:
                     log.debug('Unable to remove ignore file: %s. Error: %s.' % (filename, traceback.format_exc()))
 
     def hastagRelease(self, release_download, tag=''):

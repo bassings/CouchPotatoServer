@@ -49,7 +49,7 @@ class Blackhole(DownloaderBase):
                         if data.get('protocol') == 'torrent_magnet':
                             filedata = self.magnetToTorrent(data.get('url'))
                             data['protocol'] = 'torrent'
-                    except:
+                    except Exception:
                         log.error('Failed download torrent via magnet url: %s', traceback.format_exc())
 
                     # If it's still empty, either write the magnet link to a .magnet file, or error out.
@@ -72,7 +72,7 @@ class Blackhole(DownloaderBase):
                         if not os.path.exists(new_path):
                             os.makedirs(new_path)
                             full_path = os.path.join(new_path, file_name)
-                    except:
+                    except Exception:
                         log.error('Couldnt create sub dir, reverting to old one: %s', full_path)
 
                 try:
@@ -88,11 +88,11 @@ class Blackhole(DownloaderBase):
                         log.info('File %s already exists.', full_path)
                         return self.downloadReturnId('')
 
-                except:
+                except Exception:
                     log.error('Failed to download to blackhole %s', traceback.format_exc())
                     pass
 
-            except:
+            except Exception:
                 log.info('Failed to download file %s: %s', data.get('name'), traceback.format_exc())
                 return False
 

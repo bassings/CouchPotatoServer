@@ -228,7 +228,7 @@ class DelugeRPC:
     def test(self):
         try:
             self.connect()
-        except:
+        except Exception:
             return False
         return True
 

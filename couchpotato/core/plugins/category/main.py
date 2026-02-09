@@ -72,7 +72,7 @@ class CategoryPlugin(Plugin):
                     c.update(category)
 
                     db.update(c)
-                except:
+                except Exception:
                     c = db.insert(category)
                     c.update(category)
 
@@ -80,7 +80,7 @@ class CategoryPlugin(Plugin):
                     'success': True,
                     'category': c
                 }
-            except:
+            except Exception:
                 log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -104,7 +104,7 @@ class CategoryPlugin(Plugin):
             return {
                 'success': True
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -126,14 +126,14 @@ class CategoryPlugin(Plugin):
                 self.removeFromMovie(id)
 
                 success = True
-            except:
+            except Exception:
                 message = log.error('Failed deleting category: %s', traceback.format_exc())
 
             return {
                 'success': success,
                 'message': message
             }
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
         return {
@@ -150,5 +150,5 @@ class CategoryPlugin(Plugin):
                 for movie in movies:
                     movie['category_id'] = None
                     db.update(movie)
-        except:
+        except Exception:
             log.error('Failed: %s', traceback.format_exc())

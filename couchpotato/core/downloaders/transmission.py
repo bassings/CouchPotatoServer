@@ -253,7 +253,7 @@ class TransmissionRPC:
                     # #resend request with the updated header
 
                     return self._request(ojson)
-                except:
+                except Exception:
                     log.error('Unable to get Transmission Session-Id %s', err)
             else:
                 log.error('TransmissionRPC HTTPError: %s', err)

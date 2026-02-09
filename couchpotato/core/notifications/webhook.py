@@ -31,7 +31,7 @@ class Webhook(Notification):
         try:
             self.urlopen(self.conf('url'), headers = headers, data = post_data, show_error = False)
             return True
-        except:
+        except Exception:
             log.error('Webhook notification failed: %s', traceback.format_exc())
 
         return False

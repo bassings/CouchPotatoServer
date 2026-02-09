@@ -16,7 +16,7 @@ class MovieMeter(UserscriptBase):
 
         try:
             data = self.urlopen(url, headers = cookie)
-        except:
+        except Exception:
             return
 
         return self.getInfo(getImdb(data))

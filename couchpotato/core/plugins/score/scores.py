@@ -53,7 +53,7 @@ def nameScore(name, year, preferred_words):
         score += 100 * len(list(set(nzb_words) & set(preferred_words)))
 
         return score
-    except:
+    except Exception:
         log.error('Failed doing nameScore: %s', traceback.format_exc())
 
     return 0
@@ -66,7 +66,7 @@ def nameRatioScore(nzb_name, movie_name):
 
         left_over = set(nzb_words) - set(movie_words)
         return 10 - len(left_over)
-    except:
+    except Exception:
         log.error('Failed doing nameRatioScore: %s', traceback.format_exc())
 
     return 0
@@ -80,7 +80,7 @@ def namePositionScore(nzb_name, movie_name):
 
     try:
         nzb_name = re.search(r'([\'"])[^\1]*\1', nzb_name).group(0)
-    except:
+    except Exception:
         pass
 
     name_year = fireEvent('scanner.name_year', nzb_name, single = True)
@@ -136,7 +136,7 @@ def providerScore(provider):
 
     try:
         score = tryInt(Env.setting('extra_score', section = provider.lower(), default = 0))
-    except:
+    except Exception:
         score = 0
 
     return score
@@ -152,7 +152,7 @@ def duplicateScore(nzb_name, movie_name):
         duplicates = [x for i, x in enumerate(nzb_words) if nzb_words[i:].count(x) > 1]
 
         return len(list(set(duplicates) - set(movie_words))) * -4
-    except:
+    except Exception:
         log.error('Failed doing duplicateScore: %s', traceback.format_exc())
 
     return 0
@@ -170,7 +170,7 @@ def partialIgnoredScore(nzb_name, movie_name, ignored_words):
                 score -= 5
 
         return score
-    except:
+    except Exception:
         log.error('Failed doing partialIgnoredScore: %s', traceback.format_exc())
 
     return 0
@@ -189,7 +189,7 @@ def halfMultipartScore(nzb_name):
             return -30
 
         return 0
-    except:
+    except Exception:
         log.error('Failed doing halfMultipartScore: %s', traceback.format_exc())
 
     return 0
@@ -201,11 +201,11 @@ def sceneScore(nzb_name):
 
     # Match names between "
     try: check_names.append(re.search(r'([\'"])[^\1]*\1', nzb_name).group(0))
-    except: pass
+    except Exception: pass
 
     # Match longest name between []
     try: check_names.append(max(re.findall(r'[^[]*\[([^]]*)\]', nzb_name), key = len).strip())
-    except: pass
+    except Exception: pass
 
     for name in check_names:
 
@@ -224,7 +224,7 @@ def sceneScore(nzb_name):
                 if validate and tryInt(validate.get('score')) != 0:
                     log.debug('Release "%s" scored %s, reason: %s', nzb_name, validate['score'], validate['reasons'])
                     return tryInt(validate.get('score'))
-            except:
+            except Exception:
                 log.error('Failed scoring scene: %s', traceback.format_exc())
 
     return 0

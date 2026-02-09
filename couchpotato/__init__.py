@@ -235,7 +235,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 api_key_val = Env.setting('api_key')
 
             return {'success': api_key_val is not None, 'api_key': api_key_val}
-        except:
+        except Exception:
             log.error('Failed doing key request: %s', traceback.format_exc())
             return {'success': False, 'error': 'Failed returning results'}
 
@@ -286,7 +286,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 elif route == 'couchpotato.appcache':
                     return Response(content=content, media_type='text/cache-manifest')
                 return HTMLResponse(content=content)
-            except:
+            except Exception:
                 log.error("Failed doing web request '%s': %s", route, traceback.format_exc())
                 return JSONResponse({'success': False, 'error': 'Failed returning results'})
 

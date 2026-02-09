@@ -50,7 +50,7 @@ def addEvent(name, handler, priority=100):
                 ac = hasattr(parent, 'afterCall')
                 if ac:
                     parent.afterCall(handler)
-        except:
+        except Exception:
             log.error('Failed creating handler %s %s: %s', name, handler, traceback.format_exc())
 
         return h
@@ -107,7 +107,7 @@ def fireEvent(name, *args, **kwargs):
                 # For single mode, stop at first non-None result
                 if options['single'] and not options['merge'] and result is not None:
                     break
-            except:
+            except Exception:
                 log.error('Failed running event handler: %s', traceback.format_exc())
 
         # Process results based on mode

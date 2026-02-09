@@ -18,7 +18,7 @@ class Filmweb(UserscriptBase):
 
         try:
             data = self.urlopen(url, headers = cookie)
-        except:
+        except Exception:
             return
 
         html = BeautifulSoup(data)

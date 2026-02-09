@@ -57,7 +57,7 @@ class Base(TorrentProvider):
                             'seed_time': host['seed_time'],
                         })
 
-            except:
+            except Exception:
                 log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
 
     def getHosts(self):
@@ -74,19 +74,19 @@ class Base(TorrentProvider):
         for nr in range(len(hosts)):
 
             try: key = pass_keys[nr]
-            except: key = ''
+            except Exception: key = ''
 
             try: host = hosts[nr]
-            except: host = ''
+            except Exception: host = ''
 
             try: name = names[nr]
-            except: name = ''
+            except Exception: name = ''
 
             try: ratio = seed_ratios[nr]
-            except: ratio = ''
+            except Exception: ratio = ''
 
             try: seed_time = seed_times[nr]
-            except: seed_time = ''
+            except Exception: seed_time = ''
 
             host_list.append({
                 'use': uses[nr],

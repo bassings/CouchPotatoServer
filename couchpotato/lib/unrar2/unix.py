@@ -45,7 +45,7 @@ if os.path.isfile(osx_unrar) and 'darwin' in platform.platform().lower():
     try:
         st = os.stat(osx_unrar)
         os.chmod(osx_unrar, st.st_mode | stat.S_IEXEC)
-    except:
+    except Exception:
         pass
 
 def call_unrar(params, custom_path = None):

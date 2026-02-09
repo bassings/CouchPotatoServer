@@ -94,7 +94,7 @@ class MediaParserMixin:
                         data['aspect'] = round(float(meta.get('resolution_width')) / meta.get('resolution_height', 1), 2)
                     else:
                         data.update(self.getResolution(cur_file))
-                except:
+                except Exception:
                     log.debug('Error parsing metadata: %s %s', cur_file, traceback.format_exc())
 
             data['size'] = data.get('size', 0) + self.getFileSize(cur_file)
@@ -152,21 +152,21 @@ class MediaParserMixin:
             ac = p.audio[0].codec
             try:
                 ac = self.audio_codec_map.get(p.audio[0].codec)
-            except:
+            except Exception:
                 pass
 
             titles = []
             try:
                 if p.title and self.findYear(p.title):
                     titles.append(ss(p.title))
-            except:
+            except Exception:
                 log.error('Failed getting title from meta: %s', traceback.format_exc())
 
             for video in p.video:
                 try:
                     if video.title and self.findYear(video.title):
                         titles.append(ss(video.title))
-                except:
+                except Exception:
                     log.error('Failed getting title from meta: %s', traceback.format_exc())
 
             return {
@@ -181,7 +181,7 @@ class MediaParserMixin:
             log.debug('Failed to parse meta for %s', filename)
         except enzyme.exceptions.NoParserError:
             log.debug('No parser found for %s', filename)
-        except:
+        except Exception:
             log.debug('Failed parsing %s', filename)
 
         return {}
@@ -203,7 +203,7 @@ class MediaParserMixin:
                 for s in detected_subtitles:
                     if s.language and s.path not in paths:
                         detected_languages[s.path] = [s.language]
-        except:
+        except Exception:
             log.debug('Failed parsing subtitle languages for %s: %s', paths, traceback.format_exc())
 
         for extra in group['files']['subtitle_extra']:
@@ -218,7 +218,7 @@ class MediaParserMixin:
                     sub_file = '%s.sub' % os.path.splitext(extra)[0]
                     if len(idx_langs) > 0 and os.path.isfile(sub_file):
                         detected_languages[sub_file] = idx_langs
-            except:
+            except Exception:
                 log.error('Failed parsing subtitle idx for %s: %s', extra, traceback.format_exc())
 
         return detected_languages
@@ -228,7 +228,7 @@ class MediaParserMixin:
         try:
             codec = re.search('[^A-Z0-9](?P<codec>' + '|'.join(codecs) + ')[^A-Z0-9]', filename, re.I)
             return (codec and codec.group('codec')) or ''
-        except:
+        except Exception:
             return ''
 
     def getResolution(self, filename):
@@ -236,7 +236,7 @@ class MediaParserMixin:
             for key in self.resolutions:
                 if key in filename.lower() and key != 'default':
                     return self.resolutions[key]
-        except:
+        except Exception:
             pass
         return self.resolutions['default']
 
@@ -244,7 +244,7 @@ class MediaParserMixin:
         try:
             match = re.findall(r'\-([A-Z0-9]+)[\.\/]', file, re.I)
             return match[-1] or ''
-        except:
+        except Exception:
             return ''
 
     def getSourceMedia(self, file):

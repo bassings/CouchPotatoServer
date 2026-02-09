@@ -78,7 +78,7 @@ class TheMovieDb(MovieProvider):
                 'year': name_year.get('year'),
                 'search_type': 'ngram' if limit > 1 else 'phrase'
             }, return_key = 'results')
-        except:
+        except Exception:
             log.error('Failed searching TMDB for "%s": %s', q, traceback.format_exc())
 
         results = []
@@ -155,7 +155,7 @@ class TheMovieDb(MovieProvider):
         # Genres
         try:
             genres = [genre.get('name') for genre in movie.get('genres', [])]
-        except:
+        except Exception:
             genres = []
 
         # 1900 is the same as None
@@ -174,7 +174,7 @@ class TheMovieDb(MovieProvider):
                 try:
                     actors[toUnicode(cast_item.get('name'))] = toUnicode(cast_item.get('character'))
                     images['actors'][toUnicode(cast_item.get('name'))] = self.getImage(cast_item, type = 'profile', size = 'original')
-                except:
+                except Exception:
                     log.debug('Error getting cast info for %s: %s', cast_item, traceback.format_exc())
 
         movie_data = {
@@ -219,7 +219,7 @@ class TheMovieDb(MovieProvider):
             path = movie.get('%s_path' % type)
             if path:
                 image_url = '%s%s%s' % (self.configuration['images']['secure_base_url'], size, path)
-        except:
+        except Exception:
             log.debug('Failed getting %s.%s for "%s"', type, size, ss(str(movie)))
 
         return image_url
@@ -230,7 +230,7 @@ class TheMovieDb(MovieProvider):
         try:
             for image in movie.get('images', {}).get(type, [])[1:5]:
                 image_urls.append(self.getImage(image, 'file', size))
-        except:
+        except Exception:
             log.debug('Failed getting %s.%s for "%s"', type, size, ss(str(movie)))
 
         return image_urls
@@ -243,7 +243,7 @@ class TheMovieDb(MovieProvider):
         try:
             url = 'https://api.themoviedb.org/3/%s?api_key=%s%s' % (call, self.getApiKey(), '&%s' % params if params else '')
             data = self.getJsonData(url, show_error = False)
-        except:
+        except Exception:
             log.debug('Movie not found: %s, %s', call, params)
             data = None
 

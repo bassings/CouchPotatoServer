@@ -40,7 +40,7 @@ class Charts(Plugin):
                             continue
                     except RecordNotFound:
                         pass
-                except:
+                except Exception:
                     pass
 
                 # Cache poster

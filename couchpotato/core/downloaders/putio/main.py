@@ -75,7 +75,7 @@ class PutIO(DownloaderBase):
             client = pio.Client(self.conf('oauth_token'))
             if client.File.list():
                 return True
-        except:
+        except Exception:
             log.info('Failed to get file listing, check OAUTH_TOKEN')
             return False
 
@@ -95,7 +95,7 @@ class PutIO(DownloaderBase):
     def getCredentials(self, **kwargs):
         try:
             oauth_token = kwargs.get('oauth')
-        except:
+        except Exception:
             return 'redirect', Env.get('web_base') + 'settings/downloaders/'
         log.debug('oauth_token is: %s', oauth_token)
         self.conf('oauth_token', value = oauth_token);
@@ -166,7 +166,7 @@ class PutIO(DownloaderBase):
 
         try:
             file_id = str(kwargs.get('file_id'))
-        except:
+        except Exception:
             return {
                 'success' : False,
             }

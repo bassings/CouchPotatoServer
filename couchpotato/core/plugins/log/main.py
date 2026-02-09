@@ -175,7 +175,7 @@ class Logging(Plugin):
                 else:
                     os.remove(path)
 
-            except:
+            except Exception:
                 log.error('Couldn\'t delete file "%s": %s', path, traceback.format_exc())
 
         return {
@@ -188,9 +188,9 @@ class Logging(Plugin):
             log_message = 'API log: %s' % kwargs
             try:
                 getattr(log, type)(log_message)
-            except:
+            except Exception:
                 log.error(log_message)
-        except:
+        except Exception:
             log.error('Couldn\'t log via API: %s', kwargs)
 
         return {

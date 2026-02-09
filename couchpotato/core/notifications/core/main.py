@@ -82,7 +82,7 @@ class CoreNotifier(Notification):
             for n in db.all('notification', with_doc = True):
                 if n['doc'].get('time', 0) <= (int(time.time()) - 2419200):
                     db.delete(n['doc'])
-        except:
+        except Exception:
             log.error('Failed cleaning notification: %s', traceback.format_exc())
 
     def markAsRead(self, ids = None, **kwargs):
@@ -98,7 +98,7 @@ class CoreNotifier(Notification):
             return {
                 'success': True
             }
-        except:
+        except Exception:
             log.error('Failed mark as read: %s', traceback.format_exc())
 
         return {
@@ -169,7 +169,7 @@ class CoreNotifier(Notification):
             self.frontend(type = listener, data = n)
 
             return True
-        except:
+        except Exception:
             log.error('Failed notify "%s": %s', n, traceback.format_exc())
 
     def frontend(self, type = 'notification', data = None, message = None):
@@ -195,7 +195,7 @@ class CoreNotifier(Notification):
                     args=({'success': True, 'result': [notification]},),
                     daemon=True
                 ).start()
-            except:
+            except Exception:
                 log.debug('Failed sending to listener: %s', traceback.format_exc())
 
         self.listeners = []
@@ -227,7 +227,7 @@ class CoreNotifier(Notification):
                 listener, last_id = list_tuple
                 if listener != callback:
                     new_listeners.append(list_tuple)
-            except:
+            except Exception:
                 log.debug('Failed removing listener: %s', traceback.format_exc())
 
         self.listeners = new_listeners
@@ -256,7 +256,7 @@ class CoreNotifier(Notification):
         try:
             index = list(map(itemgetter('message_id'), self.messages)).index(last_id)
             recent = self.messages[index + 1:]
-        except:
+        except Exception:
             pass
 
         self.m_lock.release()

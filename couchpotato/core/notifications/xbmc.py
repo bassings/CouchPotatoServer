@@ -65,7 +65,7 @@ class XBMC(Notification):
                     elif result.get('error'):
                         log.error('Kodi error; %s: %s (%s)', result['id'], result['error']['message'], result['error']['code'])
 
-            except:
+            except Exception:
                 log.error('Failed parsing results: %s', traceback.format_exc())
 
         return successful == max_successful
@@ -176,7 +176,7 @@ class XBMC(Notification):
         except (MaxRetryError, Timeout, ConnectionError):
             log.info2('Couldn\'t send request to Kodi, assuming it\'s turned off')
             return [{'result': 'Error'}]
-        except:
+        except Exception:
             log.error('Failed sending non-JSON-type request to Kodi: %s', traceback.format_exc())
             return [{'result': 'Error'}]
 
@@ -212,7 +212,7 @@ class XBMC(Notification):
         except (MaxRetryError, Timeout, ConnectionError):
             log.info2('Couldn\'t send request to Kodi, assuming it\'s turned off')
             return []
-        except:
+        except Exception:
             log.error('Failed sending request to Kodi: %s', traceback.format_exc())
             return []
 

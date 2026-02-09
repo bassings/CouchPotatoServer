@@ -46,7 +46,7 @@ class Worker(threading.Thread):
                     break
                 result = consume_task(task, self.services)
                 self.results.put((task.video, result))
-            except:
+            except Exception:
                 logger.error(u'Exception raised in worker %s' % self.name, exc_info=True)
             finally:
                 self.tasks.task_done()
@@ -58,7 +58,7 @@ class Worker(threading.Thread):
         for service_name, service in self.services.iteritems():
             try:
                 service.terminate()
-            except:
+            except Exception:
                 logger.error(u'Exception raised when terminating service %s' % service_name, exc_info=True)
 
 

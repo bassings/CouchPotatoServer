@@ -68,28 +68,28 @@ class XBMC(MovieMetaData):
         try:
             el = SubElement(nfoxml, 'title')
             el.text = toUnicode(getTitle(data))
-        except:
+        except Exception:
             pass
 
         # IMDB id
         try:
             el = SubElement(nfoxml, 'id')
             el.text = toUnicode(data['identifier'])
-        except:
+        except Exception:
             pass
 
         # Runtime
         try:
             runtime = SubElement(nfoxml, 'runtime')
             runtime.text = '%s min' % movie_info.get('runtime')
-        except:
+        except Exception:
             pass
 
         # mpaa
         try:
             mpaa = SubElement(nfoxml, 'mpaa')
             mpaa.text = toUnicode('Rated %s' % movie_info.get('mpaa'))
-        except:
+        except Exception:
             pass
 
         # Other values
@@ -105,7 +105,7 @@ class XBMC(MovieMetaData):
                 if movie_info.get(type):
                     el = SubElement(nfoxml, name)
                     el.text = toUnicode(movie_info.get(type, ''))
-            except:
+            except Exception:
                 pass
 
         # Release date 
@@ -113,7 +113,7 @@ class XBMC(MovieMetaData):
             if movie_info.get('released'):
                 el = SubElement(nfoxml, 'premiered')
                 el.text = time.strftime('%Y-%m-%d', time.strptime(movie_info.get('released'), '%d %b %Y'))
-        except:
+        except Exception:
             log.debug('Failed to parse release date %s: %s', movie_info.get('released'), traceback.format_exc())
 
         # Rating
@@ -125,7 +125,7 @@ class XBMC(MovieMetaData):
                 votes = SubElement(nfoxml, 'votes')
                 votes.text = str(v)
                 break
-            except:
+            except Exception:
                 log.debug('Failed adding rating info from %s: %s', rating_type, traceback.format_exc())
 
         # Genre

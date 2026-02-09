@@ -59,7 +59,7 @@ class Synology(DownloaderBase):
                 else:
                     filename = data['name'] + '.' + data['protocol']
                     response = srpc.create_task(filename = filename, filedata = filedata)
-        except:
+        except Exception:
             log.error('Exception while adding torrent: %s', traceback.format_exc())
         finally:
             return self.downloadReturnId('') if response else False
@@ -73,7 +73,7 @@ class Synology(DownloaderBase):
         try:
             srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'))
             test_result = srpc.test()
-        except:
+        except Exception:
             return False
 
         return test_result

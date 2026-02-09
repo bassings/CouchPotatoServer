@@ -19,7 +19,7 @@ if os.name == 'nt':
     import imp
     try:
         imp.find_module('win32file')
-    except:
+    except Exception:
         # todo:: subclass ImportError for missing dependencies, vs. broken plugins?
         raise ImportError("Missing the win32file module, which is a part of the prerequisite \
             pywin32 package. You can get it from http://sourceforge.net/projects/pywin32/files/pywin32/")
@@ -94,7 +94,7 @@ class FileBrowser(Plugin):
 
         try:
             dirs = self.getDirectories(path = path, show_hidden = show_hidden)
-        except:
+        except Exception:
             log.error('Failed getting directory "%s" : %s', path, traceback.format_exc())
             dirs = []
 
@@ -144,7 +144,7 @@ class FileBrowser(Plugin):
             result = bool(attrs & 2)
         except (AttributeError, AssertionError):
             pass
-        except:
+        except Exception:
             log.error('Failed getting hidden attribute: %s', traceback.format_exc())
 
         return result

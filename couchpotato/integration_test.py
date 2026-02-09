@@ -111,7 +111,7 @@ class TestWebServerIntegration(unittest.TestCase):
         """Extract API key from the application"""
         try:
             cls.api_key = Env.setting('api_key')
-        except:
+        except Exception:
             cls.api_key = None
 
     def setUp(self):

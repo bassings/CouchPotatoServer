@@ -66,7 +66,7 @@ class Email(Notification):
             log.info('Email notification sent')
 
             return True
-        except:
+        except Exception:
             log.error('E-mail failed: %s', traceback.format_exc())
 
         return False

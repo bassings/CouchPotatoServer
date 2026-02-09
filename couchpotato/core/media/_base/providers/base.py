@@ -64,7 +64,7 @@ class Provider(Plugin):
             try:
                 self.urlopen(test_url, 30)
                 self.is_available[host] = True
-            except:
+            except Exception:
                 log.error('"%s" unavailable, trying again in an 15 minutes.', host)
                 self.is_available[host] = False
 
@@ -82,7 +82,7 @@ class Provider(Plugin):
                     data = data.decode(decode_from)
 
                 return json.loads(data)
-            except:
+            except Exception:
                 log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
         return []
@@ -96,13 +96,13 @@ class Provider(Plugin):
             try:
                 data = XMLTree.fromstring(data)
                 return self.getElements(data, item_path)
-            except:
+            except Exception:
                 try:
                     data = XMLTree.fromstring(ss(data))
                     return self.getElements(data, item_path)
                 except XmlParseError:
                     log.error('Invalid XML returned, check "%s" manually for issues', url)
-                except:
+                except Exception:
                     log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
         return []
@@ -153,7 +153,7 @@ class YarrProvider(Provider):
                 if self.loginCheckSuccess(output):
                     self.last_login_check = now
                     return True
-            except: pass
+            except Exception: pass
             self.last_login_check = None
 
         if self.last_login_check:
@@ -196,7 +196,7 @@ class YarrProvider(Provider):
             if not self.login():
                 log.error('Failed downloading from %s', self.getName())
             return self.urlopen(url)
-        except:
+        except Exception:
             log.error('Failed downloading from %s: %s', self.getName(), traceback.format_exc())
 
     def getLoginParams(self):
@@ -205,7 +205,7 @@ class YarrProvider(Provider):
     def download(self, url = '', nzb_id = ''):
         try:
             return self.urlopen(url, headers = {'User-Agent': Env.getIdentifier()}, show_error = False)
-        except:
+        except Exception:
             log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
@@ -249,7 +249,7 @@ class YarrProvider(Provider):
                     download_url = self.urls[url_type]
                     if hostname in download_url:
                         return self
-        except:
+        except Exception:
             log.debug('Url %s doesn\'t belong to %s', url, self.getName())
 
         return

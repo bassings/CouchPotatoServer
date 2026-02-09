@@ -114,7 +114,7 @@ class Trakt(Automation, TraktBase):
             self.conf('automation_oauth_refresh', value = refresh_token)
 
             Env.prop('last_trakt_refresh', value = int(time.time()))
-        except:
+        except Exception:
             log.error('Failed setting trakt token: %s', traceback.format_exc())
 
         return 'redirect', Env.get('web_base') + 'settings/automation/'

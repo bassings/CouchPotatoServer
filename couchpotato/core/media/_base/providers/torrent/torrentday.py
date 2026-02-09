@@ -24,7 +24,7 @@ class Base(TorrentProvider):
             if not self.login():
                 log.error('Failed downloading from %s', self.getName())
             return self.urlopen(url, headers=self.getRequestHeaders())
-        except:
+        except Exception:
             log.error('Failed downloading from %s: %s', self.getName(), traceback.format_exc())
 
     def _searchOnTitle(self, title, media, quality, results):

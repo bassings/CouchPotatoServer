@@ -108,9 +108,9 @@ class Loader:
                 if self.runAsDaemon():
                     try:
                         self.daemon.stop()
-                    except:
+                    except Exception:
                         pass
-            except:
+            except Exception:
                 self.log.critical(traceback.format_exc())
 
             # Release log files and shutdown logger
@@ -118,7 +118,7 @@ class Loader:
 
             args = [sys.executable] + [os.path.join(base_path, os.path.basename(__file__))] + sys.argv[1:]
             subprocess.Popen(args)
-        except:
+        except Exception:
             self.log.critical(traceback.format_exc())
 
     def daemonize(self):
@@ -130,7 +130,7 @@ class Loader:
                 self.daemon.daemonize()
             except SystemExit:
                 raise
-            except:
+            except Exception:
                 self.log.critical(traceback.format_exc())
 
     def runAsDaemon(self):
@@ -164,10 +164,10 @@ if __name__ == '__main__':
         if nr != 4:
             try:
                 l.log.critical(traceback.format_exc())
-            except:
+            except Exception:
                 print(traceback.format_exc())
             raise
-    except:
+    except Exception:
         try:
             # if this fails we will have two tracebacks
             # one for failing to log, and one for the exception that got us here.
@@ -175,6 +175,6 @@ if __name__ == '__main__':
                 l.log.critical(traceback.format_exc())
             else:
                 print(traceback.format_exc())
-        except:
+        except Exception:
             print(traceback.format_exc())
         raise

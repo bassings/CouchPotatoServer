@@ -22,7 +22,7 @@ class RottenTomatoes(UserscriptBase):
 
         try:
             data = self.getUrl(url)
-        except:
+        except Exception:
             return
 
         try:
@@ -36,5 +36,5 @@ class RottenTomatoes(UserscriptBase):
             if name and year:
                 return self.search(name, year)
 
-        except:
+        except Exception:
             log.error('Failed parsing page for title and year: %s', traceback.format_exc())

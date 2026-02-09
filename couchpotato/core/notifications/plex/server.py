@@ -134,7 +134,7 @@ class PlexServer:
                     continue
 
                 self.request('library/sections/%s/refresh' % section.get('key'), 'text')
-        except:
+        except Exception:
             log.error('Plex library update failed for %s, Media Server not running: %s',
                       (self.plex.conf('media_server'), traceback.format_exc(1)))
             return False
