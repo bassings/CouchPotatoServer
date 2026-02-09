@@ -208,6 +208,8 @@ class Database(object):
             name = f.readline()[2:].strip().decode('utf-8')  # Python 3 compatibility
             _class = f.readline()[2:].strip().decode('utf-8')  # Python 3 compatibility
             code = f.read().decode('utf-8')  # Python 3 compatibility
+        # Python 2 -> 3 compatibility patches for stored index code
+        code = code.replace('from itertools import izip', 'izip = zip')
         try:
             obj = compile(code, '<Index: %s' % os.path.join(p, ind), 'exec')
             exec(obj, globals())
@@ -260,8 +262,8 @@ class Database(object):
             if name in self.indexes_names and not edit:
                 raise IndexConflict("Already exists")
             if edit:
-                previous_index = filter(lambda x: x.endswith(
-                    '.py') and x[2:-3] == name, os.listdir(p))
+                previous_index = list(filter(lambda x: x.endswith(
+                    '.py') and x[2:-3] == name, os.listdir(p)))
                 if not previous_index:
                     raise PreconditionsException(
                         "Can't edit index that's not yet in database")
@@ -308,8 +310,8 @@ class Database(object):
                         ind_kwargs[curr] = v
             if edit:
                 # code duplication...
-                previous_index = filter(lambda x: x.endswith(
-                    '.py') and x[2:-3] == ind.name, os.listdir(p))
+                previous_index = list(filter(lambda x: x.endswith(
+                    '.py') and x[2:-3] == ind.name, os.listdir(p)))
                 if not previous_index:
                     raise PreconditionsException(
                         "Can't edit index that's not yet in database")
@@ -843,7 +845,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
     def _single_reindex_index(self, index, data):
         doc_id, rev, start, size, status = self.id_ind.get(
             data['_id'])  # it's cached so it's ok
-        if status != 'd' and status != 'u':
+        if status != b'd' and status != b'u':
             self._single_insert_index(index, data, doc_id)
 
     def reindex_index(self, index):
@@ -970,7 +972,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
             raise RecordNotFound(ex)
         if not start and not size:
             raise RecordNotFound("Not found")
-        elif status == 'd':
+        elif status == b'd':
             raise RecordDeleted("Deleted")
         if with_storage and size:
             storage = ind.storage
@@ -1065,7 +1067,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         gen = ind.all(limit, offset)
         while True:
             try:
-                doc_id, unk, start, size, status = gen.next()
+                doc_id, unk, start, size, status = next(gen)
             except StopIteration:
                 break
             else:
@@ -1133,7 +1135,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         i = 0
         while True:
             try:
-                iter_.next()
+                next(iter_)
                 i += 1
             except StopIteration:
                 break
@@ -1233,7 +1235,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
             raise IndexNotFoundException("Index doesn't exist")
 
         props = {}
-        for key, value in db_index.__dict__.iteritems():
+        for key, value in db_index.__dict__.items():
             if not callable(value):  # not using inspect etc...
                 props[key] = value
 

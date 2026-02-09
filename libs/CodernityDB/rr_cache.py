@@ -3,6 +3,12 @@
 #
 # Copyright 2011-2013 Codernity (http://codernity.com)
 #
+# Python 2/3 compatibility
+try:
+    xrange
+except NameError:
+    xrange = range
+#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -30,7 +36,7 @@ def cache1lvl(maxsize=100):
             except KeyError:
                 if len(cache1lvl) == maxsize:
                     for i in xrange(maxsize // 10 or 1):
-                        del cache1lvl[choice(cache1lvl.keys())]
+                        del cache1lvl[choice(list(cache1lvl.keys()))]
                 cache1lvl[key] = user_function(key, *args, **kwargs)
                 result = cache1lvl[key]
 #                result = user_function(obj, key, *args, **kwargs)
@@ -67,7 +73,7 @@ def cache2lvl(maxsize=100):
                 if wrapper.cache_size == maxsize:
                     to_delete = maxsize // 10 or 1
                     for i in xrange(to_delete):
-                        key1 = choice(cache.keys())
+                        key1 = choice(list(cache.keys()))
                         key2 = choice(cache[key1].keys())
                         del cache[key1][key2]
                         if not cache[key1]:

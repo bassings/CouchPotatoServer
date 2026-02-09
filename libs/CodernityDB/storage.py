@@ -114,7 +114,12 @@ class IU_Storage(object):
         # self.fsync()
 
     def data_from(self, data):
-        return marshal.loads(data)
+        try:
+            return marshal.loads(data)
+        except (ValueError, TypeError):
+            # Fall back to Python 2 marshal compat parser
+            from CodernityDB.index import _compat_marshal_loads
+            return _compat_marshal_loads(data)
 
     def data_to(self, data):
         return marshal.dumps(data)
@@ -135,7 +140,7 @@ class IU_Storage(object):
         return self.save(data)
 
     def get(self, start, size, status='c'):
-        if status == 'd':
+        if status == 'd' or status == b'd':
             return None
         else:
             self._f.seek(start)
