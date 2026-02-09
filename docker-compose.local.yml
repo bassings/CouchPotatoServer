@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  couchpotato:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: couchpotato-dev
+    environment:
+      - PUID=501
+      - PGID=20
+      - TZ=Australia/Brisbane
+    volumes:
+      - /tmp/config:/config
+    ports:
+      - "5050:5050"
+    restart: "no"
