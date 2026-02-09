@@ -101,7 +101,21 @@ class QualityPlugin(Plugin):
 
         temp = []
         for quality in self.qualities:
-            quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+            try:
+                quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+            except (RecordNotFound, KeyError):
+                log.debug('Quality %s not in DB yet, attempting fill', quality.get('identifier'))
+                self.fill()
+                try:
+                    quality_doc = db.get('quality', quality.get('identifier'), with_doc = True)['doc']
+                except (RecordNotFound, KeyError):
+                    log.warning('Quality %s still not found after fill, using defaults', quality.get('identifier'))
+                    quality_doc = {
+                        'order': self.qualities.index(quality),
+                        'identifier': quality.get('identifier'),
+                        'size_min': quality.get('size', (0, 0))[0],
+                        'size_max': quality.get('size', (0, 0))[1],
+                    }
             q = mergeDicts(quality, quality_doc)
             temp.append(q)
 
