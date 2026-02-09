@@ -1,151 +1,84 @@
-CouchPotato
-=====
+# CouchPotato
 
-[![Join the chat at https://gitter.im/CouchPotato/CouchPotatoServer](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/CouchPotato/CouchPotatoServer?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 [![CI](https://github.com/bassings/CouchPotatoServer/actions/workflows/ci.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/ci.yml)
 [![Docker](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml)
-[![Coverage Status](https://coveralls.io/repos/bassings/CouchPotatoServer/badge.svg?branch=master&service=github)](https://coveralls.io/github/bassings/CouchPotatoServer?branch=master)
 
-CouchPotato (CP) is an automatic NZB and torrent downloader. You can keep a "movies I want"-list and it will search for NZBs/torrents of these movies every X hours.
-Once a movie is found, it will send it to SABnzbd or download the torrent to a specified directory.
+Automatic NZB and torrent downloader for movies. Maintain a watchlist and CouchPotato will search for releases, then send them to SABnzbd, NZBGet, or your torrent client.
 
-## 🐍 Python 3 Migration Complete!
+This is a **Python 3 fork** of the [archived original](https://github.com/CouchPotato/CouchPotatoServer), fully modernised and actively maintained.
 
-**This fork has been successfully migrated to Python 3.13** and is fully operational. The migration includes:
+## What's Changed
 
-- ✅ **Full Python 3.9+ compatibility** (tested on Python 3.9–3.13)
-- ✅ **FastAPI web framework** (replaces Tornado) with OpenAPI docs at `/docs`
-- ✅ **SQLite database** (replaces CodernityDB)
-- ✅ **All providers, downloaders, and notifications** updated for Python 3
-- ✅ **336 tests passing**
-- ✅ **Multi-stage Docker build** for smaller images
+- **Python 3.10+** (tested on 3.10 through 3.13)
+- **FastAPI** replaces Tornado (with OpenAPI docs at `/docs`)
+- **SQLite option** alongside the original CodernityDB
+- **Modern dependencies** from PyPI (no more vendored libraries)
+- **336 tests** across unit and integration suites
+- **Multi-stage Docker build**
 
-## Requirements
+## Quick Start
 
-- **Python 3.9 or higher** (recommended: Python 3.12+)
-- Git (for updates from source)
-- Optional: LXML for better/faster website scraping
+### Docker (recommended)
 
-## Running from Source
+```bash
+docker run -d \
+  -p 5050:5050 \
+  -v /path/to/config:/config \
+  -v /path/to/downloads:/downloads \
+  -e TZ=Australia/Brisbane \
+  bassings/couchpotato:latest
+```
 
-CouchPotatoServer can be run from source. This will use *git* as updater, so make sure that is installed.
+Or with Docker Compose:
 
-Windows:
+```bash
+curl -O https://raw.githubusercontent.com/bassings/CouchPotatoServer/master/docker-compose.yml
+docker compose up -d
+```
 
-* Install [Python 3.8+](https://www.python.org/downloads/) (recommended: latest stable version)
-* Then install [PyWin32](https://pypi.org/project/pywin32/) with `pip install pywin32` and [GIT](http://git-scm.com/)
-* Open up `Git Bash` (or CMD) and go to the folder you want to install CP. Something like Program Files.
-* Run `git clone https://github.com/bassings/CouchPotatoServer.git`.
-* You can now start CP via `python CouchPotatoServer\CouchPotato.py` to start
-* Your browser should open up, but if it doesn't go to `http://localhost:5050/`
+### From Source
 
-OS X:
+```bash
+git clone https://github.com/bassings/CouchPotatoServer.git
+cd CouchPotatoServer
+pip install -r requirements.txt
+python3 CouchPotato.py
+```
 
-* Install [Python 3.8+](https://www.python.org/downloads/) (macOS 10.15+ recommended)
-* Install [GIT](http://git-scm.com/)
-* Install [LXML](http://lxml.de/installation.html) with `pip install lxml` for better/faster website scraping 
-* Open up `Terminal`
-* Go to your App folder `cd /Applications`
-* Run `git clone https://github.com/bassings/CouchPotatoServer.git`
-* Then do `python3 CouchPotatoServer/CouchPotato.py`
-* Your browser should open up, but if it doesn't go to `http://localhost:5050/`
+Open `http://localhost:5050/` in your browser.
 
-Linux:
+## Migrating from Python 2
 
-* (Ubuntu / Debian) Install Python 3.8+ and GIT: `apt-get install python3 python3-pip git`
-* (Fedora / CentOS) Install Python 3.8+ and GIT: `dnf install python3 python3-pip git`
-* Install [LXML](http://lxml.de/installation.html) with `pip3 install lxml` for better/faster website scraping 
-* 'cd' to the folder of your choosing.
-* Install [PyOpenSSL](https://pypi.python.org/pypi/pyOpenSSL) with `pip3 install --upgrade pyopenssl`
-* Run `git clone https://github.com/bassings/CouchPotatoServer.git`
-* Then do `python3 CouchPotatoServer/CouchPotato.py` to start
-* (Ubuntu / Debian with upstart) To run on boot copy the init script `sudo cp CouchPotatoServer/init/ubuntu /etc/init.d/couchpotato`
-* (Ubuntu / Debian with upstart) Copy the default paths file `sudo cp CouchPotatoServer/init/ubuntu.default /etc/default/couchpotato`
-* (Ubuntu / Debian with upstart) Change the paths inside the default file `sudo nano /etc/default/couchpotato`
-* (Ubuntu / Debian with upstart) Make it executable `sudo chmod +x /etc/init.d/couchpotato`
-* (Ubuntu / Debian with upstart) Add it to defaults `sudo update-rc.d couchpotato defaults`
-* (Linux with systemd) To run on boot copy the systemd config `sudo cp CouchPotatoServer/init/couchpotato.service /etc/systemd/system/couchpotato.service`
-* (Linux with systemd) Update the systemd config file with your user and path to CouchPotato.py (ensure it uses `python3`)
-* (Linux with systemd) Enable it at boot with `sudo systemctl enable couchpotato`
-* Open your browser and go to `http://localhost:5050/`
-
-Docker:
-* You can use [linuxserver.io](https://github.com/linuxserver/docker-couchpotato) or build your own container based on Python 3.8+. For more info about Docker check out the [official website](https://www.docker.com).
-
-FreeBSD:
-
-* Become root with `su`
-* Update your repo catalog `pkg update`
-* Install required tools `pkg install python3 py39-sqlite3 git-lite`
-* For default install location and running as root `cd /usr/local`
-* If running as root, create python3 symlink `ln -s /usr/local/bin/python3 /usr/bin/python3`
-* Run `git clone https://github.com/bassings/CouchPotatoServer.git`
-* Copy the startup script `cp CouchPotatoServer/init/freebsd /usr/local/etc/rc.d/couchpotato`
-* Edit the startup script to use `python3` instead of `python`
-* Make startup script executable `chmod 555 /usr/local/etc/rc.d/couchpotato`
-* Add startup to boot `echo 'couchpotato_enable="YES"' >> /etc/rc.conf`
-* Read the options at the top of `more /usr/local/etc/rc.d/couchpotato`
-* If not default install, specify options with startup flags in `ee /etc/rc.conf`
-* Finally, `service couchpotato start`
-* Open your browser and go to: `http://server:5050/`
-
-## Migration from Python 2
-
-If you're migrating from a Python 2 installation:
-
-1. **Backup your data**: Copy your existing `data/` directory
-2. **Install Python 3.8+**: Follow the installation instructions above
-3. **Clone this repository**: `git clone https://github.com/bassings/CouchPotatoServer.git`
-4. **Copy your data**: Move your backed up `data/` directory to the new installation
-5. **Start with Python 3**: Run `python3 CouchPotato.py`
-
-The application will automatically handle any necessary database migrations.
+See [UPGRADING.md](UPGRADING.md) for migration instructions.
 
 ## Development
 
-Be sure you're running the latest version of **Python 3.8 or higher** (Python 3.10+ recommended).
-
-If you're going to add styling or doing some javascript work you'll need a few tools that build and compress scss -> css and combine the javascript files. [Node/NPM](https://nodejs.org/), [Grunt](http://gruntjs.com/installing-grunt), [Compass](http://compass-style.org/install/)
-
-After you've got these tools you can install the packages using `npm install`. Once this process has finished you can start CP using the command `grunt`. This will start all the needed tools and watches any files for changes.
-You can now change css and javascript and it wil reload the page when needed.
-
-By default it will combine files used in the core folder. If you're adding a new .scss or .js file, you might need to add it and then restart the grunt process for it to combine it properly.
-
-Don't forget to enable development inside the CP settings. This disables some functions and also makes sure javascript errors are pushed to console instead of the log.
-
-## Testing
-
-This fork includes comprehensive Python 3 compatibility tests:
-
 ```bash
-# Run compatibility tests
-python3 test_python3_compatibility.py
-
-# Run integration tests  
-python3 test_couchpotato_integration.py
+git clone https://github.com/bassings/CouchPotatoServer.git
+cd CouchPotatoServer
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt -r requirements-dev.txt
+python -m pytest tests/ -q
 ```
+
+Enable development mode in CP settings to get JS errors in the console instead of the log.
+
+## Documentation
+
+Reference docs are in [`docs/reference/`](docs/reference/):
+
+- [API.md](docs/reference/API.md) -- REST API endpoints
+- [DATABASE_SCHEMA.md](docs/reference/DATABASE_SCHEMA.md) -- SQLite schema
+- [DATA_MODEL.md](docs/reference/DATA_MODEL.md) -- Document structure
+- [PROVIDERS.md](docs/reference/PROVIDERS.md) -- Search providers
+- [DOWNLOADERS.md](docs/reference/DOWNLOADERS.md) -- Download clients
+- [NOTIFICATIONS.md](docs/reference/NOTIFICATIONS.md) -- Notification services
 
 ## Contributing
 
-We welcome contributions! This fork focuses on:
+Contributions welcome. Please ensure compatibility with Python 3.10+ and include tests where practical.
 
-- Python 3 compatibility and improvements
-- Bug fixes and stability improvements  
-- Security updates
-- Performance optimizations
+## License
 
-Please ensure any contributions maintain Python 3.8+ compatibility.
-
-## Python 3 Migration Notes
-
-This fork has been extensively tested and includes fixes for:
-
-- Dictionary iteration compatibility (`iterkeys()` → `keys()`)
-- String/bytes encoding issues
-- Function introspection updates
-- Import compatibility (Tornado, etc.)
-- Database migration handling
-- Hash function encoding requirements
-
-All core functionality has been preserved and thoroughly tested.
+[GPL-3.0](license.txt)
