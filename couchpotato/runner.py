@@ -13,7 +13,7 @@ import shutil
 
 from CodernityDB.database_super_thread_safe import SuperThreadSafeDatabase
 from argparse import ArgumentParser
-from cache import FileSystemCache
+from diskcache import Cache as DiskCache
 from couchpotato import KeyHandler, LoginHandler, LogoutHandler
 from couchpotato.api import NonBlockHandler, ApiHandler
 from couchpotato.core.event import fireEventAsync, fireEvent
@@ -129,7 +129,7 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     Env.set('db', db)
     Env.set('http_opener', session)
     Env.set('cache_dir', cache_dir)
-    Env.set('cache', FileSystemCache(python_cache))
+    Env.set('cache', DiskCache(python_cache))
     Env.set('console_log', options.console_log)
     Env.set('quiet', options.quiet)
     Env.set('desktop', desktop)

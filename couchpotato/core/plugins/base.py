@@ -348,7 +348,7 @@ class Plugin(object):
     def setCache(self, cache_key, value, timeout = 300):
         cache_key_md5 = md5(cache_key)
         log.debug('Setting cache %s', cache_key)
-        Env.get('cache').set(cache_key_md5, value, timeout)
+        Env.get('cache').set(cache_key_md5, value, expire=timeout)
         return value
 
     def createNzbName(self, data, media, unique_tag = False):
