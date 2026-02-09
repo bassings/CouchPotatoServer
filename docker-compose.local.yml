@@ -5,11 +5,10 @@ services:
       dockerfile: Dockerfile
     container_name: couchpotato-dev
     environment:
-      - PUID=1000
-      - PGID=1000
       - TZ=Australia/Brisbane
     volumes:
-      - /tmp/config:/config
+      - /tmp/cp-config/config:/config
     ports:
       - "5050:5050"
     restart: "no"
+    command: ["python3", "CouchPotato.py", "--console_log", "--data_dir=/config/data", "--config_file=/config/config.ini"]

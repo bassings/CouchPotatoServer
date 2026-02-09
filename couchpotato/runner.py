@@ -84,10 +84,13 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     db = SuperThreadSafeDatabase(db_path)
     db_exists = db.exists()
 
-    # TEMPORARY: Force database creation for Python 3 migration
-    print("INFO: Forcing fresh database creation for Python 3 migration...")
-    db.create()
-    print("INFO: Database created successfully.")
+    if not db_exists:
+        print("INFO: No existing database found, creating fresh database...")
+        db.create()
+        print("INFO: Database created successfully.")
+    else:
+        db.open()
+        print("INFO: Opened existing database.")
 
     # Force creation of cachedir
     log_dir = sp(log_dir)
