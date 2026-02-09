@@ -254,7 +254,7 @@ class CoreNotifier(Notification):
 
         recent = []
         try:
-            index = map(itemgetter('message_id'), self.messages).index(last_id)
+            index = list(map(itemgetter('message_id'), self.messages)).index(last_id)
             recent = self.messages[index + 1:]
         except:
             pass

@@ -2,12 +2,13 @@
 
 Provides web views, authentication, and the main application setup.
 """
+import asyncio
 import json
 import os
 import time
 import traceback
 
-from couchpotato.api import api_docs, api_docs_missing, api, callApiHandler
+from couchpotato.api import api_docs, api_docs_missing, api, api_nonblock, callApiHandler
 from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import md5, tryInt
@@ -163,9 +164,32 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         if not route:
             return RedirectResponse(url=web_base + 'docs/')
 
-        # Check nonblock routes
-        if route in api.get('nonblock', {}):
-            pass  # TODO: SSE support
+        # Check nonblock routes (long-poll support)
+        nonblock_key = route.replace('nonblock/', '', 1) if route.startswith('nonblock/') else route
+        if nonblock_key in api_nonblock:
+            add_listener, remove_listener = api_nonblock[nonblock_key]
+            kwargs = dict(request.query_params)
+            last_id = kwargs.get('last_id')
+
+            loop = asyncio.get_event_loop()
+            future = loop.create_future()
+
+            def on_result(result):
+                try:
+                    loop.call_soon_threadsafe(future.set_result, result)
+                except Exception:
+                    pass
+
+            add_listener(on_result, last_id=last_id)
+            try:
+                result = await asyncio.wait_for(future, timeout=30)
+                return JSONResponse(content=result)
+            except asyncio.TimeoutError:
+                remove_listener(on_result)
+                return JSONResponse(content={'success': True, 'result': []})
+            except asyncio.CancelledError:
+                remove_listener(on_result)
+                raise
 
         kwargs = dict(request.query_params)
         result = callApiHandler(route, **kwargs)
