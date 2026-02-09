@@ -1,0 +1,52 @@
+[tool.ruff]
+target-version = "py310"
+line-length = 160
+
+exclude = [
+    "libs/",
+    "couchpotato/lib/",
+    ".git",
+    "__pycache__",
+    "build/",
+    "dist/",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "UP", "B"]
+
+ignore = [
+    # Bare except — legacy code uses these everywhere
+    "E722",
+    # Broad exception caught — too noisy for legacy code
+    "BLE001",
+    # Do not use mutable data structures for argument defaults — common pattern in legacy
+    "B006",
+    # Loop control variable not used — common in legacy
+    "B007",
+    # No explicit stacklevel in warnings.warn — too noisy
+    "B028",
+    # Star-arg unpacking after keyword — legacy patterns
+    "B026",
+    # f-string in exception — not worth bulk-fixing
+    "UP031",
+    "UP032",
+    # Open with explicit encoding — too many to fix at once
+    "UP015",
+    # Unnecessary open mode parameters — noisy
+    "UP018",
+    # Line too long — handled by line-length setting, but some will still be too long
+    "E501",
+    # Module imported but unused — needed for __init__.py re-exports
+    "F401",
+    # Undefined name — too many false positives with dynamic imports
+    "F821",
+    # Local variable assigned but never used
+    "F841",
+    # Ambiguous variable name
+    "E741",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401", "F403"]
+"tests/*" = ["B", "UP"]
