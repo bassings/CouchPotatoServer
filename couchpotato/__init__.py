@@ -10,7 +10,7 @@ import traceback
 
 from couchpotato.api import api_docs, api_docs_missing, api, api_nonblock, callApiHandler
 from couchpotato.core.event import fireEvent
-from couchpotato.core.helpers.encoding import sp
+from couchpotato.core.helpers.encoding import sp, toUnicode
 from couchpotato.core.helpers.variable import md5, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
@@ -163,6 +163,16 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         route = route.strip('/')
         if not route:
             return RedirectResponse(url=web_base + 'docs/')
+
+        # Serve cached files (posters, etc.) directly
+        if route.startswith('file.cache/'):
+            from starlette.responses import FileResponse
+            filename = route.split('/')[-1]
+            cache_dir = toUnicode(Env.get('cache_dir'))
+            file_path = os.path.join(cache_dir, filename)
+            if os.path.isfile(file_path):
+                return FileResponse(file_path)
+            return JSONResponse(content={'success': False, 'error': 'File not found'}, status_code=404)
 
         # Check nonblock routes (long-poll support)
         nonblock_key = route.replace('nonblock/', '', 1) if route.startswith('nonblock/') else route

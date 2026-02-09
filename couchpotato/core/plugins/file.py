@@ -59,9 +59,10 @@ class FileManager(Plugin):
             log.error('Failed removing unused file: %s', traceback.format_exc())
 
     def showCacheFile(self, route, **kwargs):
-        route_path = '%s%s' % (Env.get('api_base'), route)
-        cache_dir = toUnicode(Env.get('cache_dir'))
-        Env.get('app').mount(route_path, StaticFiles(directory=cache_dir), name="file_cache")
+        # Cache file serving is handled directly in the API catch-all route
+        # (see couchpotato/__init__.py). The old StaticFiles mount conflicted
+        # with FastAPI's route matching (mounts intercept GET before routes).
+        pass
 
     def download(self, url = '', dest = None, overwrite = False, urlopen_kwargs = None):
         if not urlopen_kwargs: urlopen_kwargs = {}
