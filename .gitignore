@@ -1,4 +1,7 @@
 *.pyc
+__pycache__/
+*.egg-info/
+.venv/
 /data/
 /_env/
 /_source/
@@ -10,11 +13,12 @@
 .coverage
 coverage.xml
 nosetests.xml
+htmlcov/
 
 # Visual Studio
-
 /.vs
 
+# macOS
 .DS_Store
 
 # Test data directory
