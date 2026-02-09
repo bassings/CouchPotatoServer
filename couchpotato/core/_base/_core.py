@@ -213,6 +213,10 @@ class Core(Plugin):
         elif 'Darwin' in platform.platform(): platf = 'osx'
         else: platf = 'linux'
 
+        import version as version_module
+        ver_str = getattr(version_module, 'VERSION', None)
+        if ver_str:
+            return '%s - v%s' % (platf, ver_str)
         return '%s - %s-%s - v2' % (platf, ver.get('version').get('type') or 'unknown', ver.get('version').get('hash') or 'unknown')
 
     def versionView(self, **kwargs):

@@ -1582,6 +1582,7 @@ class IU_TreeBasedIndex(Index):
         return leaf_start, record_index, doc_id, l_key, start, size, status
 
     def update(self, doc_id, key, u_start=0, u_size=0, u_status=b'o'):
+        key = _to_bytes(key)
         containing_leaf_start, element_index, old_doc_id, old_key, old_start, old_size, old_status = self._find_key_to_update(key, doc_id)
         if u_start:
             old_start = u_start
@@ -1598,6 +1599,7 @@ class IU_TreeBasedIndex(Index):
         return True
 
     def delete(self, doc_id, key, start=0, size=0):
+        key = _to_bytes(key)
         containing_leaf_start, element_index = self._find_key_to_update(
             key, doc_id)[:2]
         self._delete_element(containing_leaf_start, element_index)
