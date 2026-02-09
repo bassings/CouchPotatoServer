@@ -13,15 +13,16 @@ Once a movie is found, it will send it to SABnzbd or download the torrent to a s
 
 **This fork has been successfully migrated to Python 3.13** and is fully operational. The migration includes:
 
-- ✅ **Full Python 3.8+ compatibility** (tested on Python 3.13)
-- ✅ **All core functionality preserved** 
-- ✅ **Web interface fully operational**
-- ✅ **Database migration handled automatically**
-- ✅ **Comprehensive test suite for compatibility**
+- ✅ **Full Python 3.9+ compatibility** (tested on Python 3.9–3.13)
+- ✅ **FastAPI web framework** (replaces Tornado) with OpenAPI docs at `/docs`
+- ✅ **SQLite database** (replaces CodernityDB)
+- ✅ **All providers, downloaders, and notifications** updated for Python 3
+- ✅ **336 tests passing**
+- ✅ **Multi-stage Docker build** for smaller images
 
 ## Requirements
 
-- **Python 3.8 or higher** (recommended: Python 3.10+)
+- **Python 3.9 or higher** (recommended: Python 3.12+)
 - Git (for updates from source)
 - Optional: LXML for better/faster website scraping
 

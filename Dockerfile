@@ -1,73 +1,62 @@
 # CouchPotato Docker Container
-# Based on Python 3.12 Alpine Linux for better security and smaller size
+# Multi-stage build for smaller image
 
-FROM python:3.12-alpine
+# Stage 1: Build dependencies
+FROM python:3.12-slim AS builder
 
-# Set version label
-LABEL version="1.0.0"
+WORKDIR /build
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# Stage 2: Runtime
+FROM python:3.12-slim
+
+LABEL maintainer="CouchPotato"
 LABEL description="CouchPotato - Automatic Movie Downloader"
 
-# Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     APP_DIR=/app \
     CONFIG_DIR=/config \
-    DATA_DIR=/data \
-    DOWNLOADS_DIR=/downloads \
-    MOVIES_DIR=/movies \
-    PUID=1000 \
-    PGID=1000
+    DATA_DIR=/data
 
-    # Install system dependencies
-    RUN apk add --no-cache \
-        bash \
+# Install minimal runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
-        git \
         mediainfo \
-        unzip \
-        p7zip \
-        shadow \
-        tzdata \
-        && rm -rf /var/cache/apk/*
+        gosu \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create app user and group
-RUN addgroup -g ${PGID} -S couchpotato \
-    && adduser -u ${PUID} -S couchpotato -G couchpotato -h ${APP_DIR} -s /bin/bash
+# Create app user
+RUN groupadd -g 1000 couchpotato \
+    && useradd -u 1000 -g couchpotato -d ${APP_DIR} -s /bin/bash couchpotato
 
-# Create directories
-RUN mkdir -p ${APP_DIR} ${CONFIG_DIR} ${DATA_DIR} ${DOWNLOADS_DIR} ${MOVIES_DIR} \
-    && chown -R couchpotato:couchpotato ${APP_DIR} ${CONFIG_DIR} ${DATA_DIR} ${DOWNLOADS_DIR} ${MOVIES_DIR}
+# Copy installed Python packages from builder
+COPY --from=builder /install /usr/local
 
 # Copy application code
 COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
 
-# Copy startup script
+# Create directories
+RUN mkdir -p ${CONFIG_DIR} ${DATA_DIR} \
+    && chown -R couchpotato:couchpotato ${CONFIG_DIR} ${DATA_DIR}
+
 COPY docker/entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Set working directory
 WORKDIR ${APP_DIR}
 
-# Install Python dependencies that might be needed for Python 3 compatibility
-RUN pip install --no-cache-dir \
-    six \
-    future \
-    configparser
+VOLUME ["${CONFIG_DIR}", "${DATA_DIR}"]
 
-# Create volumes
-VOLUME ["${CONFIG_DIR}", "${DATA_DIR}", "${DOWNLOADS_DIR}", "${MOVIES_DIR}"]
-
-# Expose port
 EXPOSE 5050
 
-# Set user
-USER couchpotato
-
-# Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
-    CMD curl -f http://localhost:5050/ || exit 1
+    CMD curl -sf http://localhost:5050/ || exit 1
 
-# Entry point
+# Use SIGTERM for graceful shutdown
+STOPSIGNAL SIGTERM
+
 ENTRYPOINT ["/entrypoint.sh"]
 CMD ["python3", "CouchPotato.py", "--console_log"]
