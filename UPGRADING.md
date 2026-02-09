@@ -4,7 +4,7 @@ This guide covers migrating from the legacy Python 2 version to the modernized P
 
 ## Requirements
 
-- **Python 3.9+** (3.12+ recommended)
+- **Python 3.10+** (3.12+ recommended)
 - All dependencies installed from `requirements.txt`
 
 ## Before You Start

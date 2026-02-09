@@ -1,28 +1,6 @@
 # CouchPotatoServer - Python dependencies
-# Replaces vendored libraries from libs/
 
-# Core Network
-requests==2.32.5
-tornado==6.5.4
-certifi==2026.1.4
-
-# Parsing
-beautifulsoup4==4.14.3
-html5lib==1.1
-guessit==3.8.0
-chardet==5.2.0
-
-# Utilities
-APScheduler==3.11.2
-python-dateutil==2.9.0.post0
-rsa==4.9.1
-oauthlib==3.3.1
-enzyme==0.5.2
-bencodepy==0.9.5
-deluge-client==1.10.2
-gntp==1.0.3
-
-# Web Framework (replaced Tornado handlers)
+# Web Framework
 fastapi==0.128.5
 uvicorn==0.40.0
 Jinja2==3.1.6
@@ -32,25 +10,29 @@ python-multipart==0.0.22
 blinker==1.9.0
 diskcache==5.6.3
 pydantic==2.12.5
+apscheduler==3.11.2
 tenacity==9.1.4
-packaging==26.0
 
-# Optional utilities
-platformdirs==4.5.1
-natsort==8.4.0
+# Network
+requests==2.32.5
 
-# Transitive (pinned for reproducibility)
-urllib3==2.6.3
-idna==3.11
-charset_normalizer==3.4.4
-soupsieve==2.8.3
-webencodings==0.5.1
-pyasn1==0.6.2
-six==1.17.0
-babelfish==0.6.1
-rebulk==3.2.0
-tzlocal==5.3.1
-typing-extensions==4.15.0
-
+# Parsing
+beautifulsoup4==4.14.3
+guessit==3.8.0
 lxml
-pyOpenSSL
+
+# Media
+enzyme==0.5.2
+bencodepy==0.9.5
+
+# Downloaders
+deluge-client==1.10.2
+
+# Notifications
+gntp==1.0.3
+
+# Utilities
+python-dateutil==2.9.0.post0
+natsort==8.4.0
+packaging==26.0
+six==1.17.0
