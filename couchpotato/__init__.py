@@ -2,6 +2,7 @@
 
 Provides web views, authentication, and the main application setup.
 """
+import json
 import os
 import time
 import traceback
@@ -23,7 +24,22 @@ views = {}
 
 # Jinja2 template environment
 _template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+class CPJSONEncoder(json.JSONEncoder):
+    """JSON encoder that handles bytes from CodernityDB documents."""
+    def default(self, o):
+        if isinstance(o, bytes):
+            return o.decode('utf-8', errors='replace')
+        return super().default(o)
+
+
+def _cp_tojson(value):
+    """Custom tojson filter that handles bytes values."""
+    return json.dumps(value, cls=CPJSONEncoder)
+
+
 _jinja_env = JinjaEnv(loader=FileSystemLoader(_template_dir))
+_jinja_env.filters['tojson'] = _cp_tojson
+_jinja_env.policies['json.dumps_kwargs'] = {'cls': CPJSONEncoder}
 
 
 def addView(route, func):
