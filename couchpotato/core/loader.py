@@ -1,10 +1,11 @@
+import importlib
 import os
+import pkgutil
 import sys
 import traceback
 
 from couchpotato.core.event import fireEvent
 from couchpotato.core.logger import CPLog
-from importhelper import import_module
 
 
 log = CPLog(__name__)
@@ -18,7 +19,7 @@ class Loader(object):
         self.modules = {}
         self.paths = {}
 
-    def preload(self, root = ''):
+    def preload(self, root=''):
         core = os.path.join(root, 'couchpotato', 'core')
 
         self.paths.update({
@@ -29,7 +30,7 @@ class Loader(object):
         })
 
         # Add media to loader
-        self.addPath(root, ['couchpotato', 'core', 'media'], 25, recursive = True)
+        self.addPath(root, ['couchpotato', 'core', 'media'], 25, recursive=True)
 
         # Add custom plugin folder
         from couchpotato.environment import Env
@@ -38,7 +39,7 @@ class Loader(object):
             sys.path.insert(0, custom_plugin_dir)
             self.paths['custom_plugins'] = (30, '', custom_plugin_dir)
 
-        # Loop over all paths and add to module list
+        # Discover modules from all registered paths
         for plugin_type, plugin_tuple in self.paths.items():
             priority, module, dir_name = plugin_tuple
             self.addFromDir(plugin_type, priority, module, dir_name)
@@ -48,71 +49,60 @@ class Loader(object):
 
         for priority in sorted(self.modules):
             for module_name, plugin in sorted(self.modules[priority].items()):
-
-                # Load module
                 try:
-                    if plugin.get('name')[:2] == '__':
+                    if plugin.get('name', '')[:2] == '__':
                         continue
 
                     m = self.loadModule(module_name)
                     if m is None:
                         continue
 
-                    # Save default settings for plugin/provider
-                    did_save += self.loadSettings(m, module_name, save = False)
-
+                    did_save += self.loadSettings(m, module_name, save=False)
                     self.loadPlugins(m, plugin.get('type'), plugin.get('name'))
                 except ImportError as e:
-                    # todo:: subclass ImportError for missing requirements.
-                    if e.message.lower().startswith("missing"):
-                        log.error(e.message)
-                        pass
-                    # todo:: this needs to be more descriptive.
+                    msg = str(e)
+                    if msg.lower().startswith("missing"):
+                        log.error(msg)
                     log.error('Import error, remove the empty folder: %s', plugin.get('module'))
                     log.debug('Can\'t import %s: %s', (module_name, traceback.format_exc()))
-                except:
+                except Exception:
                     log.error('Can\'t import %s: %s', (module_name, traceback.format_exc()))
 
         if did_save:
             fireEvent('settings.save')
 
-    def addPath(self, root, base_path, priority, recursive = False):
+    def addPath(self, root, base_path, priority, recursive=False):
         root_path = os.path.join(root, *base_path)
-        for filename in os.listdir(root_path):
-            path = os.path.join(root_path, filename)
-            if os.path.isdir(path) and filename[:2] != '__':
-                if '__init__.py' in os.listdir(path):
-                    new_base_path = ''.join(s + '.' for s in base_path) + filename
-                    self.paths[new_base_path.replace('.', '_')] = (priority, new_base_path, path)
+        module_prefix = '.'.join(base_path)
+
+        for importer, name, ispkg in pkgutil.iter_modules([root_path]):
+            if name.startswith('__'):
+                continue
+            if ispkg:
+                full_module = f'{module_prefix}.{name}'
+                full_path = os.path.join(root_path, name)
+                self.paths[full_module.replace('.', '_')] = (priority, full_module, full_path)
 
                 if recursive:
-                    self.addPath(root, base_path + [filename], priority, recursive = True)
+                    self.addPath(root, base_path + [name], priority, recursive=True)
 
     def addFromDir(self, plugin_type, priority, module, dir_name):
-
-        # Load dir module
-        if module and len(module) > 0:
+        # Register the directory's own module
+        if module:
             self.addModule(priority, plugin_type, module, os.path.basename(dir_name))
 
-        for name in os.listdir(dir_name):
-            path = os.path.join(dir_name, name)
-            ext = os.path.splitext(path)[1]
-            ext_length = len(ext)
+        if not os.path.isdir(dir_name):
+            return
 
-            # SKIP test files:
-            if path.endswith('_test.py'):
+        for importer, name, ispkg in pkgutil.iter_modules([dir_name]):
+            if name.startswith('__') or name == 'static' or name.endswith('_test'):
                 continue
 
-            if name != 'static' and ((os.path.isdir(path) and os.path.isfile(os.path.join(path, '__init__.py')))
-                                     or (os.path.isfile(path) and ext == '.py')):
-                name = name[:-ext_length] if ext_length > 0 else name
-                module_name = '%s.%s' % (module, name)
-                self.addModule(priority, plugin_type, module_name, name)
+            module_name = f'{module}.{name}' if module else name
+            self.addModule(priority, plugin_type, module_name, name)
 
-    def loadSettings(self, module, name, save = True):
-
+    def loadSettings(self, module, name, save=True):
         if not hasattr(module, 'config'):
-            #log.debug('Skip loading settings for plugin %s as it has no config section' % module.__file__)
             return False
 
         try:
@@ -122,34 +112,29 @@ class Loader(object):
                 for group in section['groups']:
                     for option in group['options']:
                         options[option['name']] = option
-                fireEvent('settings.register', section_name = section['name'], options = options, save = save)
+                fireEvent('settings.register', section_name=section['name'], options=options, save=save)
             return True
-        except:
+        except Exception:
             log.debug('Failed loading settings for "%s": %s', (name, traceback.format_exc()))
             return False
 
     def loadPlugins(self, module, type, name):
-
         if not hasattr(module, 'autoload'):
-            #log.debug('Skip startup for plugin %s as it has no start section' % module.__file__)
             return False
         try:
-            # Load single file plugin
             if isinstance(module.autoload, str):
                 getattr(module, module.autoload)()
-            # Load folder plugin
             else:
                 module.autoload()
 
             log.info('Loaded %s: %s', (type, name))
             return True
-        except:
+        except Exception:
             log.error('Failed loading plugin "%s": %s', (module.__file__, traceback.format_exc()))
             return False
 
     def addModule(self, priority, plugin_type, module, name):
-
-        if not self.modules.get(priority):
+        if priority not in self.modules:
             self.modules[priority] = {}
 
         module = module.lstrip('.')
@@ -165,10 +150,8 @@ class Loader(object):
 
     def loadModule(self, name):
         try:
-            return import_module(name)
+            return importlib.import_module(name)
         except (ImportError, SyntaxError):
-            # Skip modules that fail to import in Python 3 to allow partial
-            # functionality during migration.
             log.debug('Skip loading module plugin %s: %s', (name, traceback.format_exc()))
             return None
         except Exception:
