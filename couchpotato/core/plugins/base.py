@@ -1,22 +1,19 @@
 import threading
 from pathlib import Path
-from urllib.parse import quote, urlparse
-from urllib.request import getproxies
 import os
 import os.path
 import time
 import traceback
 
 from couchpotato.core.event import fireEvent, addEvent
-from couchpotato.core.helpers.encoding import ss, toSafeString, \
+from couchpotato.core.helpers.encoding import toSafeString, \
     toUnicode, sp
-from couchpotato.core.helpers.variable import md5, isLocalIP, scanForPassword, tryInt, getIdentifier, \
+from couchpotato.core.helpers.variable import md5, scanForPassword, tryInt, getIdentifier, \
     randomString
+from couchpotato.core.http_client import HttpClient
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 import requests
-from urllib3 import Timeout
-from urllib3.exceptions import MaxRetryError
 from tornado import template
 
 log = CPLog(__name__)
@@ -35,12 +32,7 @@ class Plugin(object):
 
     _locks = {}
 
-    user_agent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:45.0) Gecko/20100101 Firefox/45.0'
-    http_last_use = {}
-    http_last_use_queue = {}
     http_time_between_calls = 0
-    http_failed_request = {}
-    http_failed_disabled = {}
 
     def __new__(cls, *args, **kwargs):
         new_plugin = super(Plugin, cls).__new__(cls)
@@ -52,10 +44,19 @@ class Plugin(object):
         addEvent('app.do_shutdown', self.doShutdown)
         addEvent('plugin.running', self.isRunning)
         self._running = []
+        self._http_client = None
 
         # Setup database
         if self._database:
             addEvent('database.setup', self.databaseSetup)
+
+    @property
+    def http_client(self):
+        if self._http_client is None:
+            self._http_client = HttpClient(
+                time_between_calls=self.http_time_between_calls,
+            )
+        return self._http_client
 
     def databaseSetup(self):
 
@@ -154,137 +155,12 @@ class Plugin(object):
             if show_error:
                 log.error('Couldn\'t remove empty directory %s: %s', (folder_path, traceback.format_exc()))
 
-    # http request
-    def urlopen(self, url, timeout = 30, data = None, headers = None, files = None, show_error = True, stream = False):
-        url = quote(ss(url), safe = "%/:=&?~#+!$,;'@()*[]")
-
-        if not headers: headers = {}
-        if not data: data = {}
-
-        # Fill in some headers
-        parsed_url = urlparse(url)
-        host = '%s%s' % (parsed_url.hostname, (':' + str(parsed_url.port) if parsed_url.port else ''))
-
-        headers['Referer'] = headers.get('Referer', '%s://%s' % (parsed_url.scheme, host))
-        headers['Host'] = headers.get('Host', None)
-        headers['User-Agent'] = headers.get('User-Agent', self.user_agent)
-        headers['Accept-encoding'] = headers.get('Accept-encoding', 'gzip')
-        headers['Connection'] = headers.get('Connection', 'keep-alive')
-        headers['Cache-Control'] = headers.get('Cache-Control', 'max-age=0')
-
-        use_proxy = Env.setting('use_proxy')
-        proxy_url = None
-
-        if use_proxy:
-            proxy_server = Env.setting('proxy_server')
-            proxy_username = Env.setting('proxy_username')
-            proxy_password = Env.setting('proxy_password')
-
-            if proxy_server:
-                loc = "{0}:{1}@{2}".format(proxy_username, proxy_password, proxy_server) if proxy_username else proxy_server
-                proxy_url = {
-                    "http": "http://"+loc,
-                    "https": "https://"+loc,
-                }
-            else:
-                proxy_url = getproxies()
-
-        r = Env.get('http_opener')
-
-        # Don't try for failed requests
-        if self.http_failed_disabled.get(host, 0) > 0:
-            if self.http_failed_disabled[host] > (time.time() - 900):
-                log.info2('Disabled calls to %s for 15 minutes because so many failed requests.', host)
-                if not show_error:
-                    raise Exception('Disabled calls to %s for 15 minutes because so many failed requests' % host)
-                else:
-                    return ''
-            else:
-                del self.http_failed_request[host]
-                del self.http_failed_disabled[host]
-
-        self.wait(host, url)
-        status_code = None
-        try:
-
-            kwargs = {
-                'headers': headers,
-                'data': data if len(data) > 0 else None,
-                'timeout': timeout,
-                'files': files,
-                'verify': False, #verify_ssl, Disable for now as to many wrongly implemented certificates..
-                'stream': stream,
-                'proxies': proxy_url,
-            }
-            method = 'post' if len(data) > 0 or files else 'get'
-
-            log.info('Opening url: %s %s, data: %s', (method, url, [x for x in data.keys()] if isinstance(data, dict) else 'with data'))
-            response = r.request(method, url, **kwargs)
-
-            status_code = response.status_code
-            if response.status_code == requests.codes.ok:
-                data = response if stream else response.content
-            else:
-                response.raise_for_status()
-
-            self.http_failed_request[host] = 0
-        except (IOError, MaxRetryError, Timeout):
-            if show_error:
-                log.error('Failed opening url in %s: %s %s', (self.getName(), url, traceback.format_exc(0)))
-
-            # Save failed requests by hosts
-            try:
-
-                # To many requests
-                if status_code in [429]:
-                    self.http_failed_request[host] = 1
-                    self.http_failed_disabled[host] = time.time()
-
-                if not self.http_failed_request.get(host):
-                    self.http_failed_request[host] = 1
-                else:
-                    self.http_failed_request[host] += 1
-
-                    # Disable temporarily
-                    if self.http_failed_request[host] > 5 and not isLocalIP(host):
-                        self.http_failed_disabled[host] = time.time()
-
-            except:
-                log.debug('Failed logging failed requests for %s: %s', (url, traceback.format_exc()))
-
-            raise
-
-        self.http_last_use[host] = time.time()
-
-        return data
-
-    def wait(self, host = '', url = ''):
-        if self.http_time_between_calls == 0:
-            return
-
-        try:
-            if host not in self.http_last_use_queue:
-                self.http_last_use_queue[host] = []
-
-            self.http_last_use_queue[host].append(url)
-
-            while True and not self.shuttingDown():
-                wait = (self.http_last_use.get(host, 0) - time.time()) + self.http_time_between_calls
-
-                if self.http_last_use_queue[host][0] != url:
-                    time.sleep(.1)
-                    continue
-
-                if wait > 0:
-                    log.debug('Waiting for %s, %d seconds', (self.getName(), max(1, wait)))
-                    time.sleep(min(wait, 30))
-                else:
-                    self.http_last_use_queue[host] = self.http_last_use_queue[host][1:]
-                    self.http_last_use[host] = time.time()
-                    break
-        except:
-            log.error('Failed handling waiting call: %s', traceback.format_exc())
-            time.sleep(self.http_time_between_calls)
+    # http request — delegates to HttpClient
+    def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True, stream=False):
+        return self.http_client.request(
+            url, timeout=timeout, data=data, headers=headers,
+            files=files, show_error=show_error, stream=stream,
+        )
 
 
     def beforeCall(self, handler):
