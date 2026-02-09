@@ -1,7 +1,6 @@
 import traceback
 import re
 
-from bs4 import BeautifulSoup
 from couchpotato import fireEvent
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.rss import RSS
@@ -30,17 +29,17 @@ class IMDBBase(Automation, RSS):
         'theater': {
             'order': 1,
             'name': 'IMDB - Movies in Theaters',
-            'url': 'http://www.imdb.com/movies-in-theaters/',
+            'url': 'https://www.imdb.com/chart/moviemeter/',
         },
         'boxoffice': {
             'order': 2,
             'name': 'IMDB - Box Office',
-            'url': 'http://www.imdb.com/boxoffice/',
+            'url': 'https://www.imdb.com/chart/boxoffice/',
         },
         'top250': {
             'order': 3,
             'name': 'IMDB - Top 250 Movies',
-            'url': 'http://www.imdb.com/chart/top',
+            'url': 'https://www.imdb.com/chart/top/',
         },
     }
 
@@ -51,32 +50,15 @@ class IMDBBase(Automation, RSS):
         log.debug('Getting IMDBs from: %s', url)
         html = self.getHTMLData(url)
 
-        try:
-            split = splitString(html, split_on = "<div class=\"list compact\">")[1]
-            html = splitString(split, split_on = "<div class=\"pages\">")[0]
-        except:
-            try:
-                split = splitString(html, split_on = "<div id=\"main\">")
-
-                if len(split) < 2:
-                    log.error('Failed parsing IMDB page "%s", unexpected html.', url)
-                    return []
-
-                html = BeautifulSoup(split[1])
-                for x in ['list compact', 'lister', 'list detail sub-list']:
-                    html2 = html.find('div', attrs = {
-                        'class': x
-                    })
-
-                    if html2:
-                        html = html2.contents
-                        html = ''.join([str(x) for x in html])
-                        break
-            except:
-                log.error('Failed parsing IMDB page "%s": %s', url, traceback.format_exc())
+        if not html:
+            log.error('Failed fetching IMDB page "%s"', url)
+            return []
 
         html = ss(html)
         imdbs = getImdb(html, multiple = True) if html else []
+
+        if not imdbs:
+            log.warning('No IMDB IDs found on page "%s"', url)
 
         return imdbs
 
