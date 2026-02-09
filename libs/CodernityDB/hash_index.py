@@ -189,7 +189,7 @@ class IU_HashIndex(Index):
                 break
             else:
                 if status != b'd':
-                    if l_key == key:  # in case of hash function conflicts
+                    if (l_key.rstrip(b"\x00") if isinstance(l_key, bytes) else l_key) == (key.encode("utf-8") if isinstance(key, str) else key):  # in case of hash function conflicts
                         offset -= 1
                 location = _next
         while limit:
@@ -202,13 +202,22 @@ class IU_HashIndex(Index):
                 break
             else:
                 if status != b'd':
-                    if l_key == key:  # in case of hash function conflicts
+                    if (l_key.rstrip(b"\x00") if isinstance(l_key, bytes) else l_key) == (key.encode("utf-8") if isinstance(key, str) else key):  # in case of hash function conflicts
                         yield doc_id, start, size, status
                         limit -= 1
                 location = _next
 
     def _calculate_position(self, key):
-        return abs(hash(key) & self.hash_lim) * self.bucket_line_size + self._start_ind
+        # Use deterministic hash instead of Python's hash() which is
+        # randomised per-process in Python 3.3+ (PYTHONHASHSEED).
+        # This ensures data written in one process can be read in another.
+        import hashlib
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        elif not isinstance(key, bytes):
+            key = str(key).encode('utf-8')
+        h = int.from_bytes(hashlib.md5(key).digest()[:8], 'little', signed=False)
+        return abs(h & self.hash_lim) * self.bucket_line_size + self._start_ind
 
     # TODO add cache!
     def _locate_key(self, key, start):
@@ -229,7 +238,7 @@ class IU_HashIndex(Index):
             except struct.error:
                 raise ElemNotFound(
                     "Not found")  # not found but might be also broken
-            if l_key == key:
+            if (l_key.rstrip(b"\x00") if isinstance(l_key, bytes) else l_key) == (key.encode("utf-8") if isinstance(key, str) else key):
                 break
             else:
                 if not _next:
@@ -258,7 +267,11 @@ class IU_HashIndex(Index):
             except:
                 raise DocIdNotFound(
                     "Doc_id '%s' for '%s' not found" % (doc_id, key))
-            if l_doc_id == doc_id and l_key == key:  # added for consistency
+            _cmp_lk = l_key.rstrip(b'\x00') if isinstance(l_key, bytes) else l_key
+            _cmp_k = key.encode('utf-8') if isinstance(key, str) else key
+            _cmp_ld = l_doc_id.rstrip(b'\x00') if isinstance(l_doc_id, bytes) else l_doc_id
+            _cmp_d = doc_id.encode('utf-8') if isinstance(doc_id, str) else doc_id
+            if _cmp_ld == _cmp_d and _cmp_lk == _cmp_k:  # added for consistency
                 break
             else:
                 if not _next:
@@ -610,7 +623,7 @@ class IU_UniqueHashIndex(IU_HashIndex):
             # todo, maybe partial read there...
             l_key, rev, start, size, status, _next = self.entry_struct.unpack(
                 data)
-            if l_key == key:
+            if (l_key.rstrip(b"\x00") if isinstance(l_key, bytes) else l_key) == (key.encode("utf-8") if isinstance(key, str) else key):
                 raise IndexException("The '%s' key already exists" % key)
             if not _next or status == b'd':
                 return self.buckets.tell() - self.entry_line_size, l_key, rev, start, size, status, _next
@@ -635,7 +648,7 @@ class IU_UniqueHashIndex(IU_HashIndex):
                 l_key, rev, start, size, status, _next = self.entry_struct.unpack(data)
             except struct.error:
                 raise ElemNotFound("Location '%s' not found" % key)
-            if l_key == key:
+            if (l_key.rstrip(b"\x00") if isinstance(l_key, bytes) else l_key) == (key.encode("utf-8") if isinstance(key, str) else key):
                 break
             else:
                 if not _next:
