@@ -1,13 +1,11 @@
-import collections
-import ctypes
 import hashlib
 import os
-import platform
 import random
 import re
+import shutil
 import string
-import sys
 import traceback
+from pathlib import Path, PurePath
 
 from couchpotato.core.helpers.encoding import simplifyString, toSafeString, ss, sp, toUnicode
 from couchpotato.core.logger import CPLog
@@ -21,63 +19,39 @@ def fnEscape(pattern):
 
 
 def link(src, dst):
-    if os.name == 'nt':
-        import ctypes
-        if ctypes.windll.kernel32.CreateHardLinkW(toUnicode(dst), toUnicode(src), 0) == 0: raise ctypes.WinError()
-    else:
-        os.link(toUnicode(src), toUnicode(dst))
+    Path(toUnicode(dst)).hardlink_to(toUnicode(src))
 
 
 def symlink(src, dst):
-    if os.name == 'nt':
-        import ctypes
-        if ctypes.windll.kernel32.CreateSymbolicLinkW(toUnicode(dst), toUnicode(src), 1 if os.path.isdir(src) else 0) in [0, 1280]: raise ctypes.WinError()
-    else:
-        os.symlink(toUnicode(src), toUnicode(dst))
+    Path(toUnicode(dst)).symlink_to(toUnicode(src))
 
 
 def getUserDir():
-    try:
-        import pwd
-        if not os.environ['HOME']:
-            os.environ['HOME'] = sp(pwd.getpwuid(os.geteuid()).pw_dir)
-    except:
-        pass
-
-    return sp(os.path.expanduser('~'))
+    return sp(str(Path.home()))
 
 
 def getDownloadDir():
-    user_dir = getUserDir()
-
-    # OSX
-    if 'darwin' in platform.platform().lower():
-        return os.path.join(user_dir, 'Downloads')
-
-    if os.name == 'nt':
-        return os.path.join(user_dir, 'Downloads')
-
-    return user_dir
+    return str(Path.home() / 'Downloads')
 
 
 def getDataDir():
-
     # Windows
     if os.name == 'nt':
         return os.path.join(os.environ['APPDATA'], 'CouchPotato')
 
-    user_dir = getUserDir()
+    import platform as _platform
 
     # OSX
-    if 'darwin' in platform.platform().lower():
-        return os.path.join(user_dir, 'Library', 'Application Support', 'CouchPotato')
+    if 'darwin' in _platform.platform().lower():
+        return str(Path.home() / 'Library' / 'Application Support' / 'CouchPotato')
 
     # FreeBSD
+    import sys
     if 'freebsd' in sys.platform:
-        return os.path.join('/usr/local/', 'couchpotato', 'data')
+        return '/usr/local/couchpotato/data'
 
     # Linux
-    return os.path.join(user_dir, '.couchpotato')
+    return str(Path.home() / '.couchpotato')
 
 
 def isDict(obj):
@@ -106,11 +80,7 @@ def mergeDicts(a, b, prepend_list = False):
 
 
 def removeListDuplicates(seq):
-    checked = []
-    for e in seq:
-        if e not in checked:
-            checked.append(e)
-    return checked
+    return list(dict.fromkeys(seq))
 
 
 def flattenList(l):
@@ -135,7 +105,8 @@ def isLocalIP(ip):
 
 
 def getExt(filename):
-    return os.path.splitext(filename)[1][1:]
+    suffix = Path(filename).suffix
+    return suffix[1:] if suffix else ''
 
 
 def cleanHost(host, protocol = True, ssl = False, username = None, password = None):
@@ -187,9 +158,7 @@ def getImdb(txt, check_inside = False, multiple = False):
         txt = ss(txt)
 
     if check_inside and os.path.isfile(txt):
-        output = open(txt, 'r')
-        txt = output.read()
-        output.close()
+        txt = Path(txt).read_text(errors='replace')
 
     try:
         ids = re.findall(r'(tt\d{4,8})', txt)
@@ -224,9 +193,11 @@ def natsortKey(string_):
 
 
 def toIterable(value):
-    if isinstance(value, collections.Iterable):
+    try:
+        iter(value)
         return value
-    return [value]
+    except TypeError:
+        return [value]
 
 
 def getIdentifier(media):
@@ -283,21 +254,20 @@ def removeEmpty(l):
 
 
 def removeDuplicate(l):
-    seen = set()
-    return [x for x in l if x not in seen and not seen.add(x)]
+    return list(dict.fromkeys(l))
 
 
 def dictIsSubset(a, b):
     return all([k in b and b[k] == v for k, v in a.items()])
 
 
-# Returns True if sub_folder is the same as or inside base_folder
 def isSubFolder(sub_folder, base_folder):
+    """Returns True if sub_folder is the same as or inside base_folder"""
     if base_folder and sub_folder:
-        base = sp(os.path.realpath(base_folder)) + os.path.sep
-        subfolder = sp(os.path.realpath(sub_folder)) + os.path.sep
-        return os.path.commonprefix([subfolder, base]) == base
-
+        try:
+            return PurePath(os.path.realpath(sub_folder)).is_relative_to(os.path.realpath(base_folder))
+        except (TypeError, ValueError):
+            return False
     return False
 
 
@@ -356,24 +326,10 @@ def getFreeSpace(directories):
 
     free_space = {}
     for folder in directories:
-
         size = None
         if os.path.isdir(folder):
-            if os.name == 'nt':
-                _, total, free = ctypes.c_ulonglong(), ctypes.c_ulonglong(), \
-                                   ctypes.c_ulonglong()
-                # In Python 3, all strings are unicode, so always use the W version
-                if isinstance(folder, str):
-                    fun = ctypes.windll.kernel32.GetDiskFreeSpaceExW #@UndefinedVariable
-                else:
-                    fun = ctypes.windll.kernel32.GetDiskFreeSpaceExA #@UndefinedVariable
-                ret = fun(folder, ctypes.byref(_), ctypes.byref(total), ctypes.byref(free))
-                if ret == 0:
-                    raise ctypes.WinError()
-                return [total.value, free.value]
-            else:
-                s = os.statvfs(folder)
-                size = [s.f_blocks * s.f_frsize / (1024 * 1024), (s.f_bavail * s.f_frsize) / (1024 * 1024)]
+            usage = shutil.disk_usage(folder)
+            size = [usage.total / (1024 * 1024), usage.free / (1024 * 1024)]
 
         if single: return size
 
@@ -390,18 +346,14 @@ def getSize(paths):
 
     total_size = 0
     for path in paths:
-        path = sp(path)
+        p = Path(sp(path))
 
-        if os.path.isdir(path):
-            total_size = 0
-            for dirpath, _, filenames in os.walk(path):
-                for f in filenames:
-                    total_size += os.path.getsize(sp(os.path.join(dirpath, f)))
+        if p.is_dir():
+            total_size = sum(f.stat().st_size for f in p.rglob('*') if f.is_file())
+        elif p.is_file():
+            total_size += p.stat().st_size
 
-        elif os.path.isfile(path):
-            total_size += os.path.getsize(path)
-
-    return total_size / 1048576 # MB
+    return total_size / 1048576  # MB
 
 
 def find(func, iterable):
@@ -413,11 +365,6 @@ def find(func, iterable):
 
 
 def compareVersions(version1, version2):
-    def normalize(v):
-        return [int(x) for x in re.sub(r'(\.0+)*$','', v).split(".")]
-    
-    # Python 3 compatible cmp function
-    def cmp(a, b):
-        return (a > b) - (a < b)
-    
-    return cmp(normalize(version1), normalize(version2))
+    from packaging.version import Version
+    v1, v2 = Version(version1), Version(version2)
+    return (v1 > v2) - (v1 < v2)
