@@ -30,8 +30,6 @@ class Plugin:
     _needs_shutdown = False
     _running = None
 
-    _locks = {}
-
     http_time_between_calls = 0
 
     def __new__(cls, *args, **kwargs):
@@ -44,6 +42,7 @@ class Plugin:
         addEvent('app.do_shutdown', self.doShutdown)
         addEvent('plugin.running', self.isRunning)
         self._running = []
+        self._locks = {}
         self._http_client = None
 
         # Setup database
