@@ -21,7 +21,7 @@ from couchpotato.core.event import fireEventAsync, fireEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import getDataDir, tryInt, getFreeSpace
 import requests
-from requests.packages.urllib3 import disable_warnings
+from urllib3 import disable_warnings
 from tornado.httpserver import HTTPServer
 from tornado.web import Application, StaticFileHandler, RedirectHandler
 from couchpotato.core.softchroot import SoftChrootInitError

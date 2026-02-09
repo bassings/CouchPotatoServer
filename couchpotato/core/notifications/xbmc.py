@@ -9,7 +9,7 @@ from couchpotato.core.helpers.variable import splitString, getTitle
 from couchpotato.core.logger import CPLog
 from couchpotato.core.notifications.base import Notification
 from requests.exceptions import ConnectionError, Timeout
-from requests.packages.urllib3.exceptions import MaxRetryError
+from urllib3.exceptions import MaxRetryError
 
 
 log = CPLog(__name__)
