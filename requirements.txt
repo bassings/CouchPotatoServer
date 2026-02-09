@@ -18,6 +18,9 @@ python-dateutil==2.9.0.post0
 rsa==4.9.1
 oauthlib==3.3.1
 enzyme==0.5.2
+bencodepy==0.9.5
+deluge-client==1.10.2
+gntp==1.0.3
 
 # Transitive (pinned for reproducibility)
 urllib3==2.6.3
