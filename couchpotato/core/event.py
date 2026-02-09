@@ -8,8 +8,9 @@ from couchpotato.core.logger import CPLog
 
 log = CPLog(__name__)
 
-# Registry: name -> list of {handler, priority}
+# Registry: name -> list of {handler, priority} (kept sorted by priority)
 events = {}
+_events_lock = threading.Lock()
 
 # blinker namespace (not used for dispatch, but available for introspection)
 _ns = Namespace()
@@ -30,9 +31,6 @@ def runHandler(name, handler, *args, **kwargs):
 
 
 def addEvent(name, handler, priority=100):
-    if name not in events:
-        events[name] = []
-
     def createHandle(*args, **kwargs):
         h = None
         try:
@@ -55,14 +53,32 @@ def addEvent(name, handler, priority=100):
 
         return h
 
-    events[name].append({
+    entry = {
         'handler': createHandle,
         'priority': priority,
-    })
+    }
+
+    with _events_lock:
+        if name not in events:
+            events[name] = []
+        # Insert in sorted order by priority
+        handler_list = events[name]
+        handler_list.append(entry)
+        handler_list.sort(key=lambda h: h['priority'])
+
+
+def removeEvent(name):
+    """Remove all handlers for an event name."""
+    with _events_lock:
+        events.pop(name, None)
 
 
 def fireEvent(name, *args, **kwargs):
-    if name not in events:
+    # Take a snapshot of handlers under the lock
+    with _events_lock:
+        handlers = list(events.get(name, []))
+
+    if not handlers:
         return []
 
     try:
@@ -79,27 +95,16 @@ def fireEvent(name, *args, **kwargs):
             if x in kwargs:
                 options[x] = kwargs.pop(x)
 
-        handlers = events.get(name, [])
         if not handlers:
             return [] if options['single'] else None
 
-        # Sort handlers by priority (lower = higher priority)
-        sorted_handlers = sorted(handlers, key=lambda h: h['priority'])
+        # Handlers already sorted at registration time; no sort needed
 
         # Execute handlers
-        if options['in_order'] or options['single']:
-            lock = threading.RLock()
-        else:
-            lock = None
-
         results = []
-        for entry in sorted_handlers:
+        for entry in handlers:
             try:
-                if lock:
-                    with lock:
-                        result = entry['handler'](*args, **kwargs)
-                else:
-                    result = entry['handler'](*args, **kwargs)
+                result = entry['handler'](*args, **kwargs)
 
                 if result is not None:
                     results.append(result)
@@ -164,4 +169,5 @@ def errorHandler(error):
 
 
 def getEvent(name):
-    return events[name]
+    with _events_lock:
+        return list(events.get(name, []))

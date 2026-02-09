@@ -249,3 +249,71 @@ class TestGetEvent:
         addEvent('test.event', lambda: 'a')
         handlers = getEvent('test.event')
         assert len(handlers) == 1
+
+    def test_get_event_returns_copy(self):
+        from couchpotato.core.event import addEvent, getEvent, events
+        addEvent('test.event', lambda: 'a')
+        handlers = getEvent('test.event')
+        handlers.clear()
+        # Original should be unaffected
+        assert len(events['test.event']) == 1
+
+
+class TestPreSortedHandlers:
+    def test_handlers_sorted_at_registration(self):
+        from couchpotato.core.event import addEvent, events
+        addEvent('test.event', lambda: 'c', priority=300)
+        addEvent('test.event', lambda: 'a', priority=100)
+        addEvent('test.event', lambda: 'b', priority=200)
+        priorities = [h['priority'] for h in events['test.event']]
+        assert priorities == [100, 200, 300]
+
+
+class TestConcurrentEventSafety:
+    def test_concurrent_add_and_fire_no_crash(self):
+        """Adding events while firing should not raise RuntimeError."""
+        from couchpotato.core.event import addEvent, fireEvent
+        errors = []
+        stop = threading.Event()
+
+        def fire_loop():
+            while not stop.is_set():
+                try:
+                    fireEvent('concurrent.test')
+                except RuntimeError as e:
+                    errors.append(e)
+                    break
+
+        def add_loop():
+            for i in range(200):
+                addEvent('concurrent.test', lambda: i, priority=i)
+
+        fire_threads = [threading.Thread(target=fire_loop) for _ in range(4)]
+        add_thread = threading.Thread(target=add_loop)
+
+        for t in fire_threads:
+            t.start()
+        add_thread.start()
+        add_thread.join()
+        stop.set()
+        for t in fire_threads:
+            t.join()
+
+        assert not errors, f"Got RuntimeErrors: {errors}"
+
+    def test_concurrent_add_events_no_corruption(self):
+        """Multiple threads adding events should not lose entries."""
+        from couchpotato.core.event import addEvent, events
+
+        def add_many(prefix):
+            for i in range(100):
+                addEvent(f'bulk.{prefix}', lambda: True)
+
+        threads = [threading.Thread(target=add_many, args=(j,)) for j in range(10)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        for j in range(10):
+            assert len(events[f'bulk.{j}']) == 100
