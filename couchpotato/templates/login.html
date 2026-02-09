@@ -1,4 +1,4 @@
-{% autoescape None %}
+
 <!doctype html>
 <html class="{{ 'dark' if Env.setting('dark_theme') else '' }}">
 	<head>
@@ -9,16 +9,16 @@
 		<meta name="robots" content="noindex, nofollow" />
 
 		{% for url in fireEvent('clientscript.get_styles', single = True) %}
-		<link data-url="{{ url }}" rel="stylesheet" href="{{ Env.get('web_base') }}{{ url }}" type="text/css">{% end %}
+		<link data-url="{{ url }}" rel="stylesheet" href="{{ Env.get('web_base') }}{{ url }}" type="text/css">{% endfor %}
 		{% for url in fireEvent('clientscript.get_scripts', single = True) %}{% if 'combined.plugins' not in url %}
-		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% end %}{% end %}
+		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% endif %}{% endfor %}
 
 		<link href="{{ Env.get('static_path') }}images/favicon.ico" rel="icon" type="image/x-icon" />
 		<link rel="apple-touch-icon" href="{{ Env.get('static_path') }}images/homescreen.png" />
 
 		{% if Env.get('dev') %}
 		<script src="//localhost:35729/livereload.js?snipver=1"></script>
-		{% end %}
+		{% endif %}
 
 		<title>CouchPotato</title>
 	</head>

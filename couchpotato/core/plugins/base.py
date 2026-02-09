@@ -14,7 +14,7 @@ from couchpotato.core.http_client import HttpClient
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 import requests
-from tornado import template
+from jinja2 import Environment as _JinjaEnv, FileSystemLoader as _JinjaFSLoader
 
 log = CPLog(__name__)
 
@@ -79,9 +79,10 @@ class Plugin(object):
         self._class_name = name
 
     def renderTemplate(self, parent_file, templ, **params):
-
-        t = template.Template((Path(parent_file).parent / templ).read_text())
-        return t.generate(**params)
+        tmpl_dir = str(Path(parent_file).parent)
+        env = _JinjaEnv(loader=_JinjaFSLoader(tmpl_dir))
+        t = env.get_template(templ)
+        return t.render(**params)
 
     def createFile(self, path, content, binary = False):
         p = Path(sp(path))

@@ -1,50 +1,29 @@
+"""CouchPotato web application module - FastAPI backed.
+
+Provides web views, authentication, and the main application setup.
+"""
 import os
 import time
 import traceback
 
-from couchpotato.api import api_docs, api_docs_missing, api
+from couchpotato.api import api_docs, api_docs_missing, api, callApiHandler
 from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import md5, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
-from tornado import template
-from tornado.web import RequestHandler, authenticated
 
+from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from jinja2 import Environment as JinjaEnv, FileSystemLoader
 
 log = CPLog(__name__)
 
 views = {}
-template_loader = template.Loader(os.path.join(os.path.dirname(__file__), 'templates'))
 
-
-class BaseHandler(RequestHandler):
-
-    def get_current_user(self):
-        username = Env.setting('username')
-        password = Env.setting('password')
-
-        if username and password:
-            return self.get_secure_cookie('user')
-        else:  # Login when no username or password are set
-            return True
-
-
-# Main web handler
-class WebHandler(BaseHandler):
-
-    @authenticated
-    def get(self, route, *args, **kwargs):
-        route = route.strip('/')
-        if not views.get(route):
-            page_not_found(self)
-            return
-
-        try:
-            self.write(views[route](self))
-        except:
-            log.error("Failed doing web request '%s': %s", (route, traceback.format_exc()))
-            self.write({'success': False, 'error': 'Failed returning results'})
+# Jinja2 template environment
+_template_dir = os.path.join(os.path.dirname(__file__), 'templates')
+_jinja_env = JinjaEnv(loader=FileSystemLoader(_template_dir))
 
 
 def addView(route, func):
@@ -55,23 +34,47 @@ def get_db():
     return Env.get('db')
 
 
-# Web view
+# --- Authentication ---
+
+def get_current_user(request: Request):
+    """FastAPI dependency for cookie-based auth."""
+    username = Env.setting('username')
+    password = Env.setting('password')
+
+    if username and password:
+        user = request.cookies.get('user')
+        if not user:
+            return None
+        return user
+    else:
+        return True
+
+
+def require_auth(request: Request):
+    """FastAPI dependency that requires authentication."""
+    user = get_current_user(request)
+    if not user:
+        web_base = Env.get('web_base')
+        raise HTTPException(status_code=302, headers={'Location': '%slogin/' % web_base})
+    return user
+
+
+# --- Web Views ---
+
 def index(*args):
-    return template_loader.load('index.html').generate(sep = os.sep, fireEvent = fireEvent, Env = Env)
+    tmpl = _jinja_env.get_template('index.html')
+    return tmpl.render(sep=os.sep, fireEvent=fireEvent, Env=Env)
+
 addView('', index)
 
 
-# Web view
-def robots(handler):
-    handler.set_header('Content-Type', 'text/plain')
+def robots(*args):
+    return 'User-agent: * \nDisallow: /'
 
-    return 'User-agent: * \n' \
-           'Disallow: /'
 addView('robots.txt', robots)
 
 
-# Manifest
-def manifest(handler):
+def manifest(*args):
     web_base = Env.get('web_base')
     static_base = Env.get('static_path')
 
@@ -84,38 +87,26 @@ def manifest(handler):
     ]
 
     if not Env.get('dev'):
-        # CSS
-        for url in fireEvent('clientscript.get_styles', single = True):
+        for url in fireEvent('clientscript.get_styles', single=True):
             lines.append(web_base + url)
-
-        # Scripts
-        for url in fireEvent('clientscript.get_scripts', single = True):
+        for url in fireEvent('clientscript.get_scripts', single=True):
             lines.append(web_base + url)
-
-        # Favicon
         lines.append(static_base + 'images/favicon.ico')
 
-        # Fonts
         font_folder = sp(os.path.join(Env.get('app_dir'), 'couchpotato', 'static', 'fonts'))
-        for subfolder, dirs, files in os.walk(font_folder, topdown = False):
+        for subfolder, dirs, files in os.walk(font_folder, topdown=False):
             for file in files:
                 if '.woff' in file:
                     lines.append(static_base + 'fonts/' + file + ('?%s' % os.path.getmtime(os.path.join(font_folder, file))))
     else:
         lines.append('# Not caching anything in dev mode')
 
-    # End lines
-    lines.extend(['',
-    'NETWORK: ',
-    '*'])
-
-    handler.set_header('Content-Type', 'text/cache-manifest')
+    lines.extend(['', 'NETWORK: ', '*'])
     return '\n'.join(lines)
 
 addView('couchpotato.appcache', manifest)
 
 
-# API docs
 def apiDocs(*args):
     routes = list(api.keys())
 
@@ -123,83 +114,143 @@ def apiDocs(*args):
         del api_docs['']
         del api_docs_missing['']
 
-    return template_loader.load('api.html').generate(fireEvent = fireEvent, routes = sorted(routes), api_docs = api_docs, api_docs_missing = sorted(api_docs_missing), Env = Env)
+    tmpl = _jinja_env.get_template('api.html')
+    return tmpl.render(fireEvent=fireEvent, routes=sorted(routes), api_docs=api_docs, api_docs_missing=sorted(api_docs_missing), Env=Env)
 
 addView('docs', apiDocs)
 
 
-# Database debug manager
 def databaseManage(*args):
-    return template_loader.load('database.html').generate(fireEvent = fireEvent, Env = Env)
+    tmpl = _jinja_env.get_template('database.html')
+    return tmpl.render(fireEvent=fireEvent, Env=Env)
 
 addView('database', databaseManage)
 
 
-# Make non basic auth option to get api key
-class KeyHandler(RequestHandler):
+# --- FastAPI Route Handlers ---
 
-    def get(self, *args, **kwargs):
-        api_key = None
+def create_app(api_key: str, web_base: str) -> FastAPI:
+    """Create and configure the FastAPI application."""
+    app = FastAPI(docs_url=None, redoc_url=None)
 
+    api_base = '%sapi/%s' % (web_base, api_key)
+
+    @app.get(api_base + '/{route:path}')
+    @app.post(api_base + '/{route:path}')
+    async def api_handler(route: str, request: Request):
+        route = route.strip('/')
+        if not route:
+            return RedirectResponse(url=web_base + 'docs/')
+
+        # Check nonblock routes
+        if route in api.get('nonblock', {}):
+            pass  # TODO: SSE support
+
+        kwargs = dict(request.query_params)
+        result = callApiHandler(route, **kwargs)
+
+        if isinstance(result, tuple) and result[0] == 'redirect':
+            return RedirectResponse(url=result[1])
+
+        jsonp_callback = kwargs.get('callback_func')
+        if jsonp_callback:
+            return Response(
+                content=str(jsonp_callback) + '(' + (result if isinstance(result, str) else str(result)) + ')',
+                media_type='text/javascript'
+            )
+
+        return result
+
+    @app.get(web_base + 'getkey/')
+    @app.get(web_base + 'getkey')
+    async def get_key(request: Request):
         try:
             username = Env.setting('username')
             password = Env.setting('password')
+            u_param = request.query_params.get('u', '')
+            p_param = request.query_params.get('p', '')
 
-            if (self.get_argument('u') == md5(username) or not username) and (self.get_argument('p') == password or not password):
-                api_key = Env.setting('api_key')
+            api_key_val = None
+            if (u_param == md5(username) or not username) and (p_param == password or not password):
+                api_key_val = Env.setting('api_key')
 
-            self.write({
-                'success': api_key is not None,
-                'api_key': api_key
-            })
+            return {'success': api_key_val is not None, 'api_key': api_key_val}
         except:
             log.error('Failed doing key request: %s', (traceback.format_exc(),))
-            self.write({'success': False, 'error': 'Failed returning results'})
+            return {'success': False, 'error': 'Failed returning results'}
 
+    @app.get(web_base + 'login/')
+    @app.get(web_base + 'login')
+    async def login_get(request: Request):
+        user = get_current_user(request)
+        if user:
+            return RedirectResponse(url=web_base)
+        tmpl = _jinja_env.get_template('login.html')
+        return HTMLResponse(tmpl.render(sep=os.sep, fireEvent=fireEvent, Env=Env))
 
-class LoginHandler(BaseHandler):
-
-    def get(self, *args, **kwargs):
-
-        if self.get_current_user():
-            self.redirect(Env.get('web_base'))
-        else:
-            self.write(template_loader.load('login.html').generate(sep = os.sep, fireEvent = fireEvent, Env = Env))
-
-    def post(self, *args, **kwargs):
-
-        api_key = None
-
+    @app.post(web_base + 'login/')
+    @app.post(web_base + 'login')
+    async def login_post(request: Request):
+        form = await request.form()
         username = Env.setting('username')
         password = Env.setting('password')
 
-        if (self.get_argument('username') == username or not username) and (md5(self.get_argument('password')) == password or not password):
-            api_key = Env.setting('api_key')
+        api_key_val = None
+        if (form.get('username') == username or not username) and (md5(form.get('password', '')) == password or not password):
+            api_key_val = Env.setting('api_key')
 
-        if api_key:
-            remember_me = tryInt(self.get_argument('remember_me', default = 0))
-            self.set_secure_cookie('user', api_key, expires_days = 30 if remember_me > 0 else None)
+        response = RedirectResponse(url=web_base, status_code=302)
+        if api_key_val:
+            remember_me = tryInt(form.get('remember_me', 0))
+            max_age = 30 * 24 * 3600 if remember_me > 0 else None
+            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True)
 
-        self.redirect(Env.get('web_base'))
+        return response
+
+    @app.get(web_base + 'logout/')
+    @app.get(web_base + 'logout')
+    async def logout(request: Request):
+        response = RedirectResponse(url='%slogin/' % web_base, status_code=302)
+        response.delete_cookie('user')
+        return response
+
+    # Catch-all web handler
+    @app.get(web_base + '{route:path}')
+    async def web_handler(route: str, request: Request, user=Depends(require_auth)):
+        route = route.strip('/')
+        if route in views:
+            try:
+                content = views[route](request)
+                if route == 'robots.txt':
+                    return Response(content=content, media_type='text/plain')
+                elif route == 'couchpotato.appcache':
+                    return Response(content=content, media_type='text/cache-manifest')
+                return HTMLResponse(content=content)
+            except:
+                log.error("Failed doing web request '%s': %s", (route, traceback.format_exc()))
+                return JSONResponse({'success': False, 'error': 'Failed returning results'})
+
+        # Page not found - redirect to SPA
+        index_url = web_base
+        url = request.url.path[len(index_url):]
+        if url[:3] != 'api':
+            return RedirectResponse(url=index_url + '#' + url.lstrip('/'))
+        else:
+            if not Env.get('dev'):
+                time.sleep(0.1)
+            return Response(content='Wrong API key used', status_code=404)
+
+    return app
 
 
-class LogoutHandler(BaseHandler):
-
-    def get(self, *args, **kwargs):
-        self.clear_cookie('user')
-        self.redirect('%slogin/' % Env.get('web_base'))
-
-
-def page_not_found(rh):
+def page_not_found(request):
+    """Legacy page_not_found - kept for compatibility."""
     index_url = Env.get('web_base')
-    url = rh.request.uri[len(index_url):]
+    url = request.url.path[len(index_url):]
 
     if url[:3] != 'api':
-        r = index_url + '#' + url.lstrip('/')
-        rh.redirect(r)
+        return RedirectResponse(url=index_url + '#' + url.lstrip('/'))
     else:
         if not Env.get('dev'):
             time.sleep(0.1)
-
-        rh.set_status(404)
-        rh.write('Wrong API key used')
+        return Response(content='Wrong API key used', status_code=404)

@@ -10,8 +10,7 @@ def getParams(params):
     reg = re.compile(r'^[a-z0-9_\.]+$')
 
     # Sort keys
-    param_keys = params.keys()
-    param_keys.sort(key = natsortKey)
+    param_keys = sorted(params.keys(), key=natsortKey)
 
     temp = {}
     for param in param_keys:

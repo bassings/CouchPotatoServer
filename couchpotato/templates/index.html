@@ -1,4 +1,4 @@
-{% autoescape None %}
+
 <!doctype html>
 <html class="{{ 'dark' if Env.setting('dark_theme') else '' }}">
 	<head>
@@ -31,11 +31,11 @@
 		<link href="{{ icon_path }}favicon.ico" rel="icon" type="image/x-icon" />
 
 		{% for url in (fireEvent('clientscript.get_scripts', single = True) or []) %}
-		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% end %}
+		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% endfor %}
 
 		{% if Env.get('dev') %}
 		<script src="//localhost:35729/livereload.js?snipver=1" async></script>
-		{% end %}
+		{% endif %}
 
 		<script type="text/javascript">
 
@@ -44,15 +44,15 @@
 				new Uniform();
 
 				Api.setup({
-					'url': {{ json_encode(Env.get('api_base')) }},
-					'path_sep': {{ json_encode(sep) }},
+					'url': {{ Env.get('api_base') | tojson }},
+					'path_sep': {{ sep | tojson }},
 					'is_remote': false
 				});
 
 				$(document.body).set('data-api', window.location.protocol + '//' + window.location.host + Api.createUrl().replace('/default/', '/'));
 
 				// Catch errors
-				var dev = {{ json_encode(Env.get('dev')) }};
+				var dev = {{ Env.get('dev') | tojson }};
 				if(!dev){
 					window.onerror = function(message, file, line){
 
@@ -73,26 +73,26 @@
 				}
 
 				Quality.setup({
-					'profiles': {{ json_encode(fireEvent('profile.all', single = True)) }},
-					'qualities': {{ json_encode(fireEvent('quality.all', single = True)) }}
+					'profiles': {{ fireEvent('profile.all', single = True) | tojson }},
+					'qualities': {{ fireEvent('quality.all', single = True) | tojson }}
 				});
 
-				CategoryList.setup({{ json_encode(fireEvent('category.all', single = True)) }});
+				CategoryList.setup({{ fireEvent('category.all', single = True) | tojson }});
 
 				App.setup({
 					'dev': dev,
-					'base_url': {{ json_encode(Env.get('web_base')) }},
-					'dereferer': {{ json_encode(Env.setting('dereferer')) }},
-					'args': {{ json_encode(Env.get('args', unicode = True)) }},
-					'options': {{ json_encode(('%s' % Env.get('options'))) }},
-					'app_dir': {{ json_encode(Env.get('app_dir', unicode = True)) }},
-					'data_dir': {{ json_encode(Env.get('data_dir', unicode = True)) }},
-					'pid': {{ json_encode(Env.getPid()) }},
-					'userscript_version': {{ json_encode(fireEvent('userscript.get_version', single = True)) }},
+					'base_url': {{ Env.get('web_base') | tojson }},
+					'dereferer': {{ Env.setting('dereferer') | tojson }},
+					'args': {{ Env.get('args', unicode = True) | tojson }},
+					'options': {{ ('%s' % Env.get('options')) | tojson }},
+					'app_dir': {{ Env.get('app_dir', unicode = True) | tojson }},
+					'data_dir': {{ Env.get('data_dir', unicode = True) | tojson }},
+					'pid': {{ Env.getPid() | tojson }},
+					'userscript_version': {{ fireEvent('userscript.get_version', single = True) | tojson }},
 					'webui_feature': {
-						'hide_about_dirs' : {{ json_encode( Env.setting('hide_about_dirs', default=False, section = 'webui_feature', type='bool') ) }},
-						'hide_menuitem_update' : {{ json_encode( Env.setting('hide_menuitem_update', default=False, section = 'webui_feature', type='bool') ) }},
-						'hide_about_update' : {{ json_encode( Env.setting('hide_about_update', default=False, section = 'webui_feature', type='bool') ) }},
+						'hide_about_dirs' : {{  Env.setting('hide_about_dirs', default=False, section = 'webui_feature', type='bool')  | tojson }},
+						'hide_menuitem_update' : {{  Env.setting('hide_menuitem_update', default=False, section = 'webui_feature', type='bool')  | tojson }},
+						'hide_about_update' : {{  Env.setting('hide_about_update', default=False, section = 'webui_feature', type='bool')  | tojson }},
 					}
 				});
 			})
@@ -100,12 +100,12 @@
 			{% if Env.setting('show_wizard') %}
 				if(!window.location.href.contains('wizard'))
 					window.location = '{{ Env.get('web_base') }}wizard/'
-			{% end %}
+			{% endif %}
 
 		</script>
 
 		{% for url in fireEvent('clientscript.get_styles', single = True) %}
-		<link data-url="{{ url }}" rel="stylesheet" href="{{ Env.get('web_base') }}{{ url }}" type="text/css">{% end %}
+		<link data-url="{{ url }}" rel="stylesheet" href="{{ Env.get('web_base') }}{{ url }}" type="text/css">{% endfor %}
 	</head>
 	<body></body>
 </html>

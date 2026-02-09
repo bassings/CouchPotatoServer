@@ -1,4 +1,4 @@
-{% autoescape None %}
+
 <!doctype html>
 <html class="api_docs">
 	<head>
@@ -42,9 +42,9 @@
 						<td class="type">{{ api_docs[route]['params'][param].get('type', 'string') }}</td>
 						<td class="description">{{ api_docs[route]['params'][param]['desc'] }}</td>
 					</tr>
-				{% end %}
+				{% endfor %}
 				</table>
-				{% end %}
+				{% endif %}
 
 				{% if api_docs[route].get('return') %}
 				<h3>Return</h3>
@@ -55,12 +55,12 @@
 						<h4>Example</h4>
 						<pre>{{ api_docs[route]['return'].get('example', '') }}</pre>
 					</div>
-					{% end %}
+					{% endif %}
 				</div>
-				{% end %}
+				{% endif %}
 			</div>
-			{% end %}
-		{% end %}
+			{% endif %}
+		{% endfor %}
 
 		<div class="missing">
 			<h1>Missing documentation</h1>

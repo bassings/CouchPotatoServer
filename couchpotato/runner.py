@@ -14,37 +14,32 @@ import shutil
 from CodernityDB.database_super_thread_safe import SuperThreadSafeDatabase
 from argparse import ArgumentParser
 from diskcache import Cache as DiskCache
-from couchpotato import KeyHandler, LoginHandler, LogoutHandler
-from couchpotato.api import NonBlockHandler, ApiHandler
 from couchpotato.core.event import fireEventAsync, fireEvent
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import getDataDir, tryInt, getFreeSpace
 import requests
 from urllib3 import disable_warnings
-from tornado.httpserver import HTTPServer
-from tornado.web import Application, StaticFileHandler, RedirectHandler
 from couchpotato.core.softchroot import SoftChrootInitError
-try: from tornado.netutil import bind_unix_socket
-except: pass
+
 
 def getOptions(args):
 
     # Options
-    parser = ArgumentParser(prog = 'CouchPotato.py')
+    parser = ArgumentParser(prog='CouchPotato.py')
     parser.add_argument('--data_dir',
-                        dest = 'data_dir', help = 'Absolute or ~/ path of the data dir')
+                        dest='data_dir', help='Absolute or ~/ path of the data dir')
     parser.add_argument('--config_file',
-                        dest = 'config_file', help = 'Absolute or ~/ path of the settings file (default DATA_DIR/settings.conf)')
-    parser.add_argument('--debug', action = 'store_true',
-                        dest = 'debug', help = 'Debug mode')
-    parser.add_argument('--console_log', action = 'store_true',
-                        dest = 'console_log', help = "Log to console")
-    parser.add_argument('--quiet', action = 'store_true',
-                        dest = 'quiet', help = 'No console logging')
-    parser.add_argument('--daemon', action = 'store_true',
-                        dest = 'daemon', help = 'Daemonize the app')
+                        dest='config_file', help='Absolute or ~/ path of the settings file (default DATA_DIR/settings.conf)')
+    parser.add_argument('--debug', action='store_true',
+                        dest='debug', help='Debug mode')
+    parser.add_argument('--console_log', action='store_true',
+                        dest='console_log', help="Log to console")
+    parser.add_argument('--quiet', action='store_true',
+                        dest='quiet', help='No console logging')
+    parser.add_argument('--daemon', action='store_true',
+                        dest='daemon', help='Daemonize the app')
     parser.add_argument('--pid_file',
-                        dest = 'pid_file', help = 'Path to pidfile needed for daemon')
+                        dest='pid_file', help='Path to pidfile needed for daemon')
 
     options = parser.parse_args(args)
 
@@ -62,20 +57,7 @@ def getOptions(args):
     return options
 
 
-# Tornado monkey patch logging..
-def _log(status_code, request):
-
-    if status_code < 400:
-        return
-    else:
-        log_method = logging.debug
-    request_time = 1000.0 * request.request_time()
-    summary = request.method + " " + request.uri + " (" + \
-        request.remote_ip + ")"
-    log_method("%d %s %.2fms", status_code, summary, request_time)
-
-
-def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, Env = None, desktop = None):
+def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=None, desktop=None):
 
     try:
         locale.setlocale(locale.LC_ALL, "")
@@ -102,9 +84,8 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     # Check if database exists
     db = SuperThreadSafeDatabase(db_path)
     db_exists = db.exists()
-    
+
     # TEMPORARY: Force database creation for Python 3 migration
-    # Skip the existence check and always create fresh database
     print("INFO: Forcing fresh database creation for Python 3 migration...")
     db.create()
     print("INFO: Database created successfully.")
@@ -138,15 +119,15 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     Env.set('options', options)
 
     # Determine debug
-    debug = options.debug or Env.setting('debug', default = False, type = 'bool')
+    debug = options.debug or Env.setting('debug', default=False, type='bool')
     Env.set('debug', debug)
 
     # Development
-    development = Env.setting('development', default = False, type = 'bool')
+    development = Env.setting('development', default=False, type='bool')
     Env.set('dev', development)
 
     # Disable logging for some modules
-    for logger_name in ['enzyme', 'guessit', 'subliminal', 'apscheduler', 'tornado', 'requests']:
+    for logger_name in ['enzyme', 'guessit', 'subliminal', 'apscheduler', 'uvicorn', 'requests']:
         logging.getLogger(logger_name).setLevel(logging.ERROR)
 
     for logger_name in ['gntp']:
@@ -172,12 +153,11 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
         logger.addHandler(hdlr)
 
     # To file
-    hdlr2 = handlers.RotatingFileHandler(Env.get('log_path'), 'a', 500000, 10, encoding = Env.get('encoding'))
+    hdlr2 = handlers.RotatingFileHandler(Env.get('log_path'), 'a', 500000, 10, encoding=Env.get('encoding'))
     hdlr2.setFormatter(formatter)
     logger.addHandler(hdlr2)
 
     # Start logging & enable colors
-    # noinspection PyUnresolvedReferences
     import color_logs
     from couchpotato.core.logger import CPLog
     log = CPLog(__name__)
@@ -185,9 +165,8 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
 
     # Check soft-chroot dir exists:
     try:
-        # Load Soft-Chroot
         soft_chroot = Env.get('softchroot')
-        soft_chroot_dir = Env.setting('soft_chroot', section = 'core', default = None, type='unicode' )
+        soft_chroot_dir = Env.setting('soft_chroot', section='core', default=None, type='unicode')
         soft_chroot.initialize(soft_chroot_dir)
     except SoftChrootInitError as exc:
         log.error(exc)
@@ -200,156 +179,89 @@ def runCouchPotato(options, base_path, args, data_dir = None, log_dir = None, En
     try:
         total_space, available_space = getFreeSpace(data_dir)
         if available_space < 100:
-            log.error('Shutting down as CP needs some space to work. You\'ll get corrupted data otherwise. Only %sMB left', available_space)
+            log.error('Shutting down as CP needs some space to work. Only %sMB left', available_space)
             return
     except:
         log.error('Failed getting diskspace: %s', traceback.format_exc())
 
-    def customwarn(message, category, filename, lineno, file = None, line = None):
+    def customwarn(message, category, filename, lineno, file=None, line=None):
         log.warning('%s %s %s line:%s', (category.__name__, message, filename, lineno))
     warnings.showwarning = customwarn
 
-    # Create app
-    from couchpotato import WebHandler
+    # Create FastAPI app
+    from couchpotato import create_app
     web_base = ('/' + Env.setting('url_base').lstrip('/') + '/') if Env.setting('url_base') else '/'
     Env.set('web_base', web_base)
 
     api_key = Env.setting('api_key')
     if not api_key:
         api_key = uuid4().hex
-        Env.setting('api_key', value = api_key)
+        Env.setting('api_key', value=api_key)
 
     api_base = r'%sapi/%s/' % (web_base, api_key)
     Env.set('api_base', api_base)
 
     # Basic config
-    host = Env.setting('host', default = '0.0.0.0')
-    host6 = Env.setting('host6', default = '::')
+    host = Env.setting('host', default='0.0.0.0')
 
     config = {
         'use_reloader': reloader,
-        'port': tryInt(Env.setting('port', default = 5050)),
+        'port': tryInt(Env.setting('port', default=5050)),
         'host': host if host and len(host) > 0 else '0.0.0.0',
-        'host6': host6 if host6 and len(host6) > 0 else '::',
-        'ssl_cert': Env.setting('ssl_cert', default = None),
-        'ssl_key': Env.setting('ssl_key', default = None),
+        'ssl_cert': Env.setting('ssl_cert', default=None),
+        'ssl_key': Env.setting('ssl_key', default=None),
     }
 
-    # Load the app
-    application = Application(
-        [],
-        log_function = lambda x: None,
-        debug = config['use_reloader'],
-        gzip = True,
-        cookie_secret = api_key,
-        login_url = '%slogin/' % web_base,
-    )
+    # Create FastAPI application
+    application = create_app(api_key, web_base)
     Env.set('app', application)
 
-    # Request handlers
-    application.add_handlers(".*$", [
-        (r'%snonblock/(.*)(/?)' % api_base, NonBlockHandler),
-
-        # API handlers
-        (r'%s(.*)(/?)' % api_base, ApiHandler),  # Main API handler
-        (r'%sgetkey(/?)' % web_base, KeyHandler),  # Get API key
-        (r'%s' % api_base, RedirectHandler, {"url": web_base + 'docs/'}),  # API docs
-
-        # Login handlers
-        (r'%slogin(/?)' % web_base, LoginHandler),
-        (r'%slogout(/?)' % web_base, LogoutHandler),
-
-        # Catch all webhandlers
-        (r'%s(.*)(/?)' % web_base, WebHandler),
-        (r'(.*)', WebHandler),
-    ])
-
-    # Static paths
+    # Static file mounting
+    from fastapi.staticfiles import StaticFiles
     static_path = '%sstatic/' % web_base
-    for dir_name in ['fonts', 'images', 'scripts', 'style']:
-        application.add_handlers(".*$", [
-            ('%s%s/(.*)' % (static_path, dir_name), StaticFileHandler, {'path': sp(os.path.join(base_path, 'couchpotato', 'static', dir_name))})
-        ])
+    static_dir = sp(os.path.join(base_path, 'couchpotato', 'static'))
+    if os.path.isdir(static_dir):
+        application.mount(static_path.rstrip('/'), StaticFiles(directory=static_dir), name='static')
     Env.set('static_path', static_path)
 
     # Load configs & plugins
     loader = Env.get('loader')
-    loader.preload(root = sp(base_path))
+    loader.preload(root=sp(base_path))
     loader.run()
 
     # Fill database with needed stuff
     fireEvent('database.setup')
     if not db_exists:
-        fireEvent('app.initialize', in_order = True)
+        fireEvent('app.initialize', in_order=True)
     fireEvent('app.migrate')
 
-    # Go go go!
-    from tornado.ioloop import IOLoop
-    from tornado.autoreload import add_reload_hook
-    loop = IOLoop.current()
-
-    # Reload hook
-    def reload_hook():
-        fireEvent('app.shutdown')
-    add_reload_hook(reload_hook)
-
     # Some logging and fire load event
-    try: log.info('Starting server on port %(port)s', config)
-    except: pass
+    try:
+        log.info('Starting server on port %(port)s', config)
+    except:
+        pass
     fireEventAsync('app.load')
 
-    ssl_options = None
+    # Run with uvicorn
+    import uvicorn
+
+    ssl_kwargs = {}
     if config['ssl_cert'] and config['ssl_key']:
-        ssl_options = {
-            'certfile': config['ssl_cert'],
-            'keyfile': config['ssl_key'],
+        ssl_kwargs = {
+            'ssl_certfile': config['ssl_cert'],
+            'ssl_keyfile': config['ssl_key'],
         }
 
-    server = HTTPServer(application, no_keep_alive = True, ssl_options = ssl_options)
-
-    try_restart = True
-    restart_tries = 5
-
-    while try_restart:
-        try:
-            if config['host'].startswith('unix:'):
-                server.add_socket(bind_unix_socket(config['host'][5:]))
-            else:
-                server.listen(config['port'], config['host'])
-
-                if Env.setting('ipv6', default = False):
-                    try: server.listen(config['port'], config['host6'])
-                    except: log.info2('Tried to bind to IPV6 but failed')
-
-            loop.start()
-            server.close_all_connections()
-            server.stop()
-            loop.close(all_fds = True)
-        except Exception as e:
-            log.error('Failed starting: %s', traceback.format_exc())
-            try:
-                # In Python 3, exceptions don't unpack the same way
-                if hasattr(e, 'errno'):
-                    nr = e.errno
-                    msg = str(e)
-                else:
-                    nr = e.args[0] if e.args else 0
-                    msg = e.args[1] if len(e.args) > 1 else str(e)
-                    
-                if nr == 48:
-                    log.info('Port (%s) needed for CouchPotato is already in use, try %s more time after few seconds', config.get('port'), restart_tries)
-                    time.sleep(1)
-                    restart_tries -= 1
-
-                    if restart_tries > 0:
-                        continue
-                    else:
-                        return
-            except (ValueError, AttributeError, IndexError):
-                return
-            except:
-                pass
-
-            raise
-
-        try_restart = False
+    try:
+        uvicorn.run(
+            application,
+            host=config['host'],
+            port=config['port'],
+            reload=config['use_reloader'],
+            log_level='debug' if debug else 'info',
+            **ssl_kwargs
+        )
+    except Exception as e:
+        log.error('Failed starting: %s', traceback.format_exc())
+        if hasattr(e, 'errno') and e.errno == 48:
+            log.info('Port (%s) is already in use', config.get('port'))

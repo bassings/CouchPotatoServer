@@ -14,7 +14,7 @@ from couchpotato.core.logger import CPLog
 from couchpotato.core.notifications.base import Notification
 from .index import NotificationIndex, NotificationUnreadIndex
 from couchpotato.environment import Env
-from tornado.ioloop import IOLoop
+import threading
 
 
 log = CPLog(__name__)
@@ -190,10 +190,11 @@ class CoreNotifier(Notification):
         while len(self.listeners) > 0 and not self.shuttingDown():
             try:
                 listener, last_id = self.listeners.pop()
-                IOLoop.current().add_callback(listener, {
-                    'success': True,
-                    'result': [notification],
-                })
+                threading.Thread(
+                    target=listener,
+                    args=({'success': True, 'result': [notification]},),
+                    daemon=True
+                ).start()
             except:
                 log.debug('Failed sending to listener: %s', traceback.format_exc())
 

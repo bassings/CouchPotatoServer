@@ -13,7 +13,7 @@ from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compa
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
-from tornado.ioloop import IOLoop
+import threading
 
 
 log = CPLog(__name__)
@@ -123,10 +123,7 @@ class Core(Plugin):
         def shutdown():
             self.initShutdown()
 
-        if IOLoop.current()._closing:
-            shutdown()
-        else:
-            IOLoop.current().add_callback(shutdown)
+        threading.Thread(target=shutdown, daemon=True).start()
 
         return 'shutdown'
 
@@ -135,8 +132,8 @@ class Core(Plugin):
             return False
 
         def restart():
-            self.initShutdown(restart = True)
-        IOLoop.current().add_callback(restart)
+            self.initShutdown(restart=True)
+        threading.Thread(target=restart, daemon=True).start()
 
         return 'restarting'
 
@@ -174,13 +171,10 @@ class Core(Plugin):
 
         log.debug('Safe to shutdown/restart')
 
-        loop = IOLoop.current()
-
+        # Signal the server to stop (uvicorn handles this via sys.exit)
         try:
-            if not loop._closing:
-                loop.stop()
-        except RuntimeError:
-            pass
+            import _thread
+            _thread.interrupt_main()
         except:
             log.error('Failed shutting down the server: %s', traceback.format_exc())
 

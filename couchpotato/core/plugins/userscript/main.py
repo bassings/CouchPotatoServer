@@ -10,7 +10,7 @@ from couchpotato.core.helpers.variable import isDict
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
-from tornado.web import RequestHandler
+from fastapi.responses import RedirectResponse
 
 
 log = CPLog(__name__)
@@ -49,19 +49,20 @@ class Userscript(Plugin):
         }
 
     def getUserScript(self, script_route, **kwargs):
-
+        """Register userscript route on the FastAPI app."""
         klass = self
+        app = Env.get('app')
 
-        class UserscriptHandler(RequestHandler):
-
-            def get(self, random, route):
-
+        if app is not None:
+            @app.get(Env.get('api_base') + script_route)
+            async def userscript_handler(request):
+                from fastapi import Request as _Req
                 bookmarklet_host = Env.setting('bookmarklet_host')
-                loc = bookmarklet_host if bookmarklet_host else "{0}://{1}".format(self.request.protocol, self.request.headers.get('X-Forwarded-Host') or self.request.headers.get('host'))
+                loc = bookmarklet_host if bookmarklet_host else str(request.base_url).rstrip('/')
 
                 params = {
-                    'includes': fireEvent('userscript.get_includes', merge = True),
-                    'excludes': fireEvent('userscript.get_excludes', merge = True),
+                    'includes': fireEvent('userscript.get_includes', merge=True),
+                    'excludes': fireEvent('userscript.get_excludes', merge=True),
                     'version': klass.getVersion(),
                     'api': '%suserscript/' % Env.get('api_base'),
                     'host': loc,
@@ -70,9 +71,7 @@ class Userscript(Plugin):
                 script = klass.renderTemplate(__file__, 'template.js_tmpl', **params)
                 klass.createFile(os.path.join(Env.get('cache_dir'), 'couchpotato.user.js'), script)
 
-                self.redirect(Env.get('api_base') + 'file.cache/couchpotato.user.js')
-
-        Env.get('app').add_handlers(".*$", [('%s%s' % (Env.get('api_base'), script_route), UserscriptHandler)])
+                return RedirectResponse(url=Env.get('api_base') + 'file.cache/couchpotato.user.js')
 
     def getVersion(self):
 
