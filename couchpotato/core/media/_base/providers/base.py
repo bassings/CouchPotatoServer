@@ -136,7 +136,7 @@ class YarrProvider(Provider):
 
     def getEnabledProtocol(self):
         if self.isEnabled():
-            return self.protocol
+            return [self.protocol]
         else:
             return []
 
