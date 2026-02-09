@@ -16,6 +16,7 @@ from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment as JinjaEnv, FileSystemLoader
 
@@ -149,6 +150,17 @@ addView('database', databaseManage)
 def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(docs_url=None, redoc_url=None)
+
+    # CORS middleware — same-origin by default, configurable via settings
+    cors_origins = Env.setting('cors_origins', default='')
+    allowed_origins = [o.strip() for o in cors_origins.split(',') if o.strip()] if cors_origins else []
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Mount static files BEFORE catch-all routes so they take priority
     if static_dir and os.path.isdir(static_dir):
