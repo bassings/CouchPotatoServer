@@ -33,33 +33,49 @@ def read_codernity_docs(source_path: str) -> List[Dict]:
     db.open()
 
     docs = []
-    for row in db.all('id'):
+    for doc in db.all('id'):
         try:
-            doc_id = row['_id']
-            doc = db.get('id', doc_id)
+            # all('id') returns full documents in CodernityDB
+            # Ensure _id is a string (CodernityDB may return bytes)
+            if isinstance(doc.get('_id'), bytes):
+                doc['_id'] = doc['_id'].decode('utf-8', errors='replace')
             docs.append(doc)
         except (RecordNotFound, RecordDeleted, KeyError):
             continue
         except Exception as e:
-            print(f"  Warning: skipping document {row.get('_id', '?')}: {e}", file=sys.stderr)
+            print(f"  Warning: skipping document {doc.get('_id', '?')}: {e}", file=sys.stderr)
             continue
 
     db.close()
     return docs
 
 
+def _decode_bytes(value):
+    """Recursively decode bytes values to strings."""
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+    if isinstance(value, dict):
+        return {_decode_bytes(k): _decode_bytes(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_decode_bytes(v) for v in value]
+    if isinstance(value, tuple):
+        return [_decode_bytes(v) for v in value]
+    return value
+
+
 def clean_doc_for_sqlite(doc: Dict) -> Dict:
     """Clean a CodernityDB document for SQLite insertion.
 
     Removes CodernityDB internal fields and ensures JSON-serializable data.
+    Decodes bytes values to strings.
     """
-    cleaned = {}
     skip_keys = {'_rev', 'key'}  # _rev will be regenerated; 'key' is index artifact
 
+    cleaned = {}
     for k, v in doc.items():
         if k in skip_keys:
             continue
-        cleaned[k] = v
+        cleaned[_decode_bytes(k)] = _decode_bytes(v)
 
     return cleaned
 
@@ -126,8 +142,9 @@ def verify(source_path: str, dest_path: str, verbose: bool = False) -> bool:
     if verbose:
         print("Verifying migration...")
 
-    # Read source
-    source_docs = read_codernity_docs(source_path)
+    # Read source (clean bytes for fair comparison)
+    source_docs_raw = read_codernity_docs(source_path)
+    source_docs = [clean_doc_for_sqlite(d) for d in source_docs_raw]
     source_by_id = {d['_id']: d for d in source_docs}
     source_types = Counter(d.get('_t', 'unknown') for d in source_docs)
 
