@@ -31,6 +31,7 @@ class Plugin:
     _running = None
 
     http_time_between_calls = 0
+    ssl_verify = True  # Subclasses can set to False to disable SSL verification
 
     def __new__(cls, *args, **kwargs):
         new_plugin = super().__new__(cls)
@@ -54,6 +55,7 @@ class Plugin:
         if self._http_client is None:
             self._http_client = HttpClient(
                 time_between_calls=self.http_time_between_calls,
+                ssl_verify=self.ssl_verify,
             )
         return self._http_client
 

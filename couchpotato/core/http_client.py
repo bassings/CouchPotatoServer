@@ -33,9 +33,10 @@ MAX_FAILURES_BEFORE_DISABLE = 5
 class HttpClient:
     """HTTP client with per-host rate limiting, failure tracking, and proxy support."""
 
-    def __init__(self, time_between_calls=0, user_agent=None):
+    def __init__(self, time_between_calls=0, user_agent=None, ssl_verify=True):
         self.time_between_calls = time_between_calls
         self.user_agent = user_agent or DEFAULT_USER_AGENT
+        self.ssl_verify = ssl_verify
         self.last_use = {}
         self.last_use_queue = {}
         self.failed_request = {}
@@ -175,7 +176,7 @@ class HttpClient:
                 'data': data if len(data) > 0 else None,
                 'timeout': timeout,
                 'files': files,
-                'verify': False,
+                'verify': self.ssl_verify,
                 'stream': stream,
                 'proxies': proxy_url,
             }

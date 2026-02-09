@@ -128,8 +128,9 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     development = Env.setting('development', default=False, type='bool')
     Env.set('dev', development)
 
-    # Disable SSL warning
-    disable_warnings()
+    # Only suppress SSL warnings if SSL verification is explicitly disabled
+    if not Env.setting('ssl_verify', default=True, type='bool'):
+        disable_warnings()
 
     # Use reloader
     reloader = debug is True and development and not Env.get('desktop') and not options.daemon
