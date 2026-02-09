@@ -18,3 +18,9 @@
 
 __version__ = '0.5.0'
 __license__ = "Apache 2.0"
+
+# Ensure CodernityDB directory is on sys.path for bare imports (rr_cache, etc.)
+import os, sys
+_cdb_dir = os.path.dirname(os.path.abspath(__file__))
+if _cdb_dir not in sys.path:
+    sys.path.insert(0, _cdb_dir)
