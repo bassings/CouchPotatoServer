@@ -1,6 +1,8 @@
 import threading
+from pathlib import Path
 from urllib.parse import quote, urlparse
 from urllib.request import getproxies
+import os
 import os.path
 import time
 import traceback
@@ -77,16 +79,16 @@ class Plugin(object):
 
     def renderTemplate(self, parent_file, templ, **params):
 
-        t = template.Template(open(os.path.join(os.path.dirname(parent_file), templ), 'r').read())
+        t = template.Template((Path(parent_file).parent / templ).read_text())
         return t.generate(**params)
 
     def createFile(self, path, content, binary = False):
-        path = sp(path)
+        p = Path(sp(path))
 
-        self.makeDir(os.path.dirname(path))
+        self.makeDir(str(p.parent))
 
-        if os.path.exists(path):
-            log.debug('%s already exists, overwriting file with new version', path)
+        if p.exists():
+            log.debug('%s already exists, overwriting file with new version', p)
 
         write_type = 'w+' if not binary else 'w+b'
 
@@ -94,64 +96,63 @@ class Plugin(object):
         if isinstance(content, requests.models.Response):
 
             # Write file to temp
-            with open('%s.tmp' % path, write_type) as f:
+            tmp_path = p.with_suffix(p.suffix + '.tmp')
+            with open(str(tmp_path), write_type) as f:
                 for chunk in content.iter_content(chunk_size = 1048576):
                     if chunk:  # filter out keep-alive new chunks
                         f.write(chunk)
                         f.flush()
 
             # Rename to destination
-            os.rename('%s.tmp' % path, path)
+            tmp_path.rename(p)
 
         else:
             try:
-                f = open(path, write_type)
-                f.write(content)
-                f.close()
+                p.write_text(content) if not binary else p.write_bytes(content)
 
                 try:
-                    os.chmod(path, Env.getPermission('file'))
+                    p.chmod(Env.getPermission('file'))
                 except:
-                    log.error('Failed writing permission to file "%s": %s', (path, traceback.format_exc()))
+                    log.error('Failed writing permission to file "%s": %s', (p, traceback.format_exc()))
 
             except:
-                log.error('Unable to write file "%s": %s', (path, traceback.format_exc()))
-                if os.path.isfile(path):
-                    os.remove(path)
+                log.error('Unable to write file "%s": %s', (p, traceback.format_exc()))
+                if p.is_file():
+                    p.unlink()
 
     def makeDir(self, path):
-        path = sp(path)
+        p = Path(sp(path))
         try:
-            if not os.path.isdir(path):
-                os.makedirs(path, Env.getPermission('folder'))
-                os.chmod(path, Env.getPermission('folder'))
+            if not p.is_dir():
+                p.mkdir(parents=True, exist_ok=True)
+                p.chmod(Env.getPermission('folder'))
             return True
         except Exception as e:
-            log.error('Unable to create folder "%s": %s', (path, e))
+            log.error('Unable to create folder "%s": %s', (p, e))
 
         return False
 
     def deleteEmptyFolder(self, folder, show_error = True, only_clean = None):
-        folder = sp(folder)
+        folder_path = Path(sp(folder))
 
-        for item in os.listdir(folder):
-            full_folder = sp(os.path.join(folder, item))
+        for item in folder_path.iterdir():
+            full_folder = Path(sp(str(item)))
 
-            if not only_clean or (item in only_clean and os.path.isdir(full_folder)):
+            if not only_clean or (item.name in only_clean and full_folder.is_dir()):
 
-                for subfolder, dirs, files in os.walk(full_folder, topdown = False):
+                for subfolder, dirs, files in os.walk(str(full_folder), topdown = False):
 
                     try:
-                        os.rmdir(subfolder)
+                        Path(subfolder).rmdir()
                     except:
                         if show_error:
                             log.info2('Couldn\'t remove directory %s: %s', (subfolder, traceback.format_exc()))
 
         try:
-            os.rmdir(folder)
+            folder_path.rmdir()
         except:
             if show_error:
-                log.error('Couldn\'t remove empty directory %s: %s', (folder, traceback.format_exc()))
+                log.error('Couldn\'t remove empty directory %s: %s', (folder_path, traceback.format_exc()))
 
     # http request
     def urlopen(self, url, timeout = 30, data = None, headers = None, files = None, show_error = True, stream = False):
