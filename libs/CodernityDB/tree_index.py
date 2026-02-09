@@ -23,6 +23,13 @@ import os
 import io
 import shutil
 from .storage import IU_Storage
+
+
+def _to_bytes(val):
+    """Ensure a value is bytes for consistent comparison (Python 3 compat)."""
+    if isinstance(val, str):
+        return val.encode('utf-8')
+    return val
 # from ipdb import set_trace
 
 from CodernityDB.env import cdb_environment
@@ -172,6 +179,13 @@ class IU_TreeBasedIndex(Index):
         self.flush()
 
     def insert(self, doc_id, key, start, size, status=b'o'):
+        # Ensure doc_id and key are bytes for struct packing (Python 3)
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        if isinstance(key, str):
+            key = key.encode('utf-8')
+        if isinstance(status, str):
+            status = status.encode('utf-8')
         nodes_stack, indexes = self._find_leaf_to_insert(key)
         self._insert_new_record_into_leaf(nodes_stack.pop(),
                                           key,
@@ -1477,6 +1491,7 @@ class IU_TreeBasedIndex(Index):
             self._read_node_nr_of_elements_and_children_flag.delete(node_start)
 
     def _find_leaf_to_insert(self, key):
+        key = _to_bytes(key)
         """
         Traverses tree in search for leaf for insert, remembering parent nodes in path,
         looks for last occurence of key if already in tree.
@@ -1526,6 +1541,7 @@ class IU_TreeBasedIndex(Index):
             return curr_position
 
     def _find_key(self, key):
+        key = _to_bytes(key)
         containing_leaf_start = self._find_leaf_with_first_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(containing_leaf_start)
         try:
@@ -1592,6 +1608,7 @@ class IU_TreeBasedIndex(Index):
         return True
 
     def _find_key_many(self, key, limit=1, offset=0):
+        key = _to_bytes(key)
         leaf_with_key = self._find_leaf_with_first_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(leaf_with_key)
         try:
@@ -1641,6 +1658,7 @@ class IU_TreeBasedIndex(Index):
                     return
 
     def _find_key_smaller(self, key, limit=1, offset=0):
+        key = _to_bytes(key)
         leaf_with_key = self._find_leaf_with_first_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(leaf_with_key)
         leaf_with_key, key_index = self._find_index_of_first_key_equal_or_smaller_key(key, leaf_with_key, nr_of_elements)
@@ -1679,6 +1697,7 @@ class IU_TreeBasedIndex(Index):
                     return
 
     def _find_key_equal_and_smaller(self, key, limit=1, offset=0):
+        key = _to_bytes(key)
         leaf_with_key = self._find_leaf_with_last_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(leaf_with_key)
         try:
@@ -1722,6 +1741,7 @@ class IU_TreeBasedIndex(Index):
                     return
 
     def _find_key_bigger(self, key, limit=1, offset=0):
+        key = _to_bytes(key)
         leaf_with_key = self._find_leaf_with_last_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(leaf_with_key)
         try:
@@ -1763,6 +1783,7 @@ class IU_TreeBasedIndex(Index):
                     return
 
     def _find_key_equal_and_bigger(self, key, limit=1, offset=0):
+        key = _to_bytes(key)
         leaf_with_key = self._find_leaf_with_first_key_occurence(key)
         nr_of_elements, prev_leaf, next_leaf = self._read_leaf_nr_of_elements_and_neighbours(leaf_with_key)
         leaf_with_key, key_index = self._find_index_of_first_key_equal_or_smaller_key(key, leaf_with_key, nr_of_elements)

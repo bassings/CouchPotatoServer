@@ -74,7 +74,7 @@ def cache2lvl(maxsize=100):
                     to_delete = maxsize // 10 or 1
                     for i in xrange(to_delete):
                         key1 = choice(list(cache.keys()))
-                        key2 = choice(cache[key1].keys())
+                        key2 = choice(list(cache[key1].keys()))
                         del cache[key1][key2]
                         if not cache[key1]:
                             del cache[key1]

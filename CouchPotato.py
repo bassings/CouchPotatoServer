@@ -5,6 +5,11 @@ if sys.version_info < (3, 8):
     print("Error: Python 3.8 or higher is required")
     sys.exit(1)
 
+# Python 2 compat aliases for code that still references these
+import builtins
+builtins.unicode = str
+builtins.long = int
+
 from logging import handlers
 from os.path import dirname
 import logging

@@ -112,7 +112,7 @@ class CoreNotifier(Notification):
         if limit_offset:
             splt = splitString(limit_offset)
             limit = tryInt(splt[0])
-            offset = tryInt(0 if len(splt) is 1 else splt[1])
+            offset = tryInt(0 if len(splt) == 1 else splt[1])
             results = db.all('notification', limit = limit, offset = offset, with_doc = True)
         else:
             results = db.all('notification', limit = 200, with_doc = True)

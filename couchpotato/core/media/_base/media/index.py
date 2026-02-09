@@ -26,7 +26,7 @@ class MediaIndex(MultiTreeBasedIndex):
 
             ids = []
             for x in identifiers:
-                ids.append(md5('%s-%s' % (x, identifiers[x])).encode('utf-8').hexdigest())
+                ids.append(md5(('%s-%s' % (x, identifiers[x])).encode('utf-8')).hexdigest())
 
             return ids, None
 
