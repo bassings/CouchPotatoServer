@@ -1,5 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-from couchpotato.core.compat import string_types
 from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.logger import CPLog
@@ -60,7 +58,7 @@ class MatcherBase(Plugin):
         if not value:
             return value
 
-        if isinstance(value, string_types):
+        if isinstance(value, str):
             return simplifyString(value)
 
         if isinstance(value, list):

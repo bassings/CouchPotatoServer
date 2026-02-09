@@ -1,5 +1,4 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-from couchpotato.core.compat import ConfigParser
+import configparser as ConfigParser
 import traceback
 from hashlib import md5
 

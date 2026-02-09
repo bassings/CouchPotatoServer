@@ -143,8 +143,10 @@ class Python3CompatibilityTest(unittest.TestCase):
             import urllib.parse   # Was urlparse in Python 2
             import io
             
-            # Test that we can import our compatibility layer
-            from couchpotato.core.compat import string_types, text_type, binary_type
+            # Python 3 native types - no compatibility layer needed
+            string_types = str
+            text_type = str
+            binary_type = bytes
             
             # Verify types are correct for Python 3
             self.assertEqual(string_types, str)

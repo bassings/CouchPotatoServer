@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from urlparse import parse_qsl
 
 from couchpotato.api import addApiView

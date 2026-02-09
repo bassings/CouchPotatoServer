@@ -1,4 +1,3 @@
-
 """
 rencode -- Web safe object pickling/unpickling.
 

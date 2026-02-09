@@ -1,6 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-
-from couchpotato.core.compat import iteritems
 import re
 import json
 import traceback
@@ -38,7 +35,7 @@ class Base(TorrentProvider):
 
             try:
                 #for result in data[]:
-                for key, result in iteritems(data):
+                for key, result in data.items():
                     if tryInt(result['total_results']) == 0:
                         return
                     torrentscore = self.conf('extra_score')

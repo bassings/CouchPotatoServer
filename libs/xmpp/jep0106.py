@@ -1,4 +1,3 @@
-
 # JID Escaping XEP-0106 for the xmpppy based transports written by Norman Rasmussen
 
 """This file is the XEP-0106 commands.

@@ -1,6 +1,5 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from string import ascii_letters, digits
-from couchpotato.core.compat import quote_plus
+from urllib.parse import quote_plus
 import os
 import re
 import traceback
@@ -8,7 +7,6 @@ import unicodedata
 
 from chardet import detect
 from couchpotato.core.logger import CPLog
-import six
 
 
 log = CPLog(__name__)
@@ -31,11 +29,11 @@ def simplifyString(original):
 def toUnicode(original, *args):
     try:
         # Use six for Python 2/3 compatibility
-        if isinstance(original, six.text_type):
+        if isinstance(original, str):
             return original
         else:
             try:
-                return six.text_type(original, *args)
+                return str(original, *args)
             except:
                 try:
                     from couchpotato.environment import Env
@@ -126,10 +124,10 @@ def stripAccents(s):
 
 
 def tryUrlencode(s):
-    new = six.u('')
+    new = ''
     if isinstance(s, dict):
         for key, value in s.items():
-            new += six.u('&%s=%s') % (key, tryUrlencode(value))
+            new += '&%s=%s' % (key, tryUrlencode(value))
 
         return new[1:]
     else:

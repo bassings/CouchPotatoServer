@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from CodernityDB.database import RecordNotFound
 from couchpotato import Env, get_db
 from couchpotato.core.helpers.variable import getTitle, splitString

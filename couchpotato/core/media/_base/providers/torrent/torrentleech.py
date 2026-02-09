@@ -1,11 +1,9 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import traceback
 import json
 from bs4 import BeautifulSoup
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
-import six
 
 
 log = CPLog(__name__)
@@ -42,7 +40,7 @@ class Base(TorrentProvider):
                     url = self.urls['download'] % (torrent['fid'], torrent['filename'])
                     currentResult = {
                         'id': torrent['fid'],
-                        'name': six.text_type(torrent['name']),
+                        'name': str(torrent['name']),
                         'url': url,
                         'detail_url': link,
                         'size': torrent['size']/1024/1024,

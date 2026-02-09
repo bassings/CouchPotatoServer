@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import fnmatch
 import os
 import re
@@ -17,8 +16,6 @@ from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
 from unrar2 import RarFile
-import six
-from six.moves import filter
 
 
 log = CPLog(__name__)
@@ -912,7 +909,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             if x in ['thename', 'namethe']:
                 continue
             if r is not None:
-                replaced = replaced.replace(six.u('<%s>') % toUnicode(x), toUnicode(r))
+                replaced = replaced.replace(f'<%s>' % toUnicode(x), toUnicode(r))
             else:
                 #If information is not available, we don't want the tag in the filename
                 replaced = replaced.replace('<' + x + '>', '')
@@ -922,7 +919,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
         for x, r in replacements.items():
             if x in ['thename', 'namethe']:
-                replaced = replaced.replace(six.u('<%s>') % toUnicode(x), toUnicode(r))
+                replaced = replaced.replace(f'<%s>' % toUnicode(x), toUnicode(r))
         replaced = re.sub(r"[\x00:\*\?\"<>\|]", '', replaced)
 
         sep = self.conf('foldersep') if folder else self.conf('separator')

@@ -1,9 +1,7 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from couchpotato.core.helpers.variable import splitString
 from couchpotato.core.logger import CPLog
 from couchpotato.core.notifications.base import Notification
 import pynma
-import six
 
 log = CPLog(__name__)
 
@@ -30,7 +28,7 @@ class NotifyMyAndroid(Notification):
 
         successful = 0
         for key in keys:
-            if not response[str(key)]['code'] == six.u('200'):
+            if not response[str(key)]['code'] == '200':
                 log.error('Could not send notification to NotifyMyAndroid (%s). %s', (key, response[key]['message']))
             else:
                 successful += 1

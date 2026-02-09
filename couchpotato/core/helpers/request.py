@@ -1,5 +1,4 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-from couchpotato.core.compat import url_unquote as unquote
+from urllib.parse import unquote
 import re
 
 from couchpotato.core.helpers.encoding import toUnicode

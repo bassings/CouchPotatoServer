@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from xml.etree.ElementTree import Element, SubElement, tostring
 import os
 import re

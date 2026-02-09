@@ -22,7 +22,6 @@
 
 # Low level interface - see UnRARDLL\UNRARDLL.TXT
 
-from __future__ import generators
 from couchpotato.environment import Env
 from shutil import copyfile
 

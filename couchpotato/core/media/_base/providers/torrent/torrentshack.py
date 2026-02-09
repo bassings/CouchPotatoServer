@@ -1,11 +1,9 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import traceback
 
 from bs4 import BeautifulSoup
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
-import six
 
 
 log = CPLog(__name__)
@@ -49,7 +47,7 @@ class Base(TorrentProvider):
 
                     results.append({
                         'id': link['href'].replace('torrents.php?torrentid=', ''),
-                        'name': six.text_type(link.span.string).translate({ord(six.u('\xad')): None}),
+                        'name': str(link.span.string).translate({ord('\xad'): None}),
                         'url': self.urls['download'] % url['href'],
                         'detail_url': self.urls['download'] % link['href'],
                         'size': self.parseSize(size),

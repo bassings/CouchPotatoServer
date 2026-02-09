@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import re
 import traceback
 
@@ -7,7 +6,6 @@ from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import tryInt, splitString
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentMagnetProvider
-import six
 
 
 log = CPLog(__name__)
@@ -47,7 +45,7 @@ class Base(TorrentMagnetProvider, RSS):
                     magnet = splitString(detail_url, '/')[-1]
                     magnet_url = 'magnet:?xt=urn:btih:%s&dn=%s&tr=%s' % (magnet.upper(), tryUrlencode(name), tryUrlencode('udp://tracker.openbittorrent.com/announce'))
 
-                    reg = re.search('Size: (?P<size>\d+) (?P<unit>[KMG]B) Seeds: (?P<seeds>[\d,]+) Peers: (?P<peers>[\d,]+)', six.text_type(description))
+                    reg = re.search('Size: (?P<size>\d+) (?P<unit>[KMG]B) Seeds: (?P<seeds>[\d,]+) Peers: (?P<peers>[\d,]+)', str(description))
                     size = reg.group('size')
                     unit = reg.group('unit')
                     seeds = reg.group('seeds').replace(',', '')
@@ -61,7 +59,7 @@ class Base(TorrentMagnetProvider, RSS):
 
                     results.append({
                         'id': magnet,
-                        'name': six.text_type(name),
+                        'name': str(name),
                         'url': magnet_url,
                         'detail_url': detail_url,
                         'size': tryInt(size)*multiplier,

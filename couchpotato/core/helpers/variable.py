@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import collections
 import ctypes
 import hashlib
@@ -12,9 +11,6 @@ import traceback
 
 from couchpotato.core.helpers.encoding import simplifyString, toSafeString, ss, sp, toUnicode
 from couchpotato.core.logger import CPLog
-import six
-# Python 3 has these built-in, no need for six.moves
-# from six.moves import map, zip, filter
 
 
 log = CPLog(__name__)
@@ -367,7 +363,7 @@ def getFreeSpace(directories):
                 _, total, free = ctypes.c_ulonglong(), ctypes.c_ulonglong(), \
                                    ctypes.c_ulonglong()
                 # In Python 3, all strings are unicode, so always use the W version
-                if sys.version_info >= (3,) or isinstance(folder, six.text_type):
+                if isinstance(folder, str):
                     fun = ctypes.windll.kernel32.GetDiskFreeSpaceExW #@UndefinedVariable
                 else:
                     fun = ctypes.windll.kernel32.GetDiskFreeSpaceExA #@UndefinedVariable

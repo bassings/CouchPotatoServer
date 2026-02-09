@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import os
 import traceback
 
@@ -7,7 +6,6 @@ from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import getExt
 from couchpotato.core.plugins.base import Plugin
-import six
 
 
 log = CPLog(__name__)
@@ -57,7 +55,7 @@ class MediaBase(Plugin):
         counter = 0
         def_title = None
         for title in titles:
-            if (len(default_title) == 0 and counter == 0) or len(titles) == 1 or title.lower() == toUnicode(default_title.lower()) or (toUnicode(default_title) == six.u('') and toUnicode(titles[0]) == title):
+            if (len(default_title) == 0 and counter == 0) or len(titles) == 1 or title.lower() == toUnicode(default_title.lower()) or (toUnicode(default_title) == '' and toUnicode(titles[0]) == title):
                 def_title = toUnicode(title)
                 break
             counter += 1

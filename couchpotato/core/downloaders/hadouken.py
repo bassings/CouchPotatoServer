@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from base64 import b16encode, b32decode, b64encode
 from distutils.version import LooseVersion
 from hashlib import sha1

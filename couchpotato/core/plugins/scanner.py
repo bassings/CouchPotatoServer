@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import os
 import re
 import threading
@@ -15,7 +14,6 @@ from couchpotato.core.plugins.base import Plugin
 from guessit import guessit as guess_movie_info
 from subliminal.videos import Video
 import enzyme
-from six.moves import filter, map, zip
 
 
 log = CPLog(__name__)

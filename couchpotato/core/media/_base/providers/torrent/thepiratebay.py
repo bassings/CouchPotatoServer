@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import re
 import traceback
 
@@ -8,7 +7,6 @@ from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentMagnetProvider
-import six
 
 
 log = CPLog(__name__)
@@ -80,7 +78,7 @@ class Base(TorrentMagnetProvider):
                         download = result.find(href = re.compile('magnet:'))
 
                         try:
-                            size = re.search('Size (?P<size>.+),', six.text_type(result.select('font.detDesc')[0])).group('size')
+                            size = re.search('Size (?P<size>.+),', str(result.select('font.detDesc')[0])).group('size')
                         except:
                             continue
 
@@ -103,7 +101,7 @@ class Base(TorrentMagnetProvider):
 
                             results.append({
                                 'id': re.search('/(?P<id>\d+)/', link['href']).group('id'),
-                                'name': six.text_type(link.string),
+                                'name': str(link.string),
                                 'url': download['href'],
                                 'detail_url': self.getDomain(link['href']),
                                 'size': self.parseSize(size),

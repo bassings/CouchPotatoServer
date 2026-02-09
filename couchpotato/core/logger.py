@@ -1,5 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
-from couchpotato.core.compat import iteritems
 import logging
 import re
 
@@ -69,7 +67,7 @@ class CPLog(object):
             if isinstance(replace_tuple, tuple):
                 msg = msg % tuple([toUnicode(x) if not isinstance(x, (int, float)) else x for x in list(replace_tuple)])
             elif isinstance(replace_tuple, dict):
-                msg = msg % dict((k, toUnicode(v) if not isinstance(v, (int, float)) else v) for k, v in iteritems(replace_tuple))
+                msg = msg % dict((k, toUnicode(v) if not isinstance(v, (int, float)) else v) for k, v in replace_tuple.items())
             else:
                 msg = msg % toUnicode(replace_tuple)
         except Exception as e:

@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 import htmlentitydefs
 import json
 import re
@@ -10,7 +9,6 @@ from couchpotato.core.helpers.variable import getTitle, tryInt, mergeDicts, getI
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
 from dateutil.parser import parse
-import six
 
 
 log = CPLog(__name__)
@@ -160,7 +158,7 @@ class Base(TorrentProvider):
                 except KeyError:
                     pass
             return txt  # leave as is
-        return re.sub("&#?\w+;", fixup, six.u('%s') % text)
+        return re.sub("&#?\w+;", fixup, '%s' % text)
 
     def unicodeToASCII(self, text):
         import unicodedata

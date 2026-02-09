@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import getTitle, getIdentifier
 from couchpotato.core.logger import CPLog

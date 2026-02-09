@@ -1,4 +1,3 @@
-from __future__ import absolute_import, division, print_function, unicode_literals
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import possibleTitles
 from couchpotato.core.logger import CPLog
