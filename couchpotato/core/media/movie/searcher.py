@@ -1,6 +1,7 @@
 from datetime import date
 import random
 import re
+import threading
 import time
 import traceback
 
@@ -23,8 +24,10 @@ autoload = 'MovieSearcher'
 class MovieSearcher(SearcherBase, MovieTypeBase):
 
     in_progress = False
+    _progress_lock = None  # initialized in __init__
 
     def __init__(self):
+        self._progress_lock = threading.Lock()
         super().__init__()
 
         addEvent('movie.searcher.all', self.searchAll)
@@ -66,12 +69,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
     def searchAll(self, manual = False):
 
-        if self.in_progress:
-            log.info('Search already in progress')
-            fireEvent('notify.frontend', type = 'movie.searcher.already_started', data = True, message = 'Full search already in progress')
-            return
-
-        self.in_progress = True
+        with self._progress_lock:
+            if self.in_progress:
+                log.info('Search already in progress')
+                fireEvent('notify.frontend', type = 'movie.searcher.already_started', data = True, message = 'Full search already in progress')
+                return
+            self.in_progress = True
         fireEvent('notify.frontend', type = 'movie.searcher.started', data = True, message = 'Full search started')
 
         medias = [x['_id'] for x in fireEvent('media.with_status', 'active', types = 'movie', with_doc = False, single = True)]

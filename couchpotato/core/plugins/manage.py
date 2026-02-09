@@ -1,4 +1,5 @@
 import os
+import threading
 import time
 import traceback
 
@@ -20,8 +21,10 @@ autoload = 'Manage'
 class Manage(Plugin):
 
     in_progress = False
+    _progress_lock = None  # initialized in __init__
 
     def __init__(self):
+        self._progress_lock = threading.Lock()
 
         fireEvent('scheduler.interval', identifier = 'manage.update_library', handle = self.updateLibrary, hours = 2)
 
@@ -86,13 +89,13 @@ class Manage(Plugin):
         last_update_key = 'manage.last_update%s' % ('_full' if full else '')
         last_update = float(Env.prop(last_update_key, default = 0))
 
-        if self.in_progress:
-            log.info('Already updating library: %s', self.in_progress)
-            return
-        elif self.isDisabled() or (last_update > time.time() - 20):
-            return
-
-        self.in_progress = {}
+        with self._progress_lock:
+            if self.in_progress:
+                log.info('Already updating library: %s', self.in_progress)
+                return
+            elif self.isDisabled() or (last_update > time.time() - 20):
+                return
+            self.in_progress = {}
         fireEvent('notify.frontend', type = 'manage.updating', data = True)
 
         try:
