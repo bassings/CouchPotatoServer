@@ -12,7 +12,7 @@ from couchpotato.core.helpers.variable import getExt, getImdb, tryInt, \
     splitString, getIdentifier
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
-from guessit import guess_movie_info
+from guessit import guessit as guess_movie_info
 from subliminal.videos import Video
 import enzyme
 from six.moves import filter, map, zip
