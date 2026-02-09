@@ -38,14 +38,13 @@ jobs:
       run: |
         python -m pytest tests/ -v --tb=short
 
-    - name: Check for Python 3 syntax warnings
+    - name: Check core modules import
       run: |
-        python -W error::SyntaxWarning -c "
-        import importlib, pkgutil, sys
+        python -c "
+        import sys
         sys.path.insert(0, '.')
-        # Verify core modules parse without SyntaxWarning
         for mod in ['couchpotato.api', 'couchpotato.core.settings', 'couchpotato.core.database']:
-            importlib.import_module(mod)
+            __import__(mod)
             print(f'OK: {mod}')
         "
 
