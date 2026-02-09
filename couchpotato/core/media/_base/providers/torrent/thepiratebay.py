@@ -118,6 +118,8 @@ class Base(TorrentMagnetProvider):
         return super(Base, self).isEnabled() and self.getDomain()
 
     def correctProxy(self, data):
+        if isinstance(data, bytes):
+            data = data.decode('utf-8', errors='replace')
         return 'title="Pirate Search"' in data
 
     def getMoreInfo(self, item):

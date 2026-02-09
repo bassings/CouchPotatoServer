@@ -23,3 +23,4 @@ htmlcov/
 
 # Test data directory
 test-data/
+.config

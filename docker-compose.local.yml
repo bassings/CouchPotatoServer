@@ -7,8 +7,31 @@ services:
     environment:
       - TZ=Australia/Brisbane
     volumes:
-      - /tmp/cp-config/config:/config
+      - /Volumes/Storage/home/scott.b/repos/CouchPotatoServer/.config:/config
+      - nfs_media:/var/media
+      - nfs_downloads:/var/cache/sab
+      - nfs_movies:/movies
     ports:
       - "5050:5050"
     restart: "no"
     command: ["python3", "CouchPotato.py", "--console_log", "--data_dir=/config/data", "--config_file=/config/config.ini"]
+
+volumes:
+  nfs_media:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=172.16.11.10,nfsvers=3,nolock
+      device: ":/media"
+  nfs_downloads:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=172.16.11.10,nfsvers=3,nolock
+      device: ":/Download"
+  nfs_movies:
+    driver: local
+    driver_opts:
+      type: nfs
+      o: addr=172.16.11.10,nfsvers=3,nolock
+      device: ":/media/Movies"

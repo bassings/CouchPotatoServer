@@ -54,6 +54,8 @@ class TorrentProvider(YarrProvider):
                 except:
                     log.debug('Failed %s proxy %s: %s', self.getName(), proxy, traceback.format_exc())
 
+                if isinstance(data, bytes):
+                    data = data.decode('utf-8', errors='replace')
                 if self.correctProxy(data):
                     log.debug('Using proxy for %s: %s', self.getName(), proxy)
                     self.proxy_domain = proxy

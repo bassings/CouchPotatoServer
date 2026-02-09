@@ -136,6 +136,8 @@ class Base(TorrentMagnetProvider):
         return super(Base, self).isEnabled() and self.getDomain()
 
     def correctProxy(self, data):
+        if isinstance(data, bytes):
+            data = data.decode('utf-8', errors='replace')
         return 'search query' in data.lower()
 
 
