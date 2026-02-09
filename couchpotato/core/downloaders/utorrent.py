@@ -18,7 +18,7 @@ from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownlo
 from couchpotato.core.helpers.encoding import isInt, ss, sp
 from couchpotato.core.helpers.variable import tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
-from multipartpost import MultipartPostHandler
+from urllib.request import BaseHandler as MultipartPostHandler  # was vendored multipartpost (Python 2); now a no-op handler
 
 
 log = CPLog(__name__)
