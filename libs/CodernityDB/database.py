@@ -687,7 +687,8 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         """
         _id, value = self.id_ind.make_key_value(data)
         db_data = self.get('id', _id)
-        if db_data['_rev'] != _rev:
+        _rev_str = _rev.decode('utf-8').rstrip('\x00') if isinstance(_rev, bytes) else _rev
+        if db_data['_rev'] != _rev_str:
             raise RevConflict()
         new_rev = self.create_new_rev(_rev)
         # storage = self.storage
@@ -782,7 +783,8 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         Performs delete operation on all indexes in order
         """
         old_data = self.get('id', _id)
-        if old_data['_rev'] != _rev:
+        _rev_str = _rev.decode('utf-8').rstrip('\x00') if isinstance(_rev, bytes) else _rev
+        if old_data['_rev'] != _rev_str:
             raise RevConflict()
         for index in self.indexes[1:]:
             self._single_delete_index(index, data, _id, old_data)
@@ -916,7 +918,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
         data['_rev'] = _rev  # for make_key_value compat with update / delete
         data['_id'] = _id
         self._insert_indexes(_rev, data)
-        ret = {'_id': _id, '_rev': _rev}
+        ret = {'_id': _id.decode('utf-8').rstrip('\x00') if isinstance(_id, bytes) else _id, '_rev': _rev.decode('utf-8').rstrip('\x00') if isinstance(_rev, bytes) else _rev}
         data.update(ret)
         return ret
 
@@ -945,7 +947,7 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
             raise PreconditionsException(
                 "`_rev` must be valid bytes object")
         _id, new_rev = self._update_indexes(_rev, data)
-        ret = {'_id': _id, '_rev': new_rev}
+        ret = {'_id': _id.decode('utf-8').rstrip('\x00') if isinstance(_id, bytes) else _id, '_rev': new_rev.decode('utf-8').rstrip('\x00') if isinstance(new_rev, bytes) else new_rev}
         data.update(ret)
         return ret
 
@@ -987,11 +989,12 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
                 data['doc'] = doc
             else:
                 data = {'doc': doc}
-        data['_id'] = l_key
+        data['_id'] = l_key.decode('utf-8').rstrip('\x00') if isinstance(l_key, bytes) else l_key
         if index_name == 'id':
-            data['_rev'] = _unk
+            _unk_str = _unk.decode('utf-8').rstrip('\x00') if isinstance(_unk, bytes) else _unk
+            data['_rev'] = _unk_str
         else:
-            data['key'] = _unk
+            data['key'] = _unk.decode('utf-8').rstrip('\x00') if isinstance(_unk, bytes) else _unk
         return data
 
     def get_many(self, index_name, key=None, limit=-1, offset=0, with_doc=False, with_storage=True, start=None, end=None, **kwargs):
@@ -1042,9 +1045,10 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
                         data['doc'] = doc
                     else:
                         data = {'doc': doc}
-                data['_id'] = doc_id
+                data['_id'] = doc_id.decode('utf-8').rstrip('\x00') if isinstance(doc_id, bytes) else doc_id
                 if key is None:
-                    data['key'] = ind_data[1]
+                    _k = ind_data[1]
+                    data['key'] = _k.decode('utf-8').rstrip('\x00') if isinstance(_k, bytes) else _k
                 yield data
 
     def all(self, index_name, limit=-1, offset=0, with_doc=False, with_storage=True):
@@ -1071,19 +1075,21 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
             except StopIteration:
                 break
             else:
+                _did = doc_id.decode('utf-8').rstrip('\x00') if isinstance(doc_id, bytes) else doc_id
+                _uk = unk.decode('utf-8').rstrip('\x00') if isinstance(unk, bytes) else unk
                 if index_name == 'id':
                     if with_storage and size:
                         data = storage.get(start, size, status)
                     else:
                         data = {}
-                    data['_id'] = doc_id
-                    data['_rev'] = unk
+                    data['_id'] = _did
+                    data['_rev'] = _uk
                 else:
                     data = {}
                     if with_storage and size:
                         data['value'] = storage.get(start, size, status)
-                    data['key'] = unk
-                    data['_id'] = doc_id
+                    data['key'] = _uk
+                    data['_id'] = _did
                     if with_doc:
                         doc = self.get('id', doc_id, False)
                         data['doc'] = doc

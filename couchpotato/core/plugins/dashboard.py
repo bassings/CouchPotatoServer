@@ -85,7 +85,7 @@ class Dashboard(Plugin):
 
                     # Don't list older movies
                     eta_date = eta.get(coming_soon)
-                    eta_3month_passed = eta_date < (now - 7862400)  # Release was more than 3 months ago
+                    eta_3month_passed = (eta_date < (now - 7862400)) if eta_date else False  # Release was more than 3 months ago
 
                     if (not late and not eta_3month_passed) or \
                             (late and eta_3month_passed):
