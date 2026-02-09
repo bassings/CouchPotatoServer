@@ -5,6 +5,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.logger import CPLog
+from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.base import Plugin
 from .index import CategoryIndex, CategoryMediaIndex
 
@@ -49,35 +50,38 @@ class CategoryPlugin(Plugin):
 
     def save(self, **kwargs):
 
-        try:
-            db = get_db()
-
-            category = {
-                '_t': 'category',
-                'order': kwargs.get('order', 999),
-                'label': toUnicode(kwargs.get('label', '')),
-                'ignored': toUnicode(kwargs.get('ignored', '')),
-                'preferred': toUnicode(kwargs.get('preferred', '')),
-                'required': toUnicode(kwargs.get('required', '')),
-                'destination': toUnicode(kwargs.get('destination', '')),
-            }
-
+        # Lock on category ID (or 'new') to prevent concurrent saves clobbering each other
+        cat_id = kwargs.get('id', 'new')
+        with media_lock(f'category-{cat_id}'):
             try:
-                c = db.get('id', kwargs.get('id'))
-                category['order'] = c.get('order', category['order'])
-                c.update(category)
+                db = get_db()
 
-                db.update(c)
+                category = {
+                    '_t': 'category',
+                    'order': kwargs.get('order', 999),
+                    'label': toUnicode(kwargs.get('label', '')),
+                    'ignored': toUnicode(kwargs.get('ignored', '')),
+                    'preferred': toUnicode(kwargs.get('preferred', '')),
+                    'required': toUnicode(kwargs.get('required', '')),
+                    'destination': toUnicode(kwargs.get('destination', '')),
+                }
+
+                try:
+                    c = db.get('id', kwargs.get('id'))
+                    category['order'] = c.get('order', category['order'])
+                    c.update(category)
+
+                    db.update(c)
+                except:
+                    c = db.insert(category)
+                    c.update(category)
+
+                return {
+                    'success': True,
+                    'category': c
+                }
             except:
-                c = db.insert(category)
-                c.update(category)
-
-            return {
-                'success': True,
-                'category': c
-            }
-        except:
-            log.error('Failed: %s', traceback.format_exc())
+                log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False,

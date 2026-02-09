@@ -11,6 +11,7 @@ from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getImdb, getTitle
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media import MediaBase
+from couchpotato.core.media_lock import media_lock
 from .index import MediaIndex, MediaStatusIndex, MediaTypeIndex, TitleSearchIndex, TitleIndex, StartsWithIndex, MediaChildrenIndex, MediaTagIndex
 
 
@@ -418,59 +419,60 @@ class MediaPlugin(MediaBase):
 
     def delete(self, media_id, delete_from = None):
 
-        try:
-            db = get_db()
+        with media_lock(media_id):
+            try:
+                db = get_db()
 
-            media = db.get('id', media_id)
-            if media:
-                deleted = False
+                media = db.get('id', media_id)
+                if media:
+                    deleted = False
 
-                media_releases = fireEvent('release.for_media', media['_id'], single = True)
+                    media_releases = fireEvent('release.for_media', media['_id'], single = True)
 
-                if delete_from == 'all':
-                    # Delete connected releases
-                    for release in media_releases:
-                        db.delete(release)
+                    if delete_from == 'all':
+                        # Delete connected releases
+                        for release in media_releases:
+                            db.delete(release)
 
-                    db.delete(media)
-                    deleted = True
-                else:
-
-                    total_releases = len(media_releases)
-                    total_deleted = 0
-                    new_media_status = None
-
-                    for release in media_releases:
-                        if delete_from in ['wanted', 'snatched', 'late']:
-                            if release.get('status') != 'done':
-                                db.delete(release)
-                                total_deleted += 1
-                            new_media_status = 'done'
-                        elif delete_from == 'manage':
-                            if release.get('status') == 'done' or media.get('status') == 'done':
-                                db.delete(release)
-                                total_deleted += 1
-
-                    if (total_releases == total_deleted) or (total_releases == 0 and not new_media_status) or (not new_media_status and delete_from == 'late'):
                         db.delete(media)
                         deleted = True
-                    elif new_media_status:
-                        media['status'] = new_media_status
-
-                        # Remove profile (no use for in manage)
-                        if new_media_status == 'done':
-                            media['profile_id'] = None
-
-                        db.update(media)
-
-                        fireEvent('media.untag', media['_id'], 'recent', single = True)
                     else:
-                        fireEvent('media.restatus', media.get('_id'), single = True)
 
-                if deleted:
-                    fireEvent('notify.frontend', type = 'media.deleted', data = media)
-        except:
-            log.error('Failed deleting media: %s', traceback.format_exc())
+                        total_releases = len(media_releases)
+                        total_deleted = 0
+                        new_media_status = None
+
+                        for release in media_releases:
+                            if delete_from in ['wanted', 'snatched', 'late']:
+                                if release.get('status') != 'done':
+                                    db.delete(release)
+                                    total_deleted += 1
+                                new_media_status = 'done'
+                            elif delete_from == 'manage':
+                                if release.get('status') == 'done' or media.get('status') == 'done':
+                                    db.delete(release)
+                                    total_deleted += 1
+
+                        if (total_releases == total_deleted) or (total_releases == 0 and not new_media_status) or (not new_media_status and delete_from == 'late'):
+                            db.delete(media)
+                            deleted = True
+                        elif new_media_status:
+                            media['status'] = new_media_status
+
+                            # Remove profile (no use for in manage)
+                            if new_media_status == 'done':
+                                media['profile_id'] = None
+
+                            db.update(media)
+
+                            fireEvent('media.untag', media['_id'], 'recent', single = True)
+                        else:
+                            fireEvent('media.restatus', media.get('_id'), single = True)
+
+                    if deleted:
+                        fireEvent('notify.frontend', type = 'media.deleted', data = media)
+            except:
+                log.error('Failed deleting media: %s', traceback.format_exc())
 
         return True
 
@@ -498,87 +500,90 @@ class MediaPlugin(MediaBase):
 
     def restatus(self, media_id, tag_recent = True, allowed_restatus = None):
 
-        try:
-            db = get_db()
+        with media_lock(media_id):
+            try:
+                db = get_db()
 
-            m = db.get('id', media_id)
-            previous_status = m['status']
+                m = db.get('id', media_id)
+                previous_status = m['status']
 
-            log.debug('Changing status for %s', getTitle(m))
-            if not m['profile_id']:
-                m['status'] = 'done'
-            else:
-                m['status'] = 'active'
+                log.debug('Changing status for %s', getTitle(m))
+                if not m['profile_id']:
+                    m['status'] = 'done'
+                else:
+                    m['status'] = 'active'
 
-                try:
-                    profile = db.get('id', m['profile_id'])
-                    media_releases = fireEvent('release.for_media', m['_id'], single = True)
-                    done_releases = [release for release in media_releases if release.get('status') == 'done']
+                    try:
+                        profile = db.get('id', m['profile_id'])
+                        media_releases = fireEvent('release.for_media', m['_id'], single = True)
+                        done_releases = [release for release in media_releases if release.get('status') == 'done']
 
-                    if done_releases:
+                        if done_releases:
 
-                        # Check if we are finished with the media
-                        for release in done_releases:
-                            if fireEvent('quality.isfinish', {'identifier': release['quality'], 'is_3d': release.get('is_3d', False)}, profile, timedelta(seconds = time.time() - release['last_edit']).days, single = True):
-                                m['status'] = 'done'
-                                break
+                            # Check if we are finished with the media
+                            for release in done_releases:
+                                if fireEvent('quality.isfinish', {'identifier': release['quality'], 'is_3d': release.get('is_3d', False)}, profile, timedelta(seconds = time.time() - release['last_edit']).days, single = True):
+                                    m['status'] = 'done'
+                                    break
 
-                    elif previous_status == 'done':
-                        m['status'] = 'done'
+                        elif previous_status == 'done':
+                            m['status'] = 'done'
 
-                except RecordNotFound:
-                    log.debug('Failed restatus, keeping previous: %s', traceback.format_exc())
-                    m['status'] = previous_status
+                    except RecordNotFound:
+                        log.debug('Failed restatus, keeping previous: %s', traceback.format_exc())
+                        m['status'] = previous_status
 
-            # Only update when status has changed
-            if previous_status != m['status'] and (not allowed_restatus or m['status'] in allowed_restatus):
-                db.update(m)
+                # Only update when status has changed
+                if previous_status != m['status'] and (not allowed_restatus or m['status'] in allowed_restatus):
+                    db.update(m)
 
-                # Tag media as recent
-                if tag_recent:
-                    self.tag(media_id, 'recent', update_edited = True)
+                    # Tag media as recent
+                    if tag_recent:
+                        self.tag(media_id, 'recent', update_edited = True)
 
-            return m['status']
-        except:
-            log.error('Failed restatus: %s', traceback.format_exc())
+                return m['status']
+            except:
+                log.error('Failed restatus: %s', traceback.format_exc())
 
     def tag(self, media_id, tag, update_edited = False):
 
-        try:
-            db = get_db()
-            m = db.get('id', media_id)
+        with media_lock(media_id):
+            try:
+                db = get_db()
+                m = db.get('id', media_id)
 
-            if update_edited:
-                m['last_edit'] = int(time.time())
+                if update_edited:
+                    m['last_edit'] = int(time.time())
 
-            tags = m.get('tags') or []
-            if tag not in tags:
-                tags.append(tag)
-                m['tags'] = tags
-                db.update(m)
+                tags = m.get('tags') or []
+                if tag not in tags:
+                    tags.append(tag)
+                    m['tags'] = tags
+                    db.update(m)
 
-            return True
-        except:
-            log.error('Failed tagging: %s', traceback.format_exc())
+                return True
+            except:
+                log.error('Failed tagging: %s', traceback.format_exc())
 
         return False
 
     def unTag(self, media_id, tag):
 
-        try:
-            db = get_db()
-            m = db.get('id', media_id)
+        with media_lock(media_id):
+            try:
+                db = get_db()
+                m = db.get('id', media_id)
 
-            tags = m.get('tags') or []
-            if tag in tags:
-                new_tags = list(set(tags))
-                new_tags.remove(tag)
+                tags = m.get('tags') or []
+                if tag in tags:
+                    new_tags = list(set(tags))
+                    new_tags.remove(tag)
 
-                m['tags'] = new_tags
-                db.update(m)
+                    m['tags'] = new_tags
+                    db.update(m)
 
-            return True
-        except:
-            log.error('Failed untagging: %s', traceback.format_exc())
+                return True
+            except:
+                log.error('Failed untagging: %s', traceback.format_exc())
 
         return False

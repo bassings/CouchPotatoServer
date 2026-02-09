@@ -11,6 +11,7 @@ from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.variable import getTitle, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
+from couchpotato.core.media_lock import media_lock
 from .index import ReleaseIndex, ReleaseStatusIndex, ReleaseIDIndex, ReleaseDownloadIndex
 from couchpotato.environment import Env
 
@@ -131,67 +132,68 @@ class Release(Plugin):
 
     def add(self, group, update_info = True, update_id = None):
 
-        try:
-            db = get_db()
-
-            release_identifier = '%s.%s.%s' % (group['identifier'], group['meta_data'].get('audio', 'unknown'), group['meta_data']['quality']['identifier'])
-
-            # Add movie if it doesn't exist
+        with media_lock(group.get('identifier', 'unknown')):
             try:
-                media = db.get('media', 'imdb-%s' % group['identifier'], with_doc = True)['doc']
-            except:
-                media = fireEvent('movie.add', params = {
-                    'identifier': group['identifier'],
-                    'profile_id': None,
-                }, search_after = False, update_after = update_info, notify_after = False, status = 'done', single = True)
+                db = get_db()
 
-            release = None
-            if update_id:
+                release_identifier = '%s.%s.%s' % (group['identifier'], group['meta_data'].get('audio', 'unknown'), group['meta_data']['quality']['identifier'])
+
+                # Add movie if it doesn't exist
                 try:
-                    release = db.get('id', update_id)
+                    media = db.get('media', 'imdb-%s' % group['identifier'], with_doc = True)['doc']
+                except:
+                    media = fireEvent('movie.add', params = {
+                        'identifier': group['identifier'],
+                        'profile_id': None,
+                    }, search_after = False, update_after = update_info, notify_after = False, status = 'done', single = True)
+
+                release = None
+                if update_id:
+                    try:
+                        release = db.get('id', update_id)
+                        release.update({
+                            'identifier': release_identifier,
+                            'last_edit': int(time.time()),
+                            'status': 'done',
+                        })
+                    except:
+                        log.error('Failed updating existing release: %s', traceback.format_exc())
+                else:
+
+                    # Add Release
+                    if not release:
+                        release = {
+                            '_t': 'release',
+                            'media_id': media['_id'],
+                            'identifier': release_identifier,
+                            'quality': group['meta_data']['quality'].get('identifier'),
+                            'is_3d': group['meta_data']['quality'].get('is_3d', 0),
+                            'last_edit': int(time.time()),
+                            'status': 'done'
+                        }
+
+                    try:
+                        r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
+                        r['media_id'] = media['_id']
+                    except:
+                        log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
+                        r = db.insert(release)
+
+                    # Update with ref and _id
                     release.update({
-                        'identifier': release_identifier,
-                        'last_edit': int(time.time()),
-                        'status': 'done',
+                        '_id': r['_id'],
+                        '_rev': r['_rev'],
                     })
-                except:
-                    log.error('Failed updating existing release: %s', traceback.format_exc())
-            else:
 
-                # Add Release
-                if not release:
-                    release = {
-                        '_t': 'release',
-                        'media_id': media['_id'],
-                        'identifier': release_identifier,
-                        'quality': group['meta_data']['quality'].get('identifier'),
-                        'is_3d': group['meta_data']['quality'].get('is_3d', 0),
-                        'last_edit': int(time.time()),
-                        'status': 'done'
-                    }
+                # Empty out empty file groups
+                release['files'] = dict((k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)
+                db.update(release)
 
-                try:
-                    r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
-                    r['media_id'] = media['_id']
-                except:
-                    log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
-                    r = db.insert(release)
+                fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)
 
-                # Update with ref and _id
-                release.update({
-                    '_id': r['_id'],
-                    '_rev': r['_rev'],
-                })
-
-            # Empty out empty file groups
-            release['files'] = dict((k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)
-            db.update(release)
-
-            fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)
-
-            return True
-        except:
-            log.error('Failed: %s', traceback.format_exc())
+                return True
+            except:
+                log.error('Failed: %s', traceback.format_exc())
 
         return False
 
@@ -325,53 +327,55 @@ class Release(Plugin):
             return False
         log.debug('Downloader result: %s', download_result)
 
-        try:
-            db = get_db()
-
+        # Lock on media ID to serialize DB updates for this media item
+        with media_lock(media.get('_id', 'unknown')):
             try:
-                rls = db.get('release_identifier', md5(data['url']), with_doc = True)['doc']
+                db = get_db()
+
+                try:
+                    rls = db.get('release_identifier', md5(data['url']), with_doc = True)['doc']
+                except:
+                    log.error('No release found to store download information in')
+                    return False
+
+                renamer_enabled = Env.setting('enabled', 'renamer')
+
+                # Save download-id info if returned
+                if isinstance(download_result, dict):
+                    rls['download_info'] = download_result
+                    db.update(rls)
+
+                log_movie = '%s (%s) in %s' % (getTitle(media), media['info'].get('year'), rls['quality'])
+                snatch_message = 'Snatched "%s": %s from %s' % (data.get('name'), log_movie, (data.get('provider', '') + data.get('provider_extra', '')))
+                log.info(snatch_message)
+                fireEvent('%s.snatched' % data['type'], message = snatch_message, data = media)
+
+                # Mark release as snatched
+                if renamer_enabled:
+                    self.updateStatus(rls['_id'], status = 'snatched')
+
+                # If renamer isn't used, mark media done if finished or release downloaded
+                else:
+
+                    if media['status'] == 'active':
+                        profile = db.get('id', media['profile_id'])
+                        if fireEvent('quality.isfinish', {'identifier': rls['quality'], 'is_3d': rls.get('is_3d', False)}, profile, single = True):
+                            log.info('Renamer disabled, marking media as finished: %s', log_movie)
+
+                            # Mark release done
+                            self.updateStatus(rls['_id'], status = 'done')
+
+                            # Mark media done
+                            fireEvent('media.restatus', media['_id'], single = True)
+
+                            return True
+
+                    # Assume release downloaded
+                    self.updateStatus(rls['_id'], status = 'downloaded')
+
             except:
-                log.error('No release found to store download information in')
+                log.error('Failed storing download status: %s', traceback.format_exc())
                 return False
-
-            renamer_enabled = Env.setting('enabled', 'renamer')
-
-            # Save download-id info if returned
-            if isinstance(download_result, dict):
-                rls['download_info'] = download_result
-                db.update(rls)
-
-            log_movie = '%s (%s) in %s' % (getTitle(media), media['info'].get('year'), rls['quality'])
-            snatch_message = 'Snatched "%s": %s from %s' % (data.get('name'), log_movie, (data.get('provider', '') + data.get('provider_extra', '')))
-            log.info(snatch_message)
-            fireEvent('%s.snatched' % data['type'], message = snatch_message, data = media)
-
-            # Mark release as snatched
-            if renamer_enabled:
-                self.updateStatus(rls['_id'], status = 'snatched')
-
-            # If renamer isn't used, mark media done if finished or release downloaded
-            else:
-
-                if media['status'] == 'active':
-                    profile = db.get('id', media['profile_id'])
-                    if fireEvent('quality.isfinish', {'identifier': rls['quality'], 'is_3d': rls.get('is_3d', False)}, profile, single = True):
-                        log.info('Renamer disabled, marking media as finished: %s', log_movie)
-
-                        # Mark release done
-                        self.updateStatus(rls['_id'], status = 'done')
-
-                        # Mark media done
-                        fireEvent('media.restatus', media['_id'], single = True)
-
-                        return True
-
-                # Assume release downloaded
-                self.updateStatus(rls['_id'], status = 'downloaded')
-
-        except:
-            log.error('Failed storing download status: %s', traceback.format_exc())
-            return False
 
         return True
 
@@ -429,64 +433,65 @@ class Release(Plugin):
 
     def createFromSearch(self, search_results, media, quality):
 
-        try:
-            db = get_db()
+        with media_lock(media.get('_id', 'unknown')):
+            try:
+                db = get_db()
 
-            found_releases = []
+                found_releases = []
 
-            is_3d = False
-            try: is_3d = quality['custom']['3d']
-            except: pass
+                is_3d = False
+                try: is_3d = quality['custom']['3d']
+                except: pass
 
-            for rel in search_results:
+                for rel in search_results:
 
-                rel_identifier = md5(rel['url'])
+                    rel_identifier = md5(rel['url'])
 
-                release = {
-                    '_t': 'release',
-                    'identifier': rel_identifier,
-                    'media_id': media.get('_id'),
-                    'quality': quality.get('identifier'),
-                    'is_3d': is_3d,
-                    'status': rel.get('status', 'available'),
-                    'last_edit': int(time.time()),
-                    'info': {}
-                }
+                    release = {
+                        '_t': 'release',
+                        'identifier': rel_identifier,
+                        'media_id': media.get('_id'),
+                        'quality': quality.get('identifier'),
+                        'is_3d': is_3d,
+                        'status': rel.get('status', 'available'),
+                        'last_edit': int(time.time()),
+                        'info': {}
+                    }
 
-                # Add downloader info if provided
-                try:
-                    release['download_info'] = rel['download_info']
-                    del rel['download_info']
-                except:
-                    pass
-
-                try:
-                    rls = db.get('release_identifier', rel_identifier, with_doc = True)['doc']
-                except:
-                    rls = db.insert(release)
-                    rls.update(release)
-
-                # Update info, but filter out functions
-                for info in rel:
+                    # Add downloader info if provided
                     try:
-                        if not isinstance(rel[info], (str, unicode, int, long, float)):
-                            continue
-
-                        rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], (str, unicode)) else rel[info]
+                        release['download_info'] = rel['download_info']
+                        del rel['download_info']
                     except:
-                        log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
+                        pass
 
-                db.update(rls)
+                    try:
+                        rls = db.get('release_identifier', rel_identifier, with_doc = True)['doc']
+                    except:
+                        rls = db.insert(release)
+                        rls.update(release)
 
-                # Update release in search_results
-                rel['status'] = rls.get('status')
+                    # Update info, but filter out functions
+                    for info in rel:
+                        try:
+                            if not isinstance(rel[info], (str, unicode, int, long, float)):
+                                continue
 
-                if rel['status'] == 'available':
-                    found_releases.append(rel_identifier)
+                            rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], (str, unicode)) else rel[info]
+                        except:
+                            log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
-            return found_releases
-        except:
-            log.error('Failed: %s', traceback.format_exc())
+                    db.update(rls)
+
+                    # Update release in search_results
+                    rel['status'] = rls.get('status')
+
+                    if rel['status'] == 'available':
+                        found_releases.append(rel_identifier)
+
+                return found_releases
+            except:
+                log.error('Failed: %s', traceback.format_exc())
 
         return []
 

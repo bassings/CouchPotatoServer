@@ -9,6 +9,7 @@ from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import toUnicode, ss
 from couchpotato.core.helpers.variable import mergeDicts, getExt, tryInt, splitString, tryFloat
 from couchpotato.core.logger import CPLog
+from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.quality.index import QualityIndex
 
@@ -133,21 +134,23 @@ class QualityPlugin(Plugin):
 
     def saveSize(self, **kwargs):
 
-        try:
-            db = get_db()
-            quality = db.get('quality', kwargs.get('identifier'), with_doc = True)
+        identifier = kwargs.get('identifier', 'unknown')
+        with media_lock(f'quality-{identifier}'):
+            try:
+                db = get_db()
+                quality = db.get('quality', identifier, with_doc = True)
 
-            if quality:
-                quality['doc'][kwargs.get('value_type')] = tryInt(kwargs.get('value'))
-                db.update(quality['doc'])
+                if quality:
+                    quality['doc'][kwargs.get('value_type')] = tryInt(kwargs.get('value'))
+                    db.update(quality['doc'])
 
-            self.cached_qualities = None
+                self.cached_qualities = None
 
-            return {
-                'success': True
-            }
-        except:
-            log.error('Failed: %s', traceback.format_exc())
+                return {
+                    'success': True
+                }
+            except:
+                log.error('Failed: %s', traceback.format_exc())
 
         return {
             'success': False
