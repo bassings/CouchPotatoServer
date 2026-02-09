@@ -70,7 +70,7 @@ class FileManager(Plugin):
         urlopen_kwargs['stream'] = True
 
         if not dest:  # to Cache
-            dest = os.path.join(toUnicode(Env.get('cache_dir')), ss('%s.%s' % (md5(url), getExt(url))))
+            dest = os.path.join(toUnicode(Env.get('cache_dir')), '%s.%s' % (md5(url), getExt(url)))
 
         dest = sp(dest)
 
