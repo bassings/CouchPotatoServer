@@ -43,6 +43,7 @@ class Plugin:
         addEvent('app.do_shutdown', self.doShutdown)
         addEvent('plugin.running', self.isRunning)
         self._running = []
+        self._running_lock = threading.Lock()
         self._locks = {}
         self._http_client = None
 
@@ -184,15 +185,17 @@ class Plugin:
     def isRunning(self, value = None, boolean = True):
 
         if value is None:
-            return self._running
+            with self._running_lock:
+                return list(self._running)
 
-        if boolean:
-            self._running.append(value)
-        else:
-            try:
-                self._running.remove(value)
-            except Exception:
-                log.error("Something went wrong when finishing the plugin function. Could not find the 'is_running' key")
+        with self._running_lock:
+            if boolean:
+                self._running.append(value)
+            else:
+                try:
+                    self._running.remove(value)
+                except Exception:
+                    log.error("Something went wrong when finishing the plugin function. Could not find the 'is_running' key")
 
     def getCache(self, cache_key, url = None, **kwargs):
 
