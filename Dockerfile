@@ -26,12 +26,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
         mediainfo \
-        gosu \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app user
-RUN groupadd -g 1000 couchpotato \
-    && useradd -u 1000 -g couchpotato -d ${APP_DIR} -s /bin/bash couchpotato
+ARG PUID=1000
+ARG PGID=1000
+RUN groupadd -g ${PGID} couchpotato \
+    && useradd -u ${PUID} -g couchpotato -d ${APP_DIR} -s /bin/bash couchpotato
 
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
@@ -43,9 +44,6 @@ COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
 RUN mkdir -p ${CONFIG_DIR} ${DATA_DIR} \
     && chown -R couchpotato:couchpotato ${CONFIG_DIR} ${DATA_DIR}
 
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
 WORKDIR ${APP_DIR}
 
 VOLUME ["${CONFIG_DIR}", "${DATA_DIR}"]
@@ -55,8 +53,8 @@ EXPOSE 5050
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD curl -sf http://localhost:5050/ || exit 1
 
-# Use SIGTERM for graceful shutdown
 STOPSIGNAL SIGTERM
 
-ENTRYPOINT ["/entrypoint.sh"]
-CMD ["python3", "CouchPotato.py", "--console_log"]
+USER couchpotato
+
+CMD ["python3", "CouchPotato.py", "--console_log", "--data_dir=/data", "--config_file=/config/settings.conf"]
