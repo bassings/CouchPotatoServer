@@ -1,0 +1,305 @@
+{
+  "media": [
+    {
+      "_t": "media",
+      "status": "done",
+      "title": "The Lost City",
+      "type": "movie",
+      "profile_id": null,
+      "category_id": null,
+      "identifiers": {
+        "imdb": "tt13320622"
+      },
+      "info": {
+        "tmdb_id": 752623,
+        "images": {
+          "poster": ["https://image.tmdb.org/t/p/w154/example_poster.jpg"],
+          "backdrop": [],
+          "poster_original": ["https://image.tmdb.org/t/p/original/example_poster.jpg"],
+          "backdrop_original": ["https://image.tmdb.org/t/p/original/example_backdrop.jpg"],
+          "disc_art": [],
+          "extra_thumbs": [],
+          "actors": {},
+          "clear_art": [],
+          "logo": [],
+          "banner": [],
+          "landscape": [],
+          "extra_fanart": []
+        },
+        "genres": ["Action", "Adventure", "Comedy"],
+        "released": "2022-03-23",
+        "titles": ["The Lost City"],
+        "imdb": "tt13320622",
+        "year": 2022,
+        "via_tmdb": true,
+        "plot": "A reclusive author gets kidnapped by an eccentric billionaire.",
+        "actor_roles": {},
+        "tagline": "",
+        "original_title": "The Lost City",
+        "actors": [],
+        "mpaa": null,
+        "runtime": 112,
+        "type": "movie"
+      },
+      "files": {
+        "image_poster": ["/data/cache/example_poster.jpg"]
+      },
+      "tags": [],
+      "last_edit": 1770564000
+    },
+    {
+      "_t": "media",
+      "status": "active",
+      "title": "Cats",
+      "type": "movie",
+      "profile_id": "abc123",
+      "category_id": null,
+      "identifiers": {
+        "imdb": "tt5697572"
+      },
+      "info": {
+        "tmdb_id": 536869,
+        "images": {
+          "poster": [],
+          "backdrop": [],
+          "poster_original": [],
+          "backdrop_original": [],
+          "disc_art": [],
+          "extra_thumbs": [],
+          "actors": {},
+          "clear_art": [],
+          "logo": [],
+          "banner": [],
+          "landscape": [],
+          "extra_fanart": []
+        },
+        "genres": ["Fantasy", "Comedy", "Drama"],
+        "released": "2019-12-19",
+        "titles": ["Cats", "Cats the Movie"],
+        "imdb": "tt5697572",
+        "year": 2019,
+        "via_tmdb": true,
+        "plot": "A tribe of cats must decide yearly which one will ascend.",
+        "actor_roles": {},
+        "tagline": "",
+        "original_title": "Cats",
+        "actors": [],
+        "mpaa": null,
+        "runtime": 110,
+        "type": "movie"
+      },
+      "files": {},
+      "tags": [],
+      "last_edit": 1770563000
+    },
+    {
+      "_t": "media",
+      "status": "done",
+      "title": "Breaking the Bank",
+      "type": "movie",
+      "profile_id": null,
+      "category_id": null,
+      "identifiers": {
+        "imdb": "tt3105662"
+      },
+      "info": {
+        "tmdb_id": 343829,
+        "images": {
+          "poster": [],
+          "backdrop": [],
+          "poster_original": [],
+          "backdrop_original": [],
+          "disc_art": [],
+          "extra_thumbs": [],
+          "actors": {},
+          "clear_art": [],
+          "logo": [],
+          "banner": [],
+          "landscape": [],
+          "extra_fanart": []
+        },
+        "genres": ["Comedy"],
+        "released": "2016-06-03",
+        "titles": ["Breaking the Bank"],
+        "imdb": "tt3105662",
+        "year": 2016,
+        "via_tmdb": true,
+        "plot": "A bumbling chairman tries to save a struggling British bank.",
+        "actor_roles": {},
+        "tagline": "",
+        "original_title": "Breaking the Bank",
+        "actors": [],
+        "mpaa": null,
+        "runtime": 106,
+        "type": "movie"
+      },
+      "files": {},
+      "tags": [],
+      "last_edit": 1770562000
+    }
+  ],
+  "release": [
+    {
+      "_t": "release",
+      "status": "done",
+      "media_id": "2c48e9a7de814ee6898bfe4665b4afd3",
+      "identifier": "tt4465564.DTS.720p",
+      "quality": "720p",
+      "is_3d": false,
+      "last_edit": 1770564053,
+      "files": {
+        "movie": ["/media/Movies/Example Movie (2017)/Example Movie.mkv"],
+        "subtitle": ["/media/Movies/Example Movie (2017)/Example Movie.en.sub"],
+        "nfo": ["/media/Movies/Example Movie (2017)/Example Movie.nfo"]
+      },
+      "info": {}
+    },
+    {
+      "_t": "release",
+      "status": "done",
+      "media_id": "f1834795048e443eb5587c62a8cef9e9",
+      "identifier": "tt0426592.AAC.720p",
+      "quality": "720p",
+      "is_3d": false,
+      "last_edit": 1770564014,
+      "files": {
+        "movie": ["/media/Movies/Another Movie (2008)/Another Movie.mkv"]
+      },
+      "info": {}
+    },
+    {
+      "_t": "release",
+      "status": "snatched",
+      "media_id": "abc123def456",
+      "identifier": "tt1234567.x264.1080p",
+      "quality": "1080p",
+      "is_3d": false,
+      "last_edit": 1770560000,
+      "files": {},
+      "info": {
+        "name": "Example.Movie.2024.1080p.BluRay.x264",
+        "size": 4500
+      },
+      "download_info": {
+        "id": "download123",
+        "downloader": "sabnzbd",
+        "status_support": true
+      }
+    }
+  ],
+  "quality": [
+    {
+      "_t": "quality",
+      "identifier": "2160p",
+      "order": 0,
+      "size_min": 10000,
+      "size_max": 650000
+    },
+    {
+      "_t": "quality",
+      "identifier": "1080p",
+      "order": 1,
+      "size_min": 4000,
+      "size_max": 60000
+    },
+    {
+      "_t": "quality",
+      "identifier": "720p",
+      "order": 3,
+      "size_min": 800,
+      "size_max": 10000
+    },
+    {
+      "_t": "quality",
+      "identifier": "bd50",
+      "order": 1,
+      "size_min": 20000,
+      "size_max": 60000
+    }
+  ],
+  "profile": [
+    {
+      "_t": "profile",
+      "label": "Best",
+      "order": 0,
+      "core": true,
+      "hide": false,
+      "qualities": ["2160p", "1080p", "720p"],
+      "wait_for": [0, 0, 0],
+      "finish": [true, true, true],
+      "stop_after": 0,
+      "minimum_score": 1,
+      "3d": false
+    },
+    {
+      "_t": "profile",
+      "label": "High",
+      "order": 1,
+      "core": true,
+      "hide": false,
+      "qualities": ["1080p", "720p"],
+      "wait_for": [0, 0],
+      "finish": [true, true],
+      "stop_after": 0,
+      "minimum_score": 1,
+      "3d": false
+    },
+    {
+      "_t": "profile",
+      "label": "Mid",
+      "order": 2,
+      "core": true,
+      "hide": false,
+      "qualities": ["720p"],
+      "wait_for": [0],
+      "finish": [true],
+      "stop_after": 0,
+      "minimum_score": 1,
+      "3d": false
+    }
+  ],
+  "notification": [
+    {
+      "_t": "notification",
+      "message": "Downloaded Example Movie (720p)",
+      "time": 1769307413,
+      "read": false
+    },
+    {
+      "_t": "notification",
+      "message": "Snatched \"Example Movie (2024) 1080p\" from ExampleProvider",
+      "time": 1768352910,
+      "read": true
+    }
+  ],
+  "property": [
+    {
+      "_t": "property",
+      "identifier": "manage.last_update",
+      "value": "1770390584.37"
+    },
+    {
+      "_t": "property",
+      "identifier": "updater.last_check",
+      "value": "1770390000"
+    },
+    {
+      "_t": "property",
+      "identifier": "last_db_compact",
+      "value": "1770300000"
+    }
+  ],
+  "_meta": {
+    "description": "Sanitized test fixtures from real CouchPotatoServer database",
+    "source": "CodernityDB id_stor/id_buck extraction",
+    "record_counts": {
+      "media": 849,
+      "release": 905,
+      "property": 1101,
+      "quality": 12,
+      "profile": 17,
+      "notification": 8
+    },
+    "total_records": 2892
+  }
+}
