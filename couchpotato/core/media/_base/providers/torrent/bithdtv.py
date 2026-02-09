@@ -68,7 +68,7 @@ class Base(TorrentProvider):
                     })
 
             except:
-                log.error('Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+                log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def getRequestHeaders(self):
         cookies = 'h_sl={};h_sp={};h_su={}'.format(self.conf('cookiesettingsl') or '', self.conf('cookiesettingsp') or '', self.conf('cookiesettingsu') or '')
@@ -89,7 +89,7 @@ class Base(TorrentProvider):
         try:
             return self.urlopen(url, headers=self.getRequestHeaders())
         except:
-            log.error('Failed getting release from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
 

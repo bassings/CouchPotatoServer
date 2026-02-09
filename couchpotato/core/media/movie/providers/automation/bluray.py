@@ -80,7 +80,7 @@ class Bluray(Automation, RSS):
                             log.debug('Error parsing movie html: %s', traceback.format_exc())
                             break
                 except:
-                    log.debug('Error loading page %s: %s', (page, traceback.format_exc()))
+                    log.debug('Error loading page %s: %s', page, traceback.format_exc())
                     break
 
             self.conf('backlog', value = False)

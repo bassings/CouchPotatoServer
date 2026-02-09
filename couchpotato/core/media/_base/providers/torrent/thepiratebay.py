@@ -112,7 +112,7 @@ class Base(TorrentMagnetProvider):
                             })
 
                 except:
-                    log.error('Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+                    log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def isEnabled(self):
         return super(Base, self).isEnabled() and self.getDomain()

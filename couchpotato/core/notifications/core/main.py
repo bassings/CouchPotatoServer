@@ -170,7 +170,7 @@ class CoreNotifier(Notification):
 
             return True
         except:
-            log.error('Failed notify "%s": %s', (n, traceback.format_exc()))
+            log.error('Failed notify "%s": %s', n, traceback.format_exc())
 
     def frontend(self, type = 'notification', data = None, message = None):
         if not data: data = {}
@@ -260,7 +260,7 @@ class CoreNotifier(Notification):
             pass
 
         self.m_lock.release()
-        log.debug('Returning for %s %s messages', (last_id, len(recent)))
+        log.debug('Returning for %s %s messages', last_id, len(recent))
 
         return recent
 

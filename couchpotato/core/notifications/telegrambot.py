@@ -34,7 +34,7 @@ class TelegramBot(Notification):
         # Error logging
         sent_successfuly = True
         if not response.status_code == 200:
-            log.error('Could not send notification to TelegramBot (token=%s). Response: [%s]', (token, response.text))
+            log.error('Could not send notification to TelegramBot (token=%s). Response: [%s]', token, response.text)
             sent_successfuly = False
 
         return sent_successfuly

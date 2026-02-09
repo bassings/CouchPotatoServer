@@ -54,11 +54,11 @@ class Base(NZBProvider):
                         parts = float(tryInt(parts.group('parts')))
 
                         if (total / parts) < 1 and ((total / parts) < 0.95 or ((total / parts) >= 0.95 and not ('par2' in info.text.lower() or 'pa3' in info.text.lower()))):
-                            log.info2('Wrong: \'%s\', not complete: %s out of %s', (item['name'], parts, total))
+                            log.info2('Wrong: \'%s\', not complete: %s out of %s', item['name'], parts, total)
                             return False
 
                         if 'requires password' in info.text.lower():
-                            log.info2('Wrong: \'%s\', passworded', (item['name']))
+                            log.info2('Wrong: \'%s\', passworded', item['name'])
                             return False
 
                         return True
@@ -86,7 +86,7 @@ class Base(NZBProvider):
         try:
             return self.urlopen(url, data = data, show_error = False)
         except:
-            log.error('Failed getting nzb from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed getting nzb from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
 

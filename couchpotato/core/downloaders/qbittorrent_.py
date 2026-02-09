@@ -63,7 +63,7 @@ class qBittorrent(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.debug('Sending "%s" to qBittorrent.', (data.get('name')))
+        log.debug('Sending "%s" to qBittorrent.', data.get('name'))
 
         if not self.connect():
             return False

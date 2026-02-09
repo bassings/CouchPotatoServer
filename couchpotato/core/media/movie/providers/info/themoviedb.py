@@ -79,7 +79,7 @@ class TheMovieDb(MovieProvider):
                 'search_type': 'ngram' if limit > 1 else 'phrase'
             }, return_key = 'results')
         except:
-            log.error('Failed searching TMDB for "%s": %s', (q, traceback.format_exc()))
+            log.error('Failed searching TMDB for "%s": %s', q, traceback.format_exc())
 
         results = []
         if raw:
@@ -175,7 +175,7 @@ class TheMovieDb(MovieProvider):
                     actors[toUnicode(cast_item.get('name'))] = toUnicode(cast_item.get('character'))
                     images['actors'][toUnicode(cast_item.get('name'))] = self.getImage(cast_item, type = 'profile', size = 'original')
                 except:
-                    log.debug('Error getting cast info for %s: %s', (cast_item, traceback.format_exc()))
+                    log.debug('Error getting cast info for %s: %s', cast_item, traceback.format_exc())
 
         movie_data = {
             'type': 'movie',
@@ -220,7 +220,7 @@ class TheMovieDb(MovieProvider):
             if path:
                 image_url = '%s%s%s' % (self.configuration['images']['secure_base_url'], size, path)
         except:
-            log.debug('Failed getting %s.%s for "%s"', (type, size, ss(str(movie))))
+            log.debug('Failed getting %s.%s for "%s"', type, size, ss(str(movie)))
 
         return image_url
 
@@ -231,7 +231,7 @@ class TheMovieDb(MovieProvider):
             for image in movie.get('images', {}).get(type, [])[1:5]:
                 image_urls.append(self.getImage(image, 'file', size))
         except:
-            log.debug('Failed getting %s.%s for "%s"', (type, size, ss(str(movie))))
+            log.debug('Failed getting %s.%s for "%s"', type, size, ss(str(movie)))
 
         return image_urls
 
@@ -244,7 +244,7 @@ class TheMovieDb(MovieProvider):
             url = 'https://api.themoviedb.org/3/%s?api_key=%s%s' % (call, self.getApiKey(), '&%s' % params if params else '')
             data = self.getJsonData(url, show_error = False)
         except:
-            log.debug('Movie not found: %s, %s', (call, params))
+            log.debug('Movie not found: %s, %s', call, params)
             data = None
 
         if data and return_key and return_key in data:

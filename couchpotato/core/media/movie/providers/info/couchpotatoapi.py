@@ -106,7 +106,7 @@ class CouchPotatoApi(MovieProvider):
         if identifier is None: return {}
 
         dates = self.getJsonData(self.urls['eta'] % identifier, headers = self.getRequestHeaders())
-        log.debug('Found ETA for %s: %s', (identifier, dates))
+        log.debug('Found ETA for %s: %s', identifier, dates)
 
         return dates
 
@@ -118,7 +118,7 @@ class CouchPotatoApi(MovieProvider):
             'movies': ','.join(movies),
             'ignore': ','.join(ignore),
         }, headers = self.getRequestHeaders())
-        log.info('Found suggestions for %s movies, %s ignored', (len(movies), len(ignore)))
+        log.info('Found suggestions for %s movies, %s ignored', len(movies), len(ignore))
 
         return suggestions
 

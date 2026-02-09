@@ -151,7 +151,7 @@ class Renamer(Plugin):
             # Check to see if the no_process folders are inside the "from" folder.
             for item in no_process:
                 if isSubFolder(item, base_folder):
-                    log.error('To protect your data, the media libraries can\'t be inside of or the same as the "from" folder. "%s" in "%s"', (item, base_folder))
+                    log.error('To protect your data, the media libraries can\'t be inside of or the same as the "from" folder. "%s" in "%s"', item, base_folder)
                     return
 
         # Check to see if the no_process folders are inside the provided media_folder
@@ -183,7 +183,7 @@ class Renamer(Plugin):
         if media_folder:
             for item in no_process:
                 if isSubFolder(item, media_folder):
-                    log.error('To protect your data, the media libraries can\'t be inside of or the same as the provided media folder. "%s" in "%s"', (item, media_folder))
+                    log.error('To protect your data, the media libraries can\'t be inside of or the same as the provided media folder. "%s" in "%s"', item, media_folder)
                     return
 
         # Make sure a checkSnatched marked all downloads/seeds as such
@@ -212,7 +212,7 @@ class Renamer(Plugin):
                     for root, folders, names in os.walk(media_folder):
                         files.extend([sp(os.path.join(root, name)) for name in names])
                 except:
-                    log.error('Failed getting files from %s: %s', (media_folder, traceback.format_exc()))
+                    log.error('Failed getting files from %s: %s', media_folder, traceback.format_exc())
 
                 # post_filter files from configuration; this is a ":"-separated list of globs
                 files = self.filesAfterIgnoring(files)
@@ -499,7 +499,7 @@ class Renamer(Plugin):
                         mdia = db.get('id', media['_id'])
                         mdia['profile_id'] = None
                         db.update(mdia)
-                        log.error('Error getting quality profile for %s: %s', (media_title, traceback.format_exc()))
+                        log.error('Error getting quality profile for %s: %s', media_title, traceback.format_exc())
                 else:
                     log.debug('Media has no quality profile: %s', media_title)
 
@@ -518,7 +518,7 @@ class Renamer(Plugin):
 
                         if is_higher == 'higher':
                             if self.conf('remove_lower_quality_copies'):
-                                log.info('Removing lesser or not wanted quality %s for %s.', (media_title, release.get('quality')))
+                                log.info('Removing lesser or not wanted quality %s for %s.', media_title, release.get('quality'))
                                 for file_type in release.get('files', {}):
                                     for release_file in release['files'][file_type]:
                                         remove_files.append(release_file)
@@ -527,7 +527,7 @@ class Renamer(Plugin):
                         # Same quality, but still downloaded, so maybe repack/proper/unrated/directors cut etc
                         elif is_higher == 'equal':
                             if self.conf('remove_lower_quality_copies'):
-                                log.info('Same quality release already exists for %s, with quality %s. Assuming repack.', (media_title, release.get('quality')))
+                                log.info('Same quality release already exists for %s, with quality %s. Assuming repack.', media_title, release.get('quality'))
                                 for file_type in release.get('files', {}):
                                     for release_file in release['files'][file_type]:
                                         remove_files.append(release_file)
@@ -535,7 +535,7 @@ class Renamer(Plugin):
 
                         # Downloaded a lower quality, rename the newly downloaded files/folder to exclude them from scan
                         else:
-                            log.info('Better quality release already exists for %s, with quality %s', (media_title, release.get('quality')))
+                            log.info('Better quality release already exists for %s, with quality %s', media_title, release.get('quality'))
 
                             # Add exists tag to the .ignore file
                             self.tagRelease(group = group, tag = 'exists')
@@ -584,7 +584,7 @@ class Renamer(Plugin):
                 total_space, available_space = getFreeSpace(destination)
                 renaming_size = getSize(rename_files.keys())
                 if renaming_size > available_space:
-                    log.error('Not enough space left, need %s MB but only %s MB available', (renaming_size, available_space))
+                    log.error('Not enough space left, need %s MB but only %s MB available', renaming_size, available_space)
                     self.tagRelease(group = group, tag = 'not_enough_space')
                     continue
 
@@ -610,7 +610,7 @@ class Renamer(Plugin):
                             delete_folders.append(parent_dir)
 
                 except:
-                    log.error('Failed removing %s: %s', (src, traceback.format_exc()))
+                    log.error('Failed removing %s: %s', src, traceback.format_exc())
                     self.tagRelease(group = group, tag = 'failed_remove')
 
             # Delete leftover folder from older releases
@@ -619,7 +619,7 @@ class Renamer(Plugin):
                 try:
                     self.deleteEmptyFolder(delete_folder, show_error = False)
                 except Exception as e:
-                    log.error('Failed to delete folder: %s %s', (e, traceback.format_exc()))
+                    log.error('Failed to delete folder: %s %s', e, traceback.format_exc())
 
             # Rename all files marked
             group['renamed_files'] = []
@@ -639,7 +639,7 @@ class Renamer(Plugin):
                         self.moveFile(src, dst, use_default = not is_torrent or self.fileIsAdded(src, group))
                         group['renamed_files'].append(dst)
                     except:
-                        log.error('Failed renaming the file "%s" : %s', (os.path.basename(src), traceback.format_exc()))
+                        log.error('Failed renaming the file "%s" : %s', os.path.basename(src), traceback.format_exc())
                         failed_rename = True
                         break
 
@@ -661,7 +661,7 @@ class Renamer(Plugin):
                 try:
                     db.delete(release)
                 except:
-                    log.error('Failed removing %s: %s', (release, traceback.format_exc()))
+                    log.error('Failed removing %s: %s', release, traceback.format_exc())
 
             if group['dirname'] and group['parentdir'] and not keep_original:
                 if media_folder:
@@ -676,7 +676,7 @@ class Renamer(Plugin):
                         log.info('Deleting folder: %s', group_folder)
                         self.deleteEmptyFolder(group_folder)
                 except:
-                    log.error('Failed removing %s: %s', (group_folder, traceback.format_exc()))
+                    log.error('Failed removing %s: %s', group_folder, traceback.format_exc())
 
             # Notify on download, search for trailers etc
             download_message = 'Downloaded %s (%s%s)' % (media_title, replacements['quality'], (' ' + replacements['3d']) if replacements['3d'] else '')
@@ -839,12 +839,12 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
             if move_type not in ['copy', 'link', 'symlink_reversed']:
                 try:
-                    log.info('Moving "%s" to "%s"', (old, dest))
+                    log.info('Moving "%s" to "%s"', old, dest)
                     shutil.move(old, dest)
                 except:
                     exists = os.path.exists(dest)
                     if exists and os.path.getsize(old) == os.path.getsize(dest):
-                        log.error('Successfully moved file "%s", but something went wrong: %s', (dest, traceback.format_exc()))
+                        log.error('Successfully moved file "%s", but something went wrong: %s', dest, traceback.format_exc())
                         os.unlink(old)
                     else:
                         # remove faultly copied file
@@ -852,27 +852,27 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                             os.unlink(dest)
                         raise
             elif move_type == 'copy':
-                log.info('Copying "%s" to "%s"', (old, dest))
+                log.info('Copying "%s" to "%s"', old, dest)
                 shutil.copy(old, dest)
             elif move_type == 'symlink_reversed':
-                log.info('Reverse symlink "%s" to "%s"', (old, dest))
+                log.info('Reverse symlink "%s" to "%s"', old, dest)
                 try:
                     shutil.move(old, dest)
                 except:
-                    log.error('Moving "%s" to "%s" went wrong: %s', (old, dest, traceback.format_exc()))
+                    log.error('Moving "%s" to "%s" went wrong: %s', old, dest, traceback.format_exc())
                 try:
                     symlink(dest, old)
                 except:
-                    log.error('Error while linking "%s" back to "%s": %s', (dest, old, traceback.format_exc()))
+                    log.error('Error while linking "%s" back to "%s": %s', dest, old, traceback.format_exc())
             else:
-                log.info('Linking "%s" to "%s"', (old, dest))
+                log.info('Linking "%s" to "%s"', old, dest)
                 # First try to hardlink
                 try:
-                    log.debug('Hardlinking file "%s" to "%s"...', (old, dest))
+                    log.debug('Hardlinking file "%s" to "%s"...', old, dest)
                     link(old, dest)
                 except:
                     # Try to symlink next
-                    log.debug('Couldn\'t hardlink file "%s" to "%s". Symlinking instead. Error: %s.', (old, dest, traceback.format_exc()))
+                    log.debug('Couldn\'t hardlink file "%s" to "%s". Symlinking instead. Error: %s.', old, dest, traceback.format_exc())
                     shutil.copy(old, dest)
                     try:
                         old_link = '%s.link' % sp(old)
@@ -880,16 +880,16 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                         os.unlink(old)
                         os.rename(old_link, old)
                     except:
-                        log.error('Couldn\'t symlink file "%s" to "%s". Copied instead. Error: %s. ', (old, dest, traceback.format_exc()))
+                        log.error('Couldn\'t symlink file "%s" to "%s". Copied instead. Error: %s. ', old, dest, traceback.format_exc())
 
             try:
                 os.chmod(dest, Env.getPermission('file'))
                 if os.name == 'nt' and self.conf('ntfs_permission'):
                     os.popen('icacls "' + dest + '"* /reset /T')
             except:
-                log.debug('Failed setting permissions for file: %s, %s', (dest, traceback.format_exc(1)))
+                log.debug('Failed setting permissions for file: %s, %s', dest, traceback.format_exc(1))
         except:
-            log.error('Couldn\'t move file "%s" to "%s": %s', (old, dest, traceback.format_exc()))
+            log.error('Couldn\'t move file "%s" to "%s": %s', old, dest, traceback.format_exc())
             raise
 
         return True
@@ -1006,7 +1006,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
                     # Check if download ID is available
                     if not download_info.get('id') or not download_info.get('downloader'):
-                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', (download_info.get('downloader', 'unknown'), rel['info']['name']))
+                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', download_info.get('downloader', 'unknown'), rel['info']['name'])
                         scan_required = True
 
                         # Continue with next release
@@ -1045,7 +1045,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
                     # Log that we found the release
                     timeleft = 'N/A' if release_download['timeleft'] == -1 else release_download['timeleft']
-                    log.debug('Found %s: %s, time to go: %s', (release_download['name'], release_download['status'].upper(), timeleft))
+                    log.debug('Found %s: %s, time to go: %s', release_download['name'], release_download['status'].upper(), timeleft)
 
                     # Check status of release
                     if release_download['status'] == 'busy':
@@ -1059,7 +1059,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                     elif release_download['status'] == 'seeding':
                         #If linking setting is enabled, process release
                         if self.conf('file_action') != 'move' and not rel.get('status') == 'seeding' and self.statusInfoComplete(release_download):
-                            log.info('Download of %s completed! It is now being processed while leaving the original files alone for seeding. Current ratio: %s.', (release_download['name'], release_download['seed_ratio']))
+                            log.info('Download of %s completed! It is now being processed while leaving the original files alone for seeding. Current ratio: %s.', release_download['name'], release_download['seed_ratio'])
 
                             # Remove the downloading tag
                             self.untagRelease(release_download = release_download, tag = 'downloading')
@@ -1069,7 +1069,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                             scan_releases.append(release_download)
                         else:
                             #let it seed
-                            log.debug('%s is seeding with ratio: %s', (release_download['name'], release_download['seed_ratio']))
+                            log.debug('%s is seeding with ratio: %s', release_download['name'], release_download['seed_ratio'])
 
                             # Set the release to seeding
                             fireEvent('release.update_status', rel.get('_id'), status = 'seeding', single = True)
@@ -1156,7 +1156,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
             try:
                 rls = db.get('release_download', '%s-%s' % (release_download.get('downloader'), release_download.get('id')), with_doc = True)['doc']
             except:
-                log.error('Download ID %s from downloader %s not found in releases', (release_download.get('id'), release_download.get('downloader')))
+                log.error('Download ID %s from downloader %s not found in releases', release_download.get('id'), release_download.get('downloader'))
 
         if rls:
             media = db.get('id', rls['media_id'])
@@ -1205,7 +1205,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
         # ignoredpaths
         for i in self.ignored_in_path:
             if i in filename.lower():
-                log.debug('Ignored "%s" contains "%s".', (filename, i))
+                log.debug('Ignored "%s" contains "%s".', filename, i)
                 return False
 
         # All is OK
@@ -1251,7 +1251,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 files_too_new, time_string = self.checkFilesChanged(archive['files'])
 
                 if files_too_new:
-                    log.info('Archive seems to be still copying/moving/downloading or just copied/moved/downloaded (created on %s), ignoring for now: %s', (time_string, os.path.basename(archive['file'])))
+                    log.info('Archive seems to be still copying/moving/downloading or just copied/moved/downloaded (created on %s), ignoring for now: %s', time_string, os.path.basename(archive['file']))
                     continue
 
             log.info('Archive %s found. Extracting...', os.path.basename(archive['file']))
@@ -1278,7 +1278,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 if not cleanup and os.path.isfile(extr_file_path):
                     self.tagRelease(release_download = {'folder': os.path.dirname(archive['file']), 'files': [archive['file']]}, tag = 'extracted')
             except Exception as e:
-                log.error('Failed to extract %s: %s %s', (archive['file'], e, traceback.format_exc()))
+                log.error('Failed to extract %s: %s %s', archive['file'], e, traceback.format_exc())
                 continue
 
             # Delete the archive files
@@ -1287,7 +1287,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                     try:
                         os.remove(filename)
                     except Exception as e:
-                        log.error('Failed to remove %s: %s %s', (filename, e, traceback.format_exc()))
+                        log.error('Failed to remove %s: %s %s', filename, e, traceback.format_exc())
                         continue
                 files.remove(filename)
 
@@ -1300,7 +1300,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                     self.makeDir(os.path.dirname(move_to))
                     self.moveFile(leftoverfile, move_to, cleanup)
                 except Exception as e:
-                    log.error('Failed moving left over file %s to %s: %s %s', (leftoverfile, move_to, e, traceback.format_exc()))
+                    log.error('Failed moving left over file %s to %s: %s %s', leftoverfile, move_to, e, traceback.format_exc())
                     # As we probably tried to overwrite the nfo file, check if it exists and then remove the original
                     if os.path.isfile(move_to) and os.path.getsize(leftoverfile) == os.path.getsize(move_to):
                         if cleanup:

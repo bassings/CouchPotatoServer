@@ -112,7 +112,7 @@ class Twitter(Notification):
             log.error('The request for an access token did not succeed: %s', resp['status'])
             return 'Twitter auth failed'
         else:
-            log.debug('Tokens: %s, %s', (access_token['oauth_token'], access_token['oauth_token_secret']))
+            log.debug('Tokens: %s, %s', access_token['oauth_token'], access_token['oauth_token_secret'])
 
             self.conf('access_token_key', value = access_token['oauth_token'])
             self.conf('access_token_secret', value = access_token['oauth_token_secret'])

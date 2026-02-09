@@ -23,7 +23,7 @@ def runHandler(name, handler, *args, **kwargs):
         error_msg = str(e)
         full_trace = traceback.format_exc()
         env_info = Env.all() if not Env.get('dev') else ''
-        log.error('Error in event "%s", that wasn\'t caught: %s %s %s', (name, error_msg, full_trace, env_info))
+        log.error('Error in event "%s", that wasn\'t caught: %s %s %s', name, error_msg, full_trace, env_info)
         print(f"EVENT ERROR: {name} - {error_msg}")
         print(f"FULL TRACEBACK: {full_trace}")
         raise e
@@ -51,7 +51,7 @@ def addEvent(name, handler, priority=100):
                 if ac:
                     parent.afterCall(handler)
         except:
-            log.error('Failed creating handler %s %s: %s', (name, handler, traceback.format_exc()))
+            log.error('Failed creating handler %s %s: %s', name, handler, traceback.format_exc())
 
         return h
 
@@ -145,7 +145,7 @@ def fireEvent(name, *args, **kwargs):
 
         return final
     except Exception:
-        log.error('%s: %s', (name, traceback.format_exc()))
+        log.error('%s: %s', name, traceback.format_exc())
 
 
 def fireEventAsync(*args, **kwargs):
@@ -155,7 +155,7 @@ def fireEventAsync(*args, **kwargs):
         t.start()
         return True
     except Exception as e:
-        log.error('%s: %s', (args[0], e))
+        log.error('%s: %s', args[0], e)
 
 
 def errorHandler(error):

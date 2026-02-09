@@ -142,7 +142,7 @@ class rTorrent(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.debug('Sending "%s" to rTorrent.', (data.get('name')))
+        log.debug('Sending "%s" to rTorrent.', data.get('name'))
 
         if not self.connect():
             return False

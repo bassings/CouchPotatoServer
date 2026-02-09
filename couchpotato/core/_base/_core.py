@@ -85,11 +85,11 @@ class Core(Plugin):
             v = OpenSSL.__version__
             v_needed = '0.15'
             if compareVersions(OpenSSL.__version__, v_needed) < 0:
-                log.error('OpenSSL installed but %s is needed while %s is installed. Run `pip install pyopenssl --upgrade`', (v_needed, v))
+                log.error('OpenSSL installed but %s is needed while %s is installed. Run `pip install pyopenssl --upgrade`', v_needed, v)
 
             try:
                 import ssl
-                log.debug('OpenSSL detected: pyopenssl (%s) using OpenSSL (%s)', (v, ssl.OPENSSL_VERSION))
+                log.debug('OpenSSL detected: pyopenssl (%s) using OpenSSL (%s)', v, ssl.OPENSSL_VERSION)
             except:
                 pass
         except:

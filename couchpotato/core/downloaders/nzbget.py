@@ -188,7 +188,7 @@ class NZBGet(DownloaderBase):
                 nzb_id = nzb['NZBID']
 
             if nzb_id in ids:
-                log.debug('Found %s in NZBGet history. TotalStatus: %s, ParStatus: %s, ScriptStatus: %s, Log: %s', (nzb['NZBFilename'] , nzb['Status'], nzb['ParStatus'], nzb['ScriptStatus'] , nzb['Log']))
+                log.debug('Found %s in NZBGet history. TotalStatus: %s, ParStatus: %s, ScriptStatus: %s, Log: %s', nzb['NZBFilename'] , nzb['Status'], nzb['ParStatus'], nzb['ScriptStatus'] , nzb['Log'])
                 release_downloads.append({
                     'id': nzb_id,
                     'name': nzb['NZBFilename'],

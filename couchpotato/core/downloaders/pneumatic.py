@@ -48,7 +48,7 @@ class Pneumatic(DownloaderBase):
 
                 try:
                     if not os.path.isfile(full_path):
-                        log.info('Downloading %s to %s.', (data.get('protocol'), full_path))
+                        log.info('Downloading %s to %s.', data.get('protocol'), full_path)
                         with open(full_path, 'wb') as f:
                             f.write(filedata)
 
@@ -71,7 +71,7 @@ class Pneumatic(DownloaderBase):
                     pass
 
             except:
-                log.info('Failed to download file %s: %s', (data.get('name'), traceback.format_exc()))
+                log.info('Failed to download file %s: %s', data.get('name'), traceback.format_exc())
                 return False
         return False
 

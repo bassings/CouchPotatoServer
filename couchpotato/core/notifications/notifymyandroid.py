@@ -29,7 +29,7 @@ class NotifyMyAndroid(Notification):
         successful = 0
         for key in keys:
             if not response[str(key)]['code'] == '200':
-                log.error('Could not send notification to NotifyMyAndroid (%s). %s', (key, response[key]['message']))
+                log.error('Could not send notification to NotifyMyAndroid (%s). %s', key, response[key]['message'])
             else:
                 successful += 1
 

@@ -56,7 +56,7 @@ class Base(TorrentProvider):
                         'leechers': tryInt(tds[len(tds)-1].string),
                     })
             except:
-                log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+                log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
 
     def getLoginParams(self):

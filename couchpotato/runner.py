@@ -1,4 +1,3 @@
-from logging import handlers
 from uuid import uuid4
 import locale
 import logging
@@ -126,40 +125,21 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     development = Env.setting('development', default=False, type='bool')
     Env.set('dev', development)
 
-    # Disable logging for some modules
-    for logger_name in ['enzyme', 'guessit', 'subliminal', 'apscheduler', 'uvicorn', 'requests']:
-        logging.getLogger(logger_name).setLevel(logging.ERROR)
-
-    for logger_name in ['gntp']:
-        logging.getLogger(logger_name).setLevel(logging.WARNING)
-
     # Disable SSL warning
     disable_warnings()
 
     # Use reloader
     reloader = debug is True and development and not Env.get('desktop') and not options.daemon
 
-    # Logger
-    logger = logging.getLogger()
-    formatter = logging.Formatter('%(asctime)s %(levelname)s %(message)s', '%m-%d %H:%M:%S')
-    level = logging.DEBUG if debug else logging.INFO
-    logger.setLevel(level)
-    logging.addLevelName(19, 'INFO')
-
-    # To screen
-    if (debug or options.console_log) and not options.quiet and not options.daemon:
-        hdlr = logging.StreamHandler(sys.stderr)
-        hdlr.setFormatter(formatter)
-        logger.addHandler(hdlr)
-
-    # To file
-    hdlr2 = handlers.RotatingFileHandler(Env.get('log_path'), 'a', 500000, 10, encoding=Env.get('encoding'))
-    hdlr2.setFormatter(formatter)
-    logger.addHandler(hdlr2)
-
-    # Start logging & enable colors
-    import color_logs
-    from couchpotato.core.logger import CPLog
+    # Configure logging
+    from couchpotato.core.logger import setup_logging, CPLog
+    console = (debug or options.console_log) and not options.quiet and not options.daemon
+    setup_logging(
+        log_path=Env.get('log_path'),
+        debug=debug,
+        console=console,
+        encoding=Env.get('encoding'),
+    )
     log = CPLog(__name__)
     log.debug('Started with options %s', options)
 
@@ -185,7 +165,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.error('Failed getting diskspace: %s', traceback.format_exc())
 
     def customwarn(message, category, filename, lineno, file=None, line=None):
-        log.warning('%s %s %s line:%s', (category.__name__, message, filename, lineno))
+        log.warning('%s %s %s line:%s', category.__name__, message, filename, lineno)
     warnings.showwarning = customwarn
 
     # Create FastAPI app

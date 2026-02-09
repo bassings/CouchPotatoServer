@@ -68,7 +68,7 @@ class Automation(AutomationBase):
 
     def isMinimalMovie(self, movie):
         if not movie.get('rating'):
-            log.info('ignoring %s as no rating is available for.', (movie['original_title']))
+            log.info('ignoring %s as no rating is available for.', movie['original_title'])
             return False
 
         if movie['rating'] and type(movie['rating']) is not float and movie['rating'].get('imdb'):
@@ -79,7 +79,7 @@ class Automation(AutomationBase):
             type_value = movie.get(minimal_type, 0)
             type_min = self.getMinimal(minimal_type)
             if type_value < type_min:
-                log.info('%s too low for %s, need %s has %s', (minimal_type, movie['original_title'], type_min, type_value))
+                log.info('%s too low for %s, need %s has %s', minimal_type, movie['original_title'], type_min, type_value)
                 return False
 
         movie_genres = [genre.lower() for genre in movie['genres']]
@@ -98,7 +98,7 @@ class Automation(AutomationBase):
         for ign_set in ignored_genres:
             ign = splitString(ign_set, '&')
             if len(list(set(movie_genres) & set(ign))) == len(ign):
-                log.info2('%s has blacklisted genre(s): %s', (movie['original_title'], ign))
+                log.info2('%s has blacklisted genre(s): %s', movie['original_title'], ign)
                 return False
 
         return True

@@ -310,11 +310,11 @@ class QualityPlugin(Plugin):
             for alt in qualities:
                 if isinstance(alt, tuple):
                     if len(set(words) & set(alt)) == len(alt):
-                        log.debug('Found %s via %s %s in %s', (quality['identifier'], tag_type, quality.get(tag_type), cur_file))
+                        log.debug('Found %s via %s %s in %s', quality['identifier'], tag_type, quality.get(tag_type), cur_file)
                         score += points.get(tag_type)
 
                 if isinstance(alt, (str, unicode)) and ss(alt.lower()) in words and ss(alt.lower()) not in scored_on:
-                    log.debug('Found %s via %s %s in %s', (quality['identifier'], tag_type, quality.get(tag_type), cur_file))
+                    log.debug('Found %s via %s %s in %s', quality['identifier'], tag_type, quality.get(tag_type), cur_file)
                     score += points.get(tag_type)
 
                     # Don't score twice on same tag
@@ -323,7 +323,7 @@ class QualityPlugin(Plugin):
         # Check extension
         for ext in quality.get('ext', []):
             if ext == extension:
-                log.debug('Found %s with .%s extension in %s', (quality['identifier'], ext, cur_file))
+                log.debug('Found %s with .%s extension in %s', quality['identifier'], ext, cur_file)
                 score += points['ext']
 
         return score
@@ -337,10 +337,10 @@ class QualityPlugin(Plugin):
             for tag in tags:
                 if isinstance(tag, tuple):
                     if len(set(words) & set(tag)) == len(tag):
-                        log.debug('Found %s in %s', (tag, cur_file))
+                        log.debug('Found %s in %s', tag, cur_file)
                         return 1, key
                 elif tag in words:
-                    log.debug('Found %s in %s', (tag, cur_file))
+                    log.debug('Found %s in %s', tag, cur_file)
                     return 1, key
 
         return 0, None
@@ -353,12 +353,12 @@ class QualityPlugin(Plugin):
 
             # Check width resolution, range 20
             if quality.get('width') and (quality.get('width') - 20) <= extra.get('resolution_width', 0) <= (quality.get('width') + 20):
-                log.debug('Found %s via resolution_width: %s == %s', (quality['identifier'], quality.get('width'), extra.get('resolution_width', 0)))
+                log.debug('Found %s via resolution_width: %s == %s', quality['identifier'], quality.get('width'), extra.get('resolution_width', 0))
                 score += 10
 
             # Check height resolution, range 20
             if quality.get('height') and (quality.get('height') - 20) <= extra.get('resolution_height', 0) <= (quality.get('height') + 20):
-                log.debug('Found %s via resolution_height: %s == %s', (quality['identifier'], quality.get('height'), extra.get('resolution_height', 0)))
+                log.debug('Found %s via resolution_height: %s == %s', quality['identifier'], quality.get('height'), extra.get('resolution_height', 0))
                 score += 5
 
             if quality.get('identifier') == 'dvdrip' and 480 <= extra.get('resolution_width', 0) <= 720:
@@ -379,7 +379,7 @@ class QualityPlugin(Plugin):
             size_max = tryFloat(quality['size_max'])
 
             if size_min <= size <= size_max:
-                log.debug('Found %s via release size: %s MB < %s MB < %s MB', (quality['identifier'], size_min, size, size_max))
+                log.debug('Found %s via release size: %s MB < %s MB < %s MB', quality['identifier'], size_min, size, size_max)
 
                 proc_range = size_max - size_min
                 size_diff = size - size_min
@@ -444,16 +444,16 @@ class QualityPlugin(Plugin):
         try:
             quality_order = [i for i, identifier in enumerate(profile['qualities']) if identifier == quality['identifier'] and bool(profile['3d'][i] if profile.get('3d') else 0) == bool(quality.get('is_3d', 0))][0]
         except:
-            log.debug('Quality %s not found in profile identifiers %s', (quality['identifier'] + (' 3D' if quality.get('is_3d', 0) else ''), \
-                [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])]))
+            log.debug('Quality %s not found in profile identifiers %s', quality['identifier'] + (' 3D' if quality.get('is_3d', 0) else ''), \
+                [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])])
             return 'lower'
 
         # Try to find compare quality in profile, if not found: anything is higher than a not wanted quality
         try:
             compare_order = [i for i, identifier in enumerate(profile['qualities']) if identifier == compare_with['identifier'] and bool(profile['3d'][i] if profile.get('3d') else 0) == bool(compare_with.get('is_3d', 0))][0]
         except:
-            log.debug('Compare quality %s not found in profile identifiers %s', (compare_with['identifier'] + (' 3D' if compare_with.get('is_3d', 0) else ''), \
-                [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])]))
+            log.debug('Compare quality %s not found in profile identifiers %s', compare_with['identifier'] + (' 3D' if compare_with.get('is_3d', 0) else ''), \
+                [identifier + (' 3D' if (profile['3d'][i] if profile.get('3d') else 0) else '') for i, identifier in enumerate(profile['qualities'])])
             return 'higher'
 
         # Note to self: a lower number means higher quality
@@ -524,10 +524,10 @@ class QualityPlugin(Plugin):
             test_quality = self.guess(files = [name], extra = tests[name].get('extra', None), size = tests[name].get('size', None), use_cache = False) or {}
             success = test_quality.get('identifier') == tests[name]['quality'] and test_quality.get('is_3d') == tests[name].get('is_3d', False)
             if not success:
-                log.error('%s failed check, thinks it\'s "%s" expecting "%s"', (name,
+                log.error('%s failed check, thinks it\'s "%s" expecting "%s"', name,
                                                                             test_quality.get('identifier') + (' 3D' if test_quality.get('is_3d') else ''),
                                                                             tests[name]['quality'] + (' 3D' if tests[name].get('is_3d') else '')
-                ))
+                )
 
             correct += success
 
@@ -535,6 +535,6 @@ class QualityPlugin(Plugin):
             log.info('Quality test successful')
             return True
         else:
-            log.error('Quality test failed: %s out of %s succeeded', (correct, len(tests)))
+            log.error('Quality test failed: %s out of %s succeeded', correct, len(tests))
 
 

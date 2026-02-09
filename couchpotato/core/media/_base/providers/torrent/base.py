@@ -52,10 +52,10 @@ class TorrentProvider(YarrProvider):
                 try:
                     data = self.urlopen(proxy, timeout = 3, show_error = False)
                 except:
-                    log.debug('Failed %s proxy %s: %s', (self.getName(), proxy, traceback.format_exc()))
+                    log.debug('Failed %s proxy %s: %s', self.getName(), proxy, traceback.format_exc())
 
                 if self.correctProxy(data):
-                    log.debug('Using proxy for %s: %s', (self.getName(), proxy))
+                    log.debug('Using proxy for %s: %s', self.getName(), proxy)
                     self.proxy_domain = proxy
                     break
 

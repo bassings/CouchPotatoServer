@@ -114,7 +114,7 @@ class XBMC(MovieMetaData):
                 el = SubElement(nfoxml, 'premiered')
                 el.text = time.strftime('%Y-%m-%d', time.strptime(movie_info.get('released'), '%d %b %Y'))
         except:
-            log.debug('Failed to parse release date %s: %s', (movie_info.get('released'), traceback.format_exc()))
+            log.debug('Failed to parse release date %s: %s', movie_info.get('released'), traceback.format_exc())
 
         # Rating
         for rating_type in ['imdb', 'rotten', 'tmdb']:
@@ -126,7 +126,7 @@ class XBMC(MovieMetaData):
                 votes.text = str(v)
                 break
             except:
-                log.debug('Failed adding rating info from %s: %s', (rating_type, traceback.format_exc()))
+                log.debug('Failed adding rating info from %s: %s', rating_type, traceback.format_exc())
 
         # Genre
         for genre in movie_info.get('genres', []):

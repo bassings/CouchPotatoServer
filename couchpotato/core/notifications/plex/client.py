@@ -51,7 +51,7 @@ class PlexClientHTTP(PlexClientProtocol):
 
 class PlexClientJSON(PlexClientProtocol):
     def request(self, method, params, client):
-        log.debug('sendJSON("%s", %s, %s)', (method, params, client))
+        log.debug('sendJSON("%s", %s, %s)', method, params, client)
         url = 'http://%s:%s/jsonrpc' % (
             client['address'],
             client['port']

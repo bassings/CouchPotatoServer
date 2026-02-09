@@ -66,7 +66,7 @@ class Updater(Plugin):
 
     def logVersion(self):
         info = self.info()
-        log.info('=== VERSION %s, using %s ===', (info.get('version', {}).get('repr', 'UNKNOWN'), self.updater.getName()))
+        log.info('=== VERSION %s, using %s ===', info.get('version', {}).get('repr', 'UNKNOWN'), self.updater.getName())
 
     def setCrons(self):
 
@@ -210,7 +210,7 @@ class GitUpdater(BaseUpdater):
         remote_name = 'origin'
         remote = self.repo.getRemoteByName(remote_name)
         if self.old_repo in remote.url:
-            log.info('Changing repo to new github organization: %s -> %s', (self.old_repo, self.new_repo))
+            log.info('Changing repo to new github organization: %s -> %s', self.old_repo, self.new_repo)
             new_url = remote.url.replace(self.old_repo, self.new_repo)
             self.repo._executeGitCommandAssertSuccess("remote set-url %s %s" % (remote_name, new_url))
 
@@ -273,7 +273,7 @@ class GitUpdater(BaseUpdater):
                 local = self.repo.getHead()
                 remote = branch.getHead()
 
-                log.debug('Versions, local:%s, remote:%s', (local.hash[:8], remote.hash[:8]))
+                log.debug('Versions, local:%s, remote:%s', local.hash[:8], remote.hash[:8])
 
                 if local.getDate() < remote.getDate():
                     self.update_version = {
@@ -366,7 +366,7 @@ class SourceUpdater(BaseUpdater):
                         except ValueError:
                             pass
                     except:
-                        log.error('Failed overwriting file "%s": %s', (tofile, traceback.format_exc()))
+                        log.error('Failed overwriting file "%s": %s', tofile, traceback.format_exc())
                         return False
 
         for still_exists in existing_files:

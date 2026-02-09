@@ -51,10 +51,10 @@ class Base(TorrentProvider):
 
             for ptpmovie in res['Movies']:
                 if not 'Torrents' in ptpmovie:
-                    log.debug('Movie %s (%s) has NO torrents', (ptpmovie['Title'], ptpmovie['Year']))
+                    log.debug('Movie %s (%s) has NO torrents', ptpmovie['Title'], ptpmovie['Year'])
                     continue
 
-                log.debug('Movie %s (%s) has %d torrents', (ptpmovie['Title'], ptpmovie['Year'], len(ptpmovie['Torrents'])))
+                log.debug('Movie %s (%s) has %d torrents', ptpmovie['Title'], ptpmovie['Year'], len(ptpmovie['Torrents']))
                 for torrent in ptpmovie['Torrents']:
                     torrent_id = tryInt(torrent['Id'])
                     torrentdesc = ''
@@ -99,7 +99,7 @@ class Base(TorrentProvider):
                     })
 
         except:
-            log.error('Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def torrentMeetsQualitySpec(self, torrent, quality):
 
@@ -117,7 +117,7 @@ class Base(TorrentProvider):
             seen_one = False
 
             if not field in torrent:
-                log.debug('Torrent with ID %s has no field "%s"; cannot apply post-search-filter for quality "%s"', (torrent['id'], field, quality))
+                log.debug('Torrent with ID %s has no field "%s"; cannot apply post-search-filter for quality "%s"', torrent['id'], field, quality)
                 continue
 
             for spec in specs:

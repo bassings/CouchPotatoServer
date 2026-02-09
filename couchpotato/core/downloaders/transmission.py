@@ -53,7 +53,7 @@ class Transmission(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.info('Sending "%s" (%s) to Transmission.', (data.get('name'), data.get('protocol')))
+        log.info('Sending "%s" (%s) to Transmission.', data.get('name'), data.get('protocol'))
 
         if not self.connect():
             return False
@@ -196,7 +196,7 @@ class Transmission(DownloaderBase):
         return self.trpc.remove_torrent(release_download['id'], True)
 
     def processComplete(self, release_download, delete_files = False):
-        log.debug('Requesting Transmission to remove the torrent %s%s.', (release_download['name'], ' and cleanup the downloaded files' if delete_files else ''))
+        log.debug('Requesting Transmission to remove the torrent %s%s.', release_download['name'], ' and cleanup the downloaded files' if delete_files else '')
         return self.trpc.remove_torrent(release_download['id'], delete_files)
 
 

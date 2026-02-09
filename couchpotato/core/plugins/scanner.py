@@ -156,9 +156,9 @@ class Scanner(Plugin):
                         break
 
             except:
-                log.error('Failed getting files from %s: %s', (folder, traceback.format_exc()))
+                log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
 
-            log.debug('Found %s files to scan and group in %s', (len(files), folder))
+            log.debug('Found %s files to scan and group in %s', len(files), folder)
         else:
             check_file_date = False
             files = [sp(x) for x in files]
@@ -316,7 +316,7 @@ class Scanner(Plugin):
             if check_file_date:
                 files_too_new, time_string = self.checkFilesChanged(group['unsorted_files'])
                 if files_too_new:
-                    log.info('Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s', (time_string, identifier))
+                    log.info('Files seem to be still unpacking or just unpacked (created on %s), ignoring for now: %s', time_string, identifier)
 
                     # Delete the unsorted list
                     del group['unsorted_files']
@@ -333,7 +333,7 @@ class Scanner(Plugin):
                         break
 
                 if not has_new_files:
-                    log.debug('None of the files have changed since %s for %s, skipping.', (time.ctime(newer_than), identifier))
+                    log.debug('None of the files have changed since %s for %s, skipping.', time.ctime(newer_than), identifier)
 
                     # Delete the unsorted list
                     del group['unsorted_files']
@@ -350,7 +350,7 @@ class Scanner(Plugin):
         if release_download and total_found == 0:
             log.info('Download ID provided (%s), but no groups found! Make sure the download contains valid media files (fully extracted).', release_download.get('imdb_id'))
         elif release_download and total_found > 1:
-            log.info('Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...', (release_download.get('imdb_id'), len(valid_files)))
+            log.info('Download ID provided (%s), but more than one group found (%s). Ignoring Download ID...', release_download.get('imdb_id'), len(valid_files))
             release_download = None
 
         # Determine file types
@@ -438,7 +438,7 @@ class Scanner(Plugin):
                 time.sleep(10)
 
         if len(processed_movies) > 0:
-            log.info('Found %s movies in the folder %s', (len(processed_movies), folder))
+            log.info('Found %s movies in the folder %s', len(processed_movies), folder)
         else:
             log.debug('Found no movies in the folder %s', folder)
 
@@ -467,7 +467,7 @@ class Scanner(Plugin):
                     else:
                         data.update(self.getResolution(cur_file))
                 except:
-                    log.debug('Error parsing metadata: %s %s', (cur_file, traceback.format_exc()))
+                    log.debug('Error parsing metadata: %s %s', cur_file, traceback.format_exc())
                     pass
 
             data['size'] = data.get('size', 0) + self.getFileSize(cur_file)
@@ -480,9 +480,9 @@ class Scanner(Plugin):
             data['quality'] = fireEvent('quality.single', release_download.get('quality'), single = True)
             data['quality']['is_3d'] = release_download.get('is_3d', 0)
             if data['quality']['identifier'] != quality['identifier']:
-                log.info('Different quality snatched than detected for %s: %s vs. %s. Assuming snatched quality is correct.', (files[0], data['quality']['identifier'], quality['identifier']))
+                log.info('Different quality snatched than detected for %s: %s vs. %s. Assuming snatched quality is correct.', files[0], data['quality']['identifier'], quality['identifier'])
             if data['quality']['is_3d'] != quality['is_3d']:
-                log.info('Different 3d snatched than detected for %s: %s vs. %s. Assuming snatched 3d is correct.', (files[0], data['quality']['is_3d'], quality['is_3d']))
+                log.info('Different 3d snatched than detected for %s: %s vs. %s. Assuming snatched 3d is correct.', files[0], data['quality']['is_3d'], quality['is_3d'])
 
         if not data['quality']:
             data['quality'] = quality
@@ -509,7 +509,7 @@ class Scanner(Plugin):
 
             for tag in tags:
                 if (isinstance(tag, tuple) and '.'.join(tag) in '.'.join(words)) or (isinstance(tag, (str, unicode)) and ss(tag.lower()) in words):
-                    log.debug('Found %s in %s', (tag, filename))
+                    log.debug('Found %s in %s', tag, filename)
                     return key
 
         return ''
@@ -579,7 +579,7 @@ class Scanner(Plugin):
                     if s.language and s.path not in paths:
                         detected_languages[s.path] = [s.language]
         except:
-            log.debug('Failed parsing subtitle languages for %s: %s', (paths, traceback.format_exc()))
+            log.debug('Failed parsing subtitle languages for %s: %s', paths, traceback.format_exc())
 
         # IDX
         for extra in group['files']['subtitle_extra']:
@@ -595,7 +595,7 @@ class Scanner(Plugin):
                     if len(idx_langs) > 0 and os.path.isfile(sub_file):
                         detected_languages[sub_file] = idx_langs
             except:
-                log.error('Failed parsing subtitle idx for %s: %s', (extra, traceback.format_exc()))
+                log.error('Failed parsing subtitle idx for %s: %s', extra, traceback.format_exc())
 
         return detected_languages
 
@@ -766,7 +766,7 @@ class Scanner(Plugin):
         # ignoredpaths
         for i in self.ignored_in_path:
             if i in filename.lower():
-                log.debug('Ignored "%s" contains "%s".', (filename, i))
+                log.debug('Ignored "%s" contains "%s".', filename, i)
                 return False
 
         # All is OK
@@ -925,7 +925,7 @@ class Scanner(Plugin):
                         'year': guessit.get('year'),
                     }
             except:
-                log.debug('Could not detect via guessit "%s": %s', (file_name, traceback.format_exc()))
+                log.debug('Could not detect via guessit "%s": %s', file_name, traceback.format_exc())
 
         # Backup to simple
         release_name = os.path.basename(release_name.replace('\\', '/'))

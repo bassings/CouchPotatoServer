@@ -78,7 +78,7 @@ class Hadouken(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.debug("Sending '%s' (%s) to Hadouken.", (data.get('name'), data.get('protocol')))
+        log.debug("Sending '%s' (%s) to Hadouken.", data.get('name'), data.get('protocol'))
 
         if not self.connect():
             return False
@@ -255,7 +255,7 @@ class JsonRpcClient(object):
             obj = json.loads(response)
 
             if 'error' in obj.keys():
-                log.error('JSONRPC error, %s: %s', (obj['error']['code'], obj['error']['message']))
+                log.error('JSONRPC error, %s: %s', obj['error']['code'], obj['error']['message'])
                 return False
 
             if 'result' in obj.keys():

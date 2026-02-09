@@ -222,7 +222,7 @@ def sceneScore(nzb_name):
             try:
                 validate = fireEvent('release.validate', name, single = True)
                 if validate and tryInt(validate.get('score')) != 0:
-                    log.debug('Release "%s" scored %s, reason: %s', (nzb_name, validate['score'], validate['reasons']))
+                    log.debug('Release "%s" scored %s, reason: %s', nzb_name, validate['score'], validate['reasons'])
                     return tryInt(validate.get('score'))
             except:
                 log.error('Failed scoring scene: %s', traceback.format_exc())

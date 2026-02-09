@@ -37,7 +37,7 @@ class Subtitle(Plugin):
                         downloaded.extend(download[subtitle])
 
             for d_sub in downloaded:
-                log.info('Found subtitle (%s): %s', (d_sub.language.alpha2, files))
+                log.info('Found subtitle (%s): %s', d_sub.language.alpha2, files)
                 group['files']['subtitle'].append(sp(d_sub.path))
                 group['before_rename'].append(sp(d_sub.path))
                 group['subtitle_language'][sp(d_sub.path)] = [d_sub.language.alpha2]
@@ -45,7 +45,7 @@ class Subtitle(Plugin):
             return True
 
         except:
-            log.error('Failed searching for subtitle: %s', (traceback.format_exc()))
+            log.error('Failed searching for subtitle: %s', traceback.format_exc())
 
         return False
 

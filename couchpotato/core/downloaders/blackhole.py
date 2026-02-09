@@ -79,7 +79,7 @@ class Blackhole(DownloaderBase):
 
                     # Make sure the file doesn't exist yet, no need in overwriting it
                     if not os.path.isfile(full_path):
-                        log.info('Downloading %s to %s.', (data.get('protocol'), full_path))
+                        log.info('Downloading %s to %s.', data.get('protocol'), full_path)
                         with open(full_path, 'wb') as f:
                             f.write(filedata)
                         os.chmod(full_path, Env.getPermission('file'))
@@ -93,7 +93,7 @@ class Blackhole(DownloaderBase):
                     pass
 
             except:
-                log.info('Failed to download file %s: %s', (data.get('name'), traceback.format_exc()))
+                log.info('Failed to download file %s: %s', data.get('name'), traceback.format_exc())
                 return False
 
         return False

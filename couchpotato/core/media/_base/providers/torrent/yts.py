@@ -24,7 +24,7 @@ class Base(TorrentMagnetProvider):
             movie_count = tryInt(data['data']['movie_count'])
 
             if movie_count == 0:
-                log.debug('%s - found no results', (self.getName()))
+                log.debug('%s - found no results', self.getName())
             else:
 
                 movie_results = data['data']['movies']

@@ -30,7 +30,7 @@ class Base(TorrentProvider):
                 if self.login_fail_msg in data['error']: # Check for login failure
                     self.disableAccount()
                 else:
-                    log.error('%s returned an error (possible rate limit): %s', (self.getName(), data['error']))
+                    log.error('%s returned an error (possible rate limit): %s', self.getName(), data['error'])
                 return
 
             try:
@@ -68,7 +68,7 @@ class Base(TorrentProvider):
                         'score': torrentscore
                     })
             except:
-                log.error('Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+                log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 config = [{
     'name': 'hd4free',
     'groups': [

@@ -89,7 +89,7 @@ class Database(object):
                     db.reindex_index(index_name)
 
         except:
-            log.error('Failed adding index %s: %s', (index_name, traceback.format_exc()))
+            log.error('Failed adding index %s: %s', index_name, traceback.format_exc())
 
     def deleteDocument(self, **kwargs):
 
@@ -154,7 +154,7 @@ class Database(object):
         db = self.getDB()
 
         try:
-            log.debug('Deleted corrupted document "%s": %s', (_id, traceback_error))
+            log.debug('Deleted corrupted document "%s": %s', _id, traceback_error)
             corrupted = db.get('id', _id, with_storage = False)
             db._delete_id_index(corrupted.get('_id'), corrupted.get('_rev'), None)
         except:
@@ -193,7 +193,7 @@ class Database(object):
 
             db.compact()
             new_size = float(db.get_db_details().get('size', 0))
-            log.debug('Done compacting database in %ss, new size: %sMB, saved: %sMB', (round(time.time()-start, 2), round(new_size/1048576, 2), round((size-new_size)/1048576, 2)))
+            log.debug('Done compacting database in %ss, new size: %sMB, saved: %sMB', round(time.time()-start, 2), round(new_size/1048576, 2), round((size-new_size)/1048576, 2))
             success = True
         except (IndexException, AttributeError):
             if try_repair:
@@ -528,7 +528,7 @@ class Database(object):
                     }, force_readd = False, search_after = False, update_after = False, notify_after = False, status = status, single = True)
 
                     if not added_media:
-                        log.error('Failed adding media %s: %s', (l.get('identifier'), info))
+                        log.error('Failed adding media %s: %s', l.get('identifier'), info)
                         continue
 
                     added_media['files'] = added_media.get('files', {})

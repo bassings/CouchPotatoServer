@@ -95,7 +95,7 @@ class Base(TorrentProvider):
                         })
 
                 except:
-                    log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+                    log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
                     break
 
             current_page += 1
@@ -109,7 +109,7 @@ class Base(TorrentProvider):
         try:
             return self.urlopen(url, headers=self.getRequestHeaders())
         except:
-            log.error('Failed getting release from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
 

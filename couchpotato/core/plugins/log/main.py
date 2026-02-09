@@ -173,7 +173,7 @@ class Logging(Plugin):
                     os.remove(path)
 
             except:
-                log.error('Couldn\'t delete file "%s": %s', (path, traceback.format_exc()))
+                log.error('Couldn\'t delete file "%s": %s', path, traceback.format_exc())
 
         return {
             'success': True

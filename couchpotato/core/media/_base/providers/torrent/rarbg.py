@@ -94,7 +94,7 @@ class Base(TorrentMagnetProvider):
                             })
 
                 except RuntimeError:
-                    log.error('RARBG: Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+                    log.error('RARBG: Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def getToken(self):
         tokendata = self.getJsonData(self.urls['token'], cache_timeout = 900, headers = self.getRequestHeaders())

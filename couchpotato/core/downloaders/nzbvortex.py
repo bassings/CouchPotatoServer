@@ -167,9 +167,9 @@ class NZBVortex(DownloaderBase):
                     self.login()
                     return self.call(call, parameters = parameters, is_repeat = True, **kwargs)
 
-            log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
         except:
-            log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
         return {}
 

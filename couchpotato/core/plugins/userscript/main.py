@@ -132,11 +132,11 @@ class Userscript(Plugin):
                     success += 1
                     continue
             except:
-                log.error('Failed userscript test "%s": %s', (x, traceback.format_exc()))
+                log.error('Failed userscript test "%s": %s', x, traceback.format_exc())
 
             log.error('Failed userscript test "%s"', x)
 
         if success == len(tests):
             log.debug('All userscript tests successful')
         else:
-            log.error('Failed userscript tests, %s out of %s', (success, len(tests)))
+            log.error('Failed userscript tests, %s out of %s', success, len(tests))

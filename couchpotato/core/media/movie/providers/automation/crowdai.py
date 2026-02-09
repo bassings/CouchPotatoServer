@@ -40,7 +40,7 @@ class CrowdAI(Automation, RSS):
 
                 if int(grabs) > tryInt(self.conf('number_grabs')):
                     title = re.match(r'.*Title: .a href.*/">(.*) \(\d{4}\).*', description).group(1)
-                    log.info2('%s grabs for movie: %s, enqueue...', (grabs, title))
+                    log.info2('%s grabs for movie: %s, enqueue...', grabs, title)
                     year = re.match(r'.*Year: (\d{4}).*', description).group(1)
                     imdb = self.search(title, year)
 

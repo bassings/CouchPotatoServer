@@ -39,7 +39,7 @@ class Base(TorrentProvider):
         if torrents:
             try:
                 if torrents.get('error'):
-                    log.error('%s: %s', (torrents.get('error'), host['host']))
+                    log.error('%s: %s', torrents.get('error'), host['host'])
                 elif torrents.get('results'):
                     for torrent in torrents.get('results', []):
                         results.append({
@@ -58,7 +58,7 @@ class Base(TorrentProvider):
                         })
 
             except:
-                log.error('Failed getting results from %s: %s', (host['host'], traceback.format_exc()))
+                log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
 
     def getHosts(self):
 

@@ -83,7 +83,7 @@ class Provider(Plugin):
 
                 return json.loads(data)
             except:
-                log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+                log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
         return []
 
@@ -103,7 +103,7 @@ class Provider(Plugin):
                 except XmlParseError:
                     log.error('Invalid XML returned, check "%s" manually for issues', url)
                 except:
-                    log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+                    log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
         return []
 
@@ -182,7 +182,7 @@ class YarrProvider(Provider):
             error = "Login credentials rejected."
             self.disableAccount()
 
-        log.error('Failed to login %s: %s', (self.getName(), error))
+        log.error('Failed to login %s: %s', self.getName(), error)
         return False
 
     def loginSuccess(self, output):
@@ -197,7 +197,7 @@ class YarrProvider(Provider):
                 log.error('Failed downloading from %s', self.getName())
             return self.urlopen(url)
         except:
-            log.error('Failed downloading from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed downloading from %s: %s', self.getName(), traceback.format_exc())
 
     def getLoginParams(self):
         return {}
@@ -206,7 +206,7 @@ class YarrProvider(Provider):
         try:
             return self.urlopen(url, headers = {'User-Agent': Env.getIdentifier()}, show_error = False)
         except:
-            log.error('Failed getting release from %s: %s', (self.getName(), traceback.format_exc()))
+            log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
 
@@ -250,7 +250,7 @@ class YarrProvider(Provider):
                     if hostname in download_url:
                         return self
         except:
-            log.debug('Url %s doesn\'t belong to %s', (url, self.getName()))
+            log.debug('Url %s doesn\'t belong to %s', url, self.getName())
 
         return
 
@@ -335,11 +335,11 @@ class ResultList(list):
             old_score = new_result['score']
             new_result['score'] = int(old_score * is_correct_weight)
 
-            log.info2('Found correct release with weight %.02f, old_score(%d) now scaled to score(%d)', (
+            log.info2('Found correct release with weight %.02f, old_score(%d) now scaled to score(%d)',
                 is_correct_weight,
                 old_score,
                 new_result['score']
-            ))
+            )
 
             self.found(new_result)
             self.result_ids.append(result['id'])

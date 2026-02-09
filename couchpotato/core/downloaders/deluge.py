@@ -63,7 +63,7 @@ class Deluge(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.info('Sending "%s" (%s) to Deluge.', (data.get('name'), data.get('protocol')))
+        log.info('Sending "%s" (%s) to Deluge.', data.get('name'), data.get('protocol'))
 
         if not self.connect():
             return False
@@ -150,7 +150,7 @@ class Deluge(DownloaderBase):
                 # When given a list of ids, deluge will return an empty item for a non-existant torrent.
                 continue
 
-            log.debug('name=%s / id=%s / save_path=%s / move_on_completed=%s / move_completed_path=%s / hash=%s / progress=%s / state=%s / eta=%s / ratio=%s / stop_ratio=%s / is_seed=%s / is_finished=%s / paused=%s', (torrent['name'], torrent['hash'], torrent['save_path'], torrent['move_on_completed'], torrent['move_completed_path'], torrent['hash'], torrent['progress'], torrent['state'], torrent['eta'], torrent['ratio'], torrent['stop_ratio'], torrent['is_seed'], torrent['is_finished'], torrent['paused']))
+            log.debug('name=%s / id=%s / save_path=%s / move_on_completed=%s / move_completed_path=%s / hash=%s / progress=%s / state=%s / eta=%s / ratio=%s / stop_ratio=%s / is_seed=%s / is_finished=%s / paused=%s', torrent['name'], torrent['hash'], torrent['save_path'], torrent['move_on_completed'], torrent['move_completed_path'], torrent['hash'], torrent['progress'], torrent['state'], torrent['eta'], torrent['ratio'], torrent['stop_ratio'], torrent['is_seed'], torrent['is_finished'], torrent['paused'])
 
             # Deluge has no easy way to work out if a torrent is stalled or failing.
             #status = 'failed'
@@ -199,7 +199,7 @@ class Deluge(DownloaderBase):
         return self.drpc.remove_torrent(release_download['id'], True)
 
     def processComplete(self, release_download, delete_files = False):
-        log.debug('Requesting Deluge to remove the torrent %s%s.', (release_download['name'], ' and cleanup the downloaded files' if delete_files else ''))
+        log.debug('Requesting Deluge to remove the torrent %s%s.', release_download['name'], ' and cleanup the downloaded files' if delete_files else '')
         return self.drpc.remove_torrent(release_download['id'], remove_local_data = delete_files)
 
 
@@ -243,7 +243,7 @@ class DelugeRPC(object):
             if torrent_id and options['label']:
                 self.client.label.set_torrent(torrent_id, options['label'])
         except Exception as err:
-            log.error('Failed to add torrent magnet %s: %s %s', (torrent, err, traceback.format_exc()))
+            log.error('Failed to add torrent magnet %s: %s %s', torrent, err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()
@@ -261,7 +261,7 @@ class DelugeRPC(object):
             if torrent_id and options['label']:
                 self.client.label.set_torrent(torrent_id, options['label'])
         except Exception as err:
-            log.error('Failed to add torrent file %s: %s %s', (filename, err, traceback.format_exc()))
+            log.error('Failed to add torrent file %s: %s %s', filename, err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()
@@ -274,7 +274,7 @@ class DelugeRPC(object):
             self.connect()
             ret = self.client.core.get_torrents_status({'id': ids}, ('name', 'hash', 'save_path', 'move_completed_path', 'progress', 'state', 'eta', 'ratio', 'stop_ratio', 'is_seed', 'is_finished', 'paused', 'move_on_completed', 'files'))
         except Exception as err:
-            log.error('Failed to get all torrents: %s %s', (err, traceback.format_exc()))
+            log.error('Failed to get all torrents: %s %s', err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()
@@ -285,7 +285,7 @@ class DelugeRPC(object):
             self.connect()
             self.client.core.pause_torrent(torrent_ids)
         except Exception as err:
-            log.error('Failed to pause torrent: %s %s', (err, traceback.format_exc()))
+            log.error('Failed to pause torrent: %s %s', err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()
@@ -295,7 +295,7 @@ class DelugeRPC(object):
             self.connect()
             self.client.core.resume_torrent(torrent_ids)
         except Exception as err:
-            log.error('Failed to resume torrent: %s %s', (err, traceback.format_exc()))
+            log.error('Failed to resume torrent: %s %s', err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()
@@ -306,7 +306,7 @@ class DelugeRPC(object):
             self.connect()
             ret = self.client.core.remove_torrent(torrent_id, remove_local_data)
         except Exception as err:
-            log.error('Failed to remove torrent: %s %s', (err, traceback.format_exc()))
+            log.error('Failed to remove torrent: %s %s', err, traceback.format_exc())
         finally:
             if self.client:
                 self.disconnect()

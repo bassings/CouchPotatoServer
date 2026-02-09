@@ -62,7 +62,7 @@ class XBMC(Notification):
                     if result.get('result') and result['result'] == 'OK':
                         successful += 1
                     elif result.get('error'):
-                        log.error('Kodi error; %s: %s (%s)', (result['id'], result['error']['message'], result['error']['code']))
+                        log.error('Kodi error; %s: %s (%s)', result['id'], result['error']['message'], result['error']['code'])
 
             except:
                 log.error('Failed parsing results: %s', traceback.format_exc())
@@ -96,7 +96,7 @@ class XBMC(Notification):
                         success = True
                         break
                     elif r.get('error'):
-                        log.error('Kodi error; %s: %s (%s)', (r['id'], r['error']['message'], r['error']['code']))
+                        log.error('Kodi error; %s: %s (%s)', r['id'], r['error']['message'], r['error']['code'])
                         break
 
             elif result.get('result') and type(result['result']['version']).__name__ == 'dict':
@@ -119,12 +119,12 @@ class XBMC(Notification):
                         success = True
                         break
                     elif r.get('error'):
-                        log.error('Kodi error; %s: %s (%s)', (r['id'], r['error']['message'], r['error']['code']))
+                        log.error('Kodi error; %s: %s (%s)', r['id'], r['error']['message'], r['error']['code'])
                         break
 
             # error getting version info (we do have contact with Kodi though)
             elif result.get('error'):
-                log.error('Kodi error; %s: %s (%s)', (result['id'], result['error']['message'], result['error']['code']))
+                log.error('Kodi error; %s: %s (%s)', result['id'], result['error']['message'], result['error']['code'])
 
         log.debug('Use JSON notifications: %s ', self.use_json_notifications)
 
@@ -149,7 +149,7 @@ class XBMC(Notification):
             headers['Authorization'] = 'Basic %s' % base64string
 
         try:
-            log.debug('Sending non-JSON-type request to %s: %s', (host, data))
+            log.debug('Sending non-JSON-type request to %s: %s', host, data)
 
             # response wil either be 'OK':
             # <html>
@@ -164,11 +164,11 @@ class XBMC(Notification):
             response = self.urlopen(server, headers = headers, timeout = 3, show_error = False)
 
             if 'OK' in response:
-                log.debug('Returned from non-JSON-type request %s: %s', (host, response))
+                log.debug('Returned from non-JSON-type request %s: %s', host, response)
                 # manually fake expected response array
                 return [{'result': 'OK'}]
             else:
-                log.error('Returned from non-JSON-type request %s: %s', (host, response))
+                log.error('Returned from non-JSON-type request %s: %s', host, response)
                 # manually fake expected response array
                 return [{'result': 'Error'}]
 
@@ -203,9 +203,9 @@ class XBMC(Notification):
             headers['Authorization'] = 'Basic %s' % base64string
 
         try:
-            log.debug('Sending request to %s: %s', (host, data))
+            log.debug('Sending request to %s: %s', host, data)
             response = self.getJsonData(server, headers = headers, data = data, timeout = 3, show_error = False)
-            log.debug('Returned from request %s: %s', (host, response))
+            log.debug('Returned from request %s: %s', host, response)
 
             return response
         except (MaxRetryError, Timeout, ConnectionError):

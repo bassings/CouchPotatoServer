@@ -42,7 +42,7 @@ class MovieMetaData(MetaDataBase):
             try:
                 self._createType(meta_name, root, movie_info, group, file_type, 0)
             except:
-                log.error('Unable to create %s file: %s', ('nfo', traceback.format_exc()))
+                log.error('Unable to create %s file: %s', 'nfo', traceback.format_exc())
 
         for file_type in ['thumbnail', 'fanart', 'banner', 'disc_art', 'logo', 'clear_art', 'landscape', 'extra_thumbs', 'extra_fanart']:
             try:
@@ -56,7 +56,7 @@ class MovieMetaData(MetaDataBase):
                 for i in range(num_images):
                     self._createType(meta_name, root, movie_info, group, file_type, i)
             except:
-                log.error('Unable to create %s file: %s', (file_type, traceback.format_exc()))
+                log.error('Unable to create %s file: %s', file_type, traceback.format_exc())
 
     def _createType(self, meta_name, root, movie_info, group, file_type, i):  # Get file path
         camelcase_method = underscoreToCamel(file_type.capitalize())
@@ -67,7 +67,7 @@ class MovieMetaData(MetaDataBase):
             # Get file content
             content = getattr(self, 'get' + camelcase_method)(movie_info = movie_info, data = group, i = i)
             if content:
-                log.debug('Creating %s file: %s', (file_type, name))
+                log.debug('Creating %s file: %s', file_type, name)
                 if os.path.isfile(content):
                     content = sp(content)
                     name = sp(name)
@@ -88,7 +88,7 @@ class MovieMetaData(MetaDataBase):
                 try:
                     os.chmod(sp(name), Env.getPermission('file'))
                 except:
-                    log.debug('Failed setting permissions for %s: %s', (name, traceback.format_exc()))
+                    log.debug('Failed setting permissions for %s: %s', name, traceback.format_exc())
 
     def getRootName(self, data = None):
         if not data: data = {}

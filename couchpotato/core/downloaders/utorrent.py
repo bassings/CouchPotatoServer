@@ -70,7 +70,7 @@ class uTorrent(DownloaderBase):
         if not media: media = {}
         if not data: data = {}
 
-        log.debug("Sending '%s' (%s) to uTorrent.", (data.get('name'), data.get('protocol')))
+        log.debug("Sending '%s' (%s) to uTorrent.", data.get('name'), data.get('protocol'))
 
         if not self.connect():
             return False
@@ -210,7 +210,7 @@ class uTorrent(DownloaderBase):
         return self.utorrent_api.remove_torrent(release_download['id'], remove_data = True)
 
     def processComplete(self, release_download, delete_files = False):
-        log.debug('Requesting uTorrent to remove the torrent %s%s.', (release_download['name'], ' and cleanup the downloaded files' if delete_files else ''))
+        log.debug('Requesting uTorrent to remove the torrent %s%s.', release_download['name'], ' and cleanup the downloaded files' if delete_files else '')
         if not self.connect():
             return False
         return self.utorrent_api.remove_torrent(release_download['id'], remove_data = delete_files)

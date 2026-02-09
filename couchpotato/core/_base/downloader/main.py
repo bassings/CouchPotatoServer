@@ -143,7 +143,7 @@ class DownloaderBase(Provider):
 
                 return filedata
             except:
-                log.debug('Torrent hash "%s" wasn\'t found on: %s', (torrent_hash, source))
+                log.debug('Torrent hash "%s" wasn\'t found on: %s', torrent_hash, source)
 
         log.error('Failed converting magnet url to torrent: %s', torrent_hash)
         return False

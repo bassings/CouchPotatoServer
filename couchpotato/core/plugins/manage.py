@@ -184,7 +184,7 @@ class Manage(Plugin):
 
             Env.prop(last_update_key, time.time())
         except:
-            log.error('Failed updating library: %s', (traceback.format_exc()))
+            log.error('Failed updating library: %s', traceback.format_exc())
 
         while self.in_progress and len(self.in_progress) > 0 and not self.shuttingDown():
 

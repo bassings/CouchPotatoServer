@@ -94,10 +94,10 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 try:
                     self.single(media, search_protocols, manual = manual)
                 except IndexError:
-                    log.error('Forcing library update for %s, if you see this often, please report: %s', (getIdentifier(media), traceback.format_exc()))
+                    log.error('Forcing library update for %s, if you see this often, please report: %s', getIdentifier(media), traceback.format_exc())
                     fireEvent('movie.update', media_id)
                 except:
-                    log.error('Search failed for %s: %s', (getIdentifier(media), traceback.format_exc()))
+                    log.error('Search failed for %s: %s', getIdentifier(media), traceback.format_exc())
 
                 self.in_progress['to_go'] -= 1
 
@@ -192,12 +192,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
             # Don't search for quality lower then already available.
             if has_better_quality > 0:
-                log.info('Better quality (%s) already available or snatched for %s', (q_identifier, default_title))
+                log.info('Better quality (%s) already available or snatched for %s', q_identifier, default_title)
                 fireEvent('media.restatus', movie['_id'], single = True)
                 break
 
             quality = fireEvent('quality.single', identifier = q_identifier, single = True)
-            log.info('Search for %s in %s%s', (default_title, quality['label'], ' ignoring ETA' if always_search or ignore_eta else ''))
+            log.info('Search for %s in %s%s', default_title, quality['label'], ' ignoring ETA' if always_search or ignore_eta else '')
 
             # Extend quality with profile customs
             quality['custom'] = quality_custom
@@ -213,14 +213,14 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             results_count = len(found_releases)
             total_result_count += results_count
             if results_count == 0:
-                log.debug('Nothing found for %s in %s', (default_title, quality['label']))
+                log.debug('Nothing found for %s in %s', default_title, quality['label'])
 
             # Keep track of releases found outside ETA window
             outside_eta_results += results_count if could_not_be_released else 0
 
             # Don't trigger download, but notify user of available releases
             if could_not_be_released and results_count > 0:
-                log.debug('Found %s releases for "%s", but ETA isn\'t correct yet.', (results_count, default_title))
+                log.debug('Found %s releases for "%s", but ETA isn\'t correct yet.', results_count, default_title)
 
             # Try find a valid result and download it
             if (force_download or not could_not_be_released or always_search) and fireEvent('release.try_download_result', results, movie, quality_custom, single = True):
@@ -244,7 +244,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             fireEvent('media.tag', movie['_id'], 'recent', update_edited = True, single = True)
 
         if len(too_early_to_search) > 0:
-            log.info2('Too early to search for %s, %s', (too_early_to_search, default_title))
+            log.info2('Too early to search for %s, %s', too_early_to_search, default_title)
 
             if outside_eta_results > 0:
                 message = 'Found %s releases for "%s" before ETA. Select and download via the dashboard.' % (outside_eta_results, default_title)
@@ -267,7 +267,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         retention = Env.setting('retention', section = 'nzb')
 
         if nzb.get('seeders') is None and 0 < retention < nzb.get('age', 0):
-            log.info2('Wrong: Outside retention, age is %s, needs %s or lower: %s', (nzb['age'], retention, nzb['name']))
+            log.info2('Wrong: Outside retention, age is %s, needs %s or lower: %s', nzb['age'], retention, nzb['name'])
             return False
 
         # Check for required and ignored words
@@ -279,22 +279,22 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # Contains lower quality string
         contains_other = fireEvent('searcher.contains_other_quality', nzb, movie_year = media['info']['year'], preferred_quality = preferred_quality, single = True)
         if contains_other and isinstance(contains_other, dict):
-            log.info2('Wrong: %s, looking for %s, found %s', (nzb['name'], quality['label'], [x for x in contains_other] if contains_other else 'no quality'))
+            log.info2('Wrong: %s, looking for %s, found %s', nzb['name'], quality['label'], [x for x in contains_other] if contains_other else 'no quality')
             return False
 
         # Contains lower quality string
         if not fireEvent('searcher.correct_3d', nzb, preferred_quality = preferred_quality, single = True):
-            log.info2('Wrong: %s, %slooking for %s in 3D', (nzb['name'], ('' if preferred_quality['custom'].get('3d') else 'NOT '), quality['label']))
+            log.info2('Wrong: %s, %slooking for %s in 3D', nzb['name'], ('' if preferred_quality['custom'].get('3d') else 'NOT '), quality['label'])
             return False
 
         # File to small
         if nzb['size'] and tryInt(preferred_quality['size_min']) > tryInt(nzb['size']):
-            log.info2('Wrong: "%s" is too small to be %s. %sMB instead of the minimal of %sMB.', (nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_min']))
+            log.info2('Wrong: "%s" is too small to be %s. %sMB instead of the minimal of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_min'])
             return False
 
         # File to large
         if nzb['size'] and tryInt(preferred_quality['size_max']) < tryInt(nzb['size']):
-            log.info2('Wrong: "%s" is too large to be %s. %sMB instead of the maximum of %sMB.', (nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_max']))
+            log.info2('Wrong: "%s" is too large to be %s. %sMB instead of the maximum of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_max'])
             return False
 
         # Provider specific functions
@@ -327,7 +327,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     if len(movie_words) <= 2 and fireEvent('searcher.correct_year', nzb['name'], media['info']['year'], 0, single = True):
                         return True
 
-        log.info("Wrong: %s, undetermined naming. Looking for '%s (%s)'", (nzb['name'], media_title, media['info']['year']))
+        log.info("Wrong: %s, undetermined naming. Looking for '%s (%s)'", nzb['name'], media_title, media['info']['year'])
         return False
 
     def couldBeReleased(self, is_pre_release, dates, year = None):

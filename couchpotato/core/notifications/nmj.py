@@ -49,7 +49,7 @@ class NMJ(Notification):
         if match:
             database = match.group(1)
             device = match.group(2)
-            log.info('Found NMJ database %s on device %s', (database, device))
+            log.info('Found NMJ database %s on device %s', database, device)
         else:
             log.error('Could not get current NMJ database on %s, NMJ is probably not running!', host)
             return self.failed()

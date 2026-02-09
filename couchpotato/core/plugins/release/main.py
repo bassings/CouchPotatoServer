@@ -291,7 +291,7 @@ class Release(Plugin):
             }
 
         except:
-            log.error('Couldn\'t find release with id: %s: %s', (id, traceback.format_exc()))
+            log.error('Couldn\'t find release with id: %s: %s', id, traceback.format_exc())
             return {
                 'success': False
             }
@@ -310,7 +310,7 @@ class Release(Plugin):
             try:
                 filedata = data.get('download')(url = data.get('url'), nzb_id = data.get('id'))
             except:
-                log.error('Tried to download, but the "%s" provider gave an error: %s', (data.get('protocol'), traceback.format_exc()))
+                log.error('Tried to download, but the "%s" provider gave an error: %s', data.get('protocol'), traceback.format_exc())
                 return False
 
             if filedata == 'try_next':
@@ -390,15 +390,15 @@ class Release(Plugin):
                 continue
 
             if rel['score'] < quality_custom.get('minimum_score'):
-                log.info('Ignored, score "%s" too low, need at least "%s": %s', (rel['score'], quality_custom.get('minimum_score'), rel['name']))
+                log.info('Ignored, score "%s" too low, need at least "%s": %s', rel['score'], quality_custom.get('minimum_score'), rel['name'])
                 continue
 
             if rel['size'] <= 50:
-                log.info('Ignored, size "%sMB" too low: %s', (rel['size'], rel['name']))
+                log.info('Ignored, size "%sMB" too low: %s', rel['size'], rel['name'])
                 continue
 
             if 'seeders' in rel and rel.get('seeders') < minimum_seeders:
-                log.info('Ignored, not enough seeders, has %s needs %s: %s', (rel.get('seeders'), minimum_seeders, rel['name']))
+                log.info('Ignored, not enough seeders, has %s needs %s: %s', rel.get('seeders'), minimum_seeders, rel['name'])
                 continue
 
             # If a single release comes through the "wait for", let through all
@@ -415,7 +415,7 @@ class Release(Plugin):
 
             # Only wait if not a single release is old enough
             if rel.get('wait_for') and not let_through:
-                log.info('Ignored, waiting %s days: %s', (quality_custom.get('wait_for') - rel.get('age'), rel['name']))
+                log.info('Ignored, waiting %s days: %s', quality_custom.get('wait_for') - rel.get('age'), rel['name'])
                 wait_for = True
                 continue
 
@@ -474,7 +474,7 @@ class Release(Plugin):
 
                         rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], (str, unicode)) else rel[info]
                     except:
-                        log.debug('Couldn\'t add %s to ReleaseInfo: %s', (info, traceback.format_exc()))
+                        log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
                 db.update(rls)
 
@@ -511,7 +511,7 @@ class Release(Plugin):
                     release_name = rel['info'].get('name')
 
                 #update status in Db
-                log.debug('Marking release %s as %s', (release_name, status))
+                log.debug('Marking release %s as %s', release_name, status)
                 rel['status'] = status
                 rel['last_edit'] = int(time.time())
 

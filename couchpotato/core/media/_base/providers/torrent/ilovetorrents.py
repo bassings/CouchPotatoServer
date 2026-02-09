@@ -105,7 +105,7 @@ class Base(TorrentProvider):
                             })
 
                 except:
-                    log.error('Failed getting results from %s: %s', (self.getName(), traceback.format_exc()))
+                    log.error('Failed getting results from %s: %s', self.getName(), traceback.format_exc())
 
     def getLoginParams(self):
         return {

@@ -176,7 +176,7 @@ def create_app(api_key: str, web_base: str) -> FastAPI:
 
             return {'success': api_key_val is not None, 'api_key': api_key_val}
         except:
-            log.error('Failed doing key request: %s', (traceback.format_exc(),))
+            log.error('Failed doing key request: %s', traceback.format_exc())
             return {'success': False, 'error': 'Failed returning results'}
 
     @app.get(web_base + 'login/')
@@ -227,7 +227,7 @@ def create_app(api_key: str, web_base: str) -> FastAPI:
                     return Response(content=content, media_type='text/cache-manifest')
                 return HTMLResponse(content=content)
             except:
-                log.error("Failed doing web request '%s': %s", (route, traceback.format_exc()))
+                log.error("Failed doing web request '%s': %s", route, traceback.format_exc())
                 return JSONResponse({'success': False, 'error': 'Failed returning results'})
 
         # Page not found - redirect to SPA

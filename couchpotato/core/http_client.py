@@ -89,7 +89,7 @@ class HttpClient:
             if count > MAX_FAILURES_BEFORE_DISABLE and not isLocalIP(host):
                 self.failed_disabled[host] = time.time()
         except Exception:
-            log.debug('Failed logging failed requests for host %s: %s', (host, traceback.format_exc()))
+            log.debug('Failed logging failed requests for host %s: %s', host, traceback.format_exc())
 
     def _wait_for_rate_limit(self, host, url=''):
         """Enforce per-host rate limiting."""
@@ -195,7 +195,7 @@ class HttpClient:
             self.failed_request[host] = 0
         except (IOError, MaxRetryError, Timeout):
             if show_error:
-                log.error('Failed opening url: %s %s', (url, traceback.format_exc(0)))
+                log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
 
             self._record_failure(host, status_code)
             raise

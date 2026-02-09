@@ -41,7 +41,7 @@ class Email(Notification):
         try:
             # Open the SMTP connection, via SSL if requested
             log.debug("Connecting to host %s on port %s" % (smtp_server, smtp_port))
-            log.debug("SMTP over SSL %s", ("enabled" if ssl == 1 else "disabled"))
+            log.debug("SMTP over SSL %s", "enabled" if ssl == 1 else "disabled")
             mailserver = smtplib.SMTP_SSL(smtp_server, smtp_port) if ssl == 1 else smtplib.SMTP(smtp_server, smtp_port)
 
             if starttls:
@@ -53,7 +53,7 @@ class Email(Notification):
 
             # Check too see if an login attempt should be attempted
             if len(smtp_user) > 0:
-                log.debug("Logging on to SMTP server using username \'%s\'%s", (smtp_user, " and a password" if len(smtp_pass) > 0 else ""))
+                log.debug("Logging on to SMTP server using username \'%s\'%s", smtp_user, " and a password" if len(smtp_pass) > 0 else "")
                 mailserver.login(smtp_user.encode('utf-8'), smtp_pass.encode('utf-8'))
 
             # Send the e-mail

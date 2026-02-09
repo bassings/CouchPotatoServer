@@ -66,7 +66,7 @@ def callApiHandler(route, **kwargs):
         result = api[route](**kwargs)
         return result
     except:
-        log.error('Failed doing api request "%s": %s', (route, traceback.format_exc()))
+        log.error('Failed doing api request "%s": %s', route, traceback.format_exc())
         return {'success': False, 'error': 'Failed returning results'}
     finally:
         if lock:

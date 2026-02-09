@@ -105,7 +105,7 @@ class Base(NZBProvider, RSS):
                     if password:
                         name += ' {{%s}}' % password.strip()
                 except:
-                    log.debug('Error getting details of "%s": %s', (name, traceback.format_exc()))
+                    log.debug('Error getting details of "%s": %s', name, traceback.format_exc())
 
             results.append({
                 'id': nzb_id,
@@ -213,7 +213,7 @@ class Base(NZBProvider, RSS):
                     self.limits_reached[host] = time.time()
                     return 'try_next'
 
-            log.error('Failed download from %s: %s', (host, traceback.format_exc()))
+            log.error('Failed download from %s: %s', host, traceback.format_exc())
 
         return 'try_next'
 

@@ -56,7 +56,7 @@ class Base(TorrentProvider):
                     })
 
             except:
-                log.error('Failed to parsing %s: %s', (self.getName(), traceback.format_exc()))
+                log.error('Failed to parsing %s: %s', self.getName(), traceback.format_exc())
 
     def getLoginParams(self):
         return {

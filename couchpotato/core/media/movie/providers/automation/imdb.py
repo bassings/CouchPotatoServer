@@ -73,7 +73,7 @@ class IMDBBase(Automation, RSS):
                         html = ''.join([str(x) for x in html])
                         break
             except:
-                log.error('Failed parsing IMDB page "%s": %s', (url, traceback.format_exc()))
+                log.error('Failed parsing IMDB page "%s": %s', url, traceback.format_exc())
 
         html = ss(html)
         imdbs = getImdb(html, multiple = True) if html else []
@@ -126,7 +126,7 @@ class IMDBWatchlist(IMDBBase):
                         if self.shuttingDown():
                             break
 
-                    log.debug('Found %s movies on %s', (len(imdbs), w_url))
+                    log.debug('Found %s movies on %s', len(imdbs), w_url)
 
                     if len(imdbs) < 225:
                         break
@@ -134,7 +134,7 @@ class IMDBWatchlist(IMDBBase):
                     start = len(movies)
 
                 except:
-                    log.error('Failed loading IMDB watchlist: %s %s', (watchlist_url, traceback.format_exc()))
+                    log.error('Failed loading IMDB watchlist: %s %s', watchlist_url, traceback.format_exc())
                     break
 
         return movies
@@ -165,7 +165,7 @@ class IMDBAutomation(IMDBBase):
                             break
 
                 except:
-                    log.error('Failed loading IMDB chart results from %s: %s', (url, traceback.format_exc()))
+                    log.error('Failed loading IMDB chart results from %s: %s', url, traceback.format_exc())
 
         return movies
 
@@ -207,7 +207,7 @@ class IMDBCharts(IMDBBase):
                         if self.shuttingDown():
                             break
                 except:
-                    log.error('Failed loading IMDB chart results from %s: %s', (url, traceback.format_exc()))
+                    log.error('Failed loading IMDB chart results from %s: %s', url, traceback.format_exc())
 
                 self.setCache(cache_key, chart['list'], timeout = 259200)
 

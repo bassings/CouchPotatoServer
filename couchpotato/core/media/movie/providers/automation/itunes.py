@@ -59,7 +59,7 @@ class ITunes(Automation, RSS):
                             movies.append(imdb['imdb'])
 
             except:
-                log.error('Failed loading iTunes rss feed: %s %s', (url, traceback.format_exc()))
+                log.error('Failed loading iTunes rss feed: %s %s', url, traceback.format_exc())
 
         return movies
 

@@ -115,10 +115,10 @@ class Plugin(object):
                 try:
                     p.chmod(Env.getPermission('file'))
                 except:
-                    log.error('Failed writing permission to file "%s": %s', (p, traceback.format_exc()))
+                    log.error('Failed writing permission to file "%s": %s', p, traceback.format_exc())
 
             except:
-                log.error('Unable to write file "%s": %s', (p, traceback.format_exc()))
+                log.error('Unable to write file "%s": %s', p, traceback.format_exc())
                 if p.is_file():
                     p.unlink()
 
@@ -130,7 +130,7 @@ class Plugin(object):
                 p.chmod(Env.getPermission('folder'))
             return True
         except Exception as e:
-            log.error('Unable to create folder "%s": %s', (p, e))
+            log.error('Unable to create folder "%s": %s', p, e)
 
         return False
 
@@ -148,13 +148,13 @@ class Plugin(object):
                         Path(subfolder).rmdir()
                     except:
                         if show_error:
-                            log.info2('Couldn\'t remove directory %s: %s', (subfolder, traceback.format_exc()))
+                            log.info2('Couldn\'t remove directory %s: %s', subfolder, traceback.format_exc())
 
         try:
             folder_path.rmdir()
         except:
             if show_error:
-                log.error('Couldn\'t remove empty directory %s: %s', (folder_path, traceback.format_exc()))
+                log.error('Couldn\'t remove empty directory %s: %s', folder_path, traceback.format_exc())
 
     # http request — delegates to HttpClient
     def urlopen(self, url, timeout=30, data=None, headers=None, files=None, show_error=True, stream=False):
@@ -220,7 +220,7 @@ class Plugin(object):
                 if not kwargs.get('show_error', True):
                     raise
 
-                log.debug('Failed getting cache: %s', (traceback.format_exc(0)))
+                log.debug('Failed getting cache: %s', traceback.format_exc(0))
                 return ''
 
     def setCache(self, cache_key, value, timeout = 300):
