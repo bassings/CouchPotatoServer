@@ -5,7 +5,7 @@ import traceback
 
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog
-from unrar2 import RarFile
+from couchpotato.lib.unrar2 import RarFile
 
 log = CPLog(__name__)
 

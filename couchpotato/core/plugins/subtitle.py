@@ -6,7 +6,7 @@ from couchpotato.core.helpers.variable import splitString
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
-import subliminal
+from couchpotato.lib import subliminal
 
 
 log = CPLog(__name__)

@@ -2,7 +2,7 @@ from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import possibleTitles
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.matcher.base import MatcherBase
-from caper import Caper
+from couchpotato.lib.caper import Caper
 
 log = CPLog(__name__)
 

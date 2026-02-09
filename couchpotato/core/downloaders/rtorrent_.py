@@ -11,7 +11,7 @@ from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
 from bencodepy import encode as bencode, decode as bdecode
-from rtorrent import RTorrent
+from couchpotato.lib.rtorrent import RTorrent
 
 
 log = CPLog(__name__)

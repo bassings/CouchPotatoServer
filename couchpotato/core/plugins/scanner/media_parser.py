@@ -15,7 +15,7 @@ except ImportError:
     enzyme = None
 
 try:
-    from subliminal.videos import Video
+    from couchpotato.lib.subliminal.videos import Video
 except ImportError:
     Video = None
 

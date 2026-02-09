@@ -13,7 +13,7 @@ except ImportError:
     from urllib.parse import urlencode
 from datetime import datetime
 
-import tus
+from couchpotato.lib import tus
 import requests
 from requests.adapters import HTTPAdapter
 from requests.packages.urllib3.util.retry import Retry

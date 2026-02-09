@@ -4,7 +4,7 @@ from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownlo
 from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
-from pio import api as pio
+from couchpotato.lib.pio import api as pio
 import datetime
 
 log = CPLog(__name__)

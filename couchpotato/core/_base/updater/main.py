@@ -17,7 +17,7 @@ from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
 from dateutil.parser import parse
-from git.repository import LocalRepository
+from couchpotato.lib.git.repository import LocalRepository
 import version
 
 
