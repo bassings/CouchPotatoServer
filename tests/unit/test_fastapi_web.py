@@ -224,7 +224,7 @@ class TestStaticFiles:
 
     def test_manifest_returns_cache_manifest(self, client):
         """App cache manifest is served correctly."""
-        resp = client.get('/couchpotato.appcache')
+        resp = client.get('/old/couchpotato.appcache')
         assert resp.status_code == 200
         assert 'CACHE MANIFEST' in resp.text
 
@@ -309,7 +309,7 @@ class TestTemplateRendering:
     def test_docs_view_renders(self, client):
         """API docs view renders."""
         with patch('couchpotato.core.event.fireEvent', return_value=[]):
-            resp = client.get('/docs')
+            resp = client.get('/old/docs')
             assert resp.status_code == 200
             assert 'API' in resp.text
 
