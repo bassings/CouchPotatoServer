@@ -20,7 +20,7 @@ from .core import (consume_task, LANGUAGE_INDEX, SERVICE_INDEX,
     create_download_tasks, group_by_video, key_subtitles)
 from .language import language_list, language_set, LANGUAGES
 from .tasks import StopTask
-import Queue
+from queue import Queue
 import logging
 import threading
 
