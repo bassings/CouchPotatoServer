@@ -420,7 +420,10 @@
 .dark .page.movie_details .section_trailer.section_trailer .trailer_container:hover{color:#f85c22}
 .page.movie_details .section_trailer.section_trailer .trailer_container:hover .icon-play,.page.movie_details .section_trailer.section_trailer .trailer_container:hover .icon-play span{opacity:1}
 .page.movie_details .section_trailer.section_trailer .trailer_container iframe{position:absolute;width:100%;height:100%;border:0;top:0;left:0;max-height:450px;z-index:10}
-.page.movie_details .section_trailer.section_trailer .trailer_container .trailer_fallback{display:block;text-align:center;padding:8px;font-size:13px;color:#aaa;position:relative;z-index:11;text-decoration:underline}
+.page.movie_details .section_trailer.section_trailer .trailer_container .trailer_error{text-align:center;padding:40px 20px;color:#aaa}
+.page.movie_details .section_trailer.section_trailer .trailer_container .trailer_error p{margin:0 0 10px}
+.page.movie_details .section_trailer.section_trailer .trailer_container .trailer_fallback{display:inline-block;padding:8px 16px;font-size:14px;color:#fff;background:#c33;border-radius:4px;text-decoration:none}
+.page.movie_details .section_trailer.section_trailer .trailer_container .trailer_fallback:hover{background:#e44}
 .alph_nav{position:relative}
 .alph_nav .mass_edit_form{display:-webkit-flex;display:-ms-flexbox;display:flex;background:#FFF;position:fixed;top:80px;right:0;left:132px;-webkit-flex-flow:row nowrap;-ms-flex-flow:row nowrap;flex-flow:row nowrap;-webkit-align-items:center;-ms-flex-align:center;align-items:center;will-change:max-height;transition:max-height .3s cubic-bezier(.9,0,.1,1);max-height:0;overflow:hidden}
 .dark .alph_nav .mass_edit_form{background:#2d2d2d}
