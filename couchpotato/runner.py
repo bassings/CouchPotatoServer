@@ -89,6 +89,11 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         db.create()
         print("INFO: Database created successfully.")
     else:
+        # Migrate old Python 2 index files before opening
+        from couchpotato.core.migration.fix_indexes import fix_index_files
+        n_fixed = fix_index_files(db_path)
+        if n_fixed:
+            print("INFO: Migrated %d database index file(s) for Python 3 compatibility." % n_fixed)
         db.open()
         print("INFO: Opened existing database.")
 
