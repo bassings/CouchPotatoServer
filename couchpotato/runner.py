@@ -95,6 +95,10 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         if n_fixed:
             print("INFO: Migrated %d database index file(s) for Python 3 compatibility." % n_fixed)
         db.open()
+        if n_fixed:
+            print("INFO: Rebuilding database indexes after migration (this may take a moment)...")
+            db.reindex()
+            print("INFO: Database reindex complete.")
         print("INFO: Opened existing database.")
 
     # Force creation of cachedir
