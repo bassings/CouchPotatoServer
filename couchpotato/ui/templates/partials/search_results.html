@@ -1,0 +1,46 @@
+{% if movies %}
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+  {% for movie in movies %}
+  {% set title = movie.get('titles', ['Unknown'])[0] if movie.get('titles') else movie.get('original_title', 'Unknown') %}
+  {% set year = movie.get('year', '') %}
+  {% set imdb = movie.get('imdb', '') %}
+  {% set poster_url = movie.get('images', {}).get('poster', [''])|first if movie.get('images', {}).get('poster') else '' %}
+  {% set poster_original = movie.get('images', {}).get('poster_original', [''])|first if movie.get('images', {}).get('poster_original') else '' %}
+  {% set poster = poster_url or poster_original %}
+
+  <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05]"
+       x-data="{ added: false, adding: false, profile_id: '' }">
+    <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
+      {% if poster %}
+      <img src="{{ poster }}" alt="{{ title }}" class="w-full h-full object-cover" loading="lazy"
+           onerror="this.style.display='none'">
+      {% else %}
+      <div class="w-full h-full flex items-center justify-center text-cp-muted">
+        <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+      </div>
+      {% endif %}
+    </div>
+    <div class="p-2.5">
+      <h3 class="font-medium text-xs truncate">{{ title }}</h3>
+      <p class="text-cp-muted text-[10px] mt-0.5 font-light">{{ year }}</p>
+      <select x-model="profile_id" class="w-full mt-2 bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1 text-[10px] focus:outline-none focus:border-cp-accent/30"
+              hx-get="{{ new_base }}partial/profiles" hx-trigger="load" hx-swap="innerHTML">
+        <option value="">Loading profiles…</option>
+      </select>
+      <button @click="if(!added && !adding) { adding = true; fetch(CP.apiBase + '/movie.add/?identifier={{ imdb }}&title={{ title|urlencode }}&profile_id=' + profile_id).then(r=>r.json()).then(d => { added = d.success !== false; adding = false; }); }"
+              class="w-full mt-2 py-1.5 rounded-md text-[10px] font-medium transition-colors"
+              :class="added ? 'bg-cp-success/10 text-cp-success cursor-default' : 'bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20'"
+              :disabled="adding">
+        <span x-show="!added && !adding">Add</span>
+        <span x-show="adding">Adding…</span>
+        <span x-show="added">✓ Added</span>
+      </button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% elif movies is defined %}
+<div class="text-center text-cp-muted py-20">
+  <p class="text-xs font-light">No results found</p>
+</div>
+{% endif %}

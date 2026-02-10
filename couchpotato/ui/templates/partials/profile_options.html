@@ -1,0 +1,8 @@
+{% for p in profiles %}
+{% if not p.get('hide', false) %}
+<option value="{{ p.get('_id', '') }}">{{ p.get('label', 'Unknown') }}</option>
+{% endif %}
+{% endfor %}
+{% if not profiles %}
+<option value="">No profiles</option>
+{% endif %}

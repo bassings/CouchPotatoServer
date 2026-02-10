@@ -174,6 +174,11 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         from fastapi.staticfiles import StaticFiles
         app.mount(web_base + 'static', StaticFiles(directory=static_dir), name='static')
 
+    # Mount new UI at /new/
+    from couchpotato.ui import create_router as create_ui_router
+    ui_router = create_ui_router(require_auth)
+    app.include_router(ui_router, prefix=web_base.rstrip('/') + '/new')
+
     api_base = '%sapi/%s' % (web_base, api_key)
 
     # Header-based API auth route (X-Api-Key header, preferred over URL-based)

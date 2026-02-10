@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Add Movie — CouchPotato{% endblock %}
+{% block content %}
+<div class="p-4 lg:p-8 fade-in" x-data="{ query: '', searching: false }">
+  <h1 class="text-xl font-semibold mb-6 tracking-tight">Add Movie</h1>
+
+  <div class="relative max-w-xl mb-8">
+    <input type="text" x-model="query" placeholder="Search for a movie..."
+           name="q"
+           hx-get="{{ new_base }}partial/search"
+           hx-trigger="input changed delay:400ms, keyup[key=='Enter']"
+           hx-target="#search-results"
+           hx-indicator="#search-loading"
+           hx-include="this"
+           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 pl-10 text-sm focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
+    <svg class="absolute left-3.5 top-3 w-4 h-4 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+    <div id="search-loading" class="htmx-indicator absolute right-3 top-3">
+      <svg class="animate-spin w-4 h-4 text-cp-accent" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+    </div>
+  </div>
+
+  <div id="search-results">
+    <div class="text-center text-cp-muted py-20">
+      <svg class="w-12 h-12 mx-auto mb-3 text-cp-border" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+      <p class="text-xs font-light">Search for a movie to add it to your wanted list</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

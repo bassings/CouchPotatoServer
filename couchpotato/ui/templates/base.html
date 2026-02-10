@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}CouchPotato{% endblock %}</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://unpkg.com/htmx.org@2.0.4"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'sans-serif'] },
+      colors: {
+        cp: {
+          bg: '#0d0d0d',
+          card: '#161618',
+          surface: '#111113',
+          border: '#1e1e22',
+          accent: '#35c5f4',
+          accentHover: '#4dd4ff',
+          text: '#e0e0e4',
+          muted: '#6b6b78',
+          success: '#3ddc84',
+          warning: '#e5a00d',
+          danger: '#f04848',
+          blue: '#35c5f4',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  [x-cloak] { display: none !important; }
+  * { letter-spacing: -0.01em; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0d0d0d; }
+  ::-webkit-scrollbar-thumb { background: #1e1e22; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+  .poster-card { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+  .poster-card:hover { border-color: rgba(53,197,244,0.15); box-shadow: 0 0 20px rgba(53,197,244,0.06); }
+  .fade-in { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .htmx-indicator { opacity: 0; transition: opacity 200ms ease-in; }
+  .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+</style>
+<script>
+  const CP = {
+    apiBase: '{{ api_base }}',
+    newBase: '{{ new_base }}',
+    webBase: '{{ web_base }}'
+  };
+</script>
+</head>
+<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="{ sidebarCollapsed: false, mobileMenu: false }" x-cloak>
+
+<!-- SIDEBAR (desktop) -->
+<aside class="fixed left-0 top-0 bottom-0 z-40 hidden lg:flex flex-col bg-black/80 backdrop-blur-xl border-r border-white/[0.04] transition-all duration-300"
+       :class="sidebarCollapsed ? 'w-16' : 'w-56'">
+  <div class="flex items-center gap-3 px-4 h-14 border-b border-white/[0.04] shrink-0">
+    <a href="{{ new_base }}" class="flex items-center gap-3">
+      <div class="w-7 h-7 rounded bg-cp-accent/10 flex items-center justify-center font-semibold text-cp-accent text-xs shrink-0 tracking-tight">CP</div>
+      <span class="font-semibold text-sm whitespace-nowrap overflow-hidden transition-all tracking-tight" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">CouchPotato</span>
+    </a>
+  </div>
+  <nav class="flex-1 py-3 space-y-0.5 px-2" aria-label="Main navigation">
+    {% set nav_items = [
+      ('wanted', 'Wanted', 'M9.348 14.652a3.75 3.75 0 010-5.304m5.304 0a3.75 3.75 0 010 5.304m-7.425 2.121a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.808-3.808-9.98 0-13.788m13.788 0c3.808 3.808 3.808 9.98 0 13.788M12 12h.008v.008H12V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z'),
+      ('available', 'Available', 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z'),
+      ('add', 'Add Movie', 'M12 4.5v15m7.5-7.5h-15'),
+    ] %}
+    {% for id, label, icon in nav_items %}
+    <a href="{{ new_base }}{{ id }}/" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}" aria-current="{% if current_page is defined and current_page == id %}page{% endif %}">
+      <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path>
+      </svg>
+      <span class="whitespace-nowrap overflow-hidden transition-all text-[13px] font-medium" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">{{ label }}</span>
+    </a>
+    {% endfor %}
+    <div class="pt-2 mt-2 border-t border-white/[0.04]">
+      <a href="{{ web_base }}" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors text-cp-muted hover:text-cp-text hover:bg-white/[0.03]">
+        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"></path>
+        </svg>
+        <span class="whitespace-nowrap overflow-hidden transition-all text-[13px] font-medium" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">Classic UI</span>
+      </a>
+    </div>
+  </nav>
+  <button @click="sidebarCollapsed = !sidebarCollapsed" class="p-4 border-t border-white/[0.04] text-cp-muted hover:text-cp-text transition-colors" aria-label="Toggle sidebar">
+    <svg class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path>
+    </svg>
+  </button>
+</aside>
+
+<!-- MOBILE TOP BAR -->
+<header class="lg:hidden fixed top-0 left-0 right-0 z-40 h-12 bg-black/80 backdrop-blur-xl border-b border-white/[0.04] flex items-center justify-between px-4">
+  <div class="flex items-center gap-3">
+    <a href="{{ new_base }}" class="flex items-center gap-3">
+      <div class="w-6 h-6 rounded bg-cp-accent/10 flex items-center justify-center font-semibold text-cp-accent text-[10px] tracking-tight">CP</div>
+      <span class="font-semibold text-sm tracking-tight">CouchPotato</span>
+    </a>
+  </div>
+  <button @click="mobileMenu = !mobileMenu" class="text-cp-muted hover:text-cp-text" aria-label="Toggle menu">
+    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
+    </svg>
+  </button>
+</header>
+
+<!-- MOBILE MENU OVERLAY -->
+<div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" class="lg:hidden fixed inset-0 z-40 bg-black/60"></div>
+<div x-show="mobileMenu" x-transition class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1">
+  {% for id, label, icon in nav_items %}
+  <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">
+    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
+    <span class="text-[13px] font-medium">{{ label }}</span>
+  </a>
+  {% endfor %}
+</div>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-black/80 backdrop-blur-xl border-t border-white/[0.04]" aria-label="Mobile navigation">
+  <div class="flex justify-around">
+    {% for id, label, icon in nav_items %}
+    <a href="{{ new_base }}{{ id }}/" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors {% if current_page is defined and current_page == id %}text-cp-accent{% else %}text-cp-muted{% endif %}">
+      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
+      <span class="text-[9px] mt-0.5 truncate">{{ label }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</nav>
+
+<!-- MAIN CONTENT -->
+<main class="lg:transition-all lg:duration-300 pb-16 lg:pb-0 pt-12 lg:pt-0" :class="sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-56'">
+  {% block content %}{% endblock %}
+</main>
+
+</body>
+</html>

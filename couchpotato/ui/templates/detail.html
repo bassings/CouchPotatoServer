@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Movie Detail — CouchPotato{% endblock %}
+{% block content %}
+<div class="fade-in"
+     hx-get="{{ new_base }}partial/movie/{{ movie_id }}"
+     hx-trigger="load"
+     hx-indicator="#detail-loading"
+     id="movie-detail-container">
+  <div id="detail-loading" class="htmx-indicator flex items-center justify-center py-32">
+    <svg class="animate-spin w-6 h-6 text-cp-accent" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+  </div>
+</div>
+{% endblock %}

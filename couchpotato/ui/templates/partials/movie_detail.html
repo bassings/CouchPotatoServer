@@ -1,0 +1,149 @@
+{% set info = movie.get('info', {}) %}
+{% set title = info.get('titles', ['Unknown'])[0] %}
+{% set year = info.get('year', '') %}
+{% set plot = info.get('plot', '') %}
+{% set rating = info.get('rating', {}) %}
+{% set imdb_rating = rating.get('imdb', ['', 0]) if rating is mapping else ['', 0] %}
+{% set genres = info.get('genres', []) %}
+{% set runtime = info.get('runtime', '') %}
+{% set poster_url = info.get('images', {}).get('poster', [''])|first if info.get('images', {}).get('poster') else '' %}
+{% set poster_original = info.get('images', {}).get('poster_original', [''])|first if info.get('images', {}).get('poster_original') else '' %}
+{% set poster = poster_url or poster_original %}
+{% set status = movie.get('status', '') %}
+{% set profile = movie.get('profile', {}) %}
+{% set quality_label = profile.get('label', '') if profile else '' %}
+{% set releases = movie.get('releases', []) %}
+{% set movie_id = movie.get('_id', '') %}
+{% set imdb_id = info.get('imdb', '') %}
+
+<!-- Backdrop -->
+<div class="relative h-44 sm:h-56 lg:h-72 overflow-hidden">
+  <div class="absolute inset-0 bg-gradient-to-b from-cp-card to-cp-bg"></div>
+  <div class="absolute inset-0 bg-gradient-to-t from-cp-bg via-transparent to-transparent"></div>
+</div>
+
+<div class="px-4 lg:px-8 -mt-32 relative z-10">
+  <div class="flex flex-col sm:flex-row gap-6 max-w-5xl">
+    <!-- Poster -->
+    <div class="shrink-0 w-36 sm:w-44 rounded-md overflow-hidden border border-white/[0.08] mx-auto sm:mx-0 bg-cp-surface">
+      {% if poster %}
+      <img src="{{ poster }}" alt="{{ title }}" class="w-full aspect-[2/3] object-cover" loading="lazy">
+      {% else %}
+      <div class="w-full aspect-[2/3] flex items-center justify-center text-cp-muted">
+        <svg class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Info -->
+    <div class="flex-1 min-w-0">
+      <a href="javascript:history.back()" class="text-cp-muted hover:text-cp-text text-xs mb-3 flex items-center gap-1 transition-colors">
+        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
+        Back
+      </a>
+      <h1 class="text-xl lg:text-2xl font-semibold tracking-tight">{{ title }}</h1>
+      <div class="flex flex-wrap items-center gap-2.5 mt-2 text-xs text-cp-muted font-light">
+        {% if year %}<span>{{ year }}</span>{% endif %}
+        {% if imdb_rating is iterable and imdb_rating|length > 1 and imdb_rating[1] %}
+        <span class="text-white/10">|</span>
+        <span>⭐ {{ imdb_rating[1] }}</span>
+        {% endif %}
+        {% if runtime %}<span class="text-white/10">|</span><span>{{ runtime }} min</span>{% endif %}
+        {% if genres %}<span class="text-white/10">|</span><span>{{ genres|join(', ') }}</span>{% endif %}
+      </div>
+      <div class="flex flex-wrap gap-1.5 mt-3">
+        {% if quality_label %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-accent/10 text-cp-accent">{{ quality_label }}</span>
+        {% endif %}
+        {% if status == 'done' %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-success/10 text-cp-success">done</span>
+        {% elif status == 'active' %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-blue/10 text-cp-blue">wanted</span>
+        {% else %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-white/10 text-white/60">{{ status }}</span>
+        {% endif %}
+      </div>
+      {% if plot %}
+      <p class="mt-4 text-xs text-cp-muted leading-relaxed font-light max-w-2xl">{{ plot }}</p>
+      {% endif %}
+
+      <!-- Actions -->
+      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, deleting: false }">
+        <button @click="refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; location.reload(); })"
+                class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
+                :disabled="refreshing">
+          <span x-show="!refreshing">Refresh</span>
+          <span x-show="refreshing">Refreshing…</span>
+        </button>
+        {% if imdb_id %}
+        <a href="https://www.imdb.com/title/{{ imdb_id }}/" target="_blank" rel="noopener"
+           class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">
+          IMDb
+        </a>
+        {% endif %}
+        <!-- Trailer button -->
+        <button x-data="{ loading: false, videoId: null, showTrailer: false }"
+                @click="if (!videoId) { loading = true; fetch(CP.apiBase + '/movie.trailer/?id={{ movie_id }}').then(r=>r.json()).then(d => { videoId = d.video_id || null; loading = false; if(videoId) showTrailer = true; }); } else { showTrailer = true; }"
+                class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">
+          <span x-show="!loading">▶ Trailer</span>
+          <span x-show="loading">Loading…</span>
+          <!-- Trailer modal -->
+          <template x-teleport="body">
+            <div x-show="showTrailer" x-transition.opacity @click.self="showTrailer = false" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+              <div class="w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden relative">
+                <button @click="showTrailer = false" class="absolute top-2 right-2 z-10 text-white/60 hover:text-white">✕</button>
+                <iframe x-show="showTrailer" :src="showTrailer ? 'https://www.youtube.com/embed/' + videoId + '?autoplay=1' : ''" class="w-full h-full" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+              </div>
+            </div>
+          </template>
+        </button>
+        <button @click="if(confirm('Delete this movie?')) { deleting = true; fetch(CP.apiBase + '/media.delete/?id={{ movie_id }}').then(() => { window.location.href = CP.newBase; }); }"
+                class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 rounded-md text-xs transition-colors disabled:opacity-50"
+                :disabled="deleting">
+          Delete
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Releases -->
+  {% if releases %}
+  <div class="mt-8 max-w-5xl">
+    <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
+    <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
+      <table class="w-full text-xs">
+        <thead>
+          <tr class="border-b border-white/[0.05] text-cp-muted text-left">
+            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
+            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
+            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
+            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in releases %}
+          {% set r_info = r.get('info', {}) %}
+          <tr class="border-b border-white/[0.03] hover:bg-white/[0.015] transition-colors">
+            <td class="px-4 py-2.5 max-w-xs truncate font-light">{{ r_info.get('name', r.get('identifier', 'Unknown')) }}</td>
+            <td class="px-4 py-2.5">
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ r.get('quality', {}).get('label', '') if r.get('quality') is mapping else '' }}</span>
+            </td>
+            <td class="px-4 py-2.5">
+              {% set rstatus = r.get('status', '') %}
+              {% if rstatus == 'done' %}
+              <span class="text-cp-success">done</span>
+              {% elif rstatus == 'snatched' %}
+              <span class="text-cp-warning">snatched</span>
+              {% else %}
+              <span class="text-cp-muted">{{ rstatus }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_info.get('age', '') }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+</div>
