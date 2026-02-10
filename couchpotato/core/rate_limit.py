@@ -39,7 +39,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._requests.setdefault(ip, []).append(now)
             return False
 
+    _EXEMPT_PREFIXES = ('/static/', '/favicon.ico')
+
     async def dispatch(self, request, call_next):
+        # Don't rate-limit static assets or page navigations
+        path = request.url.path
+        if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):
+            return await call_next(request)
+
+        # Don't rate-limit HTML page loads (non-API browser navigation)
+        accept = request.headers.get('accept', '')
+        if 'text/html' in accept and '/api/' not in path:
+            return await call_next(request)
+
         client_ip = request.client.host if request.client else '127.0.0.1'
         if self._is_rate_limited(client_ip):
             return JSONResponse(

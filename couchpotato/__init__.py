@@ -153,7 +153,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     # Rate limiting middleware
     from couchpotato.core.rate_limit import RateLimitMiddleware
-    rate_limit_max = tryInt(Env.setting('rate_limit_max', default=60))
+    rate_limit_max = tryInt(Env.setting('rate_limit_max', default=300))
     rate_limit_window = tryInt(Env.setting('rate_limit_window', default=60))
     if rate_limit_max > 0:
         app.add_middleware(RateLimitMiddleware, max_requests=rate_limit_max, window_seconds=rate_limit_window)
