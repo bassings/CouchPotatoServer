@@ -65,4 +65,4 @@ COPY docker-entrypoint.sh /usr/local/bin/
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["python3", "CouchPotato.py", "--console_log", "--data_dir=/data", "--config_file=/config/settings.conf"]
+CMD ["python3", "CouchPotato.py", "--console_log", "--data_dir=/data", "--config_file=/config/config.ini"]

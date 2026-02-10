@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CouchPotato</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'sans-serif'] },
+      colors: {
+        cp: {
+          bg: '#0d0d0d',
+          card: '#161618',
+          surface: '#111113',
+          border: '#1e1e22',
+          accent: '#35c5f4',
+          accentHover: '#4dd4ff',
+          text: '#e0e0e4',
+          muted: '#6b6b78',
+          success: '#3ddc84',
+          warning: '#e5a00d',
+          danger: '#f04848',
+          blue: '#35c5f4',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  [x-cloak] { display: none !important; }
+  * { letter-spacing: -0.01em; }
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: #0d0d0d; }
+  ::-webkit-scrollbar-thumb { background: #1e1e22; border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+  .poster-card { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+  .poster-card:hover { border-color: rgba(53,197,244,0.15); box-shadow: 0 0 20px rgba(53,197,244,0.06); }
+  .fade-in { animation: fadeIn 0.2s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+  .slide-in { animation: slideIn 0.25s ease-out; }
+  @keyframes slideIn { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: translateX(0); } }
+</style>
+</head>
+<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="app()" x-cloak>
+
+<!-- SIDEBAR (desktop) -->
+<aside class="fixed left-0 top-0 bottom-0 z-40 hidden lg:flex flex-col bg-black/80 backdrop-blur-xl border-r border-white/[0.04] transition-all duration-300"
+       :class="sidebarCollapsed ? 'w-16' : 'w-56'">
+  <!-- Logo -->
+  <div class="flex items-center gap-3 px-4 h-14 border-b border-white/[0.04] shrink-0">
+    <div class="w-7 h-7 rounded bg-cp-accent/10 flex items-center justify-center font-semibold text-cp-accent text-xs shrink-0 tracking-tight">CP</div>
+    <span class="font-semibold text-sm whitespace-nowrap overflow-hidden transition-all tracking-tight" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">CouchPotato</span>
+  </div>
+  <!-- Nav -->
+  <nav class="flex-1 py-3 space-y-0.5 px-2">
+    <template x-for="item in navItems" :key="item.id">
+      <button @click="navigate(item.id)" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors"
+              :class="currentView === item.id || (currentView === 'detail' && item.id === lastListView) ? 'bg-cp-accent/10 text-cp-accent' : 'text-cp-muted hover:text-cp-text hover:bg-white/[0.03]'">
+        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" :d="item.iconPath"></path>
+        </svg>
+        <span class="whitespace-nowrap overflow-hidden transition-all text-[13px] font-medium" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'" x-text="item.label"></span>
+      </button>
+    </template>
+  </nav>
+  <!-- Collapse toggle -->
+  <button @click="sidebarCollapsed = !sidebarCollapsed" class="p-4 border-t border-white/[0.04] text-cp-muted hover:text-cp-text transition-colors">
+    <svg class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path>
+    </svg>
+  </button>
+</aside>
+
+<!-- MOBILE TOP BAR -->
+<header class="lg:hidden fixed top-0 left-0 right-0 z-40 h-12 bg-black/80 backdrop-blur-xl border-b border-white/[0.04] flex items-center px-4 gap-3">
+  <div class="w-6 h-6 rounded bg-cp-accent/10 flex items-center justify-center font-semibold text-cp-accent text-[10px] tracking-tight">CP</div>
+  <span class="font-semibold text-sm tracking-tight">CouchPotato</span>
+</header>
+
+<!-- MAIN CONTENT -->
+<main class="lg:transition-all lg:duration-300 pb-16 lg:pb-0 pt-12 lg:pt-0"
+      :class="sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-56'">
+
+  <!-- WANTED VIEW -->
+  <div x-show="currentView === 'wanted'" x-transition class="fade-in">
+    <div class="p-4 lg:p-8">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">Wanted</h1>
+          <p class="text-cp-muted text-xs mt-1 font-light" x-text="filteredWanted.length + ' movies'"></p>
+        </div>
+        <div class="relative w-full sm:w-64">
+          <input type="text" x-model="searchWanted" placeholder="Filter movies..."
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
+          <svg class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        <template x-for="movie in filteredWanted" :key="movie.id">
+          <div @click="showDetail(movie)" class="poster-card cursor-pointer rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group">
+            <div class="relative aspect-[2/3] overflow-hidden">
+              <img :src="movie.poster" :alt="movie.title" class="w-full h-full object-cover">
+              <div class="absolute top-2 right-2">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase"
+                      :class="movie.status === 'Searching' ? 'bg-cp-blue/20 text-cp-blue backdrop-blur-sm' : movie.status === 'Snatched' ? 'bg-cp-warning/20 text-cp-warning backdrop-blur-sm' : 'bg-white/10 text-white/60 backdrop-blur-sm'"
+                      x-text="movie.status"></span>
+              </div>
+              <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-white/80 backdrop-blur-sm" x-text="movie.quality"></span>
+              </div>
+            </div>
+            <div class="p-2.5">
+              <h3 class="font-medium text-xs truncate" x-text="movie.title"></h3>
+              <p class="text-cp-muted text-[10px] mt-0.5 font-light" x-text="movie.year"></p>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- AVAILABLE VIEW -->
+  <div x-show="currentView === 'available'" x-transition class="fade-in">
+    <div class="p-4 lg:p-8">
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <div>
+          <h1 class="text-xl font-semibold tracking-tight">Available</h1>
+          <p class="text-cp-muted text-xs mt-1 font-light" x-text="filteredAvailable.length + ' movies'"></p>
+        </div>
+        <div class="relative w-full sm:w-64">
+          <input type="text" x-model="searchAvailable" placeholder="Filter movies..."
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
+          <svg class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+        </div>
+      </div>
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        <template x-for="movie in filteredAvailable" :key="movie.id">
+          <div @click="showDetail(movie)" class="poster-card cursor-pointer rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group">
+            <div class="relative aspect-[2/3] overflow-hidden">
+              <img :src="movie.poster" :alt="movie.title" class="w-full h-full object-cover">
+              <div class="absolute top-2 right-2">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success backdrop-blur-sm">downloaded</span>
+              </div>
+              <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8 flex items-end justify-between">
+                <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-white/80 backdrop-blur-sm" x-text="movie.fileQuality"></span>
+                <span class="text-[9px] text-white/40 font-light" x-text="movie.fileSize"></span>
+              </div>
+            </div>
+            <div class="p-2.5">
+              <h3 class="font-medium text-xs truncate" x-text="movie.title"></h3>
+              <p class="text-cp-muted text-[10px] mt-0.5 font-light" x-text="movie.year"></p>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+
+  <!-- DETAIL VIEW -->
+  <div x-show="currentView === 'detail'" x-transition class="fade-in">
+    <template x-if="selectedMovie">
+      <div>
+        <!-- Backdrop -->
+        <div class="relative h-44 sm:h-56 lg:h-72 overflow-hidden">
+          <div class="absolute inset-0 bg-gradient-to-b from-cp-card to-cp-bg"></div>
+          <div class="absolute inset-0 bg-gradient-to-t from-cp-bg via-transparent to-transparent"></div>
+        </div>
+        <div class="px-4 lg:px-8 -mt-32 relative z-10">
+          <div class="flex flex-col sm:flex-row gap-6 max-w-5xl">
+            <!-- Poster -->
+            <div class="shrink-0 w-36 sm:w-44 rounded-md overflow-hidden border border-white/[0.08] mx-auto sm:mx-0">
+              <img :src="selectedMovie.poster" :alt="selectedMovie.title" class="w-full aspect-[2/3] object-cover">
+            </div>
+            <!-- Info -->
+            <div class="flex-1 min-w-0">
+              <button @click="goBack()" class="text-cp-muted hover:text-cp-text text-xs mb-3 flex items-center gap-1 transition-colors">
+                <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
+                Back
+              </button>
+              <h1 class="text-xl lg:text-2xl font-semibold tracking-tight" x-text="selectedMovie.title"></h1>
+              <div class="flex flex-wrap items-center gap-2.5 mt-2 text-xs text-cp-muted font-light">
+                <span x-text="selectedMovie.year"></span>
+                <span class="text-white/10">|</span>
+                <span x-text="selectedMovie.rating"></span>
+                <span class="text-white/10">|</span>
+                <span x-text="selectedMovie.runtime"></span>
+                <span class="text-white/10">|</span>
+                <span x-text="selectedMovie.genre"></span>
+              </div>
+              <div class="flex flex-wrap gap-1.5 mt-3">
+                <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-accent/10 text-cp-accent" x-text="selectedMovie.quality || selectedMovie.fileQuality"></span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase"
+                      :class="selectedMovie.fileQuality ? 'bg-cp-success/10 text-cp-success' : 'bg-cp-blue/10 text-cp-blue'"
+                      x-text="selectedMovie.fileQuality ? 'downloaded' : selectedMovie.status"></span>
+              </div>
+              <p class="mt-4 text-xs text-cp-muted leading-relaxed font-light max-w-2xl" x-text="selectedMovie.plot"></p>
+              <!-- Actions -->
+              <div class="flex flex-wrap gap-2 mt-6">
+                <button class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors">Refresh</button>
+                <button class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">Manual Search</button>
+                <button class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 rounded-md text-xs transition-colors">Delete</button>
+              </div>
+            </div>
+          </div>
+          <!-- Releases Table -->
+          <div class="mt-8 max-w-5xl">
+            <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
+            <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead>
+                  <tr class="border-b border-white/[0.05] text-cp-muted text-left">
+                    <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
+                    <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
+                    <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Size</th>
+                    <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Score</th>
+                    <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(r, i) in sampleReleases" :key="i">
+                    <tr class="border-b border-white/[0.03] hover:bg-white/[0.015] transition-colors">
+                      <td class="px-4 py-2.5 max-w-xs truncate font-light" x-text="r.name"></td>
+                      <td class="px-4 py-2.5"><span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent" x-text="r.quality"></span></td>
+                      <td class="px-4 py-2.5 text-cp-muted font-light" x-text="r.size"></td>
+                      <td class="px-4 py-2.5 text-cp-muted font-light" x-text="r.score"></td>
+                      <td class="px-4 py-2.5"><button class="px-2.5 py-1 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 rounded text-[10px] transition-colors">Download</button></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ADD MOVIE VIEW -->
+  <div x-show="currentView === 'add'" x-transition class="fade-in">
+    <div class="p-4 lg:p-8">
+      <h1 class="text-xl font-semibold mb-6 tracking-tight">Add Movie</h1>
+      <div class="relative max-w-xl mb-8">
+        <input type="text" x-model="addSearch" @input="searchMovies()" placeholder="Search for a movie..."
+               class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 pl-10 text-sm focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
+        <svg class="absolute left-3.5 top-3 w-4 h-4 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+      </div>
+      <div x-show="addResults.length > 0" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        <template x-for="movie in addResults" :key="movie.id">
+          <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05]">
+            <div class="relative aspect-[2/3] overflow-hidden">
+              <img :src="movie.poster" :alt="movie.title" class="w-full h-full object-cover">
+            </div>
+            <div class="p-2.5">
+              <h3 class="font-medium text-xs truncate" x-text="movie.title"></h3>
+              <p class="text-cp-muted text-[10px] mt-0.5 font-light" x-text="movie.year"></p>
+              <select class="w-full mt-2 bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1 text-[10px] focus:outline-none focus:border-cp-accent/30">
+                <option>HD 1080p</option><option>HD 720p</option><option>4K UHD</option><option>Any</option>
+              </select>
+              <button @click="movie.added = true" class="w-full mt-2 py-1.5 rounded-md text-[10px] font-medium transition-colors"
+                      :class="movie.added ? 'bg-cp-success/10 text-cp-success cursor-default' : 'bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20'"
+                      x-text="movie.added ? 'Added' : 'Add'"></button>
+            </div>
+          </div>
+        </template>
+      </div>
+      <div x-show="addSearch.length > 0 && addResults.length === 0" class="text-center text-cp-muted py-20">
+        <p class="text-xs">Type to search for movies...</p>
+      </div>
+      <div x-show="addSearch.length === 0" class="text-center text-cp-muted py-20">
+        <p class="text-xs font-light">Search for a movie to add it to your wanted list</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS VIEW -->
+  <div x-show="currentView === 'settings'" x-transition class="fade-in">
+    <div class="p-4 lg:p-8 max-w-3xl">
+      <h1 class="text-xl font-semibold mb-6 tracking-tight">Settings</h1>
+      <!-- Tabs -->
+      <div class="flex gap-0 border-b border-white/[0.06] mb-6 overflow-x-auto">
+        <template x-for="tab in settingsTabs" :key="tab">
+          <button @click="activeSettingsTab = tab" class="px-4 py-2 text-xs font-medium whitespace-nowrap transition-colors border-b-2 -mb-px"
+                  :class="activeSettingsTab === tab ? 'border-cp-accent text-cp-accent' : 'border-transparent text-cp-muted hover:text-cp-text'"
+                  x-text="tab"></button>
+        </template>
+      </div>
+      <!-- General -->
+      <div x-show="activeSettingsTab === 'General'" class="space-y-6">
+        <div class="space-y-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Application</h3>
+          <div class="border border-white/[0.05] rounded-md divide-y divide-white/[0.04]">
+            <div class="p-4">
+              <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">API Key</label>
+              <input type="text" value="a1b2c3d4e5f6..." class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+            </div>
+            <div class="p-4">
+              <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">Port</label>
+              <input type="number" value="5050" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+            </div>
+            <div class="p-4 flex items-center justify-between">
+              <div><p class="text-xs font-medium">Launch browser on startup</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Open web UI when CouchPotato starts</p></div>
+              <button @click="settingsToggles.launch = !settingsToggles.launch" class="w-9 h-5 rounded-full transition-colors relative shrink-0" :class="settingsToggles.launch ? 'bg-cp-accent' : 'bg-white/10'">
+                <div class="w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all" :class="settingsToggles.launch ? 'left-[18px]' : 'left-[3px]'"></div>
+              </button>
+            </div>
+            <div class="p-4 flex items-center justify-between">
+              <div><p class="text-xs font-medium">Dark mode</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Use dark theme</p></div>
+              <button class="w-9 h-5 rounded-full bg-cp-accent relative shrink-0"><div class="w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] left-[18px]"></div></button>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Folders</h3>
+          <div class="border border-white/[0.05] rounded-md p-4">
+            <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">Movie Library</label>
+            <input type="text" value="/media/movies" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+          </div>
+        </div>
+      </div>
+      <!-- Search Providers -->
+      <div x-show="activeSettingsTab === 'Search'" class="space-y-6">
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Newznab Providers</h3>
+            <button class="px-2.5 py-1 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 rounded-md text-[10px] font-medium transition-colors">Add</button>
+          </div>
+          <div class="border border-white/[0.05] rounded-md divide-y divide-white/[0.04]">
+            <div class="flex items-center justify-between p-3.5">
+              <div><p class="text-xs font-medium">NZBgeek</p><p class="text-[10px] text-cp-muted font-light mt-0.5">https://api.nzbgeek.info</p></div>
+              <div class="flex items-center gap-2.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-cp-success"></span>
+                <button class="text-cp-muted hover:text-cp-text text-[10px] transition-colors">Edit</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between p-3.5">
+              <div><p class="text-xs font-medium">DrunkenSlug</p><p class="text-[10px] text-cp-muted font-light mt-0.5">https://api.drunkenslug.com</p></div>
+              <div class="flex items-center gap-2.5">
+                <span class="w-1.5 h-1.5 rounded-full bg-cp-success"></span>
+                <button class="text-cp-muted hover:text-cp-text text-[10px] transition-colors">Edit</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="space-y-4">
+          <div class="flex items-center justify-between">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Torrent Providers</h3>
+            <button class="px-2.5 py-1 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 rounded-md text-[10px] font-medium transition-colors">Add</button>
+          </div>
+          <div class="border border-white/[0.05] rounded-md p-3.5 flex items-center justify-between">
+            <div><p class="text-xs font-medium">YTS</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Built-in</p></div>
+            <div class="flex items-center gap-2.5">
+              <span class="w-1.5 h-1.5 rounded-full bg-cp-success"></span>
+              <button class="text-cp-muted hover:text-cp-text text-[10px] transition-colors">Edit</button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Download Clients -->
+      <div x-show="activeSettingsTab === 'Downloaders'" class="space-y-4">
+        <div class="flex items-center justify-between">
+          <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Download Clients</h3>
+          <button class="px-2.5 py-1 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 rounded-md text-[10px] font-medium transition-colors">Add</button>
+        </div>
+        <div class="border border-white/[0.05] rounded-md divide-y divide-white/[0.04]">
+          <div class="p-3.5 flex items-center justify-between">
+            <div><p class="text-xs font-medium">SABnzbd</p><p class="text-[10px] text-cp-muted font-light mt-0.5">http://localhost:8080</p></div>
+            <div class="flex items-center gap-2.5"><span class="w-1.5 h-1.5 rounded-full bg-cp-success"></span><button class="text-cp-muted hover:text-cp-text text-[10px] transition-colors">Edit</button></div>
+          </div>
+          <div class="p-3.5 flex items-center justify-between">
+            <div><p class="text-xs font-medium">qBittorrent</p><p class="text-[10px] text-cp-muted font-light mt-0.5">http://localhost:8112</p></div>
+            <div class="flex items-center gap-2.5"><span class="w-1.5 h-1.5 rounded-full bg-cp-warning"></span><button class="text-cp-muted hover:text-cp-text text-[10px] transition-colors">Edit</button></div>
+          </div>
+        </div>
+      </div>
+      <!-- Notifications -->
+      <div x-show="activeSettingsTab === 'Notifications'" class="space-y-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Notification Agents</h3>
+        <div class="border border-white/[0.05] rounded-md divide-y divide-white/[0.04]">
+          <div class="p-4 flex items-center justify-between">
+            <div><p class="text-xs font-medium">Telegram</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Send notifications via Telegram bot</p></div>
+            <button @click="settingsToggles.telegram = !settingsToggles.telegram" class="w-9 h-5 rounded-full transition-colors relative shrink-0" :class="settingsToggles.telegram ? 'bg-cp-accent' : 'bg-white/10'">
+              <div class="w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all" :class="settingsToggles.telegram ? 'left-[18px]' : 'left-[3px]'"></div>
+            </button>
+          </div>
+          <div class="p-4 flex items-center justify-between">
+            <div><p class="text-xs font-medium">Pushover</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Push notifications to your devices</p></div>
+            <button @click="settingsToggles.pushover = !settingsToggles.pushover" class="w-9 h-5 rounded-full transition-colors relative shrink-0" :class="settingsToggles.pushover ? 'bg-cp-accent' : 'bg-white/10'">
+              <div class="w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all" :class="settingsToggles.pushover ? 'left-[18px]' : 'left-[3px]'"></div>
+            </button>
+          </div>
+          <div class="p-4 flex items-center justify-between">
+            <div><p class="text-xs font-medium">Discord Webhook</p><p class="text-[10px] text-cp-muted font-light mt-0.5">Post to a Discord channel</p></div>
+            <button @click="settingsToggles.discord = !settingsToggles.discord" class="w-9 h-5 rounded-full transition-colors relative shrink-0" :class="settingsToggles.discord ? 'bg-cp-accent' : 'bg-white/10'">
+              <div class="w-3.5 h-3.5 bg-white rounded-full absolute top-[3px] transition-all" :class="settingsToggles.discord ? 'left-[18px]' : 'left-[3px]'"></div>
+            </button>
+          </div>
+        </div>
+      </div>
+      <!-- UI -->
+      <div x-show="activeSettingsTab === 'UI'" class="space-y-4">
+        <h3 class="text-xs font-semibold uppercase tracking-wider text-cp-muted">Interface</h3>
+        <div class="border border-white/[0.05] rounded-md divide-y divide-white/[0.04]">
+          <div class="p-4">
+            <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">Theme</label>
+            <select class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+              <option>Dark (Default)</option><option>Light</option><option>OLED Black</option>
+            </select>
+          </div>
+          <div class="p-4">
+            <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">Accent Color</label>
+            <div class="flex gap-2 mt-1">
+              <button class="w-6 h-6 rounded-full bg-[#35c5f4] ring-2 ring-white/20 ring-offset-1 ring-offset-cp-bg"></button>
+              <button class="w-6 h-6 rounded-full bg-[#8b5cf6]"></button>
+              <button class="w-6 h-6 rounded-full bg-[#ef4444]"></button>
+              <button class="w-6 h-6 rounded-full bg-[#22c55e]"></button>
+              <button class="w-6 h-6 rounded-full bg-[#e5a00d]"></button>
+            </div>
+          </div>
+          <div class="p-4">
+            <label class="block text-[10px] font-medium uppercase tracking-wider text-cp-muted mb-1.5">Movies per page</label>
+            <select class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+              <option>25</option><option>50</option><option>100</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <!-- Save -->
+      <div class="mt-6 flex gap-2">
+        <button class="px-4 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors">Save Changes</button>
+        <button class="px-4 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] rounded-md text-xs transition-colors">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- MOBILE BOTTOM NAV -->
+<nav class="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-black/80 backdrop-blur-xl border-t border-white/[0.04]">
+  <div class="flex justify-around">
+    <template x-for="item in navItems" :key="item.id">
+      <button @click="navigate(item.id)" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors"
+              :class="currentView === item.id || (currentView === 'detail' && item.id === lastListView) ? 'text-cp-accent' : 'text-cp-muted'">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" :d="item.iconPath"></path>
+        </svg>
+        <span class="text-[9px] mt-0.5 truncate" x-text="item.label"></span>
+      </button>
+    </template>
+  </div>
+</nav>
+
+<script>
+function app() {
+  const wantedMovies = [
+    { id: 1, title: 'Dune: Part Two', year: 2024, quality: '4K UHD', status: 'Searching', rating: '8.8', runtime: '166 min', genre: 'Sci-Fi, Adventure', poster: 'https://image.tmdb.org/t/p/w300/8b8R8l88Qje9dn9OE8PY05Nez7S.jpg', plot: 'Paul Atreides unites with the Fremen while on a warpath of revenge against the conspirators who destroyed his family. Facing a choice between the love of his life and the fate of the known universe, he endeavors to prevent a terrible future.' },
+    { id: 2, title: 'Oppenheimer', year: 2023, quality: 'HD 1080p', status: 'Searching', rating: '8.5', runtime: '180 min', genre: 'Drama, History', poster: 'https://image.tmdb.org/t/p/w300/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg', plot: 'The story of American scientist J. Robert Oppenheimer and his role in the development of the atomic bomb during World War II.' },
+    { id: 3, title: 'Furiosa: A Mad Max Saga', year: 2024, quality: 'HD 1080p', status: 'Snatched', rating: '7.8', runtime: '148 min', genre: 'Action, Sci-Fi', poster: 'https://image.tmdb.org/t/p/w300/iADOJ8Zymht2JPMoy3R7xceZprc.jpg', plot: 'The origin story of the rebel warrior Furiosa before her encounter and target with Max Rockatansky.' },
+    { id: 4, title: 'Deadpool & Wolverine', year: 2024, quality: '4K UHD', status: 'Searching', rating: '8.0', runtime: '127 min', genre: 'Action, Comedy', poster: 'https://image.tmdb.org/t/p/w300/8cdWjvZQUExUUTzyp4t6EDMubfO.jpg', plot: 'Deadpool joins forces with Wolverine on a mission that will change the future of the MCU.' },
+    { id: 5, title: 'The Fall Guy', year: 2024, quality: 'HD 1080p', status: 'Waiting', rating: '7.0', runtime: '126 min', genre: 'Action, Comedy', poster: 'https://image.tmdb.org/t/p/w300/tSz1qsmSJon0rqjHBxXZmrotuse.jpg', plot: 'A down-and-out stuntman must find the missing star of his ex-girlfriend\'s blockbuster film.' },
+    { id: 6, title: 'Nosferatu', year: 2024, quality: 'HD 1080p', status: 'Searching', rating: '7.5', runtime: '132 min', genre: 'Horror, Fantasy', poster: 'https://image.tmdb.org/t/p/w300/5qGIxdEO841C0tdY023mK85DAAO.jpg', plot: 'A gothic tale of obsession between a haunted young woman and the terrifying vampire infatuated with her.' },
+  ];
+  const availableMovies = [
+    { id: 101, title: 'The Batman', year: 2022, fileQuality: 'Blu-ray 1080p', fileSize: '14.2 GB', quality: 'HD 1080p', rating: '7.8', runtime: '176 min', genre: 'Action, Crime', poster: 'https://image.tmdb.org/t/p/w300/74xTEgt7R36Fpooo50r9T25onhq.jpg', plot: 'When a sadistic serial killer begins murdering key political figures in Gotham, Batman is forced to investigate the city\'s hidden corruption.' },
+    { id: 102, title: 'Everything Everywhere All at Once', year: 2022, fileQuality: 'Remux 2160p', fileSize: '52.1 GB', quality: '4K UHD', rating: '8.0', runtime: '139 min', genre: 'Action, Comedy', poster: 'https://image.tmdb.org/t/p/w300/w3LxiVYdWWRvEVdn5RYq6jIqkb1.jpg', plot: 'A middle-aged Chinese immigrant is swept up into an insane adventure in which she alone can save existence by exploring other universes.' },
+    { id: 103, title: 'Top Gun: Maverick', year: 2022, fileQuality: 'Blu-ray 2160p', fileSize: '45.8 GB', quality: '4K UHD', rating: '8.3', runtime: '130 min', genre: 'Action, Drama', poster: 'https://image.tmdb.org/t/p/w300/62HCnUTziyWcpDaBO2i1DG3xKvN.jpg', plot: 'After thirty years of service, Pete "Maverick" Mitchell is where he belongs, pushing the envelope as a courageous test pilot.' },
+    { id: 104, title: 'Spider-Man: Across the Spider-Verse', year: 2023, fileQuality: 'WEB-DL 1080p', fileSize: '8.4 GB', quality: 'HD 1080p', rating: '8.7', runtime: '140 min', genre: 'Animation, Action', poster: 'https://image.tmdb.org/t/p/w300/8Vt6mWEReuy4Of61Lnj5Xj704m8.jpg', plot: 'Miles Morales catapults across the Multiverse, where he encounters a team of Spider-People charged with protecting its very existence.' },
+    { id: 105, title: 'Barbie', year: 2023, fileQuality: 'Blu-ray 1080p', fileSize: '12.7 GB', quality: 'HD 1080p', rating: '7.0', runtime: '114 min', genre: 'Comedy, Fantasy', poster: 'https://image.tmdb.org/t/p/w300/iuFNMS8U5cb6xfzi51Dbkovj7vM.jpg', plot: 'Barbie and Ken are having the time of their lives in the colorful and seemingly perfect world of Barbie Land.' },
+    { id: 106, title: 'John Wick: Chapter 4', year: 2023, fileQuality: 'Remux 2160p', fileSize: '58.3 GB', quality: '4K UHD', rating: '7.7', runtime: '169 min', genre: 'Action, Thriller', poster: 'https://image.tmdb.org/t/p/w300/vZloFAK7NmvMGKE7VKF5A6TnQAU.jpg', plot: 'John Wick uncovers a path to defeating The High Table. But before he can earn his freedom, Wick must face off against a new enemy.' },
+  ];
+  const searchDatabase = [
+    { id: 201, title: 'Gladiator II', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/2cxhvwyEwRlysAmRH4iodkvo0z5.jpg', added: false },
+    { id: 202, title: 'Wicked', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/xDGbZ0JJ3mYaGKy4Nzd9Kph6OF9.jpg', added: false },
+    { id: 203, title: 'Alien: Romulus', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/b33nnKl1GSFbao4l3fZDDqsMail.jpg', added: false },
+    { id: 204, title: 'Inside Out 2', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/vpnVM9B6NMmQpWeZvzLbVelHR9a.jpg', added: false },
+    { id: 205, title: 'Beetlejuice Beetlejuice', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/kKgQzkUCnQmeTPkyIwHly2t6ZFI.jpg', added: false },
+    { id: 206, title: 'Twisters', year: 2024, poster: 'https://image.tmdb.org/t/p/w300/pjnD08FlMAIXsfOLKQbvmO0GkLJ.jpg', added: false },
+  ];
+
+  return {
+    currentView: 'wanted',
+    lastListView: 'wanted',
+    sidebarCollapsed: false,
+    selectedMovie: null,
+    searchWanted: '',
+    searchAvailable: '',
+    addSearch: '',
+    addResults: [],
+    activeSettingsTab: 'General',
+    settingsTabs: ['General', 'Search', 'Downloaders', 'Notifications', 'UI'],
+    settingsToggles: { launch: true, telegram: true, pushover: false, discord: true },
+    navItems: [
+      { id: 'wanted', label: 'Wanted', iconPath: 'M9.348 14.652a3.75 3.75 0 010-5.304m5.304 0a3.75 3.75 0 010 5.304m-7.425 2.121a6.75 6.75 0 010-9.546m9.546 0a6.75 6.75 0 010 9.546M5.106 18.894c-3.808-3.808-3.808-9.98 0-13.788m13.788 0c3.808 3.808 3.808 9.98 0 13.788M12 12h.008v.008H12V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z' },
+      { id: 'available', label: 'Available', iconPath: 'M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z' },
+      { id: 'add', label: 'Add Movie', iconPath: 'M12 4.5v15m7.5-7.5h-15' },
+      { id: 'settings', label: 'Settings', iconPath: 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 11-6 0 3 3 0 016 0z' },
+    ],
+    wantedMovies,
+    availableMovies,
+    searchDatabase,
+    sampleReleases: [
+      { name: 'Movie.Title.2024.2160p.UHD.BluRay.REMUX.HDR.HEVC.Atmos-GROUP', quality: '4K Remux', size: '52.3 GB', score: '95' },
+      { name: 'Movie.Title.2024.2160p.WEB-DL.DDP5.1.Atmos.DV.x265-GROUP', quality: '4K WEB-DL', size: '18.1 GB', score: '85' },
+      { name: 'Movie.Title.2024.1080p.BluRay.REMUX.AVC.DTS-HD.MA.7.1-GROUP', quality: '1080p Remux', size: '32.4 GB', score: '80' },
+      { name: 'Movie.Title.2024.1080p.WEB-DL.DD5.1.H.264-GROUP', quality: '1080p WEB-DL', size: '4.2 GB', score: '60' },
+      { name: 'Movie.Title.2024.720p.BluRay.x264-GROUP', quality: '720p', size: '5.8 GB', score: '40' },
+    ],
+    get filteredWanted() {
+      if (!this.searchWanted) return this.wantedMovies;
+      const q = this.searchWanted.toLowerCase();
+      return this.wantedMovies.filter(m => m.title.toLowerCase().includes(q));
+    },
+    get filteredAvailable() {
+      if (!this.searchAvailable) return this.availableMovies;
+      const q = this.searchAvailable.toLowerCase();
+      return this.availableMovies.filter(m => m.title.toLowerCase().includes(q));
+    },
+    navigate(view) {
+      if (view !== 'detail') this.lastListView = view;
+      this.currentView = view;
+      window.scrollTo(0, 0);
+    },
+    showDetail(movie) {
+      this.selectedMovie = movie;
+      this.currentView = 'detail';
+      window.scrollTo(0, 0);
+    },
+    goBack() {
+      this.currentView = this.lastListView;
+      window.scrollTo(0, 0);
+    },
+    searchMovies() {
+      if (this.addSearch.length < 1) { this.addResults = []; return; }
+      this.addResults = this.searchDatabase.filter(m => m.title.toLowerCase().includes(this.addSearch.toLowerCase()));
+      if (this.addResults.length === 0 && this.addSearch.length >= 1) this.addResults = this.searchDatabase;
+    },
+  };
+}
+</script>
+</body>
+</html>

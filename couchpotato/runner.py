@@ -28,7 +28,7 @@ def getOptions(args):
     parser.add_argument('--data_dir',
                         dest='data_dir', help='Absolute or ~/ path of the data dir')
     parser.add_argument('--config_file',
-                        dest='config_file', help='Absolute or ~/ path of the settings file (default DATA_DIR/settings.conf)')
+                        dest='config_file', help='Absolute or ~/ path of the settings file (default DATA_DIR/config.ini)')
     parser.add_argument('--debug', action='store_true',
                         dest='debug', help='Debug mode')
     parser.add_argument('--console_log', action='store_true',
@@ -45,7 +45,7 @@ def getOptions(args):
     data_dir = os.path.expanduser(options.data_dir if options.data_dir else getDataDir())
 
     if not options.config_file:
-        options.config_file = os.path.join(data_dir, 'settings.conf')
+        options.config_file = os.path.join(data_dir, 'config.ini')
 
     if not options.pid_file:
         options.pid_file = os.path.join(data_dir, 'couchpotato.pid')

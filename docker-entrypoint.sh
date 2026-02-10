@@ -11,7 +11,7 @@ if [ "$1" = "python3" ]; then
     exec gosu couchpotato "$@"
 elif [ "${1#-}" != "$1" ] || [ -z "$1" ]; then
     # No args or flags only — run default
-    exec gosu couchpotato python3 CouchPotato.py --console_log --data_dir=/data --config_file=/config/settings.conf "$@"
+    exec gosu couchpotato python3 CouchPotato.py --console_log --data_dir=/data --config_file=/config/config.ini "$@"
 else
     # Unknown command, just exec it
     exec "$@"
