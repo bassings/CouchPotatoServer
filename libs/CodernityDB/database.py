@@ -1040,7 +1040,10 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
                     data = {}
                 doc_id = ind_data[0]
                 if with_doc:
-                    doc = self.get('id', doc_id, False)
+                    try:
+                        doc = self.get('id', doc_id, False)
+                    except (RecordDeleted, RecordNotFound):
+                        continue
                     if data:
                         data['doc'] = doc
                     else:
@@ -1091,7 +1094,10 @@ you should check index code.""" % (index.name, ex), RuntimeWarning)
                     data['key'] = _uk
                     data['_id'] = _did
                     if with_doc:
-                        doc = self.get('id', doc_id, False)
+                        try:
+                            doc = self.get('id', doc_id, False)
+                        except (RecordDeleted, RecordNotFound):
+                            continue
                         data['doc'] = doc
                 yield data
 
