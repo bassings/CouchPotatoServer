@@ -25,7 +25,7 @@ def _make_notification(cls_path, cls_name):
     """Create a notification instance without triggering __init__."""
     import importlib
     with patch('couchpotato.core.event.addEvent'), \
-         patch('couchpotato.api.addApiView'), \
+         patch('couchpotato.api.addApiView', create=True), \
          patch('couchpotato.core._base.downloader.main.addApiView', create=True), \
          patch('couchpotato.core.notifications.base.addApiView', create=True):
         mod = importlib.import_module(cls_path)
