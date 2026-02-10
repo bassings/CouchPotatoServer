@@ -11,7 +11,6 @@ from urllib.request import getproxies
 
 import requests
 from requests.adapters import HTTPAdapter
-from urllib3 import Timeout
 from urllib3.exceptions import MaxRetryError
 from urllib3.util.retry import Retry
 
@@ -191,7 +190,7 @@ class HttpClient:
 
         Raises:
             Exception: If host is disabled and show_error=False.
-            IOError/MaxRetryError/Timeout: On connection failure.
+            IOError/MaxRetryError: On connection failure.
         """
         url = quote(ss(url), safe="%/:=&?~#+!$,;'@()*[]")
 
@@ -246,7 +245,7 @@ class HttpClient:
 
             with self._lock:
                 self.failed_request[host] = 0
-        except (OSError, MaxRetryError, Timeout):
+        except (OSError, MaxRetryError):
             if show_error:
                 log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
 

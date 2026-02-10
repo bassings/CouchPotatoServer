@@ -281,3 +281,27 @@ class TestRateLimitEventWait:
         t.start()
         client._wait_for_rate_limit('host', 'my_url')
         t.join(timeout=5)
+
+    def test_except_clause_no_typeerror(self):
+        """Verify except clause doesn't catch non-BaseException classes (regression).
+
+        Previously, urllib3.Timeout (a non-exception utility class) was in the
+        except tuple, causing TypeError on Python 3.10+.
+        """
+        import ast, inspect, textwrap
+        import couchpotato.core.http_client as mod
+        source = textwrap.dedent(inspect.getsource(mod.HttpClient.request))
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ExceptHandler) and node.type:
+                # Collect all exception names in except clauses
+                names = []
+                if isinstance(node.type, ast.Tuple):
+                    for elt in node.type.elts:
+                        if isinstance(elt, ast.Name):
+                            names.append(elt.id)
+                elif isinstance(node.type, ast.Name):
+                    names.append(node.type.id)
+                # urllib3.Timeout is NOT an exception class — must not appear
+                assert 'Timeout' not in names, \
+                    'except clause catches urllib3.Timeout which is not a BaseException subclass'
