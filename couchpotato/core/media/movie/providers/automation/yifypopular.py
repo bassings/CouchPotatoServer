@@ -1,4 +1,4 @@
-import HTMLParser
+from html.parser import HTMLParser as _HTMLParser
 from couchpotato import fireEvent
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media.movie.providers.automation.base import Automation
@@ -18,7 +18,7 @@ class YTSPopular(Automation):
         movies = []
         source = self.getHTMLData(self.url)
 
-        class MyHTMLParser(HTMLParser):
+        class MyHTMLParser(_HTMLParser):
             doparse = False
             dotitle = False
             doyear = False
