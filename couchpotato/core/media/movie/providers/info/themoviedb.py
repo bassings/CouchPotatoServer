@@ -3,6 +3,7 @@ import traceback
 import itertools
 from base64 import b64decode as bd
 
+from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import toUnicode, ss, tryUrlencode
 from couchpotato.core.helpers.variable import tryInt, splitString
@@ -36,6 +37,8 @@ class TheMovieDb(MovieProvider):
         addEvent('movie.info', self.getInfo, priority = 3)
         addEvent('movie.info_by_tmdb', self.getInfo)
         addEvent('app.load', self.config)
+
+        addApiView('movie.trailer', self.getTrailer)
 
     def config(self):
 
@@ -103,6 +106,44 @@ class TheMovieDb(MovieProvider):
                 return False
 
         return results
+
+    def getTrailer(self, identifier = None, **kwargs):
+        """Get YouTube trailer for a movie via TMDB videos endpoint."""
+        if not identifier:
+            return {'success': False}
+
+        # Try IMDB ID first (find TMDB ID)
+        tmdb_id = None
+        if identifier.startswith('tt'):
+            result = self.call('find/%s' % identifier, params={'external_source': 'imdb_id'})
+            if result and result.get('movie_results'):
+                tmdb_id = result['movie_results'][0].get('id')
+        else:
+            tmdb_id = identifier
+
+        if not tmdb_id:
+            return {'success': False}
+
+        videos = self.call('movie/%s/videos' % tmdb_id, return_key='results')
+        if not videos:
+            return {'success': False}
+
+        # Prefer official trailers, then teasers, then any video
+        for vtype in ['Trailer', 'Teaser', None]:
+            for v in videos:
+                if v.get('site') != 'YouTube':
+                    continue
+                if vtype and v.get('type') != vtype:
+                    continue
+                return {
+                    'success': True,
+                    'video_id': v['key'],
+                    'title': v.get('name', ''),
+                    'thumbnail': 'https://img.youtube.com/vi/%s/hqdefault.jpg' % v['key'],
+                    'url': 'https://www.youtube.com/watch?v=%s' % v['key']
+                }
+
+        return {'success': False}
 
     def getInfo(self, identifier = None, extended = True, **kwargs):
 
