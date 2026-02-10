@@ -144,28 +144,38 @@ class MediaParserMixin:
             return {}
 
         try:
-            p = enzyme.parse(filename)
-            vc = ('H264' if p.video[0].codec == 'AVC1'
-                  else 'x265' if p.video[0].codec == 'HEVC'
-                  else p.video[0].codec)
+            with open(filename, 'rb') as f:
+                p = enzyme.MKV(f)
+            info = p.info or object()
+            video_tracks = p.video_tracks or []
+            audio_tracks = p.audio_tracks or []
 
-            ac = p.audio[0].codec
-            try:
-                ac = self.audio_codec_map.get(p.audio[0].codec)
-            except Exception:
-                pass
+            if not video_tracks:
+                return {}
+
+            vt = video_tracks[0]
+            vc = ('H264' if getattr(vt, 'codec_id', '') == 'V_MPEG4/ISO/AVC'
+                  else 'x265' if getattr(vt, 'codec_id', '') == 'V_MPEGH/ISO/HEVC'
+                  else getattr(vt, 'codec_id', ''))
+
+            ac = ''
+            if audio_tracks:
+                at = audio_tracks[0]
+                ac = self.audio_codec_map.get(getattr(at, 'codec_id', ''), getattr(at, 'codec_id', ''))
 
             titles = []
             try:
-                if p.title and self.findYear(p.title):
-                    titles.append(ss(p.title))
+                title = getattr(info, 'title', None)
+                if title and self.findYear(title):
+                    titles.append(ss(title))
             except Exception:
                 log.error('Failed getting title from meta: %s', traceback.format_exc())
 
-            for video in p.video:
+            for vt2 in video_tracks:
                 try:
-                    if video.title and self.findYear(video.title):
-                        titles.append(ss(video.title))
+                    vname = getattr(vt2, 'name', None)
+                    if vname and self.findYear(vname):
+                        titles.append(ss(vname))
                 except Exception:
                     log.error('Failed getting title from meta: %s', traceback.format_exc())
 
@@ -173,14 +183,12 @@ class MediaParserMixin:
                 'titles': list(set(titles)),
                 'video': vc,
                 'audio': ac,
-                'resolution_width': tryInt(p.video[0].width),
-                'resolution_height': tryInt(p.video[0].height),
-                'audio_channels': p.audio[0].channels,
+                'resolution_width': tryInt(getattr(vt, 'width', 0)),
+                'resolution_height': tryInt(getattr(vt, 'height', 0)),
+                'audio_channels': getattr(audio_tracks[0], 'channels', 0) if audio_tracks else 0,
             }
-        except enzyme.exceptions.ParseError:
+        except enzyme.exceptions.ParserError:
             log.debug('Failed to parse meta for %s', filename)
-        except enzyme.exceptions.NoParserError:
-            log.debug('No parser found for %s', filename)
         except Exception:
             log.debug('Failed parsing %s', filename)
 
