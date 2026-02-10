@@ -565,6 +565,8 @@ class Release(Plugin):
                 pass
             except (ValueError, EOFError):
                 fireEvent('database.delete_corrupted', r.get('_id'), traceback_error = traceback.format_exc(0))
+            except Exception:
+                log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())
 
         releases = sorted(releases, key = lambda k: k.get('info', {}).get('score', 0), reverse = True)
 
