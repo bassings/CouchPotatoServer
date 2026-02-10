@@ -1,4 +1,5 @@
 import os.path
+import time
 import traceback
 
 from couchpotato import get_db
@@ -41,41 +42,102 @@ class FileManager(Plugin):
         repaired = self.repairPosters()
         return {'success': True, 'repaired': repaired}
 
+    def _posterExists(self, poster_path, cache_dir):
+        """Check if a poster file exists, accounting for stale path prefixes."""
+        if os.path.isfile(poster_path):
+            return True
+        # The DB may store paths with an old data_dir prefix. Check if the
+        # filename exists in the current cache directory instead.
+        basename = os.path.basename(poster_path)
+        return os.path.isfile(os.path.join(cache_dir, basename))
+
+    def _fixStalePosterPath(self, poster_path, cache_dir):
+        """Return the corrected path if the file exists in the current cache dir."""
+        if os.path.isfile(poster_path):
+            return poster_path
+        basename = os.path.basename(poster_path)
+        candidate = os.path.join(cache_dir, basename)
+        if os.path.isfile(candidate):
+            return candidate
+        return None
+
     def repairPosters(self):
-        """Check all movies for missing poster files and re-fetch them."""
+        """Check all movies for missing poster files and re-fetch them.
+
+        Fixes two issues:
+        1. Stale paths pointing to an old data_dir (updates the DB path)
+        2. Genuinely missing poster files (re-fetches from TMDB)
+        """
         log.info('Checking for missing poster files...')
         try:
             db = get_db()
-            repaired = 0
+            cache_dir = toUnicode(Env.get('cache_dir'))
+            path_fixes = 0
+            refetched = 0
 
             for media in db.all('media', with_doc = True):
                 doc = media['doc']
                 files = doc.get('files', {})
                 posters = files.get('image_poster', [])
 
-                if not posters or not any(os.path.isfile(p) for p in posters):
-                    # Missing poster, try to re-fetch
+                if not posters:
+                    # No poster at all, try to re-fetch from TMDB
                     identifier = doc.get('identifier') or doc.get('identifiers', {}).get('imdb')
                     if identifier:
-                        info = fireEvent('movie.info', identifier = identifier, merge = True) or {}
-                        images = info.get('images', {})
-                        poster_urls = images.get('poster', [])
+                        self._refetchPoster(db, doc, identifier)
+                        refetched += 1
+                        time.sleep(1)  # Be kind to TMDB rate limits
+                    continue
 
-                        for url in poster_urls:
-                            if url:
-                                file_path = fireEvent('file.download', url = url, single = True)
-                                if file_path:
-                                    doc.setdefault('files', {})['image_poster'] = [toUnicode(file_path)]
-                                    db.update(doc)
-                                    repaired += 1
-                                    log.info('Repaired poster for: %s', doc.get('title', identifier))
-                                    break
+                # Check if any poster path resolves to an existing file
+                if any(self._posterExists(p, cache_dir) for p in posters):
+                    # File exists but path may be stale, fix it
+                    new_posters = []
+                    changed = False
+                    for p in posters:
+                        fixed = self._fixStalePosterPath(p, cache_dir)
+                        if fixed and fixed != p:
+                            new_posters.append(toUnicode(fixed))
+                            changed = True
+                        else:
+                            new_posters.append(p)
+                    if changed:
+                        doc['files']['image_poster'] = new_posters
+                        db.update(doc)
+                        path_fixes += 1
+                        log.info('Fixed stale poster path for: %s', doc.get('title', '?'))
+                else:
+                    # File genuinely missing, re-fetch
+                    identifier = doc.get('identifier') or doc.get('identifiers', {}).get('imdb')
+                    if identifier:
+                        if self._refetchPoster(db, doc, identifier):
+                            refetched += 1
+                        time.sleep(1)  # Be kind to TMDB rate limits
 
-            log.info('Poster repair complete: %d posters fixed', repaired)
-            return repaired
+            log.info('Poster repair complete: %d path fixes, %d re-fetched from TMDB', path_fixes, refetched)
+            return path_fixes + refetched
         except Exception:
             log.error('Failed repairing posters: %s', traceback.format_exc())
             return 0
+
+    def _refetchPoster(self, db, doc, identifier):
+        """Re-fetch a poster from TMDB for the given media document."""
+        try:
+            info = fireEvent('movie.info', identifier = identifier, merge = True) or {}
+            images = info.get('images', {})
+            poster_urls = images.get('poster', [])
+
+            for url in poster_urls:
+                if url:
+                    file_path = fireEvent('file.download', url = url, single = True)
+                    if file_path:
+                        doc.setdefault('files', {})['image_poster'] = [toUnicode(file_path)]
+                        db.update(doc)
+                        log.info('Re-fetched poster for: %s', doc.get('title', identifier))
+                        return True
+        except Exception:
+            log.error('Failed re-fetching poster for %s: %s', identifier, traceback.format_exc())
+        return False
 
     def cleanup(self):
 
