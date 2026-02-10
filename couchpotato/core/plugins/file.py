@@ -91,8 +91,6 @@ class FileManager(Plugin):
 
                 # Check if any poster path resolves to an existing file
                 exists = any(self._posterExists(p, cache_dir) for p in posters)
-                if not exists:
-                    log.info('Missing poster for %s: %s', doc.get('title', '?'), posters)
                 if exists:
                     # File exists but path may be stale, fix it
                     new_posters = []
@@ -134,6 +132,12 @@ class FileManager(Plugin):
                       'ZjZiZDY4N2ZmYTYzY2QyODJiNmZmMmM2ODc3ZjI2Njk=']
 
         try:
+            # Clean up bytes-string identifiers from Python 2 era
+            if isinstance(identifier, bytes):
+                identifier = identifier.decode('utf-8')
+            elif isinstance(identifier, str) and identifier.startswith("b'") and identifier.endswith("'"):
+                identifier = identifier[2:-1]
+
             # Look up TMDB poster path via IMDB ID
             api_key = b64decode(random.choice(tmdb_keys)).decode('utf-8')
             resp = requests.get(
