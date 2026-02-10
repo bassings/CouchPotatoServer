@@ -115,7 +115,7 @@ class TheMovieDb(MovieProvider):
         # Try IMDB ID first (find TMDB ID)
         tmdb_id = None
         if identifier.startswith('tt'):
-            result = self.call('find/%s' % identifier, params={'external_source': 'imdb_id'})
+            result = self.request('find/%s' % identifier, params={'external_source': 'imdb_id'})
             if result and result.get('movie_results'):
                 tmdb_id = result['movie_results'][0].get('id')
         else:
@@ -124,7 +124,7 @@ class TheMovieDb(MovieProvider):
         if not tmdb_id:
             return {'success': False}
 
-        videos = self.call('movie/%s/videos' % tmdb_id, return_key='results')
+        videos = self.request('movie/%s/videos' % tmdb_id, return_key='results')
         if not videos:
             return {'success': False}
 
