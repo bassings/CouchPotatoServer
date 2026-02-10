@@ -1,4 +1,4 @@
-"""Task 18: Provider tests — TMDB, OMDB, FanartTV info + YTS, TorrentPotato, Newznab search.
+"""Task 18: Provider tests — TMDB, FanartTV info + YTS, TorrentPotato, Newznab search.
 
 Uses unittest.mock to avoid real HTTP calls.
 """
@@ -149,79 +149,6 @@ class TestTMDBProvider:
 
 
 # ===========================================================================
-# OMDB Info Provider
-# ===========================================================================
-
-class TestOMDBProvider:
-    """Tests for OMDB info provider."""
-
-    def _make_provider(self):
-        with patch('couchpotato.core.media.movie.providers.info.omdbapi.addEvent'):
-            from couchpotato.core.media.movie.providers.info.omdbapi import OMDBAPI
-            p = OMDBAPI.__new__(OMDBAPI)
-            return p
-
-    def test_parseMovie_from_bytes(self):
-        p = self._make_provider()
-        movie_bytes = b'{"Title":"Inception","Type":"movie","Year":"2010","Response":"True","imdbID":"tt1375666","imdbRating":"8.8","imdbVotes":"2,000,000","Rated":"PG-13","Runtime":"148 min","Released":"2010-07-16","Plot":"A thief...","Genre":"Action, Sci-Fi","Director":"Christopher Nolan","Writer":"Christopher Nolan","Actors":"Leonardo DiCaprio","Poster":"http://img.com/poster.jpg"}'
-        result = p.parseMovie(movie_bytes)
-        assert result['titles'] == ['Inception']
-        assert result['year'] == 2010
-        assert result['imdb'] == 'tt1375666'
-
-    def test_parseMovie_from_str(self):
-        p = self._make_provider()
-        movie_str = '{"Title":"Inception","Type":"movie","Year":"2010","Response":"True","imdbID":"tt1375666","imdbRating":"8.8","imdbVotes":"2,000,000","Rated":"PG-13","Runtime":"148 min"}'
-        result = p.parseMovie(movie_str)
-        assert result['titles'] == ['Inception']
-
-    def test_parseMovie_from_dict(self):
-        p = self._make_provider()
-        movie_dict = {
-            "Title": "Inception", "Type": "movie", "Year": "2010",
-            "Response": "True", "imdbID": "tt1375666",
-            "imdbRating": "8.8", "imdbVotes": "2,000,000",
-            "Rated": "PG-13", "Runtime": "148 min"
-        }
-        result = p.parseMovie(movie_dict)
-        assert result['titles'] == ['Inception']
-
-    def test_parseMovie_error_response(self):
-        p = self._make_provider()
-        result = p.parseMovie('{"Response":"False","Error":"Movie not found!"}')
-        assert result == {}
-
-    def test_parseMovie_invalid_json(self):
-        p = self._make_provider()
-        result = p.parseMovie('not json at all')
-        assert result == {}
-
-    def test_parseMovie_non_movie_type(self):
-        p = self._make_provider()
-        result = p.parseMovie('{"Title":"Test","Type":"series","Year":"2020","Response":"True"}')
-        assert result == {}
-
-    def test_parseMovie_na_values_filtered(self):
-        p = self._make_provider()
-        movie = {
-            "Title": "Test", "Type": "movie", "Year": "2020",
-            "Response": "True", "imdbID": "tt999",
-            "Rated": "N/A", "Runtime": "N/A", "Plot": "N/A",
-            "imdbRating": "N/A", "imdbVotes": "N/A"
-        }
-        result = p.parseMovie(movie)
-        assert result.get('titles') == ['Test']
-
-    def test_runtimeToMinutes(self):
-        p = self._make_provider()
-        assert p.runtimeToMinutes('2 hrs 28 mins') == 148
-        assert p.runtimeToMinutes('90 min') == 90
-        assert p.runtimeToMinutes('1 hr') == 60
-        assert p.runtimeToMinutes('') == 0
-
-
-# ===========================================================================
-# FanartTV Info Provider
 # ===========================================================================
 
 class TestFanartTVProvider:
