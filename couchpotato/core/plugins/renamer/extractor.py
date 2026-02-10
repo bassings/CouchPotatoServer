@@ -31,6 +31,9 @@ class ExtractorMixin:
             check_file_date = False
 
         if not files:
+            if not isinstance(folder, (str, bytes, os.PathLike)):
+                log.warning('extractFiles: folder is not a valid path type (%s), skipping', type(folder).__name__)
+                return []
             for root, folders, names in os.walk(folder):
                 files.extend([sp(os.path.join(root, name)) for name in names])
 

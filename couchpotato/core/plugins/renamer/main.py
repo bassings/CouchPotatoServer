@@ -118,6 +118,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # Extract if needed
         if self.conf('unrar', default=False):
             group_folder = group.get('parentdir') or group.get('dirname')
+            if isinstance(group_folder, dict):
+                log.warning('Group folder is a dict instead of a path, skipping extraction: %s', group_folder)
+                group_folder = None
+            if not group_folder or not isinstance(group_folder, str):
+                group_folder = None
             self.extractFiles(
                 folder=group_folder,
                 media_folder=media_folder,
