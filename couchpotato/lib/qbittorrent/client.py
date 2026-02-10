@@ -330,7 +330,7 @@ class QBittorrentClient(object):
             torrent_files = {}
             for i, f in enumerate(file_buffer):
                 torrent_files.update({'torrents%s' % i: f})
-            print torrent_files
+            print(torrent_files)
         else:
             torrent_files = {'torrents': file_buffer}
 

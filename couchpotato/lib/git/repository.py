@@ -60,7 +60,7 @@ class Repository(ref_container.RefContainer):
         return '.'
     def _logGitCommand(self, command, cwd):
         if self._loggingEnabled:
-            print >> sys.stderr, ">>", command
+            print(">>", command, file=sys.stderr)
     def enableLogging(self):
         self._loggingEnabled = True
     def disableLogging(self):
