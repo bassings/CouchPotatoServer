@@ -33,6 +33,8 @@ class Updater(Plugin):
 
         if Env.get('desktop'):
             self.updater = DesktopUpdater()
+        elif os.environ.get('CP_DOCKER') == '1' or os.path.isfile('/.dockerenv'):
+            self.updater = DockerUpdater()
         elif os.path.isdir(os.path.join(Env.get('app_dir'), '.git')):
             git_default = 'git'
             git_command = self.conf('git_command', default = git_default)
@@ -175,6 +177,9 @@ class BaseUpdater(Plugin):
     update_failed = False
     update_version = None
     last_check = 0
+
+    def getName(self):
+        return 'base'
 
     def doUpdate(self):
         pass
@@ -437,6 +442,80 @@ class SourceUpdater(BaseUpdater):
             log.error('Failed getting latest request from github: %s', traceback.format_exc())
 
         return {}
+
+
+class DockerUpdater(BaseUpdater):
+    """Update checker for Docker environments. Never mutates the container,
+    just checks GitHub Releases for newer versions and notifies the user."""
+
+    repo_user = 'bassings'
+    repo_name = 'CouchPotatoServer'
+    _check_interval = 3600  # Check at most once per hour
+
+    def getName(self):
+        return 'docker'
+
+    def _parseVersion(self, tag):
+        """Parse a version tag like 'v3.1.0' into a tuple of ints."""
+        tag = tag.lstrip('v')
+        try:
+            return tuple(int(x) for x in tag.split('.'))
+        except (ValueError, AttributeError):
+            return (0, 0, 0)
+
+    def getVersion(self):
+        if not self.version:
+            self.version = {
+                'repr': 'docker:(v%s)' % version.VERSION,
+                'hash': 'v%s' % version.VERSION,
+                'date': getattr(version, 'BUILD_DATE', 0),
+                'type': 'docker',
+                'branch': self.branch,
+            }
+        return self.version
+
+    def check(self):
+        if self.update_version:
+            return True
+
+        # Rate limit: once per hour
+        now = time.time()
+        if self.last_check and (now - self.last_check) < self._check_interval:
+            return self.update_version is not None
+
+        log.info('Checking GitHub Releases for newer Docker image version')
+        try:
+            url = 'https://api.github.com/repos/%s/%s/releases/latest' % (self.repo_user, self.repo_name)
+            data = self.getCache('github_releases', url = url)
+            if not data:
+                self.last_check = now
+                return False
+
+            release = json.loads(data)
+            latest_tag = release.get('tag_name', '')
+            current = self._parseVersion(version.VERSION)
+            latest = self._parseVersion(latest_tag)
+
+            if latest > current:
+                published = release.get('published_at', '')
+                release_date = int(time.mktime(parse(published).timetuple())) if published else 0
+                self.update_version = {
+                    'hash': latest_tag,
+                    'date': release_date,
+                    'changelog': release.get('html_url', ''),
+                    'docker_message': 'Version %s is available. Rebuild your Docker container to update.' % latest_tag,
+                }
+                log.info('Newer version available: %s (running v%s)', latest_tag, version.VERSION)
+        except Exception:
+            log.error('Failed checking GitHub Releases: %s', traceback.format_exc())
+
+        self.last_check = now
+        return self.update_version is not None
+
+    def doUpdate(self):
+        # Never mutate the container. Just inform the user.
+        log.info('Update your Docker container to get the latest version')
+        return False
 
 
 class DesktopUpdater(BaseUpdater):

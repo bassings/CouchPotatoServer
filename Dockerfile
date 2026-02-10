@@ -17,6 +17,7 @@ LABEL description="CouchPotato - Automatic Movie Downloader"
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    CP_DOCKER=1 \
     APP_DIR=/app \
     CONFIG_DIR=/config \
     DATA_DIR=/data
