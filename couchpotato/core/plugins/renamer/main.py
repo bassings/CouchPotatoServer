@@ -117,7 +117,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
         # Extract if needed
         if self.conf('unrar', default=False):
-            self.extractFiles(group)
+            group_folder = group.get('parentdir') or group.get('dirname')
+            self.extractFiles(
+                folder=group_folder,
+                media_folder=media_folder,
+            )
 
         # Build the destination path
         to_folder = media_folder or sp(self.conf('to'))
