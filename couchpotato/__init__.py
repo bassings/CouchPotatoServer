@@ -226,10 +226,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             if not real_path.startswith(real_cache + os.sep) and real_path != real_cache:
                 return JSONResponse(content={'success': False, 'error': 'Invalid filename'}, status_code=400)
 
-            if os.path.isfile(file_path):
-                return FileResponse(file_path)
+            if os.path.isfile(real_path):
+                return FileResponse(real_path)
             # Try with common extensions (URLs often omit the extension)
-            matches = [m for m in glob.glob(file_path + '.*')
+            matches = [os.path.realpath(m) for m in glob.glob(real_path + '.*')
                        if os.path.realpath(m).startswith(real_cache + os.sep)]
             if matches:
                 return FileResponse(matches[0])
