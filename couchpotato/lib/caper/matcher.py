@@ -14,7 +14,7 @@
 
 from caper.helpers import is_list_type, update_dict, delta_seconds
 from datetime import datetime
-from logr import Logr
+from caper.logr_shim import Logr
 import re
 
 

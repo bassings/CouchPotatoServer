@@ -15,7 +15,7 @@
 from caper import FragmentMatcher
 from caper.group import CaptureGroup
 from caper.result import CaperResult, CaperClosureNode, CaperRootNode
-from logr import Logr
+from caper.logr_shim import Logr
 
 
 class Parser(object):

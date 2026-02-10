@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import copy
-from logr import Logr
+from caper.logr_shim import Logr
 
 
 GROUP_MATCHES = ['identifier']

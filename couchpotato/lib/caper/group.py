@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from logr import Logr
+from caper.logr_shim import Logr
 from caper import CaperClosure, CaperFragment
 from caper.helpers import clean_dict
 from caper.result import CaperFragmentNode, CaperClosureNode

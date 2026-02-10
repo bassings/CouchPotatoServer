@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from caper.objects import CaptureMatch
-from logr import Logr
+from caper.logr_shim import Logr
 
 
 class CaptureStep(object):

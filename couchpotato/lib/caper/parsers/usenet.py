@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from logr import Logr
+from caper.logr_shim import Logr
 from caper import FragmentMatcher
 from caper.parsers.base import Parser
 
