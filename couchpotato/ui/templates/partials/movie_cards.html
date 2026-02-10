@@ -5,7 +5,7 @@
 {% set poster_url = info.get('images', {}).get('poster', [''])|first if info.get('images', {}).get('poster') else '' %}
 {% set poster_original = info.get('images', {}).get('poster_original', [''])|first if info.get('images', {}).get('poster_original') else '' %}
 {% set poster = poster_url or poster_original %}
-{% set status = movie.get('status', 'active') %}
+{% set status = movie.get('status', 'active')|to_str %}
 {% set profile = movie.get('profile', {}) %}
 {% set quality_label = profile.get('label', '') if profile else '' %}
 {% set releases = movie.get('releases', []) %}

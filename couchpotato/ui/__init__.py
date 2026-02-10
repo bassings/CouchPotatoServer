@@ -29,6 +29,15 @@ def _tojson(value):
 _jinja.filters['tojson'] = _tojson
 
 
+def _to_str(value):
+    """Convert bytes to str, pass through strings."""
+    if isinstance(value, bytes):
+        return value.decode('utf-8', errors='replace')
+    return str(value) if value is not None else ''
+
+_jinja.filters['to_str'] = _to_str
+
+
 def _ctx(extra=None):
     """Common template context."""
     api_key = Env.setting('api_key')
