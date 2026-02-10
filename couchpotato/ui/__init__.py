@@ -37,7 +37,7 @@ def _ctx(extra=None):
         'api_key': api_key,
         'api_base': '%sapi/%s' % (web_base, api_key),
         'web_base': web_base,
-        'new_base': '%snew/' % web_base,
+        'new_base': web_base,
     }
     if extra:
         ctx.update(extra)

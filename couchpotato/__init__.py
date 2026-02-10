@@ -174,10 +174,17 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         from fastapi.staticfiles import StaticFiles
         app.mount(web_base + 'static', StaticFiles(directory=static_dir), name='static')
 
-    # Mount new UI at /new/
+    # Mount new UI at root (default) and keep legacy /new/ path for compatibility
     from couchpotato.ui import create_router as create_ui_router
     ui_router = create_ui_router(require_auth)
+    app.include_router(ui_router, prefix=web_base.rstrip('/'))
+    # Also keep /new/ working for bookmarks
     app.include_router(ui_router, prefix=web_base.rstrip('/') + '/new')
+
+    # Robots.txt at root
+    @app.get(web_base + 'robots.txt')
+    async def robots_txt():
+        return Response(content='User-agent: * \nDisallow: /', media_type='text/plain')
 
     api_base = '%sapi/%s' % (web_base, api_key)
 
@@ -339,9 +346,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         response.delete_cookie('user')
         return response
 
-    # Catch-all web handler
-    @app.get(web_base + '{route:path}')
-    async def web_handler(route: str, request: Request, user=Depends(require_auth)):
+    # Classic UI catch-all (moved to /old/)
+    @app.get(web_base + 'old/{route:path}')
+    @app.get(web_base + 'old')
+    async def web_handler(route: str = '', request: Request = None, user=Depends(require_auth)):
         route = route.strip('/')
         if route in views:
             try:
@@ -355,14 +363,13 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 log.error("Failed doing web request '%s': %s", route, traceback.format_exc())
                 return JSONResponse({'success': False, 'error': 'Failed returning results'})
 
-        # Page not found - redirect to SPA
-        index_url = web_base
-        url = request.url.path[len(index_url):]
+        # Page not found - redirect to classic SPA
+        old_base = web_base + 'old/'
+        url = route
         if url.startswith('static/'):
-            # Let static file mount handle it (shouldn't reach here if mount works)
             return Response(content='Not found', status_code=404)
         elif url[:3] != 'api':
-            return RedirectResponse(url=index_url + '#' + url.lstrip('/'))
+            return RedirectResponse(url=old_base + '#' + url.lstrip('/'))
         else:
             if not Env.get('dev'):
                 time.sleep(0.1)
