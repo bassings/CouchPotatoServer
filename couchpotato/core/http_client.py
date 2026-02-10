@@ -10,8 +10,10 @@ from urllib.parse import quote, urlparse
 from urllib.request import getproxies
 
 import requests
+from requests.adapters import HTTPAdapter
 from urllib3 import Timeout
 from urllib3.exceptions import MaxRetryError
+from urllib3.util.retry import Retry
 
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.variable import isLocalIP
@@ -21,6 +23,46 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 DEFAULT_USER_AGENT = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.11; rv:45.0) Gecko/20100101 Firefox/45.0'
+DEFAULT_RETRY_TOTAL = 3
+DEFAULT_RETRY_BACKOFF = 0.5
+DEFAULT_POOL_CONNECTIONS = 10
+DEFAULT_POOL_MAXSIZE = 10
+
+
+def create_session(retry_total=DEFAULT_RETRY_TOTAL, retry_backoff=DEFAULT_RETRY_BACKOFF,
+                   pool_connections=DEFAULT_POOL_CONNECTIONS, pool_maxsize=DEFAULT_POOL_MAXSIZE):
+    """Create a requests.Session with retry strategy and connection pooling.
+
+    Args:
+        retry_total: Max number of retries per request.
+        retry_backoff: Exponential backoff factor between retries.
+        pool_connections: Number of connection pools to cache.
+        pool_maxsize: Max connections per pool.
+
+    Returns:
+        Configured requests.Session.
+    """
+    session = requests.Session()
+    session.max_redirects = 5
+
+    retry = Retry(
+        total=retry_total,
+        backoff_factor=retry_backoff,
+        status_forcelist=[500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "HEAD"],
+        raise_on_status=False,
+    )
+
+    adapter = HTTPAdapter(
+        max_retries=retry,
+        pool_connections=pool_connections,
+        pool_maxsize=pool_maxsize,
+    )
+
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+
+    return session
 DISABLE_DURATION = 900  # 15 minutes
 MAX_FAILURES_BEFORE_DISABLE = 5
 
@@ -37,6 +79,8 @@ class HttpClient:
         self.failed_request = {}
         self.failed_disabled = {}
         self._lock = threading.Lock()
+        self._rate_event = threading.Event()
+        self._rate_event.set()  # Initially open
         self._shutting_down = False
 
     def shutdown(self):
@@ -91,7 +135,7 @@ class HttpClient:
             log.debug('Failed logging failed requests for host %s: %s', host, traceback.format_exc())
 
     def _wait_for_rate_limit(self, host, url=''):
-        """Enforce per-host rate limiting."""
+        """Enforce per-host rate limiting using event-based waiting instead of busy-wait."""
         if self.time_between_calls == 0:
             return
 
@@ -107,20 +151,26 @@ class HttpClient:
                     is_front = self.last_use_queue.get(host, [None])[0] == url
 
                 if not is_front:
-                    time.sleep(0.1)
+                    # Wait on event instead of busy-polling; woken when a slot finishes
+                    self._rate_event.clear()
+                    self._rate_event.wait(timeout=0.5)
                     continue
 
                 if wait > 0:
                     log.debug('Waiting for rate limit, %d seconds', max(1, wait))
-                    time.sleep(min(wait, 30))
+                    self._rate_event.clear()
+                    self._rate_event.wait(timeout=min(wait, 30))
                 else:
                     with self._lock:
                         self.last_use_queue[host] = self.last_use_queue[host][1:]
                         self.last_use[host] = time.time()
+                    # Signal other waiters that a slot opened
+                    self._rate_event.set()
                     break
         except Exception:
             log.error('Failed handling waiting call: %s', traceback.format_exc())
-            time.sleep(self.time_between_calls)
+            self._rate_event.clear()
+            self._rate_event.wait(timeout=self.time_between_calls)
 
     def request(self, url, timeout=30, data=None, headers=None, files=None,
                 show_error=True, stream=False):

@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 import requests
 
-from couchpotato.core.http_client import HttpClient, DISABLE_DURATION, MAX_FAILURES_BEFORE_DISABLE
+from couchpotato.core.http_client import (
+    HttpClient, DISABLE_DURATION, MAX_FAILURES_BEFORE_DISABLE,
+    create_session, DEFAULT_RETRY_TOTAL, DEFAULT_POOL_CONNECTIONS, DEFAULT_POOL_MAXSIZE,
+)
 
 
 @pytest.fixture
@@ -190,3 +193,91 @@ class TestHttpClient:
             t.join()
 
         assert not errors
+
+
+class TestCreateSession:
+    """Tests for create_session with HTTPAdapter, retry, and connection pooling."""
+
+    def test_session_has_adapters_mounted(self):
+        session = create_session()
+        http_adapter = session.get_adapter('http://example.com')
+        https_adapter = session.get_adapter('https://example.com')
+        from requests.adapters import HTTPAdapter
+        assert isinstance(http_adapter, HTTPAdapter)
+        assert isinstance(https_adapter, HTTPAdapter)
+
+    def test_retry_config(self):
+        session = create_session(retry_total=5, retry_backoff=1.0)
+        adapter = session.get_adapter('https://example.com')
+        assert adapter.max_retries.total == 5
+        assert adapter.max_retries.backoff_factor == 1.0
+        assert 502 in adapter.max_retries.status_forcelist
+
+    def test_pool_sizing(self):
+        session = create_session(pool_connections=20, pool_maxsize=30)
+        adapter = session.get_adapter('https://example.com')
+        assert adapter._pool_connections == 20
+        assert adapter._pool_maxsize == 30
+
+    def test_default_values(self):
+        session = create_session()
+        adapter = session.get_adapter('https://example.com')
+        assert adapter.max_retries.total == DEFAULT_RETRY_TOTAL
+        assert adapter._pool_connections == DEFAULT_POOL_CONNECTIONS
+        assert adapter._pool_maxsize == DEFAULT_POOL_MAXSIZE
+
+    def test_max_redirects(self):
+        session = create_session()
+        assert session.max_redirects == 5
+
+
+class TestRateLimitEventWait:
+    """Tests for event-based rate limiting (no busy-wait)."""
+
+    def test_rate_event_exists(self):
+        client = HttpClient(time_between_calls=1)
+        assert hasattr(client, '_rate_event')
+        assert isinstance(client._rate_event, threading.Event)
+
+    def test_no_busy_wait_in_source(self):
+        import inspect
+        source = inspect.getsource(HttpClient._wait_for_rate_limit)
+        assert 'time.sleep(0.1)' not in source
+        assert '_rate_event' in source
+
+    def test_rate_limit_sequential(self, mock_env):
+        env, session, response = mock_env
+        client = HttpClient(time_between_calls=0.05)
+        client.request('http://example.com/a')
+        client.request('http://example.com/b')
+        assert session.request.call_count == 2
+
+    def test_rate_limit_concurrent(self, mock_env):
+        env, session, response = mock_env
+        client = HttpClient(time_between_calls=0.05)
+        results = []
+
+        def do_req(path):
+            client.request(f'http://example.com/{path}')
+            results.append(path)
+
+        threads = [threading.Thread(target=do_req, args=(f'p{i}',)) for i in range(3)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+        assert len(results) == 3
+
+    def test_shutdown_breaks_wait(self):
+        client = HttpClient(time_between_calls=100)
+        client.last_use_queue['host'] = ['other_url']
+        client.last_use['host'] = time.time()
+
+        def wait_then_shutdown():
+            time.sleep(0.1)
+            client.shutdown()
+
+        t = threading.Thread(target=wait_then_shutdown)
+        t.start()
+        client._wait_for_rate_limit('host', 'my_url')
+        t.join(timeout=5)

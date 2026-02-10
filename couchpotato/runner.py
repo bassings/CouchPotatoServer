@@ -102,8 +102,8 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     if not os.path.exists(python_cache):
         os.mkdir(python_cache)
 
-    session = requests.Session()
-    session.max_redirects = 5
+    from couchpotato.core.http_client import create_session
+    session = create_session()
 
     # Register environment settings
     Env.set('app_dir', sp(base_path))
