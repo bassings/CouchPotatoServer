@@ -26,6 +26,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         curl \
+        gosu \
         mediainfo \
     && rm -rf /var/lib/apt/lists/*
 
@@ -59,6 +60,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
 
 STOPSIGNAL SIGTERM
 
-USER couchpotato
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["python3", "CouchPotato.py", "--console_log", "--data_dir=/data", "--config_file=/config/settings.conf"]
