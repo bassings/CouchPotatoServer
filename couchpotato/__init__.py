@@ -151,6 +151,13 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     """Create and configure the FastAPI application."""
     app = FastAPI(docs_url=None, redoc_url=None)
 
+    # Rate limiting middleware
+    from couchpotato.core.rate_limit import RateLimitMiddleware
+    rate_limit_max = tryInt(Env.setting('rate_limit_max', default=60))
+    rate_limit_window = tryInt(Env.setting('rate_limit_window', default=60))
+    if rate_limit_max > 0:
+        app.add_middleware(RateLimitMiddleware, max_requests=rate_limit_max, window_seconds=rate_limit_window)
+
     # CORS middleware — same-origin by default, configurable via settings
     cors_origins = Env.setting('cors_origins', default='')
     allowed_origins = [o.strip() for o in cors_origins.split(',') if o.strip()] if cors_origins else []
@@ -169,9 +176,32 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     api_base = '%sapi/%s' % (web_base, api_key)
 
-    @app.get(api_base + '/{route:path}')
-    @app.post(api_base + '/{route:path}')
-    async def api_handler(route: str, request: Request):
+    # Header-based API auth route (X-Api-Key header, preferred over URL-based)
+    @app.get(web_base + 'api/{route:path}')
+    @app.post(web_base + 'api/{route:path}')
+    async def api_header_auth_handler(route: str, request: Request):
+        """API handler that checks X-Api-Key header first, then falls back to URL key."""
+        header_key = request.headers.get('x-api-key')
+
+        # Check if the route starts with the API key (URL-based auth)
+        if header_key:
+            if header_key != api_key:
+                return JSONResponse(content={'success': False, 'error': 'Invalid API key'}, status_code=401)
+            # Strip leading key from route if present (header takes priority)
+            if route.startswith(api_key + '/'):
+                route = route[len(api_key) + 1:]
+            elif route == api_key:
+                route = ''
+        elif route.startswith(api_key + '/'):
+            route = route[len(api_key) + 1:]
+        elif route == api_key:
+            route = ''
+        else:
+            return JSONResponse(content={'success': False, 'error': 'API key required'}, status_code=401)
+
+        return await _dispatch_api(route, request)
+
+    async def _dispatch_api(route: str, request: Request):
         route = route.strip('/')
         if not route:
             return RedirectResponse(url=web_base + 'docs/')
