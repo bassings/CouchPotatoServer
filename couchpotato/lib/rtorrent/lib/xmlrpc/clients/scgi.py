@@ -82,7 +82,7 @@
 # OF THIS SOFTWARE.
 
 import urllib
-import xmlrpclib
+import xmlrpc.client as xmlrpclib
 
 from rtorrent.lib.xmlrpc.transports.scgi import SCGITransport
 

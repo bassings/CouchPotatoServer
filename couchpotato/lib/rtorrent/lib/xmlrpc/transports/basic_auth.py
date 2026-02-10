@@ -22,7 +22,7 @@
 
 from base64 import b64encode
 import httplib
-import xmlrpclib
+import xmlrpc.client as xmlrpclib
 
 
 class BasicAuthTransport(xmlrpclib.Transport):

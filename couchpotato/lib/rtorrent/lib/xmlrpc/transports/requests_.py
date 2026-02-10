@@ -1,6 +1,6 @@
 import requests
 import requests.auth
-import xmlrpclib
+import xmlrpc.client as xmlrpclib
 
 
 class RequestsTransport(xmlrpclib.Transport):

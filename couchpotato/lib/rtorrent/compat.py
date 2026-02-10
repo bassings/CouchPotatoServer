@@ -18,13 +18,4 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-import sys
-
-
-def is_py3():
-    return sys.version_info[0] == 3
-
-if is_py3():
-    import xmlrpc.client as xmlrpclib
-else:
-    import xmlrpclib
+import xmlrpc.client as xmlrpclib
