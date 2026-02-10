@@ -1006,3 +1006,4 @@ input[type=text],textarea{-webkit-appearance:none}
 .directory_list .actions:last-child>.clear{left:20px;position:absolute;top:50%;-webkit-transform:translateY(-50%);transform:translateY(-50%);margin:0}
 .directory_list .actions:last-child>.cancel{opacity:.7}
 .directory_list .actions:last-child>.save{margin-right:0}
+.thumb_list .movie .poster:not(.type_image){display:flex;align-items:center;justify-content:center;position:absolute;height:100%;width:100%}.thumb_list .movie .poster:not(.type_image)::after{content:"No Poster Available";color:#999;font-size:11px;text-align:center}
