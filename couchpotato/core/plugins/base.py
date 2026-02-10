@@ -197,6 +197,24 @@ class Plugin:
                 except Exception:
                     log.error("Something went wrong when finishing the plugin function. Could not find the 'is_running' key")
 
+    # Class-level lock registry for cache stampede prevention
+    _cache_locks = {}
+    _cache_locks_lock = threading.Lock()
+
+    @classmethod
+    def _get_cache_lock(cls, key):
+        """Get or create a lock for a specific cache key to prevent stampedes."""
+        with cls._cache_locks_lock:
+            if key not in cls._cache_locks:
+                cls._cache_locks[key] = threading.Lock()
+            return cls._cache_locks[key]
+
+    @classmethod
+    def _remove_cache_lock(cls, key):
+        """Remove a cache lock after fetch is complete."""
+        with cls._cache_locks_lock:
+            cls._cache_locks.pop(key, None)
+
     def getCache(self, cache_key, url = None, **kwargs):
 
         use_cache = not len(kwargs.get('data', {})) > 0 and not kwargs.get('files')
@@ -209,23 +227,42 @@ class Plugin:
                 return cache
 
         if url:
-            try:
+            if use_cache:
+                # Stampede prevention: only one thread fetches for a given key
+                lock = self._get_cache_lock(cache_key_md5)
+                lock.acquire()
+                try:
+                    # Double-check: another thread may have populated the cache
+                    cache = Env.get('cache').get(cache_key_md5)
+                    if cache:
+                        return cache
+                    return self._fetch_and_cache(url, cache_key, cache_key_md5, use_cache, **kwargs)
+                finally:
+                    lock.release()
+                    self._remove_cache_lock(cache_key_md5)
+            else:
+                return self._fetch_and_cache(url, cache_key, None, use_cache, **kwargs)
 
-                cache_timeout = 300
-                if 'cache_timeout' in kwargs:
-                    cache_timeout = kwargs.get('cache_timeout')
-                    del kwargs['cache_timeout']
+        return '' if use_cache else None
 
-                data = self.urlopen(url, **kwargs)
-                if data and cache_timeout > 0 and use_cache:
-                    self.setCache(cache_key, data, timeout = cache_timeout)
-                return data
-            except Exception:
-                if not kwargs.get('show_error', True):
-                    raise
+    def _fetch_and_cache(self, url, cache_key, cache_key_md5, use_cache, **kwargs):
+        """Fetch URL data and optionally cache the result."""
+        try:
+            cache_timeout = 300
+            if 'cache_timeout' in kwargs:
+                cache_timeout = kwargs.get('cache_timeout')
+                del kwargs['cache_timeout']
 
-                log.debug('Failed getting cache: %s', traceback.format_exc(0))
-                return ''
+            data = self.urlopen(url, **kwargs)
+            if data and cache_timeout > 0 and use_cache:
+                self.setCache(cache_key, data, timeout = cache_timeout)
+            return data
+        except Exception:
+            if not kwargs.get('show_error', True):
+                raise
+
+            log.debug('Failed getting cache: %s', traceback.format_exc(0))
+            return ''
 
     def setCache(self, cache_key, value, timeout = 300):
         cache_key_md5 = md5(cache_key)
