@@ -1,0 +1,84 @@
+{% if charts %}
+{% for chart in charts %}
+{% if chart.list %}
+<div class="mb-8">
+  <h2 class="text-sm font-medium mb-3">{{ chart.name }}</h2>
+  <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+    {% for movie in chart.list %}
+    {% set info = movie.get('info', {}) %}
+    {% set title = movie.get('title', '') or info.get('titles', [''])[0] or info.get('original_title', '') or 'Unknown' %}
+    {% set year = info.get('year', 0) if info.get('year', 0) else '' %}
+    {% set poster = info.get('images', {}).get('poster', [''])[0] if info.get('images', {}).get('poster') else '' %}
+    {% set imdb = movie.get('identifiers', {}).get('imdb', '') or info.get('imdb', '') %}
+    {% set plot = info.get('plot', '') %}
+    <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group" data-imdb="{{ imdb }}">
+      <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
+        {% if poster %}
+        <img src="{{ poster }}" alt="{{ title }}" class="w-full h-full object-cover" loading="lazy"
+             onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        <div class="w-full h-full items-center justify-center text-cp-muted" style="display:none">
+          <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+        </div>
+        {% else %}
+        <div class="w-full h-full flex items-center justify-center text-cp-muted">
+          <svg class="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+        </div>
+        {% endif %}
+        <div class="absolute top-2 left-2">
+          <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning backdrop-blur-sm">chart</span>
+        </div>
+        <!-- Hover overlay -->
+        <div class="absolute inset-0 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2 p-3">
+          {% if plot %}
+          <p class="text-[10px] text-white/80 text-center line-clamp-4 mb-1">{{ plot[:200] }}</p>
+          {% endif %}
+          <div class="flex gap-2">
+            <button onclick="addChart('{{ imdb }}', this)" class="px-3 py-1.5 rounded-md text-[10px] font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"></path></svg>
+              Add
+            </button>
+            <button onclick="ignoreChart('{{ imdb }}', this)" class="px-3 py-1.5 rounded-md text-[10px] font-medium bg-white/10 text-cp-muted hover:text-cp-text hover:bg-white/20 transition-colors flex items-center gap-1">
+              <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+              Skip
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="p-2.5">
+        <h3 class="font-medium text-xs truncate">{{ title }}</h3>
+        <p class="text-cp-muted text-[10px] mt-0.5 font-light">{{ year }}</p>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+{% endfor %}
+{% else %}
+<div class="text-center text-cp-muted py-20">
+  <svg class="w-12 h-12 mx-auto mb-3 text-cp-border" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+    <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z"></path>
+  </svg>
+  <p class="text-xs font-light">No charts available</p>
+  <p class="text-[10px] text-cp-muted mt-1">Enable chart sources (IMDB, Blu-ray.com) in Settings to see suggestions here.</p>
+</div>
+{% endif %}
+
+<script>
+async function addChart(imdb, btn) {
+  if (!imdb) return;
+  const card = btn.closest('.poster-card');
+  try {
+    await fetch(CP.apiBase + '/movie.add/?identifier=' + imdb);
+    if (card) { card.style.opacity = '0.3'; card.style.pointerEvents = 'none'; }
+  } catch (e) { console.error('Failed to add', e); }
+}
+async function ignoreChart(imdb, btn) {
+  if (!imdb) return;
+  const card = btn.closest('.poster-card');
+  try {
+    await fetch(CP.apiBase + '/charts.ignore/?imdb=' + imdb);
+    if (card) card.remove();
+  } catch (e) { console.error('Failed to ignore', e); }
+}
+</script>

@@ -67,11 +67,23 @@ def create_router(require_auth) -> APIRouter:
         tmpl = _jinja.get_template('detail.html')
         return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id})))
 
+    @router.get('/suggestions/')
+    @router.get('/suggestions')
+    async def suggestions_page(request: Request, user=Depends(require_auth)):
+        tmpl = _jinja.get_template('suggestions.html')
+        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'suggestions'})))
+
     @router.get('/add/')
     @router.get('/add')
     async def add_movie(request: Request, user=Depends(require_auth)):
         tmpl = _jinja.get_template('add.html')
         return HTMLResponse(tmpl.render(**_ctx({'current_page': 'add'})))
+
+    @router.get('/settings/')
+    @router.get('/settings')
+    async def settings_page(request: Request, user=Depends(require_auth)):
+        tmpl = _jinja.get_template('settings.html')
+        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'settings'})))
 
     # --- htmx partials ---
 
@@ -123,6 +135,39 @@ def create_router(require_auth) -> APIRouter:
                 log.error('Failed to search movies')
         tmpl = _jinja.get_template('partials/search_results.html')
         return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
+
+    @router.get('/partial/suggestions')
+    async def partial_suggestions(request: Request, user=Depends(require_auth)):
+        """Return movie suggestions as HTML partial."""
+        from couchpotato.api import callApiHandler
+        movies = []
+        try:
+            result = callApiHandler('suggestion.view')
+            if isinstance(result, dict):
+                movies = result.get('movies', [])
+        except Exception:
+            log.error('Failed to fetch suggestions')
+        tmpl = _jinja.get_template('partials/suggestions.html')
+        return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
+
+    @router.get('/partial/charts')
+    async def partial_charts(request: Request, user=Depends(require_auth)):
+        """Return chart lists (IMDB, Blu-ray, etc.) as HTML partial."""
+        from couchpotato.api import callApiHandler
+        charts = []
+        try:
+            result = callApiHandler('charts.view')
+            if isinstance(result, dict):
+                charts = result.get('charts', [])
+        except Exception:
+            log.error('Failed to fetch charts')
+        tmpl = _jinja.get_template('partials/charts.html')
+        return HTMLResponse(tmpl.render(charts=charts, **_ctx()))
+
+    @router.get('/partial/settings/{section}')
+    async def partial_settings_section(section: str, request: Request, user=Depends(require_auth)):
+        """Return settings section as HTML partial (placeholder)."""
+        return HTMLResponse('<p class="text-xs text-cp-muted">Settings for %s will be loaded here. Use the Classic UI for full configuration.</p>' % section)
 
     @router.get('/partial/profiles')
     async def partial_profiles(request: Request, user=Depends(require_auth)):

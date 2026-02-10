@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Settings — CouchPotato{% endblock %}
+{% block content %}
+<div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
+    <button @click="saveSettings()" :disabled="saving"
+            class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
+      <span x-show="!saving">Save Changes</span>
+      <span x-show="saving">Saving...</span>
+    </button>
+  </div>
+
+  <!-- Tabs -->
+  <div class="flex gap-1 mb-6 text-[11px] border-b border-white/[0.06] pb-2">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button @click="activeTab = tab.id"
+              :class="activeTab === tab.id ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
+              class="px-3 py-1.5 rounded-md transition-colors" x-text="tab.label"></button>
+    </template>
+  </div>
+
+  <!-- Settings loaded via htmx -->
+  <div id="settings-content"
+       hx-get=""
+       hx-trigger="none"
+       class="space-y-4">
+
+    <!-- General -->
+    <div x-show="activeTab === 'general'" class="space-y-6">
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
+        <h2 class="text-sm font-medium mb-4">General</h2>
+        <div class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[11px] text-cp-muted mb-1.5">Username</label>
+              <input type="text" x-model="settings.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+            </div>
+            <div>
+              <label class="block text-[11px] text-cp-muted mb-1.5">Password</label>
+              <input type="password" x-model="settings.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+            </div>
+          </div>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-[11px] text-cp-muted mb-1.5">Port</label>
+              <input type="number" x-model="settings.port" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+            </div>
+            <div>
+              <label class="block text-[11px] text-cp-muted mb-1.5">API Key</label>
+              <input type="text" x-model="settings.api_key" readonly class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-muted focus:outline-none">
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="settings.dark_theme" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+              <span class="text-xs">Dark Theme</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" x-model="settings.launch_browser" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+              <span class="text-xs">Launch Browser on Start</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Downloaders -->
+    <div x-show="activeTab === 'downloaders'" class="space-y-6">
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
+        <h2 class="text-sm font-medium mb-4">Downloaders</h2>
+        <p class="text-xs text-cp-muted">Configure your download clients (SABnzbd, NZBGet, Transmission, Deluge, etc.)</p>
+        <div id="downloader-list" class="mt-4 space-y-3"
+             hx-get="{{ new_base }}partial/settings/downloaders"
+             hx-trigger="load"
+             hx-indicator="#loading-downloaders">
+        </div>
+        <div id="loading-downloaders" class="htmx-indicator text-center py-4">
+          <span class="text-xs text-cp-muted">Loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Searchers / Providers -->
+    <div x-show="activeTab === 'searchers'" class="space-y-6">
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
+        <h2 class="text-sm font-medium mb-4">Search Providers</h2>
+        <p class="text-xs text-cp-muted">Configure NZB and torrent search providers.</p>
+        <div id="provider-list" class="mt-4 space-y-3"
+             hx-get="{{ new_base }}partial/settings/providers"
+             hx-trigger="load"
+             hx-indicator="#loading-providers">
+        </div>
+        <div id="loading-providers" class="htmx-indicator text-center py-4">
+          <span class="text-xs text-cp-muted">Loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Notifications -->
+    <div x-show="activeTab === 'notifications'" class="space-y-6">
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
+        <h2 class="text-sm font-medium mb-4">Notifications</h2>
+        <p class="text-xs text-cp-muted">Configure notification services (Pushover, Telegram, Email, etc.)</p>
+        <div id="notification-list" class="mt-4 space-y-3"
+             hx-get="{{ new_base }}partial/settings/notifications"
+             hx-trigger="load"
+             hx-indicator="#loading-notifications">
+        </div>
+        <div id="loading-notifications" class="htmx-indicator text-center py-4">
+          <span class="text-xs text-cp-muted">Loading...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Renamer -->
+    <div x-show="activeTab === 'renamer'" class="space-y-6">
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
+        <h2 class="text-sm font-medium mb-4">Renamer</h2>
+        <p class="text-xs text-cp-muted">Configure how movies are renamed and organized after download.</p>
+        <div id="renamer-settings" class="mt-4 space-y-3"
+             hx-get="{{ new_base }}partial/settings/renamer"
+             hx-trigger="load"
+             hx-indicator="#loading-renamer">
+        </div>
+        <div id="loading-renamer" class="htmx-indicator text-center py-4">
+          <span class="text-xs text-cp-muted">Loading...</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Status bar -->
+  <div x-show="message" x-transition class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium"
+       :class="messageType === 'success' ? 'bg-cp-success/20 text-cp-success' : 'bg-cp-danger/20 text-cp-danger'"
+       x-text="message"></div>
+</div>
+
+<script>
+function settingsPanel() {
+  return {
+    activeTab: 'general',
+    saving: false,
+    message: '',
+    messageType: 'success',
+    tabs: [
+      { id: 'general', label: 'General' },
+      { id: 'downloaders', label: 'Downloaders' },
+      { id: 'searchers', label: 'Searchers' },
+      { id: 'notifications', label: 'Notifications' },
+      { id: 'renamer', label: 'Renamer' },
+    ],
+    settings: {
+      username: '',
+      password: '',
+      port: 5050,
+      api_key: '',
+      dark_theme: false,
+      launch_browser: true,
+    },
+    async init() {
+      try {
+        const resp = await fetch(CP.apiBase + '/settings/');
+        const data = await resp.json();
+        if (data && data.values && data.values.core) {
+          const core = data.values.core;
+          this.settings.username = core.username || '';
+          this.settings.port = core.port || 5050;
+          this.settings.api_key = core.api_key || '';
+          this.settings.dark_theme = core.dark_theme === true || core.dark_theme === 'True';
+          this.settings.launch_browser = core.launch_browser === true || core.launch_browser === 'True';
+        }
+      } catch (e) {
+        console.error('Failed to load settings', e);
+      }
+    },
+    async saveSettings() {
+      this.saving = true;
+      try {
+        const params = new URLSearchParams();
+        params.append('section', 'core');
+        params.append('name', 'username');
+        params.append('value', this.settings.username);
+        await fetch(CP.apiBase + '/settings.save/', { method: 'POST', body: params });
+
+        if (this.settings.password) {
+          const pp = new URLSearchParams();
+          pp.append('section', 'core');
+          pp.append('name', 'password');
+          pp.append('value', this.settings.password);
+          await fetch(CP.apiBase + '/settings.save/', { method: 'POST', body: pp });
+        }
+
+        this.message = 'Settings saved';
+        this.messageType = 'success';
+      } catch (e) {
+        this.message = 'Failed to save settings';
+        this.messageType = 'error';
+      }
+      this.saving = false;
+      setTimeout(() => this.message = '', 3000);
+    }
+  };
+}
+</script>
+{% endblock %}

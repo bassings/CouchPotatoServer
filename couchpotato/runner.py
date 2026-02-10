@@ -223,6 +223,15 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.info('Starting server on port %(port)s', config)
     except Exception:
         pass
+    # Clean orphaned movie entries (Py2 migration: dead IMDB IDs with no metadata)
+    try:
+        from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
+        n_orphans = clean_orphaned_movies(db)
+        if n_orphans:
+            log.info('Removed %d orphaned movie entries with no metadata.', n_orphans)
+    except Exception as e:
+        log.warning('Orphan cleanup skipped: %s', e)
+
     fireEventAsync('app.load')
 
     # Run with uvicorn

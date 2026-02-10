@@ -1,7 +1,7 @@
 {% for movie in movies %}
 {% set info = movie.get('info', {}) %}
-{% set title = info.get('titles', ['Unknown'])[0] %}
-{% set year = info.get('year', '') %}
+{% set title = info.get('titles', [''])[0] or info.get('original_title', '') or 'Unknown' %}
+{% set year = info.get('year', 0) if info.get('year', 0) else '' %}
 {% set poster_url = info.get('images', {}).get('poster', [''])|first if info.get('images', {}).get('poster') else '' %}
 {% set poster_original = info.get('images', {}).get('poster_original', [''])|first if info.get('images', {}).get('poster_original') else '' %}
 {% set poster = poster_url or poster_original %}

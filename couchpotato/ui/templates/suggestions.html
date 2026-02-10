@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Suggestions — CouchPotato{% endblock %}
+{% block content %}
+<div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'personal' }">
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+    <div>
+      <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
+      <p class="text-cp-muted text-xs mt-1 font-light">Discover new movies from your library suggestions and chart sources.</p>
+    </div>
+    <div class="flex gap-1 text-[10px]">
+      <button @click="activeTab = 'personal'" :class="activeTab === 'personal' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">For You</button>
+      <button @click="activeTab = 'charts'" :class="activeTab === 'charts' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Charts</button>
+    </div>
+  </div>
+
+  <!-- Personal suggestions -->
+  <div x-show="activeTab === 'personal'" id="suggestions-grid"
+       hx-get="{{ new_base }}partial/suggestions"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+
+  <!-- Charts (IMDB, Blu-ray, etc.) -->
+  <div x-show="activeTab === 'charts'" id="charts-grid"
+       hx-get="{{ new_base }}partial/charts"
+       hx-trigger="load"
+       hx-swap="innerHTML">
+  </div>
+</div>
+{% endblock %}
