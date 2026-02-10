@@ -18,7 +18,7 @@
 from . import subtitles
 from .language import Language
 from .utils import to_unicode
-import enzyme.core
+import enzyme
 import guessit
 import hashlib
 import logging
@@ -125,11 +125,11 @@ class Video(object):
         results = []
         video_infos = None
         try:
-            video_infos = enzyme.parse(self.path)
+            video_infos = enzyme.MKV(open(self.path, "rb"))
             logger.debug(u'Succeeded parsing %s with enzyme: %r' % (self.path, video_infos))
         except Exception:
             logger.debug(u'Failed parsing %s with enzyme' % self.path)
-        if isinstance(video_infos, enzyme.core.AVContainer):
+        if isinstance(video_infos, enzyme.MKV):
             results.extend([subtitles.EmbeddedSubtitle.from_enzyme(self.path, s) for s in video_infos.subtitles])
         # cannot use glob here because it chokes if there are any square
         # brackets inside the filename, so we have to use basic string

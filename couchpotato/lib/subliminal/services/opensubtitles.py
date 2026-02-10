@@ -24,7 +24,7 @@ from ..videos import Episode, Movie
 import gzip
 import logging
 import os.path
-import xmlrpclib
+import xmlrpc.client as xmlrpclib
 
 
 logger = logging.getLogger(__name__)
