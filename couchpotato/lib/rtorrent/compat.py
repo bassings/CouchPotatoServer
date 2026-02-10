@@ -20,5 +20,8 @@
 
 import sys
 
-
 import xmlrpc.client as xmlrpclib
+
+
+def is_py3():
+    return sys.version_info[0] >= 3
