@@ -105,7 +105,9 @@ class Suggestion(Plugin):
         """Extract IMDB IDs from library movies."""
         ids = set()
         for movie in movies:
-            info = movie.get('info', movie) if isinstance(movie, dict) else {}
+            if not isinstance(movie, dict):
+                continue
+            info = movie.get('info', movie)
             imdb = info.get('imdb') or movie.get('identifiers', {}).get('imdb', '')
             if imdb:
                 ids.add(imdb)
@@ -115,7 +117,9 @@ class Suggestion(Plugin):
         """Extract TMDB IDs from library movies."""
         ids = set()
         for movie in movies:
-            info = movie.get('info', movie) if isinstance(movie, dict) else {}
+            if not isinstance(movie, dict):
+                continue
+            info = movie.get('info', movie)
             tmdb = info.get('tmdb_id') or movie.get('identifiers', {}).get('tmdb')
             if tmdb:
                 ids.add(int(tmdb))
@@ -191,7 +195,9 @@ class Suggestion(Plugin):
         # Pick up to 5 random movies that have TMDB IDs
         seed_movies = []
         for movie in library_movies:
-            info = movie.get('info', movie) if isinstance(movie, dict) else {}
+            if not isinstance(movie, dict):
+                continue
+            info = movie.get('info', movie)
             tmdb_id = info.get('tmdb_id') or movie.get('identifiers', {}).get('tmdb')
             if tmdb_id:
                 seed_movies.append(int(tmdb_id))

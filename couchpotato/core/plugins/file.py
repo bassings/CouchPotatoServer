@@ -90,7 +90,10 @@ class FileManager(Plugin):
                     continue
 
                 # Check if any poster path resolves to an existing file
-                if any(self._posterExists(p, cache_dir) for p in posters):
+                exists = any(self._posterExists(p, cache_dir) for p in posters)
+                if not exists:
+                    log.info('Missing poster for %s: %s', doc.get('title', '?'), posters)
+                if exists:
                     # File exists but path may be stale, fix it
                     new_posters = []
                     changed = False
