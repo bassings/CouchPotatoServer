@@ -91,14 +91,37 @@ class Database:
         except Exception:
             log.error('Failed adding index %s: %s', index_name, traceback.format_exc())
 
+    @staticmethod
+    def _validate_document_id(doc_id):
+        """Validate document ID format. Returns error string or None."""
+        if not doc_id or not isinstance(doc_id, str):
+            return 'Document ID is required and must be a string'
+        doc_id = doc_id.strip()
+        if not doc_id:
+            return 'Document ID cannot be empty'
+        if len(doc_id) > 256:
+            return 'Document ID too long (max 256 characters)'
+        # Reject path traversal and shell injection
+        import re
+        if re.search(r'[;|&`$\\]|\.\./', doc_id):
+            return 'Document ID contains invalid characters'
+        return None
+
     def deleteDocument(self, **kwargs):
 
         db = self.getDB()
 
         try:
+            document_id = kwargs.get('_request').get_argument('id') if kwargs.get('_request') else kwargs.get('id')
 
-            document_id = kwargs.get('_request').get_argument('id')
-            document = db.get('id', document_id)
+            error = self._validate_document_id(document_id)
+            if error:
+                return {
+                    'success': False,
+                    'error': error
+                }
+
+            document = db.get('id', document_id.strip())
             db.delete(document)
 
             return {
@@ -110,13 +133,40 @@ class Database:
                 'error': traceback.format_exc()
             }
 
+    @staticmethod
+    def _validate_document_payload(raw_document):
+        """Validate document payload for update. Returns (doc, error)."""
+        if not raw_document or not isinstance(raw_document, str):
+            return None, 'Document payload is required'
+        if len(raw_document) > 1_000_000:  # 1MB limit
+            return None, 'Document payload too large (max 1MB)'
+        try:
+            document = json.loads(raw_document)
+        except (json.JSONDecodeError, ValueError):
+            return None, 'Invalid JSON in document payload'
+        if not isinstance(document, dict):
+            return None, 'Document must be a JSON object'
+        if '_id' not in document:
+            return None, 'Document must contain _id field'
+        id_error = Database._validate_document_id(document['_id'])
+        if id_error:
+            return None, id_error
+        return document, None
+
     def updateDocument(self, **kwargs):
 
         db = self.getDB()
 
         try:
+            raw_doc = kwargs.get('_request').get_argument('document') if kwargs.get('_request') else kwargs.get('document')
 
-            document = json.loads(kwargs.get('_request').get_argument('document'))
+            document, error = self._validate_document_payload(raw_doc)
+            if error:
+                return {
+                    'success': False,
+                    'error': error
+                }
+
             d = db.update(document)
             document.update(d)
 
