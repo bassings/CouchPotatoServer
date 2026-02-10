@@ -115,11 +115,31 @@ class IU_Storage(object):
 
     def data_from(self, data):
         try:
-            return marshal.loads(data)
+            result = marshal.loads(data)
         except (ValueError, TypeError):
             # Fall back to Python 2 marshal compat parser
             from CodernityDB.index import _compat_marshal_loads
-            return _compat_marshal_loads(data)
+            result = _compat_marshal_loads(data)
+        # Decode bytes values from Python 2 databases
+        return self._decode_bytes(result) if isinstance(result, dict) else result
+
+    @staticmethod
+    def _decode_bytes(obj):
+        """Recursively decode bytes to str in dicts/lists from Py2 marshal data."""
+        if isinstance(obj, dict):
+            return {
+                (k.decode('utf-8', errors='replace') if isinstance(k, bytes) else k):
+                IU_Storage._decode_bytes(v)
+                for k, v in obj.items()
+            }
+        elif isinstance(obj, list):
+            return [IU_Storage._decode_bytes(v) for v in obj]
+        elif isinstance(obj, bytes):
+            try:
+                return obj.decode('utf-8')
+            except (UnicodeDecodeError, AttributeError):
+                return obj
+        return obj
 
     def data_to(self, data):
         return marshal.dumps(data)

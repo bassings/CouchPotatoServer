@@ -94,11 +94,14 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         n_fixed = fix_index_files(db_path)
         if n_fixed:
             print("INFO: Migrated %d database index file(s) for Python 3 compatibility." % n_fixed)
-        db.open()
-        if n_fixed:
-            print("INFO: Rebuilding database indexes after migration (this may take a moment)...")
-            db.reindex()
-            print("INFO: Database reindex complete.")
+            # The index hash functions changed, so bucket files must be rebuilt.
+            # Delete all non-id bucket files; they'll be recreated during reindex.
+            # The id bucket needs special handling since reindex depends on it.
+            from couchpotato.core.migration.rebuild_buckets import rebuild_after_migration
+            rebuild_after_migration(db, db_path)
+            print("INFO: Database migration and reindex complete.")
+        else:
+            db.open()
         print("INFO: Opened existing database.")
 
     # Force creation of cachedir
