@@ -28,25 +28,51 @@ This is a **Python 3 fork** of the [archived original](https://github.com/CouchP
 
 ### Docker (recommended)
 
+Pre-built multi-arch images (amd64 + arm64) are published to GitHub Container Registry:
+
 ```bash
 docker run -d \
   --name couchpotato \
+  --restart unless-stopped \
   -p 5050:5050 \
-  -v /path/to/config:/config \
+  -v ./config:/config \
+  -v ./data:/data \
   -v /path/to/downloads:/downloads \
   -v /path/to/movies:/movies \
   -e TZ=Australia/Brisbane \
   -e PUID=1000 \
   -e PGID=1000 \
-  bassings/couchpotato:latest
+  ghcr.io/bassings/couchpotatoserver:latest
 ```
 
-Or with Docker Compose:
+Or with Docker Compose, create a `docker-compose.yml`:
+
+```yaml
+services:
+  couchpotato:
+    image: ghcr.io/bassings/couchpotatoserver:latest
+    container_name: couchpotato
+    restart: unless-stopped
+    ports:
+      - "5050:5050"
+    volumes:
+      - ./config:/config
+      - ./data:/data
+      - /path/to/downloads:/downloads
+      - /path/to/movies:/movies
+    environment:
+      - TZ=Australia/Brisbane
+      - PUID=1000
+      - PGID=1000
+```
+
+Then run:
 
 ```bash
-curl -O https://raw.githubusercontent.com/bassings/CouchPotatoServer/master/docker-compose.yml
 docker compose up -d
 ```
+
+Available tags: `latest`, `3`, `3.0`, `3.0.1`
 
 ### From Source
 
