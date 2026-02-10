@@ -339,8 +339,8 @@ config = [{
                 },
                 {
                     'name': 'dereferer',
-                    'default': 'http://www.nullrefer.com/?',
-                    'description': 'Derefer links to external sites, keep empty for no dereferer. Example: http://www.dereferer.org/? or http://www.nullrefer.com/?.',
+                    'default': '',
+                    'description': 'Prefix external links with a dereferer service URL. Leave empty to link directly (recommended).',
                 },
                 {
                     'name': 'use_proxy',
