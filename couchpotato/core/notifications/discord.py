@@ -70,7 +70,7 @@ config = [{
                     'name': 'avatar_url',
                     'description': 'URL to an image to use as the avatar for '
                                    'notifications.',
-                    'default': 'https://couchpota.to/media/images/couch.png',
+                    'default': 'https://raw.githubusercontent.com/bassings/CouchPotatoServer/master/couchpotato/static/images/logo.png',
                     'advanced': True,
                 },
                 {

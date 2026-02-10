@@ -16,7 +16,9 @@ class PutIO(DownloaderBase):
 
     protocol = ['torrent', 'torrent_magnet']
     downloading_list = []
-    oauth_authenticate = 'https://api.couchpota.to/authorize/putio/'
+    # Original OAuth proxy (api.couchpota.to) is dead. Put.io OAuth needs
+    # a direct integration with Put.io's API to work again.
+    oauth_authenticate = ''
 
     def __init__(self):
         addApiView('downloader.putio.getfrom', self.getFromPutio, docs = {

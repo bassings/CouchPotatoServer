@@ -38,8 +38,10 @@ class Trakt(Automation, TraktBase):
 
     urls = {
         'watchlist': 'sync/watchlist/movies?extended=full',
-        'oauth': 'https://api.couchpota.to/authorize/trakt/',
-        'refresh_token': 'https://api.couchpota.to/authorize/trakt_refresh/',
+        # Original OAuth proxy (api.couchpota.to) is dead. Trakt OAuth needs
+        # direct integration with Trakt's API to work again.
+        'oauth': '',
+        'refresh_token': '',
     }
 
     def __init__(self):

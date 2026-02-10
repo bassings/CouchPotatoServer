@@ -74,7 +74,7 @@ var UserscriptSettingTab = new Class({
 				new Element('div').adopt(
 					new Element('a.userscript.button', {
 						'text': 'Install extension',
-						'href': 'https://couchpota.to/extension/',
+						'href': 'https://github.com/bassings/CouchPotatoServer',
 						'target': '_blank'
 					}),
 					new Element('span.or[text=or]'),
@@ -101,7 +101,7 @@ var UserscriptSettingTab = new Class({
 					)
 				),
 				new Element('img', {
-					'src': 'https://couchpota.to/media/images/userscript.gif'
+					'src': ''
 				})
 			);
 
