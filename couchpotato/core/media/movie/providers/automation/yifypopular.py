@@ -11,7 +11,7 @@ autoload = 'YTSPopular'
 class YTSPopular(Automation):
 
     interval = 1800
-    url = 'https://yts.lt/'
+    url = 'https://yts.bz/'
 
     def getIMDBids(self):
 

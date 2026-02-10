@@ -40,6 +40,9 @@ COPY --from=builder /install /usr/local
 # Copy application code
 COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
 
+# Embed build date into version.py
+RUN python3 -c "import time; open('${APP_DIR}/version.py','a').write('\nBUILD_DATE = %d\n' % int(time.time()))"
+
 # Create directories
 RUN mkdir -p ${CONFIG_DIR} ${DATA_DIR} \
     && chown -R couchpotato:couchpotato ${CONFIG_DIR} ${DATA_DIR}

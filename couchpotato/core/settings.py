@@ -360,7 +360,7 @@ class Settings:
             propert = db.get('property', identifier)
             fireEvent('database.delete_corrupted', propert.get('_id'))
         except Exception:
-            self.log.debug('Property "%s" doesn\'t exist: %s' % (identifier, traceback.format_exc()))
+            self.log.debug('Property "%s" not yet stored, will use default' % identifier)
 
         return prop
 

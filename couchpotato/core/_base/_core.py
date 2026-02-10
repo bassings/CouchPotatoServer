@@ -224,10 +224,34 @@ class Core(Plugin):
         import version as version_module
         ver_str = getattr(version_module, 'VERSION', 'unknown')
         ver_branch = getattr(version_module, 'BRANCH', 'master')
+        ver_date = getattr(version_module, 'BUILD_DATE', None)
+
+        # Fall back to git commit date or version.py mtime
+        if ver_date is None:
+            try:
+                import subprocess
+                result = subprocess.run(
+                    ['git', 'log', '-1', '--format=%ct'],
+                    capture_output=True, text=True, timeout=5,
+                    cwd=os.path.dirname(os.path.abspath(__file__))
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    ver_date = int(result.stdout.strip())
+            except Exception:
+                pass
+
+        if ver_date is None:
+            try:
+                import version as vm
+                ver_date = int(os.path.getmtime(vm.__file__))
+            except Exception:
+                import time
+                ver_date = int(time.time())
+
         return {
             'version': {
                 'hash': 'v%s' % ver_str,
-                'date': None,
+                'date': ver_date,
                 'type': 'docker',
                 'branch': ver_branch,
             }
