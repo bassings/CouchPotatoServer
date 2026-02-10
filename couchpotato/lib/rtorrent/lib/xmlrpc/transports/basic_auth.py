@@ -21,7 +21,7 @@
 # WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 from base64 import b64encode
-import httplib
+import http.client as httplib
 import xmlrpc.client as xmlrpclib
 
 

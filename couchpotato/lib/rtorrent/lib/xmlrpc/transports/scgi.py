@@ -83,7 +83,7 @@
 
 
 import errno
-import httplib
+import http.client as httplib
 import re
 import socket
 import urllib
