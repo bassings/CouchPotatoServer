@@ -13,7 +13,9 @@ from starlette.responses import JSONResponse
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Rate limit requests per IP using a sliding window."""
 
-    def __init__(self, app, max_requests: int = 60, window_seconds: int = 60):
+    _LOCALHOST_IPS = ('127.0.0.1', '::1', 'localhost')
+
+    def __init__(self, app, max_requests: int = 600, window_seconds: int = 60):
         super().__init__(app)
         self.max_requests = max_requests
         self.window_seconds = window_seconds
@@ -39,10 +41,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             self._requests.setdefault(ip, []).append(now)
             return False
 
-    _EXEMPT_PREFIXES = ('/static/', '/favicon.ico')
+    _EXEMPT_PREFIXES = ('/static/', '/favicon.ico', '/file.cache/')
 
     async def dispatch(self, request, call_next):
-        # Don't rate-limit static assets or page navigations
+        # Don't rate-limit static assets, cached files, or page navigations
         path = request.url.path
         if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):
             return await call_next(request)
@@ -53,6 +55,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else '127.0.0.1'
+
+        # Exempt localhost requests (UI runs on same host)
+        if client_ip in self._LOCALHOST_IPS:
+            return await call_next(request)
         if self._is_rate_limited(client_ip):
             return JSONResponse(
                 content={'success': False, 'error': 'Rate limit exceeded'},
