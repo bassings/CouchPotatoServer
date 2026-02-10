@@ -84,8 +84,8 @@ class FileManager(Plugin):
                     # No poster at all, try to re-fetch from TMDB
                     identifier = doc.get('identifier') or doc.get('identifiers', {}).get('imdb')
                     if identifier:
-                        self._refetchPoster(db, doc, identifier)
-                        refetched += 1
+                        if self._refetchPoster(db, doc, identifier):
+                            refetched += 1
                         time.sleep(1)  # Be kind to TMDB rate limits
                     continue
 
@@ -122,19 +122,45 @@ class FileManager(Plugin):
 
     def _refetchPoster(self, db, doc, identifier):
         """Re-fetch a poster from TMDB for the given media document."""
-        try:
-            info = fireEvent('movie.info', identifier = identifier, merge = True) or {}
-            images = info.get('images', {})
-            poster_urls = images.get('poster', [])
+        import requests
+        import hashlib
+        import random
+        from base64 import b64decode
 
-            for url in poster_urls:
-                if url:
-                    file_path = fireEvent('file.download', url = url, single = True)
-                    if file_path:
-                        doc.setdefault('files', {})['image_poster'] = [toUnicode(file_path)]
-                        db.update(doc)
-                        log.info('Re-fetched poster for: %s', doc.get('title', identifier))
-                        return True
+        tmdb_keys = ['ZTIyNGZlNGYzZmVjNWY3YjU1NzA2NDFmN2NkM2RmM2E=',
+                      'ZjZiZDY4N2ZmYTYzY2QyODJiNmZmMmM2ODc3ZjI2Njk=']
+
+        try:
+            # Look up TMDB poster path via IMDB ID
+            api_key = b64decode(random.choice(tmdb_keys)).decode('utf-8')
+            resp = requests.get(
+                f'https://api.themoviedb.org/3/find/{identifier}',
+                params={'api_key': api_key, 'external_source': 'imdb_id'},
+                timeout=10
+            )
+            data = resp.json()
+            results = data.get('movie_results', [])
+            if not results:
+                return False
+
+            poster_path = results[0].get('poster_path')
+            if not poster_path:
+                return False
+
+            # Download the poster directly
+            poster_url = f'https://image.tmdb.org/t/p/w154{poster_path}'
+            cache_dir = toUnicode(Env.get('cache_dir'))
+            fname = hashlib.md5(poster_url.encode()).hexdigest() + '.jpg'
+            dest = os.path.join(cache_dir, fname)
+
+            img_resp = requests.get(poster_url, timeout=10)
+            if img_resp.status_code == 200 and len(img_resp.content) > 100:
+                with open(dest, 'wb') as f:
+                    f.write(img_resp.content)
+                doc.setdefault('files', {})['image_poster'] = [toUnicode(dest)]
+                db.update(doc)
+                log.info('Re-fetched poster for: %s (%d bytes)', doc.get('title', identifier), len(img_resp.content))
+                return True
         except Exception:
             log.error('Failed re-fetching poster for %s: %s', identifier, traceback.format_exc())
         return False
