@@ -94,7 +94,7 @@ var AboutSettingTab = new Class({
 						'text': 'This is a maintained fork of CouchPotato. '
 					}),
 					new Element('a', {
-						'href': 'https://github.com/scottboyd-ai/CouchPotatoServer',
+						'href': 'https://github.com/bassings/CouchPotatoServer',
 						'target': '_blank',
 						'text': 'View on GitHub'
 					}),
