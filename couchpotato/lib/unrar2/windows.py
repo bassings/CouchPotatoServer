@@ -29,7 +29,7 @@ import ctypes, ctypes.wintypes
 import os, os.path, re
 import time
 
-from rar_exceptions import *
+from .rar_exceptions import *
 
 ERAR_END_ARCHIVE = 10
 ERAR_NO_MEMORY = 11

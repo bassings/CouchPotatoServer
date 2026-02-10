@@ -97,7 +97,7 @@ class SCGITransport(xmlrpclib.Transport):
         for i in (0, 1):
             try:
                 return self.single_request(host, handler, request_body, verbose)
-            except socket.error, e:
+            except socket.error as e:
                 if i or e.errno not in (errno.ECONNRESET, errno.ECONNABORTED, errno.EPIPE):
                     raise
             except httplib.BadStatusLine: #close after we sent request

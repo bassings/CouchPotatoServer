@@ -30,9 +30,9 @@ import gc
 import os, os.path
 import time, re
 
-from rar_exceptions import *
+from .rar_exceptions import *
 from dateutil.parser import parse
-from rar_exceptions import *
+from .rar_exceptions import *
 
 
 class UnpackerNotInstalled(Exception): pass
