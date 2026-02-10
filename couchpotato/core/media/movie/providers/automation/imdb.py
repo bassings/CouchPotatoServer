@@ -2,7 +2,7 @@ import traceback
 import re
 
 from couchpotato import fireEvent
-from couchpotato.core.helpers.encoding import ss
+from couchpotato.core.helpers.encoding import ss, toUnicode
 from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import getImdb, splitString, tryInt
 from couchpotato.core.logger import CPLog
@@ -54,7 +54,7 @@ class IMDBBase(Automation, RSS):
             log.error('Failed fetching IMDB page "%s"', url)
             return []
 
-        html = ss(html)
+        html = toUnicode(html)
         imdbs = getImdb(html, multiple = True) if html else []
 
         if not imdbs:
@@ -157,15 +157,19 @@ class IMDBCharts(IMDBBase):
     def getChartList(self):
         # Nearly identical to 'getIMDBids', but we don't care about minimalMovie and return all movie data (not just id)
         movie_lists = []
-        max_items = 10
+        max_items = 40
 
         for name in self.charts:
             chart = self.charts[name].copy()
             cache_key = 'imdb.chart_display_%s' % name
 
-            if self.conf('chart_display_%s' % name):
+            chart_enabled = self.conf('chart_display_%s' % name)
+            log.info('Chart %s enabled=%s (type=%s)', name, chart_enabled, type(chart_enabled).__name__)
+
+            if chart_enabled:
 
                 cached = self.getCache(cache_key)
+                log.info('Chart %s cache: %s', name, 'HIT (%d items)' % len(cached) if cached else 'MISS')
                 if cached:
                     chart['list'] = cached
                     movie_lists.append(chart)
@@ -175,6 +179,7 @@ class IMDBCharts(IMDBBase):
 
                 chart['list'] = []
                 imdb_ids = self.getFromURL(url)
+                log.info('Chart %s: found %d IMDB IDs from %s', name, len(imdb_ids) if imdb_ids else 0, url)
 
                 try:
                     for imdb_id in imdb_ids[0:max_items]:

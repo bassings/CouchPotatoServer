@@ -99,8 +99,11 @@ class Release(Plugin):
                 fireEvent('database.delete_corrupted', release.get('key'), traceback_error = traceback.format_exc(0))
                 reindex += 1
             except RecordDeleted:
-                db.delete(doc)
-                log.debug('Deleted orphaned release: %s', doc)
+                try:
+                    db.delete(doc)
+                    log.debug('Deleted orphaned release: %s', doc)
+                except Exception:
+                    log.debug('Failed deleting orphaned release (corrupt index), skipping: %s', doc.get('_id', '?'))
                 reindex += 1
             except Exception:
                 log.debug('Failed cleaning up orphaned releases: %s', traceback.format_exc())
