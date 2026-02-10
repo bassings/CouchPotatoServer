@@ -131,12 +131,12 @@
 			$(self.block.header).addClass('header').adopt(
 				self.block.navigation = new BlockHeader(self, {}),
 				self.block.search = new BlockSearch(self, {}),
-				self.support = new Element('a.donate.icon-donate', {
-					'href': 'https://couchpota.to/support/',
+				self.support = new Element('a.icon-donate', {
+					'href': 'https://github.com/bassings/CouchPotatoServer',
 					'target': '_blank'
 				}).grab(
 					new Element('span', {
-						'text': 'Donate'
+						'text': 'GitHub'
 					})
 				),
 				self.block.more = new BlockMenu(self, {'button_class': 'icon-settings'})
@@ -417,37 +417,10 @@
 
 		return new Element('div.group_userscript').adopt(
 			new Element('div').adopt(
-				new Element('a.userscript.button', {
-					'text': 'Install extension',
-					'href': 'https://couchpota.to/extension/',
-					'target': '_blank'
-				}),
-				new Element('span.or[text=or]'),
-				new Element('span.bookmarklet').adopt(
-					new Element('a.button', {
-						'text': '+CouchPotato',
-						/* jshint ignore:start */
-						'href': "javascript:void((function(){var e=document.createElement('script');e.setAttribute('type','text/javascript');e.setAttribute('charset','UTF-8');e.setAttribute('src','" +
-						host_url + Api.createUrl('userscript.bookmark') +
-						"?host="+ encodeURI(host_url + Api.createUrl('userscript.get')+randomString()+'/') +
-						"&r='+Math.random()*99999999);document.body.appendChild(e)})());",
-						/* jshint ignore:end */
-						'target': '',
-						'events': {
-							'click': function(e){
-								(e).stop();
-								alert('Drag it to your bookmark ;)');
-							}
-						}
-					}),
-					new Element('span', {
-						'text': '⇽ Drag this to your bookmarks'
-					})
-				)
-			),
-			new Element('img', {
-				'src': 'https://couchpota.to/media/images/userscript.gif'
-			})
+				new Element('span', {
+					'text': 'Add movies via the search bar above, or use the automation sources below to import from watchlists.'
+				})
+			)
 		);
 	},
 

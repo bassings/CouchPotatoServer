@@ -31,8 +31,51 @@ class FileManager(Plugin):
         })
 
         fireEvent('schedule.interval', 'file.cleanup', self.cleanup, hours = 24)
+        fireEvent('schedule.interval', 'file.repair_posters', self.repairPosters, hours = 12)
+
+        addApiView('file.repair_posters', self.repairPostersView)
 
         addEvent('app.test', self.doSubfolderTest)
+
+    def repairPostersView(self, **kwargs):
+        repaired = self.repairPosters()
+        return {'success': True, 'repaired': repaired}
+
+    def repairPosters(self):
+        """Check all movies for missing poster files and re-fetch them."""
+        log.info('Checking for missing poster files...')
+        try:
+            db = get_db()
+            repaired = 0
+
+            for media in db.all('media', with_doc = True):
+                doc = media['doc']
+                files = doc.get('files', {})
+                posters = files.get('image_poster', [])
+
+                if not posters or not any(os.path.isfile(p) for p in posters):
+                    # Missing poster, try to re-fetch
+                    identifier = doc.get('identifier') or doc.get('identifiers', {}).get('imdb')
+                    if identifier:
+                        info = fireEvent('movie.info', identifier = identifier, merge = True) or {}
+                        images = info.get('images', {})
+                        poster_urls = images.get('poster', [])
+
+                        for url in poster_urls:
+                            if url:
+                                file_path = fireEvent('file.download', url = url, single = True)
+                                if file_path:
+                                    doc.setdefault('files', {})['image_poster'] = [toUnicode(file_path)]
+                                    db.update(doc)
+                                    repaired += 1
+                                    log.info('Repaired poster for: %s', doc.get('title', identifier))
+                                    break
+
+            log.info('Poster repair complete: %d posters fixed', repaired)
+            return repaired
+        except Exception:
+            log.error('Failed repairing posters: %s', traceback.format_exc())
+            return 0
 
     def cleanup(self):
 
