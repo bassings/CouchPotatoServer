@@ -175,8 +175,10 @@ class TestSabnzbd:
 
     def _make_sab(self):
         """Create SABnzbd instance with mocked dependencies."""
+        import importlib
+        api_module = importlib.import_module('couchpotato.api')
         with patch('couchpotato.core.event.addEvent'), \
-             patch('couchpotato.api.addApiView', create=True), \
+             patch.object(api_module, 'addApiView'), \
              patch('couchpotato.core._base.downloader.main.addApiView', create=True), \
              patch('couchpotato.core.notifications.base.addApiView', create=True):
             from couchpotato.core.downloaders.sabnzbd import Sabnzbd
