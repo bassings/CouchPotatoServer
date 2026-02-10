@@ -131,7 +131,7 @@
 			$(self.block.header).addClass('header').adopt(
 				self.block.navigation = new BlockHeader(self, {}),
 				self.block.search = new BlockSearch(self, {}),
-				self.support = new Element('a.icon-donate', {
+				self.support = new Element('a.donate', {
 					'href': 'https://github.com/bassings/CouchPotatoServer',
 					'target': '_blank'
 				}).grab(

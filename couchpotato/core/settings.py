@@ -19,8 +19,17 @@ _type_adapters = {
 }
 
 
+def _strip_bytes_literal(value: str) -> str:
+    """Strip Python 2 bytes literal prefix from config values (e.g. b'Horror' -> Horror)."""
+    if isinstance(value, str) and value.startswith("b'") and value.endswith("'"):
+        return value[2:-1]
+    return value
+
+
 def _coerce_value(value: Any, type_name: str) -> Any:
     """Use Pydantic's type coercion to convert config values."""
+    if isinstance(value, str):
+        value = _strip_bytes_literal(value)
     if type_name in _type_adapters:
         # Handle string booleans that ConfigParser doesn't handle
         if type_name in ('bool', 'enabler') and isinstance(value, str):
