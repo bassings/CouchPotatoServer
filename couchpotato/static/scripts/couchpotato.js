@@ -131,14 +131,6 @@
 			$(self.block.header).addClass('header').adopt(
 				self.block.navigation = new BlockHeader(self, {}),
 				self.block.search = new BlockSearch(self, {}),
-				self.support = new Element('a.donate', {
-					'href': 'https://github.com/bassings/CouchPotatoServer',
-					'target': '_blank'
-				}).grab(
-					new Element('span', {
-						'text': 'GitHub'
-					})
-				),
 				self.block.more = new BlockMenu(self, {'button_class': 'icon-settings'})
 			),
 			new Element('div.corner_background'),
