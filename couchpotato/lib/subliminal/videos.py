@@ -125,7 +125,8 @@ class Video(object):
         results = []
         video_infos = None
         try:
-            video_infos = enzyme.MKV(open(self.path, "rb"))
+            with open(self.path, 'rb') as f:
+                video_infos = enzyme.MKV(f)
             logger.debug(u'Succeeded parsing %s with enzyme: %r' % (self.path, video_infos))
         except Exception:
             logger.debug(u'Failed parsing %s with enzyme' % self.path)

@@ -22,6 +22,10 @@ class Automation(Plugin):
             'desc': 'Manually trigger the automation scan. Hangs until scan is complete. Useful for webhooks.',
             'return': {'type': 'object: {"success": true}'},
         })
+        addApiView('automation.list', self.listAutomationMovies, docs = {
+            'desc': 'List movies found by automation providers without adding them.',
+            'return': {'type': 'object: {"success": true, "movies": []}'},
+        })
         addEvent('setting.save.automation.hour.after', self.setCrons)
 
     def setCrons(self):
@@ -31,6 +35,14 @@ class Automation(Plugin):
         self.addMovies()
         return {
             'success': True
+        }
+
+    def listAutomationMovies(self, **kwargs):
+        """Return the list of movies found by automation providers without adding them."""
+        movies = fireEvent('automation.get_movies', merge = True)
+        return {
+            'success': True,
+            'movies': movies if movies else []
         }
 
     def addMovies(self):
