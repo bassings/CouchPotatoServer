@@ -68,20 +68,31 @@ class CodernityDBAdapter(DatabaseInterface):
 
     def all(self, index_name: str, limit: int = -1, offset: int = 0,
             with_doc: bool = False) -> Iterator[dict]:
-        return self._db.all(index_name, limit=limit, offset=offset,
-                           with_doc=with_doc)
+        return self._safe_iter(self._db.all(
+            index_name, limit=limit, offset=offset, with_doc=with_doc))
+
+    def _safe_iter(self, gen: Iterator[dict]) -> Iterator[dict]:
+        """Wrap a CodernityDB generator to skip deleted/missing records."""
+        while True:
+            try:
+                yield next(gen)
+            except StopIteration:
+                return
+            except (RecordDeleted, RecordNotFound):
+                continue
 
     def query(self, index_name: str, key: Any = None,
               start: Any = None, end: Any = None,
               limit: int = -1, offset: int = 0,
               with_doc: bool = False) -> Iterator[dict]:
         if key is not None:
-            return self._db.get_many(index_name, key=key, limit=limit,
-                                     offset=offset, with_doc=with_doc)
+            return self._safe_iter(self._db.get_many(
+                index_name, key=key, limit=limit,
+                offset=offset, with_doc=with_doc))
         elif start is not None or end is not None:
-            return self._db.get_many(index_name, start=start, end=end,
-                                     limit=limit, offset=offset,
-                                     with_doc=with_doc)
+            return self._safe_iter(self._db.get_many(
+                index_name, start=start, end=end,
+                limit=limit, offset=offset, with_doc=with_doc))
         else:
             return self.all(index_name, limit=limit, offset=offset,
                            with_doc=with_doc)
