@@ -1,6 +1,6 @@
 """Standalone HTTP client extracted from Plugin base class.
 
-Provides retry logic via tenacity, rate limiting per host, and proxy support.
+Provides rate limiting per host, and proxy support.
 """
 
 import threading
@@ -10,12 +10,6 @@ from urllib.parse import quote, urlparse
 from urllib.request import getproxies
 
 import requests
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-)
 from urllib3 import Timeout
 from urllib3.exceptions import MaxRetryError
 
