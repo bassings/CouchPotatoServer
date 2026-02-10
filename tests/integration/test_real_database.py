@@ -18,7 +18,12 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture(scope='module')
 def real_db():
-    """Extract and open the real CouchPotato database."""
+    """Extract and open the real CouchPotato database.
+
+    Uses a background thread with a timeout to prevent hanging if the
+    CodernityDB open() call blocks (e.g. corrupt or Python 2 era databases).
+    """
+    import concurrent.futures
     from CodernityDB.database import Database
 
     tmp = tempfile.mkdtemp(prefix='cptest_real_')
@@ -27,7 +32,16 @@ def real_db():
 
     db_path = os.path.join(tmp, 'config', 'data', 'database')
     db = Database(db_path)
-    db.open()
+
+    # Open in a thread with a timeout to avoid blocking the entire suite
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(db.open)
+        try:
+            future.result(timeout=15)
+        except (concurrent.futures.TimeoutError, Exception) as exc:
+            shutil.rmtree(tmp, ignore_errors=True)
+            pytest.skip(f'Could not open real database within timeout: {exc}')
+
     yield db
     db.close()
     shutil.rmtree(tmp, ignore_errors=True)

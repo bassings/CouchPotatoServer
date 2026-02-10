@@ -68,7 +68,7 @@ class TestHttpClient:
         with patch('couchpotato.core.http_client.isLocalIP', return_value=False):
             for _ in range(MAX_FAILURES_BEFORE_DISABLE + 1):
                 client._record_failure('remote.com')
-        assert 'remote.com' in client.failed_disabled
+        assert client.failed_disabled.get('remote.com') is not None  # exact key lookup, not substring
 
     def test_host_not_disabled_for_local(self, mock_env):
         env, session, response = mock_env

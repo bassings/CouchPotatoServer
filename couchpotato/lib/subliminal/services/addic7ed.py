@@ -104,7 +104,7 @@ class Addic7ed(ServiceBase):
         try:
             r = self.session.get(subtitle.link, headers={'Referer': subtitle.link, 'User-Agent': self.user_agent})
             soup = BeautifulSoup(r.content, self.required_features)
-            if soup.title is not None and u'Addic7ed.com' in soup.title.text.strip():
+            if soup.title is not None and soup.title.text.strip().startswith(u'Addic7ed.com'):  # noqa: codeql[py/incomplete-url-substring-sanitization]
                 raise DownloadFailedError('Download limit exceeded')
             with open(subtitle.path, 'wb') as f:
                 f.write(r.content)

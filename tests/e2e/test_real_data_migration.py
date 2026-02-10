@@ -46,11 +46,24 @@ def real_db_path():
 
 @pytest.fixture(scope='module')
 def migrated_db(real_db_path):
-    """Migrate the real database to SQLite."""
+    """Migrate the real database to SQLite (with timeout to prevent CI hangs)."""
     from couchpotato.core.db.migrate import migrate
+    import signal
+
+    def _timeout_handler(signum, frame):
+        raise TimeoutError("Migration exceeded 120s timeout")
+
     tmpdir = tempfile.mkdtemp(prefix='cp_e2e_sqlite_')
     dest_path = os.path.join(tmpdir, 'migrated')
-    count, types = migrate(real_db_path, dest_path, verbose=False)
+
+    old_handler = signal.signal(signal.SIGALRM, _timeout_handler)
+    signal.alarm(120)
+    try:
+        count, types = migrate(real_db_path, dest_path, verbose=False)
+    finally:
+        signal.alarm(0)
+        signal.signal(signal.SIGALRM, old_handler)
+
     yield dest_path, count, types
     shutil.rmtree(tmpdir, ignore_errors=True)
 

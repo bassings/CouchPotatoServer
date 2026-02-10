@@ -30,7 +30,18 @@ def read_codernity_docs(source_path: str) -> list[dict]:
     from CodernityDB.database import Database, RecordNotFound, RecordDeleted
 
     db = Database(source_path)
-    db.open()
+
+    # Open in a thread with a timeout to avoid blocking indefinitely
+    # on corrupt or Python 2 era databases that may hang under Python 3.
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(db.open)
+        try:
+            future.result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            raise RuntimeError(
+                f'CodernityDB open() timed out after 30s for {source_path}'
+            )
 
     docs = []
     for doc in db.all('id'):

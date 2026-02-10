@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import threading
+from urllib.parse import urlparse
 import pytest
 from unittest.mock import patch, MagicMock, call
 
@@ -82,7 +83,7 @@ class TestPushover:
 
         assert result is True
         post_data = mock_url.call_args[1]['data']
-        assert 'imdb.com' in post_data.get('url', '')
+        assert urlparse(post_data.get('url', '')).hostname == 'www.imdb.com'
 
     def test_notify_failure(self):
         p = self._make()
@@ -137,7 +138,7 @@ class TestTelegram:
 
         assert result is True
         text = mock_post.call_args[1]['data']['text']
-        assert 'imdb.com' in text
+        assert 'www.imdb.com' in [urlparse(word).hostname for word in text.split() if word.startswith('http')]
 
     def test_notify_failure(self):
         t = self._make()
@@ -197,7 +198,7 @@ class TestDiscord:
 
         assert result is True
         payload = json.loads(mock_post.call_args[1]['data'])
-        assert 'imdb.com' in payload['content']
+        assert 'www.imdb.com' in [urlparse(word).hostname for word in payload['content'].split() if word.startswith('http')]
 
     def test_notify_missing_webhook(self):
         d = self._make()
