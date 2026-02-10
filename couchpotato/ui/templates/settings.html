@@ -1,137 +1,166 @@
 {% extends "base.html" %}
 {% block title %}Settings — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()">
+<div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()" x-init="init()">
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
-    <button @click="saveSettings()" :disabled="saving"
-            class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
-      <span x-show="!saving">Save Changes</span>
-      <span x-show="saving">Saving...</span>
-    </button>
+    <div class="flex items-center gap-3">
+      <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
+        <input type="checkbox" x-model="showAdvanced" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+        Advanced
+      </label>
+      <button @click="saveAll()" :disabled="saving"
+              class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
+        <span x-show="!saving">Save Changes</span>
+        <span x-show="saving">Saving…</span>
+      </button>
+    </div>
   </div>
 
-  <!-- Tabs -->
-  <div class="flex gap-1 mb-6 text-[11px] border-b border-white/[0.06] pb-2">
-    <template x-for="tab in tabs" :key="tab.id">
-      <button @click="activeTab = tab.id"
-              :class="activeTab === tab.id ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
-              class="px-3 py-1.5 rounded-md transition-colors" x-text="tab.label"></button>
+  <!-- Loading state -->
+  <div x-show="loading" class="flex items-center justify-center py-20">
+    <div class="flex items-center gap-3 text-cp-muted text-sm">
+      <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      Loading settings…
+    </div>
+  </div>
+
+  <div x-show="!loading" x-cloak>
+    <!-- Tabs -->
+    <div class="flex flex-wrap gap-1 mb-6 text-[11px] border-b border-white/[0.06] pb-2">
+      <template x-for="tab in tabOrder" :key="tab">
+        <button @click="activeTab = tab"
+                :class="activeTab === tab ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
+                class="px-3 py-1.5 rounded-md transition-colors capitalize" x-text="tabLabels[tab] || tab"></button>
+      </template>
+    </div>
+
+    <!-- Tab contents -->
+    <template x-for="tab in tabOrder" :key="'content-'+tab">
+      <div x-show="activeTab === tab" class="space-y-4">
+        <template x-for="group in getTabGroups(tab)" :key="group.section + '.' + group.name">
+          <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden">
+            <!-- Group header -->
+            <div class="flex items-center justify-between px-5 py-3 border-b border-white/[0.04] cursor-pointer"
+                 @click="toggleGroup(group.section + '.' + group.name)">
+              <div class="flex items-center gap-3">
+                <!-- Enabler toggle if group has one -->
+                <template x-if="getEnabler(group)">
+                  <button @click.stop="toggleEnabler(group)"
+                          :class="isEnabled(group) ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                          class="relative w-8 h-4 rounded-full transition-colors shrink-0">
+                    <span :class="isEnabled(group) ? 'translate-x-4' : 'translate-x-0.5'"
+                          class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                  </button>
+                </template>
+                <div>
+                  <h3 class="text-sm font-medium" x-text="group.label || group.name"></h3>
+                  <p x-show="group.description" class="text-[11px] text-cp-muted mt-0.5" x-html="group.description"></p>
+                </div>
+              </div>
+              <svg class="w-4 h-4 text-cp-muted transition-transform" :class="isGroupOpen(group.section + '.' + group.name) ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+              </svg>
+            </div>
+
+            <!-- Group options -->
+            <div x-show="isGroupOpen(group.section + '.' + group.name)" x-collapse class="px-5 py-4">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+                <template x-for="opt in getGroupOptions(group)" :key="group.section + '.' + opt.name">
+                  <div x-show="opt.type !== 'enabler' && (showAdvanced || !opt.advanced)"
+                       :class="opt.type === 'directory' || opt.type === 'directories' ? 'sm:col-span-2' : ''">
+                    <label class="block text-[11px] text-cp-muted mb-1.5 capitalize" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
+
+                    <!-- Bool / checkbox -->
+                    <template x-if="opt.type === 'bool'">
+                      <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="checkbox"
+                               :checked="getVal(group.section, opt.name)"
+                               @change="setVal(group.section, opt.name, $event.target.checked)"
+                               class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+                        <span class="text-[11px] text-cp-muted" x-html="opt.description || ''"></span>
+                      </label>
+                    </template>
+
+                    <!-- Dropdown -->
+                    <template x-if="opt.type === 'dropdown'">
+                      <div>
+                        <select @change="setVal(group.section, opt.name, $event.target.value)"
+                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                          <template x-for="v in (opt.values || [])" :key="JSON.stringify(v)">
+                            <option :value="Array.isArray(v) ? v[1] : v"
+                                    :selected="String(getVal(group.section, opt.name)) === String(Array.isArray(v) ? v[1] : v)"
+                                    x-text="Array.isArray(v) ? v[0] : v"></option>
+                          </template>
+                        </select>
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                      </div>
+                    </template>
+
+                    <!-- Password -->
+                    <template x-if="opt.type === 'password'">
+                      <div>
+                        <input type="password"
+                               :value="getVal(group.section, opt.name)"
+                               @input="setVal(group.section, opt.name, $event.target.value)"
+                               class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                      </div>
+                    </template>
+
+                    <!-- Int -->
+                    <template x-if="opt.type === 'int' || opt.type === 'float'">
+                      <div>
+                        <input type="number" :step="opt.type === 'float' ? '0.1' : '1'"
+                               :value="getVal(group.section, opt.name)"
+                               @input="setVal(group.section, opt.name, $event.target.value)"
+                               class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                      </div>
+                    </template>
+
+                    <!-- Text (default) -->
+                    <template x-if="!opt.type || opt.type === 'string' || opt.type === 'directory' || opt.type === 'directories'">
+                      <div>
+                        <input type="text"
+                               :value="getVal(group.section, opt.name)"
+                               @input="setVal(group.section, opt.name, $event.target.value)"
+                               :placeholder="opt.default != null ? String(opt.default) : ''"
+                               class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Test button for providers -->
+              <template x-if="group.list">
+                <div class="mt-4 pt-3 border-t border-white/[0.04]">
+                  <button @click="testProvider(group)" :disabled="testing === group.section"
+                          class="px-3 py-1.5 rounded-md text-[11px] font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors disabled:opacity-50">
+                    <span x-show="testing !== group.section">Test <span x-text="group.label"></span></span>
+                    <span x-show="testing === group.section">Testing…</span>
+                  </button>
+                  <span x-show="testResult[group.section]"
+                        :class="testResult[group.section] === 'success' ? 'text-cp-success' : 'text-cp-danger'"
+                        class="ml-2 text-[11px]" x-text="testResult[group.section]"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
     </template>
   </div>
 
-  <!-- Settings loaded via htmx -->
-  <div id="settings-content"
-       hx-get=""
-       hx-trigger="none"
-       class="space-y-4">
-
-    <!-- General -->
-    <div x-show="activeTab === 'general'" class="space-y-6">
-      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
-        <h2 class="text-sm font-medium mb-4">General</h2>
-        <div class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-[11px] text-cp-muted mb-1.5">Username</label>
-              <input type="text" x-model="settings.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-            </div>
-            <div>
-              <label class="block text-[11px] text-cp-muted mb-1.5">Password</label>
-              <input type="password" x-model="settings.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-            </div>
-          </div>
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <label class="block text-[11px] text-cp-muted mb-1.5">Port</label>
-              <input type="number" x-model="settings.port" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-            </div>
-            <div>
-              <label class="block text-[11px] text-cp-muted mb-1.5">API Key</label>
-              <input type="text" x-model="settings.api_key" readonly class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-muted focus:outline-none">
-            </div>
-          </div>
-          <div class="flex items-center gap-3">
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" x-model="settings.dark_theme" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-              <span class="text-xs">Dark Theme</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-              <input type="checkbox" x-model="settings.launch_browser" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-              <span class="text-xs">Launch Browser on Start</span>
-            </label>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Downloaders -->
-    <div x-show="activeTab === 'downloaders'" class="space-y-6">
-      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
-        <h2 class="text-sm font-medium mb-4">Downloaders</h2>
-        <p class="text-xs text-cp-muted">Configure your download clients (SABnzbd, NZBGet, Transmission, Deluge, etc.)</p>
-        <div id="downloader-list" class="mt-4 space-y-3"
-             hx-get="{{ new_base }}partial/settings/downloaders"
-             hx-trigger="load"
-             hx-indicator="#loading-downloaders">
-        </div>
-        <div id="loading-downloaders" class="htmx-indicator text-center py-4">
-          <span class="text-xs text-cp-muted">Loading...</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Searchers / Providers -->
-    <div x-show="activeTab === 'searchers'" class="space-y-6">
-      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
-        <h2 class="text-sm font-medium mb-4">Search Providers</h2>
-        <p class="text-xs text-cp-muted">Configure NZB and torrent search providers.</p>
-        <div id="provider-list" class="mt-4 space-y-3"
-             hx-get="{{ new_base }}partial/settings/providers"
-             hx-trigger="load"
-             hx-indicator="#loading-providers">
-        </div>
-        <div id="loading-providers" class="htmx-indicator text-center py-4">
-          <span class="text-xs text-cp-muted">Loading...</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Notifications -->
-    <div x-show="activeTab === 'notifications'" class="space-y-6">
-      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
-        <h2 class="text-sm font-medium mb-4">Notifications</h2>
-        <p class="text-xs text-cp-muted">Configure notification services (Pushover, Telegram, Email, etc.)</p>
-        <div id="notification-list" class="mt-4 space-y-3"
-             hx-get="{{ new_base }}partial/settings/notifications"
-             hx-trigger="load"
-             hx-indicator="#loading-notifications">
-        </div>
-        <div id="loading-notifications" class="htmx-indicator text-center py-4">
-          <span class="text-xs text-cp-muted">Loading...</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Renamer -->
-    <div x-show="activeTab === 'renamer'" class="space-y-6">
-      <div class="bg-cp-card rounded-lg border border-white/[0.05] p-5">
-        <h2 class="text-sm font-medium mb-4">Renamer</h2>
-        <p class="text-xs text-cp-muted">Configure how movies are renamed and organized after download.</p>
-        <div id="renamer-settings" class="mt-4 space-y-3"
-             hx-get="{{ new_base }}partial/settings/renamer"
-             hx-trigger="load"
-             hx-indicator="#loading-renamer">
-        </div>
-        <div id="loading-renamer" class="htmx-indicator text-center py-4">
-          <span class="text-xs text-cp-muted">Loading...</span>
-        </div>
-      </div>
-    </div>
-
+  <!-- Restart banner -->
+  <div x-show="needsRestart" x-transition class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-lg bg-cp-warning/20 border border-cp-warning/30 backdrop-blur-sm">
+    <span class="text-xs text-cp-warning font-medium">Some changes need a restart to take effect.</span>
+    <button @click="restartApp()" class="px-3 py-1 rounded-md text-xs font-medium bg-cp-warning text-black hover:opacity-90 transition-opacity">Restart</button>
   </div>
 
-  <!-- Status bar -->
+  <!-- Toast -->
   <div x-show="message" x-transition class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium"
        :class="messageType === 'success' ? 'bg-cp-success/20 text-cp-success' : 'bg-cp-danger/20 text-cp-danger'"
        x-text="message"></div>
@@ -141,66 +170,192 @@
 function settingsPanel() {
   return {
     activeTab: 'general',
+    loading: true,
     saving: false,
+    showAdvanced: false,
+    needsRestart: false,
+    testing: null,
+    testResult: {},
     message: '',
     messageType: 'success',
-    tabs: [
-      { id: 'general', label: 'General' },
-      { id: 'downloaders', label: 'Downloaders' },
-      { id: 'searchers', label: 'Searchers' },
-      { id: 'notifications', label: 'Notifications' },
-      { id: 'renamer', label: 'Renamer' },
-    ],
-    settings: {
-      username: '',
-      password: '',
-      port: 5050,
-      api_key: '',
-      dark_theme: false,
-      launch_browser: true,
+    openGroups: {},
+    options: {},
+    values: {},
+    dirty: {},
+    tabOrder: [],
+    tabLabels: {
+      general: 'General',
+      downloaders: 'Downloaders',
+      searcher: 'Searchers',
+      renamer: 'Renamer',
+      notifications: 'Notifications',
+      automation: 'Automation',
+      manage: 'Library',
+      display: 'Display',
+      providers: 'Providers',
     },
+
     async init() {
       try {
         const resp = await fetch(CP.apiBase + '/settings/');
         const data = await resp.json();
-        if (data && data.values && data.values.core) {
-          const core = data.values.core;
-          this.settings.username = core.username || '';
-          this.settings.port = core.port || 5050;
-          this.settings.api_key = core.api_key || '';
-          this.settings.dark_theme = core.dark_theme === true || core.dark_theme === 'True';
-          this.settings.launch_browser = core.launch_browser === true || core.launch_browser === 'True';
+        this.options = data.options || {};
+        this.values = data.values || {};
+        // Determine tab order from the data
+        const tabSet = new Set();
+        const tabOrderMap = {};
+        for (const [sectionName, section] of Object.entries(this.options)) {
+          for (const grp of (section.groups || [])) {
+            const tab = grp.tab || 'general';
+            tabSet.add(tab);
+            if (section.order && (!tabOrderMap[tab] || section.order < tabOrderMap[tab])) {
+              tabOrderMap[tab] = section.order;
+            }
+          }
+        }
+        const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display', 'providers'];
+        this.tabOrder = preferred.filter(t => tabSet.has(t));
+        for (const t of tabSet) {
+          if (!this.tabOrder.includes(t)) this.tabOrder.push(t);
+        }
+        // Auto-open first group in each tab
+        for (const tab of this.tabOrder) {
+          const groups = this.getTabGroups(tab);
+          if (groups.length > 0 && groups.length <= 5) {
+            this.openGroups[groups[0].section + '.' + groups[0].name] = true;
+          }
         }
       } catch (e) {
         console.error('Failed to load settings', e);
+        this.toast('Failed to load settings', 'error');
       }
+      this.loading = false;
     },
-    async saveSettings() {
-      this.saving = true;
-      try {
-        const params = new URLSearchParams();
-        params.append('section', 'core');
-        params.append('name', 'username');
-        params.append('value', this.settings.username);
-        await fetch(CP.apiBase + '/settings.save/', { method: 'POST', body: params });
 
-        if (this.settings.password) {
-          const pp = new URLSearchParams();
-          pp.append('section', 'core');
-          pp.append('name', 'password');
-          pp.append('value', this.settings.password);
-          await fetch(CP.apiBase + '/settings.save/', { method: 'POST', body: pp });
+    getTabGroups(tab) {
+      const groups = [];
+      for (const [sectionName, section] of Object.entries(this.options)) {
+        for (const grp of (section.groups || [])) {
+          if ((grp.tab || 'general') === tab) {
+            groups.push({ ...grp, section: sectionName, order: section.order || 999 });
+          }
         }
+      }
+      groups.sort((a, b) => a.order - b.order);
+      return groups;
+    },
 
-        this.message = 'Settings saved';
-        this.messageType = 'success';
+    getGroupOptions(group) {
+      return (group.options || []).map(opt => ({
+        ...opt,
+        label: opt.label || null,
+      }));
+    },
+
+    getEnabler(group) {
+      return (group.options || []).find(o => o.type === 'enabler') || null;
+    },
+
+    isEnabled(group) {
+      const enabler = this.getEnabler(group);
+      if (!enabler) return true;
+      const val = this.getVal(group.section, enabler.name);
+      return val === true || val === 'True' || val === '1' || val === 1 || val === 'true';
+    },
+
+    toggleEnabler(group) {
+      const enabler = this.getEnabler(group);
+      if (!enabler) return;
+      this.setVal(group.section, enabler.name, !this.isEnabled(group));
+    },
+
+    getVal(section, name) {
+      // Check dirty first
+      const key = section + '.' + name;
+      if (key in this.dirty) return this.dirty[key];
+      if (this.values[section] && this.values[section][name] !== undefined) {
+        return this.values[section][name];
+      }
+      return '';
+    },
+
+    setVal(section, name, value) {
+      const key = section + '.' + name;
+      this.dirty[key] = value;
+    },
+
+    toggleGroup(key) {
+      this.openGroups[key] = !this.openGroups[key];
+    },
+
+    isGroupOpen(key) {
+      return !!this.openGroups[key];
+    },
+
+    async saveAll() {
+      this.saving = true;
+      let restartNeeded = false;
+      try {
+        const saves = Object.entries(this.dirty).map(([key, value]) => {
+          const [section, ...nameParts] = key.split('.');
+          const name = nameParts.join('.');
+          const params = new URLSearchParams();
+          params.append('section', section);
+          params.append('name', name);
+          params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
+          return fetch(CP.apiBase + '/settings.save/?' + params.toString());
+        });
+        await Promise.all(saves);
+        // Update local values
+        for (const [key, value] of Object.entries(this.dirty)) {
+          const [section, ...nameParts] = key.split('.');
+          const name = nameParts.join('.');
+          if (!this.values[section]) this.values[section] = {};
+          this.values[section][name] = value;
+        }
+        // Check if restart-sensitive settings changed
+        const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
+        restartNeeded = Object.keys(this.dirty).some(k => restartKeys.includes(k));
+        this.dirty = {};
+        this.toast('Settings saved!', 'success');
+        if (restartNeeded) this.needsRestart = true;
       } catch (e) {
-        this.message = 'Failed to save settings';
-        this.messageType = 'error';
+        this.toast('Failed to save: ' + e.message, 'error');
       }
       this.saving = false;
+    },
+
+    async testProvider(group) {
+      this.testing = group.section;
+      this.testResult[group.section] = '';
+      // Save first, then test
+      try {
+        // Some providers have a test endpoint
+        const resp = await fetch(CP.apiBase + '/' + group.section + '.test/');
+        const data = await resp.json();
+        this.testResult[group.section] = data.success ? 'success' : (data.message || 'failed');
+      } catch (e) {
+        this.testResult[group.section] = 'error';
+      }
+      this.testing = null;
+    },
+
+    async restartApp() {
+      try {
+        await fetch(CP.apiBase + '/app.restart/');
+        this.toast('Restarting…', 'success');
+        this.needsRestart = false;
+        setTimeout(() => location.reload(), 5000);
+      } catch (e) {
+        this.toast('Restart failed', 'error');
+      }
+    },
+
+    toast(msg, type) {
+      this.message = msg;
+      this.messageType = type;
       setTimeout(() => this.message = '', 3000);
-    }
+    },
   };
 }
 </script>

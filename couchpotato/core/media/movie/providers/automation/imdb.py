@@ -184,10 +184,6 @@ class IMDBCharts(IMDBBase):
                 try:
                     for imdb_id in imdb_ids[0:max_items]:
 
-                        is_movie = fireEvent('movie.is_movie', identifier = imdb_id, adding = False, single = True)
-                        if not is_movie:
-                            continue
-
                         info = self.getInfo(imdb_id)
                         chart['list'].append(info)
 

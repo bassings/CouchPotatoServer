@@ -2,7 +2,7 @@
 {% for chart in charts %}
 {% if chart.list %}
 <div class="mb-8">
-  <h2 class="text-sm font-medium mb-3">{{ chart.name }}</h2>
+  <h2 class="text-sm font-medium mb-3">{{ chart.label or chart.name }}</h2>
   <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
     {% for movie in chart.list %}
     {% set info = movie.get('info', {}) %}

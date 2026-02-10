@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block title %}Logs — CouchPotato{% endblock %}
+{% block content %}
+<div class="p-4 lg:p-8 fade-in" x-data="logsPanel()" x-init="init()">
+  <div class="flex items-center justify-between mb-6">
+    <h1 class="text-xl font-semibold tracking-tight">Logs</h1>
+    <div class="flex items-center gap-3">
+      <select x-model="logType" @change="refresh()"
+              class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+        <option value="all">All</option>
+        <option value="error">Errors</option>
+        <option value="warning">Warnings</option>
+        <option value="info">Info</option>
+        <option value="debug">Debug</option>
+      </select>
+      <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
+        <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()"
+               class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+        Auto-refresh
+      </label>
+      <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
+        Refresh
+      </button>
+      <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
+        Clear
+      </button>
+    </div>
+  </div>
+
+  <!-- Loading -->
+  <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20">
+    <div class="flex items-center gap-3 text-cp-muted text-sm">
+      <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      Loading logs…
+    </div>
+  </div>
+
+  <!-- Log entries -->
+  <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
+    <div class="max-h-[calc(100vh-200px)] overflow-y-auto" id="log-container">
+      <template x-if="logs.length === 0 && !loading">
+        <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>
+      </template>
+      <template x-for="(entry, idx) in logs" :key="idx">
+        <div class="px-4 py-1.5 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+             :class="{
+               'text-cp-danger bg-cp-danger/[0.03]': entry.type === 'ERROR',
+               'text-cp-warning bg-cp-warning/[0.03]': entry.type === 'WARNING',
+               'text-cp-text': entry.type === 'INFO',
+               'text-cp-muted': entry.type === 'DEBUG',
+             }">
+          <span class="text-cp-muted/50 select-none" x-text="entry.time"></span>
+          <span class="inline-block w-14 text-center font-medium"
+                :class="{
+                  'text-cp-danger': entry.type === 'ERROR',
+                  'text-cp-warning': entry.type === 'WARNING',
+                  'text-cp-accent': entry.type === 'INFO',
+                  'text-cp-muted': entry.type === 'DEBUG',
+                }" x-text="entry.type"></span>
+          <span class="text-cp-muted/70" x-text="'[' + entry.source + ']'"></span>
+          <span x-text="entry.message"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>
+
+<script>
+function logsPanel() {
+  return {
+    logs: [],
+    loading: true,
+    logType: 'all',
+    autoRefresh: true,
+    refreshTimer: null,
+
+    async init() {
+      await this.refresh();
+      if (this.autoRefresh) this.startAutoRefresh();
+    },
+
+    async refresh() {
+      this.loading = true;
+      try {
+        const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
+        const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
+        const data = await resp.json();
+        if (data.success !== false) {
+          this.logs = this.parseLogs(data.log || data.lines || []);
+        }
+      } catch (e) {
+        console.error('Failed to load logs', e);
+      }
+      this.loading = false;
+      // Scroll to bottom
+      this.$nextTick(() => {
+        const el = document.getElementById('log-container');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    parseLogs(lines) {
+      if (!Array.isArray(lines)) return [];
+      return lines.map(line => {
+        if (typeof line === 'object' && line.time) {
+          // API returns {time, type, message} where message includes [source]
+          const msg = line.message || '';
+          const srcMatch = msg.match(/^\[([^\]]*)\]\s*(.*)/);
+          return {
+            time: line.time,
+            type: (line.type || 'INFO').toUpperCase(),
+            source: srcMatch ? srcMatch[1].trim() : '',
+            message: srcMatch ? srcMatch[2] : msg,
+          };
+        }
+        if (typeof line !== 'string') return { time: '', type: 'INFO', source: '', message: String(line) };
+        const m = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(ERROR|WARNING|INFO|DEBUG)\s+\[([^\]]*)\]\s*(.*)$/);
+        if (m) return { time: m[1], type: m[2], source: m[3].trim(), message: m[4] };
+        const levelMatch = line.match(/\b(ERROR|WARNING|INFO|DEBUG)\b/);
+        return { time: '', type: levelMatch ? levelMatch[1] : 'INFO', source: '', message: line };
+      });
+    },
+
+    async clearLogs() {
+      try {
+        await fetch(CP.apiBase + '/logging.clear/');
+        this.logs = [];
+      } catch (e) {
+        console.error('Failed to clear logs');
+      }
+    },
+
+    startAutoRefresh() {
+      this.stopAutoRefresh();
+      this.refreshTimer = setInterval(() => this.refresh(), 10000);
+    },
+
+    stopAutoRefresh() {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    },
+
+    toggleAutoRefresh() {
+      if (this.autoRefresh) {
+        this.startAutoRefresh();
+      } else {
+        this.stopAutoRefresh();
+      }
+    },
+  };
+}
+</script>
+{% endblock %}
