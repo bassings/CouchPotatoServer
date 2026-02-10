@@ -54,7 +54,7 @@ class FolderScannerMixin:
             try:
                 files = []
                 for root, dirs, walk_files in os.walk(folder, followlinks=True):
-                    files.extend([sp(os.path.join(sp(root), ss(filename))) for filename in walk_files])
+                    files.extend([sp(os.path.join(sp(root), sp(filename))) for filename in walk_files])
                     if self.shuttingDown():
                         break
             except Exception:
@@ -272,7 +272,7 @@ class FolderScannerMixin:
                 break
 
             for file_type in group['files']:
-                if file_type is not 'leftover':
+                if file_type != 'leftover':
                     group['files']['leftover'] -= set(group['files'][file_type])
                     group['files'][file_type] = list(group['files'][file_type])
             group['files']['leftover'] = list(group['files']['leftover'])
