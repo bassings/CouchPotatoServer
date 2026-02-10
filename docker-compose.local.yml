@@ -3,6 +3,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      args:
+        - CP_VERSION=dev
     container_name: couchpotato-dev
     environment:
       - TZ=Australia/Brisbane

@@ -42,8 +42,9 @@ COPY --from=builder /install /usr/local
 # Copy application code
 COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
 
-# Embed build date into version.py
-RUN python3 -c "import time; open('${APP_DIR}/version.py','a').write('\nBUILD_DATE = %d\n' % int(time.time()))"
+# Embed version and build date into version.py
+ARG CP_VERSION=dev
+RUN python3 -c "import time; f=open('${APP_DIR}/version.py','w'); f.write('VERSION = \'%s\'\nBRANCH = \'master\'\nBUILD_DATE = %d\n' % ('${CP_VERSION}'.lstrip('v'), int(time.time()))); f.close()"
 
 # Create directories
 RUN mkdir -p ${CONFIG_DIR} ${DATA_DIR} \
