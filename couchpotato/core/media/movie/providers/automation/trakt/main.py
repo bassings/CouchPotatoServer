@@ -15,7 +15,7 @@ log = CPLog(__name__)
 
 class TraktBase(Provider):
     """Base class for Trakt API v2 integration with direct OAuth device code flow.
-    
+
     Users must create their own Trakt application at https://trakt.tv/oauth/applications
     and enter their client_id and client_secret in the settings.
     """
@@ -57,7 +57,7 @@ class TraktBase(Provider):
 
 class Trakt(Automation, TraktBase):
     """Trakt watchlist automation with direct OAuth 2.0 device code authentication.
-    
+
     This implementation uses the OAuth device code flow which is ideal for server
     applications. Users authenticate by:
     1. Creating a Trakt app at https://trakt.tv/oauth/applications
@@ -170,7 +170,7 @@ class Trakt(Automation, TraktBase):
 
     def getAuthorizationUrl(self, **kwargs):
         """Legacy endpoint - redirect to device code flow instructions.
-        
+
         The old proxy-based OAuth redirect is dead. We now use device code flow
         which doesn't require a redirect URL.
         """
@@ -182,7 +182,7 @@ class Trakt(Automation, TraktBase):
 
     def startDeviceAuth(self, **kwargs):
         """Start the device code authorization flow.
-        
+
         Returns a user_code and verification_url. The user must visit the URL
         and enter the code to authorize CouchPotato.
         """
@@ -233,7 +233,7 @@ class Trakt(Automation, TraktBase):
 
     def pollForToken(self, **kwargs):
         """Poll Trakt to check if the user has authorized the device code.
-        
+
         Returns success when the user completes authorization, or pending/error status.
         """
         client_id = self.get_client_id()
@@ -334,7 +334,7 @@ class Trakt(Automation, TraktBase):
 
     def getCredentials(self, **kwargs):
         """Legacy callback endpoint for proxy-based OAuth (no longer used).
-        
+
         Kept for backwards compatibility in case old tokens need to be handled.
         """
         try:

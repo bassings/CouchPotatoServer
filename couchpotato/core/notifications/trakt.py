@@ -10,7 +10,7 @@ autoload = 'Trakt'
 
 class Trakt(Notification, TraktBase):
     """Trakt notification provider - adds movies to your collection and removes from watchlist.
-    
+
     Uses the OAuth credentials configured in the Trakt automation settings.
     """
 
@@ -28,14 +28,14 @@ class Trakt(Notification, TraktBase):
         # These settings are shared with the automation module
         shared_settings = ['automation_client_id', 'automation_client_secret', 
                           'automation_oauth_token', 'automation_oauth_refresh']
-        
+
         if attr in shared_settings:
             # Read from the automation config section
             from couchpotato.environment import Env
             value = Env.setting(attr, 'trakt_automation')
             return value
-        
-        return super(Trakt, self).conf(attr, *args, **kwargs)
+
+        return super().conf(attr, *args, **kwargs)
 
     def notify(self, message='', data=None, listener=None):
         if not data:
