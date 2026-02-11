@@ -99,11 +99,19 @@ def flattenList(l):
 
 
 def md5(text):
-    return hashlib.md5(ss(text)).hexdigest()
+    # MD5 used for legacy compatibility (cache keys, existing password hashes).
+    # Not used for new security-sensitive operations.
+    return hashlib.md5(ss(text), usedforsecurity=False).hexdigest()
 
 
 def sha1(text):
-    return hashlib.sha1(text).hexdigest()
+    # SHA1 used for legacy compatibility only, not for security-sensitive hashing.
+    return hashlib.sha1(text, usedforsecurity=False).hexdigest()
+
+
+def sha256(text):
+    """SHA-256 hash for security-sensitive operations."""
+    return hashlib.sha256(ss(text)).hexdigest()
 
 
 def isLocalIP(ip):

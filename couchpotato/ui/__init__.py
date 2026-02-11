@@ -1,5 +1,6 @@
 """New UI module — htmx + Tailwind + Alpine.js served under /new/."""
 
+import html
 import json
 import os
 
@@ -182,7 +183,8 @@ def create_router(require_auth) -> APIRouter:
     @router.get('/partial/settings/{section}')
     async def partial_settings_section(section: str, request: Request, user=Depends(require_auth)):
         """Return settings section as HTML partial (placeholder)."""
-        return HTMLResponse('<p class="text-xs text-cp-muted">Settings for %s will be loaded here. Use the Classic UI for full configuration.</p>' % section)
+        safe_section = html.escape(section)
+        return HTMLResponse('<p class="text-xs text-cp-muted">Settings for %s will be loaded here. Use the Classic UI for full configuration.</p>' % safe_section)
 
     @router.get('/partial/profiles')
     async def partial_profiles(request: Request, user=Depends(require_auth)):

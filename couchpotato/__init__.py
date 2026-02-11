@@ -241,7 +241,9 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             if os.path.isfile(real_path):
                 return FileResponse(real_path)
             # Try with common extensions (URLs often omit the extension)
-            matches = [os.path.realpath(m) for m in glob.glob(real_path + '.*')
+            # Escape glob special characters in path to prevent pattern injection
+            glob_pattern = glob.escape(real_path) + '.*'
+            matches = [os.path.realpath(m) for m in glob.glob(glob_pattern)
                        if os.path.realpath(m).startswith(real_cache + os.sep)]
             if matches:
                 return FileResponse(matches[0])
