@@ -79,6 +79,7 @@ config = [{
         {
             'tab': 'searcher',
             'name': 'searcher',
+            'label': 'Torrents',
             'wizard': True,
             'options': [
                 {
