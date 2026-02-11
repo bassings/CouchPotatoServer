@@ -11,7 +11,6 @@ module rebuilds all bucket files by:
 4. For the id index: create new bucket file and re-insert all entries
 """
 import os
-import io
 import shutil
 import struct
 from couchpotato.core.logger import CPLog
@@ -73,7 +72,7 @@ def rebuild_after_migration(db, db_path):
 
     # Create new empty bucket file with correct header
     import marshal
-    with io.open(buck_path, 'w+b') as f:
+    with open(buck_path, 'w+b') as f:
         props = dict(
             name=id_ind.name,
             bucket_line_format=id_ind.bucket_line_format,
@@ -85,7 +84,7 @@ def rebuild_after_migration(db, db_path):
         f.write(marshal.dumps(props))
 
     # Reopen the bucket file
-    id_ind.buckets = io.open(buck_path, 'r+b', buffering=0)
+    id_ind.buckets = open(buck_path, 'r+b', buffering=0)
     id_ind._fix_params()
 
     # Clear any caches
