@@ -1,3 +1,2 @@
-VERSION = '3.0.8'
+VERSION = 'dev'
 BRANCH = 'master'
-BUILD_DATE = 1770794573
