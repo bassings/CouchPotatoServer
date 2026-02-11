@@ -225,6 +225,39 @@ class Base(NZBProvider, RSS):
         })
         return query
 
+    def test(self):
+        """Test connectivity to all enabled Newznab hosts."""
+        hosts = self.getHosts()
+        enabled_hosts = [h for h in hosts if self.isEnabled(h)]
+
+        if not enabled_hosts:
+            return False, 'No hosts enabled'
+
+        results = []
+        for host in enabled_hosts:
+            host_url = host.get('host', 'unknown')
+            try:
+                # Use the caps endpoint to test API connectivity
+                query = tryUrlencode({
+                    't': 'caps',
+                    'apikey': host['api_key'],
+                })
+                url = '%s%s' % (self.getUrl(host['host']), query)
+                data = self.urlopen(url, timeout=15, cache_timeout=0)
+
+                if data and ('error' in data.lower() and 'code="100"' in data.lower()):
+                    results.append((False, '%s: Invalid API key' % urlparse(host_url).hostname))
+                elif data and '<caps>' in data:
+                    results.append((True, '%s: OK' % urlparse(host_url).hostname))
+                else:
+                    results.append((True, '%s: Connected' % urlparse(host_url).hostname))
+            except Exception as e:
+                results.append((False, '%s: %s' % (urlparse(host_url).hostname, str(e)[:50])))
+
+        # Return overall success and combined message
+        all_success = all(r[0] for r in results)
+        messages = [r[1] for r in results]
+        return all_success, '; '.join(messages)
 
 
 config = [{

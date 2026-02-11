@@ -1,9 +1,11 @@
 from urllib.parse import urlparse
 import re
 import traceback
+import xml.etree.ElementTree as ET
 
+from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
-from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat
+from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.base import ResultList
 from couchpotato.core.media._base.providers.torrent.base import TorrentProvider
@@ -18,6 +20,28 @@ class Base(TorrentProvider):
     limits_reached = {}
 
     http_time_between_calls = 1  # Seconds
+
+    def __init__(self):
+        super().__init__()
+
+        # Register API endpoint for Jackett sync
+        addApiView('torrentpotato.jackett_sync', self.jackettSync, docs={
+            'desc': 'Sync TorrentPotato indexers from Jackett',
+            'params': {
+                'jackett_url': {'desc': 'Jackett base URL (optional, uses saved setting if not provided)'},
+                'jackett_api_key': {'desc': 'Jackett API key (optional, uses saved setting if not provided)'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
+        })
+
+        addApiView('torrentpotato.jackett_test', self.jackettTest, docs={
+            'desc': 'Test Jackett connection and list available indexers',
+            'params': {
+                'jackett_url': {'desc': 'Jackett base URL'},
+                'jackett_api_key': {'desc': 'Jackett API key'},
+            },
+            'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
+        })
 
     def search(self, media, quality):
         hosts = self.getHosts()
@@ -123,6 +147,212 @@ class Base(TorrentProvider):
 
         return TorrentProvider.isEnabled(self) and host['host'] and host['pass_key'] and int(host['use'])
 
+    def getJackettIndexers(self, jackett_url, jackett_api_key):
+        """Fetch list of configured indexers from Jackett"""
+        try:
+            jackett_url = cleanHost(jackett_url).rstrip('/')
+            # Use the torznab endpoint with t=indexers to get all indexers
+            indexers_url = f'{jackett_url}/torznab/all/api?apikey={jackett_api_key}&t=indexers'
+
+            log.info('Fetching Jackett indexers from: %s', indexers_url.replace(jackett_api_key, '***'))
+
+            response = self.urlopen(indexers_url, timeout=30)
+            if not response:
+                return None, 'No response from Jackett'
+
+            # Parse XML response
+            root = ET.fromstring(response)
+
+            indexers = []
+            for indexer in root.findall('.//indexer'):
+                indexer_id = indexer.get('id')
+                configured = indexer.get('configured', 'false').lower() == 'true'
+
+                if not configured:
+                    continue
+
+                title_elem = indexer.find('title')
+                title = title_elem.text if title_elem is not None else indexer_id
+
+                # Build the TorrentPotato URL for this indexer
+                potato_url = f'{jackett_url}/potato/{indexer_id}/api'
+
+                indexers.append({
+                    'id': indexer_id,
+                    'title': title,
+                    'potato_url': potato_url,
+                    'configured': configured
+                })
+
+            log.info('Found %d configured Jackett indexers', len(indexers))
+            return indexers, None
+
+        except ET.ParseError as e:
+            log.error('Failed to parse Jackett response: %s', e)
+            return None, f'Failed to parse Jackett response: {e}'
+        except Exception as e:
+            log.error('Failed to fetch Jackett indexers: %s', traceback.format_exc())
+            return None, f'Failed to connect to Jackett: {e}'
+
+    def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
+        """Test Jackett connection and return list of available indexers"""
+        jackett_url = jackett_url or self.conf('jackett_url')
+        jackett_api_key = jackett_api_key or self.conf('jackett_api_key')
+
+        if not jackett_url or not jackett_api_key:
+            return {
+                'success': False,
+                'error': 'Jackett URL and API key are required'
+            }
+
+        indexers, error = self.getJackettIndexers(jackett_url, jackett_api_key)
+
+        if error:
+            return {
+                'success': False,
+                'error': error
+            }
+
+        return {
+            'success': True,
+            'indexers': indexers,
+            'count': len(indexers)
+        }
+
+    def jackettSync(self, jackett_url=None, jackett_api_key=None, replace=False, **kwargs):
+        """Sync TorrentPotato indexers from Jackett
+
+        Args:
+            jackett_url: Jackett base URL (uses saved setting if not provided)
+            jackett_api_key: Jackett API key (uses saved setting if not provided)
+            replace: If True, replace all existing indexers. If False, merge/add new ones.
+        """
+        jackett_url = jackett_url or self.conf('jackett_url')
+        jackett_api_key = jackett_api_key or self.conf('jackett_api_key')
+
+        if not jackett_url or not jackett_api_key:
+            return {
+                'success': False,
+                'error': 'Jackett URL and API key are required. Please configure them in settings.'
+            }
+
+        indexers, error = self.getJackettIndexers(jackett_url, jackett_api_key)
+
+        if error:
+            return {
+                'success': False,
+                'error': error
+            }
+
+        if not indexers:
+            return {
+                'success': False,
+                'error': 'No configured indexers found in Jackett'
+            }
+
+        # Get existing hosts
+        existing_hosts = self.getHosts() if not replace else []
+        existing_urls = {h['host'] for h in existing_hosts}
+
+        # Build new configuration
+        new_uses = []
+        new_hosts = []
+        new_names = []
+        new_pass_keys = []
+        new_seed_ratios = []
+        new_seed_times = []
+        new_extra_scores = []
+
+        # Keep existing entries first (if not replacing)
+        for host in existing_hosts:
+            new_uses.append(str(host.get('use', '1')))
+            new_hosts.append(host['host'])
+            new_names.append(host.get('name', ''))
+            new_pass_keys.append(host.get('pass_key', ''))
+            new_seed_ratios.append(str(host.get('seed_ratio', '1')))
+            new_seed_times.append(str(host.get('seed_time', '40')))
+            new_extra_scores.append(str(host.get('extra_score', '0')))
+
+        # Add new indexers from Jackett
+        added_count = 0
+        for indexer in indexers:
+            potato_url = indexer['potato_url']
+
+            # Skip if already exists
+            if potato_url in existing_urls:
+                continue
+
+            new_uses.append('1')  # Enable by default
+            new_hosts.append(potato_url)
+            new_names.append(indexer['title'])  # Use title as username
+            new_pass_keys.append(jackett_api_key)  # Use Jackett API key as passkey
+            new_seed_ratios.append('1')
+            new_seed_times.append('40')
+            new_extra_scores.append('0')
+            added_count += 1
+
+        # Save the configuration
+        self.conf('use', value=','.join(new_uses))
+        self.conf('host', value=','.join(new_hosts))
+        self.conf('name', value=','.join(new_names))
+        self.conf('pass_key', value=','.join(new_pass_keys))
+        self.conf('seed_ratio', value=','.join(new_seed_ratios))
+        self.conf('seed_time', value=','.join(new_seed_times))
+        self.conf('extra_score', value=','.join(new_extra_scores))
+
+        log.info('Synced %d indexers from Jackett (%d new)', len(indexers), added_count)
+
+        return {
+            'success': True,
+            'message': f'Synced {len(indexers)} indexers from Jackett ({added_count} new)',
+            'added': added_count,
+            'total': len(new_hosts),
+            'indexers': indexers
+        }
+
+    def test(self):
+        """Test connectivity to all enabled TorrentPotato hosts."""
+        hosts = self.getHosts()
+        enabled_hosts = [h for h in hosts if self.isEnabled(h)]
+
+        if not enabled_hosts:
+            return False, 'No hosts enabled'
+
+        results = []
+        for host in enabled_hosts:
+            host_url = host.get('host', 'unknown')
+            try:
+                # Build a simple test URL - TorrentPotato providers typically respond to any search
+                test_url = cleanHost(host_url) + '?passkey=%s&user=%s&search=test' % (
+                    host.get('pass_key', ''),
+                    host.get('name', '')
+                )
+                data = self.urlopen(test_url, timeout=15, cache_timeout=0)
+
+                hostname = urlparse(host_url).hostname or host_url
+                if data:
+                    # Try to parse as JSON to verify it's a valid TorrentPotato response
+                    import json
+                    try:
+                        parsed = json.loads(data)
+                        if 'error' in parsed:
+                            results.append((False, '%s: %s' % (hostname, parsed.get('error', 'Unknown error'))))
+                        else:
+                            results.append((True, '%s: OK' % hostname))
+                    except json.JSONDecodeError:
+                        # Not JSON but got a response, might still be OK
+                        results.append((True, '%s: Connected' % hostname))
+                else:
+                    results.append((False, '%s: No response' % hostname))
+            except Exception as e:
+                hostname = urlparse(host_url).hostname or host_url
+                results.append((False, '%s: %s' % (hostname, str(e)[:50])))
+
+        # Return overall success and combined message
+        all_success = all(r[0] for r in results)
+        messages = [r[1] for r in results]
+        return all_success, '; '.join(messages)
+
 
 config = [{
     'name': 'torrentpotato',
@@ -132,7 +362,7 @@ config = [{
             'list': 'torrent_providers',
             'name': 'TorrentPotato',
             'order': 10,
-            'description': 'CouchPotato torrent provider. Checkout <a href="https://github.com/CouchPotato/CouchPotatoServer/wiki/CouchPotato-Torrent-Provider" target="_blank">the wiki page about this provider</a> for more info.',
+            'description': 'CouchPotato torrent provider. Checkout <a href="https://github.com/CouchPotato/CouchPotatoServer/wiki/CouchPotato-Torrent-Provider" target="_blank">the wiki page about this provider</a> for more info. You can also sync indexers from <a href="https://github.com/Jackett/Jackett" target="_blank">Jackett</a> automatically.',
             'wizard': True,
             'icon': 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAIAAACQkWg2AAAABnRSTlMAAAAAAABupgeRAAABSElEQVR4AZ2Nz0oCURTGv8t1YMpqUxt9ARFxoQ/gQtppgvUKcu/sxB5iBJkogspaBC6iVUplEC6kv+oiiKDNhAtt16roP0HQgdsMLgaxfvy4nHP4Pi48qE2g4v91JOqT1CH/UnA7w7icUlLawyEdj+ZI/7h6YluWbRiddHonHh9M70aj7VTKzuXuikUMci/EO/ACnAI15599oAk8AR/AgxBQNCzreD7bmpl+FOIVuAHqQDUcJo+AK+CZFKLt95/MpSmMt0TiW9POxse6UvYZ6zB2wFgjFiNpOGesR0rZ0PVPXf8KhUCl22CwClz4eN8weoZBb9c0bdPsOWvHx/cYu9Y0CoNoZTJrwAbn5DrnZc6XOV+igVbnsgo0IxEomlJuA1vUIYGyq3PZBChwmExCUSmVZgMBDIUCK4UCFIv5vHIhm/XUDeAf/ADbcpd5+aXSWQAAAABJRU5ErkJggg==',
             'options': [
@@ -140,6 +370,28 @@ config = [{
                     'name': 'enabled',
                     'type': 'enabler',
                     'default': False,
+                },
+                {
+                    'name': 'jackett_url',
+                    'label': 'Jackett URL',
+                    'default': '',
+                    'description': 'Base URL of your Jackett instance (e.g., http://localhost:9117)',
+                },
+                {
+                    'name': 'jackett_api_key',
+                    'label': 'Jackett API Key',
+                    'type': 'password',
+                    'default': '',
+                    'description': 'API key from Jackett (found in Jackett settings)',
+                },
+                {
+                    'name': 'jackett_sync',
+                    'label': 'Sync from Jackett',
+                    'type': 'button',
+                    'default': '',
+                    'description': 'Click to sync all configured indexers from Jackett',
+                    'button_action': 'torrentpotato.jackett_sync',
+                    'button_text': 'Sync Indexers',
                 },
                 {
                     'name': 'use',

@@ -605,9 +605,21 @@ function settingsPanel() {
       this.testing = group.section;
       this.testResult[group.section] = '';
       try {
-        const resp = await fetch(CP.apiBase + '/' + group.section + '.test/');
+        // Route to correct API endpoint based on provider type
+        let endpoint;
+        if (group.list === 'download_providers') {
+          endpoint = 'download.' + group.section + '.test';
+        } else if (group.list === 'notification_providers') {
+          endpoint = 'notify.' + group.section + '.test';
+        } else if (group.list === 'nzb_providers' || group.list === 'torrent_providers') {
+          endpoint = 'provider.' + group.section + '.test';
+        } else {
+          // Fallback for other provider types
+          endpoint = group.section + '.test';
+        }
+        const resp = await fetch(CP.apiBase + '/' + endpoint + '/');
         const data = await resp.json();
-        this.testResult[group.section] = data.success ? 'success' : (data.message || 'failed');
+        this.testResult[group.section] = data.success ? 'success' : (data.message || data.msg || 'failed');
       } catch (e) {
         this.testResult[group.section] = 'error';
       }

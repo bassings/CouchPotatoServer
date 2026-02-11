@@ -11,6 +11,7 @@ try:
 except ImportError:
     from xml.parsers.expat import ExpatError as XmlParseError
 
+from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import ss
 from couchpotato.core.helpers.variable import tryFloat, mergeDicts, md5, \
@@ -133,6 +134,8 @@ class YarrProvider(Provider):
         addEvent('provider.enabled_protocols', self.getEnabledProtocol)
         addEvent('provider.belongs_to', self.belongsTo)
         addEvent('provider.search.%s.%s' % (self.protocol, self.type), self.search)
+        # Register test API endpoint
+        addApiView('provider.%s.test' % self.getName().lower(), self._test)
 
     def getEnabledProtocol(self):
         if self.isEnabled():
@@ -297,6 +300,26 @@ class YarrProvider(Provider):
                   "in an IP ban, depending on the site.", self.getName())
         self.conf(self.enabled_option, False)
         self.login_failures = 0
+
+    def _test(self, **kwargs):
+        """API wrapper for test method."""
+        try:
+            result = self.test()
+            if isinstance(result, tuple):
+                return {'success': result[0], 'msg': result[1]}
+            elif isinstance(result, dict):
+                return result
+            return {'success': bool(result)}
+        except Exception as e:
+            log.error('Test failed for %s: %s', self.getName(), traceback.format_exc())
+            return {'success': False, 'msg': str(e)}
+
+    def test(self):
+        """Test provider connectivity. Override in subclasses for specific behavior."""
+        # Default implementation: try to login if required, otherwise just return True
+        if self.urls.get('login'):
+            return self.login()
+        return True
 
 
 class ResultList(list):
