@@ -65,38 +65,63 @@ class Suggestion(Plugin):
         """Persist the ignored set to properties."""
         Env.prop('suggestion.ignored', ','.join(self._ignored))
 
+    _validated_key = None
+
     def getApiKey(self):
-        """Get TMDB API key from settings or use built-in."""
+        """Get TMDB API key from settings or use built-in.
+        Validates the config key once and falls back to built-in if invalid."""
+        if self._validated_key:
+            return self._validated_key
+
+        # Try config key first
         try:
             key = Env.setting('api_key', section='themoviedb')
-            if key and key != '9b939aee0aaafc12a65bf448e4af9543':
-                return key
+            if key:
+                # Quick validation against TMDB
+                import requests
+                r = requests.get('https://api.themoviedb.org/3/configuration?api_key=%s' % key, timeout=5)
+                if r.status_code == 200:
+                    self._validated_key = key
+                    return key
+                log.debug('Config TMDB API key is invalid, using built-in')
         except Exception:
             pass
+
         decoded = bd(random.choice(self.ak))
-        return decoded.decode('utf-8') if isinstance(decoded, bytes) else decoded
+        key = decoded.decode('utf-8') if isinstance(decoded, bytes) else decoded
+        self._validated_key = key
+        return key
 
     def _tmdbRequest(self, call, params=None):
         """Make a request to the TMDB API."""
+        import requests as req
         params = params or {}
-        params = dict((k, v) for k, v in params.items() if v)
-        param_str = tryUrlencode(params) if params else ''
+        params['api_key'] = self.getApiKey()
 
         try:
-            url = 'https://api.themoviedb.org/3/%s?api_key=%s%s' % (
-                call, self.getApiKey(), '&%s' % param_str if param_str else ''
-            )
-            data = self.getJsonData(url, show_error=False)
-            return data
-        except Exception:
-            log.debug('TMDB request failed: %s', call)
+            url = 'https://api.themoviedb.org/3/%s' % call
+            r = req.get(url, params=params, timeout=10)
+            if r.status_code == 200:
+                return r.json()
+            log.debug('TMDB request returned %d for %s', r.status_code, call)
+            return None
+        except Exception as e:
+            log.debug('TMDB request failed: %s - %s', call, e)
             return None
 
     def _getLibraryMovies(self):
         """Get movies from the user's library (wanted + managed)."""
         try:
-            movies = fireEvent('media.list', types='movie', single=True) or {}
-            return movies.get('movies', []) if isinstance(movies, dict) else movies
+            result = fireEvent('media.list', types='movie', single=True)
+            if not result:
+                return []
+            # media.list returns (total_count, movies_list) tuple
+            if isinstance(result, (list, tuple)) and len(result) == 2:
+                total, movies = result
+                return movies if isinstance(movies, list) else []
+            if isinstance(result, dict):
+                return result.get('movies', [])
+            return []
         except Exception:
             log.debug('Failed to get library movies: %s', traceback.format_exc())
             return []

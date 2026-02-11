@@ -1,15 +1,15 @@
 {% extends "base.html" %}
 {% block title %}Suggestions — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'personal' }">
+<div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'charts' }">
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1 font-light">Discover new movies from your library suggestions and chart sources.</p>
     </div>
-    <div class="flex gap-1 text-[10px]">
-      <button @click="activeTab = 'personal'" :class="activeTab === 'personal' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">For You</button>
-      <button @click="activeTab = 'charts'" :class="activeTab === 'charts' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Charts</button>
+    <div class="flex gap-1 text-sm font-medium">
+      <button @click="activeTab = 'charts'" :class="activeTab === 'charts' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" class="px-4 py-2 rounded-lg transition-all">Charts</button>
+      <button @click="activeTab = 'personal'" :class="activeTab === 'personal' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" class="px-4 py-2 rounded-lg transition-all">For You</button>
     </div>
   </div>
 
