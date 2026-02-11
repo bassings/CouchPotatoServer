@@ -107,15 +107,7 @@
     <!-- ==================== SETTINGS TABS ==================== -->
     <div x-show="activeTab !== 'logs'" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
-        <!-- Section header divider for remapped groups -->
-        <template x-if="group._sectionHeader">
-          <div class="pt-4 pb-1">
-            <h2 class="text-sm font-semibold text-cp-text tracking-tight" x-text="group.label"></h2>
-            <p x-show="group.description" class="text-[11px] text-cp-muted mt-0.5" x-text="group.description"></p>
-            <div class="mt-2 border-t border-white/[0.06]"></div>
-          </div>
-        </template>
-        <div x-show="!group._sectionHeader && (!group.advanced || showAdvanced)" class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden">
+        <div x-show="!group.advanced || showAdvanced" class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden">
             <!-- Group header -->
             <div class="flex items-center justify-between px-5 py-3"
                  :class="[
@@ -362,13 +354,6 @@ function settingsPanel() {
     // Remap automation tab groups into suggestions (display) tab
     tabRemaps: { 'automation': 'display' },
 
-    // Section headers injected before the first group from a remapped tab
-    tabSectionHeaders: {
-      'display': [
-        { beforeTab: 'automation', label: 'Watchlist Import', description: 'Automatically add movies from external watchlists and popular movie lists.' }
-      ]
-    },
-
     tabLabels: {
       general: 'General',
       downloaders: 'Downloaders',
@@ -460,16 +445,6 @@ function settingsPanel() {
         }
       }
       groups.sort((a, b) => a.order - b.order);
-
-      // Inject section headers for remapped groups
-      const headers = this.tabSectionHeaders[tab] || [];
-      for (const hdr of headers) {
-        const firstIdx = groups.findIndex(g => g._originalTab === hdr.beforeTab);
-        if (firstIdx >= 0) {
-          groups.splice(firstIdx, 0, { _sectionHeader: true, label: hdr.label, description: hdr.description });
-        }
-      }
-
       return groups;
     },
 
