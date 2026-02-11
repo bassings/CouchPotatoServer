@@ -41,6 +41,7 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'discord',
+            'label': 'Discord',
             'options': [
                 {
                     'name': 'enabled',

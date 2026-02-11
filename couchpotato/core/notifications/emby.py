@@ -67,6 +67,7 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'emby',
+            'label': 'Emby',
             'options': [
                 {
                     'name': 'enabled',

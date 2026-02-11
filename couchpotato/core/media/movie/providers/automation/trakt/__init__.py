@@ -12,8 +12,8 @@ config = [{
             'tab': 'automation',
             'list': 'watchlist_providers',
             'name': 'trakt_automation',
-            'label': 'Trakt',
-            'description': 'Import movies from your own watchlist',
+            'label': 'Trakt Watchlist',
+            'description': 'Auto-add movies from your Trakt watchlist.',
             'options': [
                 {
                     'name': 'automation_enabled',

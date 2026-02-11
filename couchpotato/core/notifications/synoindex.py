@@ -50,7 +50,8 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'synoindex',
-            'description': 'Automaticly adds index to Synology Media Server.',
+            'label': 'Synology Indexer',
+            'description': 'Automatically update Synology Media Server index.',
             'options': [
                 {
                     'name': 'enabled',

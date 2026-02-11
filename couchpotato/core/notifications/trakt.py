@@ -48,7 +48,7 @@ config = [{
             'list': 'notification_providers',
             'name': 'trakt',
             'label': 'Trakt',
-            'description': 'add movies to your collection once downloaded. Connect your account in <a href="../automation/">Automation Trakt settings</a>',
+            'description': 'Add movies to your Trakt collection once downloaded. Connect your account in Suggestions settings.',
             'options': [
                 {
                     'name': 'notification_enabled',

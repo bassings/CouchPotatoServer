@@ -53,6 +53,7 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'slack',
+            'label': 'Slack',
             'options': [
                 {
                     'name': 'enabled',

@@ -270,6 +270,7 @@ config = [{
                 },
                 {
                     'name': 'on_snatch',
+                    'label': 'Notify on Snatch',
                     'default': False,
                     'type': 'bool',
                     'advanced': True,

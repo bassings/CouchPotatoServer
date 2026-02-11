@@ -35,7 +35,7 @@ config = [{
             'list': 'automation_providers',
             'name': 'popularmovies_automation',
             'label': 'Popular Movies',
-            'description': 'Imports the <a href="http://movies.stevenlu.com/" target="_blank">top titles of movies that have been in theaters</a>. Script provided by <a href="https://github.com/sjlu/popular-movies" target="_blank">Steven Lu</a>',
+            'description': 'Auto-add popular movies currently in theaters.',
             'options': [
                 {
                     'name': 'automation_enabled',

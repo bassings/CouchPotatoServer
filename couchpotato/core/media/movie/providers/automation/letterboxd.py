@@ -79,7 +79,7 @@ config = [{
             'list': 'watchlist_providers',
             'name': 'letterboxd_automation',
             'label': 'Letterboxd',
-            'description': 'Import movies from any public <a href="http://letterboxd.com/" target="_blank">Letterboxd</a> watchlist',
+            'description': 'Auto-add movies from public Letterboxd watchlists.',
             'options': [
                 {
                     'name': 'automation_enabled',

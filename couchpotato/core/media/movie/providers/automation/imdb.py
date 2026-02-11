@@ -207,8 +207,8 @@ config = [{
             'tab': 'automation',
             'list': 'watchlist_providers',
             'name': 'imdb_automation_watchlist',
-            'label': 'IMDB',
-            'description': 'From any <strong>public</strong> IMDB watchlists.',
+            'label': 'IMDB Watchlist',
+            'description': 'Auto-add movies from public IMDB watchlists.',
             'options': [
                 {
                     'name': 'automation_enabled',
@@ -231,8 +231,8 @@ config = [{
             'tab': 'automation',
             'list': 'automation_providers',
             'name': 'imdb_automation_charts',
-            'label': 'IMDB',
-            'description': 'Import movies from IMDB Charts',
+            'label': 'IMDB Charts Auto-Add',
+            'description': 'Automatically add movies from IMDB chart lists (Top 250, Box Office, etc.).',
             'options': [
                 {
                     'name': 'automation_providers_enabled',

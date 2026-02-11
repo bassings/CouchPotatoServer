@@ -76,6 +76,7 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'pushbullet',
+            'label': 'Pushbullet',
             'options': [
                 {
                     'name': 'enabled',
@@ -101,6 +102,7 @@ config = [{
                 },
                 {
                     'name': 'on_snatch',
+                    'label': 'Notify on Snatch',
                     'default': 0,
                     'type': 'bool',
                     'advanced': True,

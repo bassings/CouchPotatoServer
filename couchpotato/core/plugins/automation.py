@@ -82,45 +82,52 @@ config = [{
         {
             'tab': 'automation',
             'name': 'automation',
-            'label': 'Minimal movie requirements',
+            'label': 'Auto-Add Filters',
+            'description': 'Minimum quality requirements for movies added automatically from watchlists and popular lists below.',
             'options': [
                 {
                     'name': 'year',
                     'default': 2011,
                     'type': 'int',
+                    'label': 'Minimum Year',
+                    'description': 'Only add movies released in this year or later.',
                 },
                 {
                     'name': 'votes',
                     'default': 1000,
                     'type': 'int',
+                    'label': 'Minimum Votes',
+                    'description': 'Only add movies with at least this many votes on IMDB.',
                 },
                 {
                     'name': 'rating',
                     'default': 7.0,
                     'type': 'float',
+                    'label': 'Minimum Rating',
+                    'description': 'Only add movies rated this high or above on IMDB.',
                 },
                 {
                     'name': 'hour',
                     'advanced': True,
                     'default': 12,
-                    'label': 'Check every',
+                    'label': 'Check Interval',
                     'type': 'int',
                     'unit': 'hours',
-                    'description': 'hours',
+                    'description': 'How often to check watchlists for new movies (in hours).',
                 },
                 {
                     'name': 'required_genres',
                     'label': 'Required Genres',
                     'default': '',
                     'placeholder': 'Example: Action, Crime & Drama',
-                    'description': ('Ignore movies that don\'t contain at least one set of genres.', 'Sets are separated by "," and each word within a set must be separated with "&"')
+                    'description': 'Only add movies matching at least one genre set. Sets separated by ",", words within a set by "&".',
                 },
                 {
                     'name': 'ignored_genres',
                     'label': 'Ignored Genres',
                     'default': '',
                     'placeholder': 'Example: Horror, Comedy & Drama & Romance',
-                    'description': 'Ignore movies that contain at least one set of genres. Sets work the same as above.'
+                    'description': 'Skip movies matching any genre set. Same format as above.',
                 },
             ],
         },
