@@ -53,14 +53,16 @@ config = [{
                 },
                 {
                     'name': 'url',
-                    'description': 'The URL to send notification data to when something happens'
+                    'label': 'Webhook URL',
+                    'description': 'URL that receives a JSON POST when movies are snatched or downloaded.',
                 },
                 {
                     'name': 'on_snatch',
                     'default': 0,
                     'type': 'bool',
+                    'label': 'Notify on Snatch',
                     'advanced': True,
-                    'description': 'Also send message when movie is snatched.',
+                    'description': 'Also notify when a release is snatched.',
                 }
             ]
         }

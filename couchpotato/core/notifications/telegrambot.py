@@ -47,8 +47,8 @@ config = [{
             'tab': 'notifications',
             'list': 'notification_providers',
             'name': 'telegrambot',
-            'label': 'Telegram Bot',
-            'description': 'Notification provider which utilizes the bot API of the famous Telegram IM.',
+            'label': 'Telegram',
+            'description': 'Send notifications via a Telegram bot.',
             'options': [
                 {
                     'name': 'enabled',
@@ -57,19 +57,21 @@ config = [{
                 },
                 {
                     'name': 'bot_token',
-                    'description': 'Your bot token. Contact <a href="http://telegram.me/BotFather" target="_blank">@BotFather</a> on Telegram to get one.'
+                    'label': 'Bot Token',
+                    'description': 'Get one from <a href="http://telegram.me/BotFather" target="_blank">@BotFather</a> on Telegram.',
                 },
                 {
                     'name': 'receiver_user_id',
-                    'label': 'Recieving User/Group ID',
-                    'description': 'Receiving user/group - notifications will be sent to this user or group. Contact <a href="http://telegram.me/myidbot" target="_blank">@myidbot</a> on Telegram to get an ID.'
+                    'label': 'Chat ID',
+                    'description': 'User or group ID to send notifications to. Use <a href="http://telegram.me/myidbot" target="_blank">@myidbot</a> to find yours.',
                 },
                 {
                     'name': 'on_snatch',
                     'default': 0,
                     'type': 'bool',
+                    'label': 'Notify on Snatch',
                     'advanced': True,
-                    'description': 'Also send message when movie is snatched.',
+                    'description': 'Also notify when a release is snatched (not just downloaded).',
                 },
             ],
         }

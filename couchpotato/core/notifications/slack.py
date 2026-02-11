@@ -61,64 +61,55 @@ config = [{
                 },
                 {
                     'name': 'token',
-                    'description': (
-                        'Your Slack authentication token.',
-                        'Can be created at https://api.slack.com/web'
-                    )
+                    'label': 'Bot Token',
+                    'description': 'Slack bot or user token. Create one at <a href="https://api.slack.com/apps" target="_blank">api.slack.com</a>.',
                 },
                 {
                     'name': 'channels',
-                    'description': (
-                        'Channel to send notifications to.',
-                        'Can be a public channel, private group or IM '
-                        'channel. Can be an encoded ID or a name '
-                        '(staring with a hashtag, e.g. #general). '
-                        'Separate with commas in order to notify multiple '
-                        'channels. It is however recommended to send '
-                        'notifications to only one channel due to '
-                        'the Slack API rate limits.'
-                    )
+                    'label': 'Channel',
+                    'description': 'Channel name (e.g. #movies) or ID. Separate multiple with commas.',
                 },
                 {
                     'name': 'include_imdb',
                     'default': True,
                     'type': 'bool',
-                    'descrpition': 'Include a link to the movie page on IMDB.'
+                    'label': 'Include IMDB Link',
+                    'description': 'Add a link to the movie\'s IMDB page.',
                 },
                 {
                     'name': 'bot_name',
-                    'description': 'Name of bot.',
+                    'label': 'Bot Name',
+                    'description': 'Display name for the bot.',
                     'default': 'CouchPotato',
                     'advanced': True,
                 },
                 {
                     'name': 'as_user',
-                    'description': 'Send message as the authentication token '
-                                   ' user.',
+                    'label': 'Send as User',
+                    'description': 'Post as the token owner instead of the bot.',
                     'default': False,
                     'type': 'bool',
                     'advanced': True
                 },
                 {
                     'name': 'icon_url',
-                    'description': 'URL to an image to use as the icon for '
-                                   'notifications.',
+                    'label': 'Icon URL',
+                    'description': 'URL for the bot\'s avatar image.',
                     'advanced': True,
                 },
                 {
                     'name': 'icon_emoji',
-                    'description': (
-                        'Emoji to use as the icon for notifications.',
-                        'Overrides icon_url'
-                    ),
+                    'label': 'Icon Emoji',
+                    'description': 'Emoji for the bot icon (e.g. :movie_camera:). Overrides Icon URL.',
                     'advanced': True,
                 },
                 {
                     'name': 'on_snatch',
                     'default': 0,
                     'type': 'bool',
+                    'label': 'Notify on Snatch',
                     'advanced': True,
-                    'description': 'Also send message when movie is snatched.',
+                    'description': 'Also notify when a release is snatched.',
                 },
             ],
         }

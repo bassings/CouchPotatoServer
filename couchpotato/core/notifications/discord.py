@@ -49,27 +49,27 @@ config = [{
                 },
                 {
                     'name': 'webhook_url',
-                    'description': (
-                        'Your Discord authentication webhook URL.',
-                        'Created under channel settings.'
-                    )
+                    'label': 'Webhook URL',
+                    'description': 'Discord webhook URL. Create one in your channel\'s Integrations settings.',
                 },
                 {
                     'name': 'include_imdb',
                     'default': True,
                     'type': 'bool',
-                    'descrpition': 'Include a link to the movie page on IMDB.'
+                    'label': 'Include IMDB Link',
+                    'description': 'Add a link to the movie\'s IMDB page in notifications.',
                 },
                 {
                     'name': 'bot_name',
-                    'description': 'Name of bot.',
+                    'label': 'Bot Name',
+                    'description': 'Display name for the webhook bot.',
                     'default': 'CouchPotato',
                     'advanced': True,
                 },
                 {
                     'name': 'avatar_url',
-                    'description': 'URL to an image to use as the avatar for '
-                                   'notifications.',
+                    'label': 'Avatar URL',
+                    'description': 'URL to an image used as the bot avatar.',
                     'default': 'https://raw.githubusercontent.com/bassings/CouchPotatoServer/master/couchpotato/static/images/logo.png',
                     'advanced': True,
                 },
@@ -77,13 +77,15 @@ config = [{
                     'name': 'discord_tts',
                     'default': 0,
                     'type': 'bool',
+                    'label': 'Text-to-Speech',
                     'advanced': True,
-                    'description': 'Send notification using text-to-speech.',
+                    'description': 'Send notifications using Discord TTS.',
                 },
                 {
                     'name': 'on_snatch',
                     'default': 0,
                     'type': 'bool',
+                    'label': 'Notify on Snatch',
                     'advanced': True,
                     'description': 'Also send message when movie is snatched.',
                 },
