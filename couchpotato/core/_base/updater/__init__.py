@@ -13,9 +13,9 @@ config = [{
         {
             'tab': 'general',
             'name': 'updater',
-            'label': 'Updater',
+            'label': 'Updates',
             'git_only': True,
-            'description': 'Enable periodic update checking',
+            'description': 'Keep CouchPotato up to date automatically.',
             'options': [
                 {
                     'name': 'enabled',
@@ -23,16 +23,25 @@ config = [{
                     'type': 'enabler',
                 },
                 {
-                    'name': 'notification',
-                    'type': 'bool',
-                    'default': True,
-                    'description': 'Send a notification if an update is available.',
-                },
-                {
                     'name': 'automatic',
                     'default': True,
                     'type': 'bool',
-                    'description': 'Automatically update when update is available',
+                    'label': 'Auto-Update',
+                    'description': 'Automatically install updates when available.',
+                },
+                {
+                    'name': 'notification',
+                    'type': 'bool',
+                    'default': True,
+                    'label': 'Notify on Update',
+                    'description': 'Send a notification when a new update is available.',
+                },
+                {
+                    'name': 'check_interval',
+                    'default': 24,
+                    'type': 'int',
+                    'label': 'Check Every (hours)',
+                    'description': 'How often to check for updates.',
                 },
                 {
                     'name': 'git_command',

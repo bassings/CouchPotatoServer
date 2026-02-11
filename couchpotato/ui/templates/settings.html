@@ -5,15 +5,24 @@
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
     <div class="flex items-center gap-3">
-      <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
-        <input type="checkbox" x-model="showAdvanced" class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-        Advanced
-      </label>
-      <button @click="saveAll()" :disabled="saving"
-              class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
-        <span x-show="!saving">Save Changes</span>
-        <span x-show="saving">Saving…</span>
-      </button>
+      <template x-if="activeTab !== 'logs'">
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
+          <button @click="showAdvanced = !showAdvanced"
+                  :class="showAdvanced ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                  class="relative w-8 h-4 rounded-full transition-colors shrink-0">
+            <span :class="showAdvanced ? 'translate-x-4' : 'translate-x-0.5'"
+                  class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5"></span>
+          </button>
+          <span :class="showAdvanced ? 'text-cp-accent' : ''">Advanced</span>
+        </label>
+      </template>
+      <template x-if="activeTab !== 'logs'">
+        <button @click="saveAll()" :disabled="saving"
+                class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
+          <span x-show="!saving">Save Changes</span>
+          <span x-show="saving">Saving…</span>
+        </button>
+      </template>
     </div>
   </div>
 
@@ -27,20 +36,81 @@
 
   <div x-show="!loading" x-cloak>
     <!-- Tabs -->
-    <div class="flex flex-wrap gap-1 mb-6 text-[11px] border-b border-white/[0.06] pb-2">
+    <div class="flex flex-wrap gap-1 mb-6">
       <template x-for="tab in tabOrder" :key="tab">
         <button @click="activeTab = tab"
-                :class="activeTab === tab ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
-                class="px-3 py-1.5 rounded-md transition-colors capitalize" x-text="tabLabels[tab] || tab"></button>
+                :class="activeTab === tab ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
+                class="px-4 py-2 rounded-lg transition-all text-sm font-medium" x-text="tabLabels[tab] || tab"></button>
       </template>
     </div>
 
-    <!-- Tab contents -->
-    <div class="space-y-4">
+    <!-- ==================== LOGS TAB ==================== -->
+    <div x-show="activeTab === 'logs'" x-data="logsPanel()" x-init="$watch('$root.activeTab', v => { if(v==='logs') init(); else stopAutoRefresh(); })">
+      <div class="flex items-center gap-3 mb-4">
+        <select x-model="logType" @change="refresh()"
+                class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+          <option value="all">All</option>
+          <option value="error">Errors</option>
+          <option value="warning">Warnings</option>
+          <option value="info">Info</option>
+          <option value="debug">Debug</option>
+        </select>
+        <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
+          <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()"
+                 class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+          Auto-refresh
+        </label>
+        <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
+          Refresh
+        </button>
+        <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
+          Clear
+        </button>
+      </div>
+
+      <div x-show="logLoading && logs.length === 0" class="flex items-center justify-center py-20">
+        <div class="flex items-center gap-3 text-cp-muted text-sm">
+          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          Loading logs…
+        </div>
+      </div>
+
+      <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
+        <div class="max-h-[calc(100vh-280px)] overflow-y-auto" id="log-container">
+          <template x-if="logs.length === 0 && !logLoading">
+            <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>
+          </template>
+          <template x-for="(entry, idx) in logs" :key="idx">
+            <div class="px-4 py-1.5 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+                 :class="{
+                   'text-cp-danger bg-cp-danger/[0.03]': entry.type === 'ERROR',
+                   'text-cp-warning bg-cp-warning/[0.03]': entry.type === 'WARNING',
+                   'text-cp-text': entry.type === 'INFO',
+                   'text-cp-muted': entry.type === 'DEBUG',
+                 }">
+              <span class="text-cp-muted/50 select-none" x-text="entry.time"></span>
+              <span class="inline-block w-14 text-center font-medium"
+                    :class="{
+                      'text-cp-danger': entry.type === 'ERROR',
+                      'text-cp-warning': entry.type === 'WARNING',
+                      'text-cp-accent': entry.type === 'INFO',
+                      'text-cp-muted': entry.type === 'DEBUG',
+                    }" x-text="entry.type"></span>
+              <span class="text-cp-muted/70" x-text="'[' + entry.source + ']'"></span>
+              <span x-text="entry.message"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+    </div>
+
+    <!-- ==================== SETTINGS TABS ==================== -->
+    <div x-show="activeTab !== 'logs'" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
         <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden">
             <!-- Group header -->
-            <div class="flex items-center justify-between px-5 py-3 border-b border-white/[0.04] cursor-pointer"
+            <div class="flex items-center justify-between px-5 py-3 cursor-pointer"
+                 :class="isGroupOpen(groupKey(group, groupIdx)) ? 'border-b border-white/[0.04]' : ''"
                  @click="toggleGroup(groupKey(group, groupIdx))">
               <div class="flex items-center gap-3">
                 <!-- Enabler toggle if group has one -->
@@ -68,7 +138,7 @@
                 <template x-for="opt in getGroupOptions(group)" :key="group.section + '.' + opt.name">
                   <div x-show="opt.type !== 'enabler' && (showAdvanced || !opt.advanced)"
                        :class="opt.type === 'directory' || opt.type === 'directories' ? 'sm:col-span-2' : ''">
-                    <label class="block text-[11px] text-cp-muted mb-1.5 capitalize" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
+                    <label class="block text-xs text-cp-muted mb-1.5" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
 
                     <!-- Bool / checkbox -->
                     <template x-if="opt.type === 'bool'">
@@ -165,6 +235,89 @@
 </div>
 
 <script>
+/* ── Logs panel (embedded in Settings) ── */
+function logsPanel() {
+  return {
+    logs: [],
+    logLoading: false,
+    logType: 'all',
+    autoRefresh: true,
+    refreshTimer: null,
+
+    async init() {
+      await this.refresh();
+      if (this.autoRefresh) this.startAutoRefresh();
+    },
+
+    async refresh() {
+      this.logLoading = true;
+      try {
+        const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
+        const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
+        const data = await resp.json();
+        if (data.success !== false) {
+          this.logs = this.parseLogs(data.log || data.lines || []);
+        }
+      } catch (e) {
+        console.error('Failed to load logs', e);
+      }
+      this.logLoading = false;
+      this.$nextTick(() => {
+        const el = document.getElementById('log-container');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    parseLogs(lines) {
+      if (!Array.isArray(lines)) return [];
+      return lines.map(line => {
+        if (typeof line === 'object' && line.time) {
+          const msg = line.message || '';
+          const srcMatch = msg.match(/^\[([^\]]*)\]\s*(.*)/);
+          return {
+            time: line.time,
+            type: (line.type || 'INFO').toUpperCase(),
+            source: srcMatch ? srcMatch[1].trim() : '',
+            message: srcMatch ? srcMatch[2] : msg,
+          };
+        }
+        if (typeof line !== 'string') return { time: '', type: 'INFO', source: '', message: String(line) };
+        const m = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(ERROR|WARNING|INFO|DEBUG)\s+\[([^\]]*)\]\s*(.*)$/);
+        if (m) return { time: m[1], type: m[2], source: m[3].trim(), message: m[4] };
+        const levelMatch = line.match(/\b(ERROR|WARNING|INFO|DEBUG)\b/);
+        return { time: '', type: levelMatch ? levelMatch[1] : 'INFO', source: '', message: line };
+      });
+    },
+
+    async clearLogs() {
+      try {
+        await fetch(CP.apiBase + '/logging.clear/');
+        this.logs = [];
+      } catch (e) {
+        console.error('Failed to clear logs');
+      }
+    },
+
+    startAutoRefresh() {
+      this.stopAutoRefresh();
+      this.refreshTimer = setInterval(() => this.refresh(), 10000);
+    },
+
+    stopAutoRefresh() {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    },
+
+    toggleAutoRefresh() {
+      if (this.autoRefresh) this.startAutoRefresh();
+      else this.stopAutoRefresh();
+    },
+  };
+}
+
+/* ── Settings panel ── */
 function settingsPanel() {
   return {
     activeTab: 'general',
@@ -182,6 +335,16 @@ function settingsPanel() {
     dirty: {},
     tabOrder: [],
     currentGroups: [],
+
+    // Obsolete/dead sections to hide
+    hiddenSections: new Set([
+      'wdtvlive', 'windowsmediacenter', 'sonyps3', 'mediabrowser',
+      'pneumatic', 'hadouken', 'homey',
+    ]),
+
+    // Tabs to hide (no useful visible content)
+    hiddenTabs: new Set(['providers']),
+
     tabLabels: {
       general: 'General',
       downloaders: 'Downloaders',
@@ -190,8 +353,9 @@ function settingsPanel() {
       notifications: 'Notifications',
       automation: 'Automation',
       manage: 'Library',
-      display: 'Display',
+      display: 'Suggestions',
       providers: 'Providers',
+      logs: 'Logs',
     },
 
     async init() {
@@ -200,10 +364,12 @@ function settingsPanel() {
         const data = await resp.json();
         this.options = data.options || {};
         this.values = data.values || {};
+
         // Determine tab order from the data
         const tabSet = new Set();
         const tabOrderMap = {};
         for (const [sectionName, section] of Object.entries(this.options)) {
+          if (this.hiddenSections.has(sectionName)) continue;
           for (const grp of (section.groups || [])) {
             const tab = grp.tab || 'general';
             tabSet.add(tab);
@@ -212,18 +378,17 @@ function settingsPanel() {
             }
           }
         }
-        const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display', 'providers'];
-        this.tabOrder = preferred.filter(t => tabSet.has(t));
+
+        const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display'];
+        this.tabOrder = preferred.filter(t => tabSet.has(t) && !this.hiddenTabs.has(t));
         for (const t of tabSet) {
-          if (!this.tabOrder.includes(t)) this.tabOrder.push(t);
+          if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
-        // Auto-open first group in each tab
-        for (const tab of this.tabOrder) {
-          const groups = this.getTabGroups(tab);
-          if (groups.length > 0 && groups.length <= 5) {
-            this.openGroups[this.groupKey(groups[0], 0)] = true;
-          }
-        }
+        // Add Logs tab at the end
+        this.tabOrder.push('logs');
+
+        // Smart auto-expand: essential settings visible, enabled sections open
+        this.computeOpenGroups();
         this.updateCurrentGroups();
       } catch (e) {
         console.error('Failed to load settings', e);
@@ -231,6 +396,24 @@ function settingsPanel() {
       }
       this.loading = false;
       this.$watch('activeTab', () => this.updateCurrentGroups());
+    },
+
+    computeOpenGroups() {
+      for (const tab of this.tabOrder) {
+        const groups = this.getTabGroups(tab);
+        groups.forEach((group, idx) => {
+          const key = this.groupKey(group, idx);
+          const enabler = this.getEnabler(group);
+          if (!enabler) {
+            // No enabler = essential/core settings, always expand
+            this.openGroups[key] = true;
+          } else if (this.isEnabled(group)) {
+            // Has enabler and ON = user is using this, expand
+            this.openGroups[key] = true;
+          }
+          // Enabler OFF = stays collapsed, just shows the toggle row
+        });
+      }
     },
 
     updateCurrentGroups() {
@@ -244,6 +427,7 @@ function settingsPanel() {
     getTabGroups(tab) {
       const groups = [];
       for (const [sectionName, section] of Object.entries(this.options)) {
+        if (this.hiddenSections.has(sectionName)) continue;
         for (const grp of (section.groups || [])) {
           if ((grp.tab || 'general') === tab) {
             groups.push({ ...grp, section: sectionName, order: section.order || 999 });
@@ -275,11 +459,18 @@ function settingsPanel() {
     toggleEnabler(group) {
       const enabler = this.getEnabler(group);
       if (!enabler) return;
-      this.setVal(group.section, enabler.name, !this.isEnabled(group));
+      const newVal = !this.isEnabled(group);
+      this.setVal(group.section, enabler.name, newVal);
+      // Auto-expand when enabling, collapse when disabling
+      const groups = this.currentGroups;
+      const idx = groups.indexOf(group);
+      if (idx >= 0) {
+        const key = this.groupKey(group, idx);
+        this.openGroups[key] = newVal;
+      }
     },
 
     getVal(section, name) {
-      // Check dirty first
       const key = section + '.' + name;
       if (key in this.dirty) return this.dirty[key];
       if (this.values[section] && this.values[section][name] !== undefined) {
@@ -315,14 +506,12 @@ function settingsPanel() {
           return fetch(CP.apiBase + '/settings.save/?' + params.toString());
         });
         await Promise.all(saves);
-        // Update local values
         for (const [key, value] of Object.entries(this.dirty)) {
           const [section, ...nameParts] = key.split('.');
           const name = nameParts.join('.');
           if (!this.values[section]) this.values[section] = {};
           this.values[section][name] = value;
         }
-        // Check if restart-sensitive settings changed
         const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
         restartNeeded = Object.keys(this.dirty).some(k => restartKeys.includes(k));
         this.dirty = {};
@@ -337,9 +526,7 @@ function settingsPanel() {
     async testProvider(group) {
       this.testing = group.section;
       this.testResult[group.section] = '';
-      // Save first, then test
       try {
-        // Some providers have a test endpoint
         const resp = await fetch(CP.apiBase + '/' + group.section + '.test/');
         const data = await resp.json();
         this.testResult[group.section] = data.success ? 'success' : (data.message || 'failed');

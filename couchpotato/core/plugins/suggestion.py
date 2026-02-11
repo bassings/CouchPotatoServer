@@ -318,7 +318,8 @@ config = [{
         {
             'tab': 'display',
             'name': 'suggestion',
-            'label': 'Suggestions',
+            'label': 'For You',
+            'description': 'Personalised recommendations based on movies in your library.',
             'options': [
                 {
                     'name': 'enabled',

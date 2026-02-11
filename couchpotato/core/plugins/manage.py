@@ -284,8 +284,8 @@ config = [{
     'groups': [
         {
             'tab': 'manage',
-            'label': 'Movie Library Manager',
-            'description': 'Add your existing movie folders.',
+            'label': 'Movie Library',
+            'description': 'Tell CouchPotato where your movie collection lives.',
             'options': [
                 {
                     'name': 'enabled',
@@ -295,30 +295,29 @@ config = [{
                 {
                     'name': 'library',
                     'type': 'directories',
-                    'description': 'Folder where the movies should be moved to.',
+                    'label': 'Library Folders',
+                    'description': 'Folders containing your movie files. You can add multiple folders separated by :: (double colon).',
                 },
                 {
-                    'label': 'Cleanup After',
-                    'name': 'cleanup',
-                    'type': 'bool',
-                    'description': 'Remove movie from db if it can\'t be found after re-scan.',
-                    'default': True,
-                },
-                {
-                    'label': 'Scan at startup',
-                    'name': 'startup_scan',
-                    'type': 'bool',
-                    'default': True,
-                    'advanced': True,
-                    'description': 'Do a quick scan on startup. On slow systems better disable this.',
-                },
-                {
-                    'label': 'Full library refresh',
+                    'label': 'Scan Interval (hours)',
                     'name': 'library_refresh_interval',
                     'type': 'int',
                     'default': 0,
-                    'advanced': True,
-                    'description': 'Do a full scan every X hours. (0 is disabled)',
+                    'description': 'Automatically scan your library every X hours. Set to 0 to disable.',
+                },
+                {
+                    'label': 'Scan at Startup',
+                    'name': 'startup_scan',
+                    'type': 'bool',
+                    'default': True,
+                    'description': 'Run a quick scan when CouchPotato starts.',
+                },
+                {
+                    'label': 'Remove Missing Movies',
+                    'name': 'cleanup',
+                    'type': 'bool',
+                    'description': 'Remove movies from the database if their files can no longer be found.',
+                    'default': True,
                 },
             ],
         },
