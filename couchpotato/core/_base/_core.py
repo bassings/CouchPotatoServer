@@ -310,13 +310,13 @@ config = [{
                     'name': 'ssl_cert',
                     'label': 'SSL Certificate',
                     'description': 'Full path to your SSL certificate file (.crt or .pem)',
-                    'advanced': True,
+                    'show_when': {'core.use_https': True},
                 },
                 {
                     'name': 'ssl_key',
                     'label': 'SSL Private Key',
                     'description': 'Full path to your SSL private key file (.key)',
-                    'advanced': True,
+                    'show_when': {'core.use_https': True},
                 },
                 {
                     'name': 'ipv6',
