@@ -9,6 +9,10 @@ autoload = 'Trakt'
 
 
 class Trakt(Notification, TraktBase):
+    """Trakt notification provider - adds movies to your collection and removes from watchlist.
+    
+    Uses the OAuth credentials configured in the Trakt automation settings.
+    """
 
     urls = {
         'library': 'sync/collection',
@@ -19,16 +23,38 @@ class Trakt(Notification, TraktBase):
     listen_to = ['renamer.after']
     enabled_option = 'notification_enabled'
 
-    def notify(self, message = '', data = None, listener = None):
-        if not data: data = {}
+    def conf(self, attr, *args, **kwargs):
+        """Override conf to read OAuth credentials from automation settings."""
+        # These settings are shared with the automation module
+        shared_settings = ['automation_client_id', 'automation_client_secret', 
+                          'automation_oauth_token', 'automation_oauth_refresh']
+        
+        if attr in shared_settings:
+            # Read from the automation config section
+            from couchpotato.environment import Env
+            value = Env.setting(attr, 'trakt_automation')
+            return value
+        
+        return super(Trakt, self).conf(attr, *args, **kwargs)
+
+    def notify(self, message='', data=None, listener=None):
+        if not data:
+            data = {}
 
         if listener == 'test':
-            result = self.call(self.urls['test'])
+            # Check if credentials are configured
+            if not self.get_client_id():
+                log.warning('Trakt Client ID not configured in automation settings')
+                return False
+            if not self.conf('automation_oauth_token'):
+                log.warning('Trakt not authorized. Authorize in the Automation tab first.')
+                return False
 
-            return result
+            result = self.call(self.urls['test'])
+            return bool(result)
 
         else:
-
+            # Add to collection
             post_data = {
                 'movies': [{'ids': {'imdb': getIdentifier(data)}}] if data else []
             }
@@ -48,7 +74,7 @@ config = [{
             'list': 'notification_providers',
             'name': 'trakt',
             'label': 'Trakt',
-            'description': 'Add movies to your Trakt collection once downloaded. Connect your account in Suggestions settings.',
+            'description': 'Add movies to your Trakt collection once downloaded. Configure credentials in the Automation tab.',
             'options': [
                 {
                     'name': 'notification_enabled',
@@ -60,6 +86,7 @@ config = [{
                     'label': 'Remove from watchlist',
                     'default': False,
                     'type': 'bool',
+                    'description': 'Remove movies from your Trakt watchlist after adding to collection.',
                 },
             ],
         }

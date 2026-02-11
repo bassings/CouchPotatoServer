@@ -13,7 +13,7 @@ config = [{
             'list': 'watchlist_providers',
             'name': 'trakt_automation',
             'label': 'Trakt Watchlist',
-            'description': 'Auto-add movies from your Trakt watchlist.',
+            'description': 'Auto-add movies from your Trakt watchlist. Requires a Trakt application.',
             'options': [
                 {
                     'name': 'automation_enabled',
@@ -21,16 +21,27 @@ config = [{
                     'type': 'enabler',
                 },
                 {
+                    'name': 'automation_client_id',
+                    'label': 'Client ID',
+                    'description': 'Create a Trakt app at trakt.tv/oauth/applications and copy the Client ID here.',
+                },
+                {
+                    'name': 'automation_client_secret',
+                    'label': 'Client Secret',
+                    'description': 'The Client Secret from your Trakt application.',
+                    'type': 'password',
+                },
+                {
                     'name': 'automation_oauth_token',
                     'label': 'Auth Token',
-                    'advanced': 1
+                    'advanced': True,
+                    'description': 'OAuth access token (set automatically after authorization).',
                 },
                 {
                     'name': 'automation_oauth_refresh',
                     'label': 'Refresh Token',
-                    'description': ('Used to automatically refresh your oauth token every 3 months',
-                                    'To get a refresh token, reconnect with trakt'),
-                    'advanced': 1
+                    'advanced': True,
+                    'description': 'OAuth refresh token for automatic token renewal.',
                 },
             ],
         },

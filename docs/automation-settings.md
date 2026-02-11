@@ -45,9 +45,19 @@ These filters apply to ALL automation sources:
 
 ### Trakt Watchlist
 - **Purpose:** Sync with your Trakt.tv watchlist
-- **How it works:** Uses OAuth authentication to access your Trakt account
-- **Setup:** Click "Authorize" to link your Trakt account
-- **Note:** OAuth proxy is currently unavailable; Trakt sync may not work until direct OAuth is implemented
+- **How it works:** Uses OAuth 2.0 device code authentication to access your Trakt account
+- **Setup:**
+  1. Create a Trakt application at [trakt.tv/oauth/applications](https://trakt.tv/oauth/applications)
+  2. Enter your **Client ID** and **Client Secret** in the settings
+  3. Click **"Authorize with Trakt"** to start the device code flow
+  4. Visit the URL shown (trakt.tv/activate) and enter the code displayed
+  5. Once authorized, CouchPotato will automatically sync your watchlist
+- **Settings:**
+  - **Enabled** toggle
+  - **Client ID** - From your Trakt application
+  - **Client Secret** - From your Trakt application
+  - **Auth Token** (advanced) - Set automatically after authorization
+  - **Refresh Token** (advanced) - Used for automatic token renewal
 
 ### Blu-ray.com
 - **Purpose:** Import new Blu-ray releases
@@ -150,8 +160,8 @@ The Suggestions system shows movies on the Suggestions page without adding them 
 ### Avoid enabling:
 - Multiple overlapping sources (e.g., IMDB Charts Auto-Add AND Popular Movies)
 - YTS Popular if you don't use that tracker
-- Trakt (currently broken without OAuth proxy)
 
 ---
 
 *Document created: 2026-02-12 by Eggbert 🥚*
+*Updated: 2026-02-12 - Trakt OAuth now uses direct device code flow*
