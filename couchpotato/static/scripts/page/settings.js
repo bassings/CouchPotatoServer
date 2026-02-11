@@ -1286,6 +1286,81 @@ Option.Combined = new Class({
 
 });
 
+Option.Button = new Class({
+	Extends: OptionBase,
+
+	type: 'button',
+	save_on_change: false,
+
+	create: function(){
+		var self = this;
+
+		self.input = new Element('input', {
+			'type': 'hidden',
+			'name': self.postName(),
+			'value': ''
+		});
+
+		self.button = new Element('a.button', {
+			'text': self.options.button_text || 'Execute',
+			'events': {
+				'click': self.executeAction.bind(self)
+			}
+		});
+
+		self.status = new Element('span.button_status');
+
+		self.el.adopt(
+			self.createLabel(),
+			self.button,
+			self.status,
+			self.input
+		);
+	},
+
+	executeAction: function(e){
+		var self = this;
+		(e).preventDefault();
+
+		if(!self.options.button_action){
+			self.status.set('text', 'No action configured');
+			return;
+		}
+
+		self.button.addClass('loading');
+		self.status.set('text', 'Loading...');
+
+		Api.request(self.options.button_action, {
+			'onComplete': function(json){
+				self.button.removeClass('loading');
+				if(json.success){
+					self.status.set('text', json.message || 'Success!');
+					self.status.removeClass('error');
+					self.status.addClass('success');
+
+					// Reload the page after a short delay to show updated settings
+					if(json.added > 0){
+						requestTimeout(function(){
+							window.location.reload();
+						}, 1500);
+					}
+				}
+				else {
+					self.status.set('text', json.error || 'Failed');
+					self.status.removeClass('success');
+					self.status.addClass('error');
+				}
+			},
+			'onError': function(){
+				self.button.removeClass('loading');
+				self.status.set('text', 'Request failed');
+				self.status.removeClass('success');
+				self.status.addClass('error');
+			}
+		});
+	}
+});
+
 var createTooltip = function(description){
 
 	var tip = new Element('div.tooltip', {

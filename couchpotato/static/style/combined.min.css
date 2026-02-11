@@ -1011,3 +1011,4 @@ input[type=text],textarea{-webkit-appearance:none}
 .directory_list .actions:last-child>.cancel{opacity:.7}
 .directory_list .actions:last-child>.save{margin-right:0}
 .thumb_list .movie .poster:not(.type_image){display:flex;align-items:center;justify-content:center;position:absolute;height:100%;width:100%}.thumb_list .movie .poster:not(.type_image)::after{content:"No Poster Available";color:#999;font-size:11px;text-align:center}
+.ctrlHolder .button_status{margin-left:10px;font-size:12px}.ctrlHolder .button_status.success{color:#4CAF50}.ctrlHolder .button_status.error{color:#f44336}.ctrlHolder a.button.loading{opacity:.6;pointer-events:none}.ctrlHolder a.button.loading:after{content:"..."}

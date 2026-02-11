@@ -381,3 +381,212 @@ class TestTorrentPotatoProvider:
             p._searchOnHost({'host': 'http://example.com/'}, {}, {}, results)
 
         assert len(results) == 0
+
+
+# ===========================================================================
+# TorrentPotato Jackett Integration Tests
+# ===========================================================================
+
+class TestTorrentPotatoJackettIntegration:
+    """Tests for TorrentPotato Jackett integration."""
+
+    def _make_provider(self):
+        """Create a TorrentPotato provider with mocked event system."""
+        with patch('couchpotato.core.media._base.providers.torrent.torrentpotato.addApiView'):
+            from couchpotato.core.media._base.providers.torrent.torrentpotato import Base
+            p = Base.__new__(Base)
+            p._http_client = None
+            return p
+
+    def test_getJackettIndexers_parses_xml(self):
+        p = self._make_provider()
+
+        # Sample Jackett indexers XML response
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers>
+            <indexer id="yts" configured="true">
+                <title>YTS</title>
+            </indexer>
+            <indexer id="1337x" configured="true">
+                <title>1337x</title>
+            </indexer>
+            <indexer id="rarbg" configured="false">
+                <title>RARBG</title>
+            </indexer>
+        </indexers>'''
+
+        with patch.object(p, 'urlopen', return_value=xml_response):
+            indexers, error = p.getJackettIndexers('http://localhost:9117', 'testapikey')
+
+        assert error is None
+        assert len(indexers) == 2  # Only configured=true indexers
+        assert indexers[0]['id'] == 'yts'
+        assert indexers[0]['title'] == 'YTS'
+        assert 'potato/yts/api' in indexers[0]['potato_url']
+        assert indexers[1]['id'] == '1337x'
+
+    def test_getJackettIndexers_empty_response(self):
+        p = self._make_provider()
+
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers></indexers>'''
+
+        with patch.object(p, 'urlopen', return_value=xml_response):
+            indexers, error = p.getJackettIndexers('http://localhost:9117', 'testapikey')
+
+        assert error is None
+        assert len(indexers) == 0
+
+    def test_getJackettIndexers_connection_error(self):
+        p = self._make_provider()
+
+        with patch.object(p, 'urlopen', side_effect=Exception('Connection refused')):
+            indexers, error = p.getJackettIndexers('http://localhost:9117', 'testapikey')
+
+        assert indexers is None
+        assert 'Connection refused' in error
+
+    def test_getJackettIndexers_invalid_xml(self):
+        p = self._make_provider()
+
+        with patch.object(p, 'urlopen', return_value=b'not valid xml'):
+            indexers, error = p.getJackettIndexers('http://localhost:9117', 'testapikey')
+
+        assert indexers is None
+        assert 'Failed to parse' in error
+
+    def test_jackettTest_success(self):
+        p = self._make_provider()
+
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers>
+            <indexer id="yts" configured="true">
+                <title>YTS</title>
+            </indexer>
+        </indexers>'''
+
+        with patch.object(p, 'urlopen', return_value=xml_response), \
+             patch.object(p, 'conf', return_value=''):
+            result = p.jackettTest('http://localhost:9117', 'testapikey')
+
+        assert result['success'] is True
+        assert result['count'] == 1
+        assert len(result['indexers']) == 1
+
+    def test_jackettTest_missing_credentials(self):
+        p = self._make_provider()
+
+        with patch.object(p, 'conf', return_value=''):
+            result = p.jackettTest()
+
+        assert result['success'] is False
+        assert 'required' in result['error']
+
+    def test_jackettSync_adds_indexers(self):
+        p = self._make_provider()
+
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers>
+            <indexer id="yts" configured="true">
+                <title>YTS</title>
+            </indexer>
+            <indexer id="1337x" configured="true">
+                <title>1337x</title>
+            </indexer>
+        </indexers>'''
+
+        saved_settings = {}
+
+        def mock_conf(key, value=None, **kwargs):
+            if value is not None:
+                saved_settings[key] = value
+                return value
+            return saved_settings.get(key, '')
+
+        with patch.object(p, 'urlopen', return_value=xml_response), \
+             patch.object(p, 'conf', side_effect=mock_conf), \
+             patch.object(p, 'getHosts', return_value=[]):
+            result = p.jackettSync('http://localhost:9117', 'testapikey')
+
+        assert result['success'] is True
+        assert result['added'] == 2
+        assert result['total'] == 2
+        assert 'host' in saved_settings
+        assert 'yts/api' in saved_settings['host']
+        assert '1337x/api' in saved_settings['host']
+
+    def test_jackettSync_preserves_existing_indexers(self):
+        p = self._make_provider()
+
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers>
+            <indexer id="yts" configured="true">
+                <title>YTS</title>
+            </indexer>
+        </indexers>'''
+
+        existing_host = {
+            'use': '1',
+            'host': 'http://other-indexer.com/api',
+            'name': 'other',
+            'pass_key': 'pass123',
+            'seed_ratio': 1.0,
+            'seed_time': 40,
+            'extra_score': 0
+        }
+
+        saved_settings = {}
+
+        def mock_conf(key, value=None, **kwargs):
+            if value is not None:
+                saved_settings[key] = value
+                return value
+            return saved_settings.get(key, '')
+
+        with patch.object(p, 'urlopen', return_value=xml_response), \
+             patch.object(p, 'conf', side_effect=mock_conf), \
+             patch.object(p, 'getHosts', return_value=[existing_host]):
+            result = p.jackettSync('http://localhost:9117', 'testapikey')
+
+        assert result['success'] is True
+        assert result['added'] == 1
+        assert result['total'] == 2  # existing + new
+        assert 'other-indexer.com' in saved_settings['host']
+        assert 'yts/api' in saved_settings['host']
+
+    def test_jackettSync_skips_duplicates(self):
+        p = self._make_provider()
+
+        xml_response = b'''<?xml version="1.0" encoding="UTF-8"?>
+        <indexers>
+            <indexer id="yts" configured="true">
+                <title>YTS</title>
+            </indexer>
+        </indexers>'''
+
+        existing_host = {
+            'use': '1',
+            'host': 'http://localhost:9117/potato/yts/api',
+            'name': 'YTS',
+            'pass_key': 'testapikey',
+            'seed_ratio': 1.0,
+            'seed_time': 40,
+            'extra_score': 0
+        }
+
+        saved_settings = {}
+
+        def mock_conf(key, value=None, **kwargs):
+            if value is not None:
+                saved_settings[key] = value
+                return value
+            return saved_settings.get(key, '')
+
+        with patch.object(p, 'urlopen', return_value=xml_response), \
+             patch.object(p, 'conf', side_effect=mock_conf), \
+             patch.object(p, 'getHosts', return_value=[existing_host]):
+            result = p.jackettSync('http://localhost:9117', 'testapikey')
+
+        assert result['success'] is True
+        assert result['added'] == 0  # Should skip since URL already exists
+        assert result['total'] == 1
