@@ -42,6 +42,8 @@ tailwind.config = {
   ::-webkit-scrollbar-track { background: #0d0d0d; }
   ::-webkit-scrollbar-thumb { background: #1e1e22; border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+  .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+  .scrollbar-hide::-webkit-scrollbar { display: none; }
   .poster-card { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
   .poster-card:hover { border-color: rgba(53,197,244,0.15); box-shadow: 0 0 20px rgba(53,197,244,0.06); }
   .fade-in { animation: fadeIn 0.2s ease-out; }
