@@ -36,7 +36,7 @@
 
   <div x-show="!loading" x-cloak>
     <!-- Tabs -->
-    <div class="flex flex-wrap gap-1 mb-6">
+    <div class="flex flex-wrap gap-1 mb-6 overflow-x-auto scrollbar-hide">
       <template x-for="tab in tabOrder" :key="tab">
         <button @click="activeTab = tab"
                 :class="activeTab === tab ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
@@ -194,8 +194,48 @@
                       </div>
                     </template>
 
+                    <!-- Combined (multi-entry rows like newznab hosts/keys) -->
+                    <template x-if="opt.type === 'combined'">
+                      <div class="sm:col-span-2" x-data="combinedField(group.section, opt)">
+                        <template x-for="(row, rowIdx) in rows" :key="rowIdx">
+                          <div class="flex gap-2 mb-2 items-center">
+                            <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
+                              <input type="text" :placeholder="col.replace(/_/g, ' ')"
+                                     :value="row[colIdx] || ''"
+                                     @input="updateRow(rowIdx, colIdx, $event.target.value)"
+                                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                            </template>
+                            <button @click="removeRow(rowIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
+                              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                          </div>
+                        </template>
+                        <button @click="addRow()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add</button>
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="typeof opt.description === 'object' ? Object.values(opt.description).join(' ') : (opt.description || '')"></p>
+                      </div>
+                    </template>
+
+                    <!-- Directories (multi-path) -->
+                    <template x-if="opt.type === 'directories'">
+                      <div class="sm:col-span-2" x-data="directoriesField(group.section, opt)">
+                        <template x-for="(dir, dirIdx) in dirs" :key="dirIdx">
+                          <div class="flex gap-2 mb-2 items-center">
+                            <input type="text" :value="dir"
+                                   @input="updateDir(dirIdx, $event.target.value)"
+                                   placeholder="/path/to/movies"
+                                   class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                            <button @click="removeDir(dirIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
+                              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            </button>
+                          </div>
+                        </template>
+                        <button @click="addDir()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add folder</button>
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description || ''"></p>
+                      </div>
+                    </template>
+
                     <!-- Text (default) -->
-                    <template x-if="!opt.type || opt.type === 'string' || opt.type === 'directory' || opt.type === 'directories'">
+                    <template x-if="!opt.type || opt.type === 'string' || opt.type === 'directory'">
                       <div>
                         <input type="text"
                                :value="getVal(group.section, opt.name)"
@@ -451,14 +491,27 @@ function settingsPanel() {
     },
 
     getGroupOptions(group) {
-      return (group.options || []).map(opt => ({
-        ...opt,
-        label: opt.label || null,
-      }));
+      // Collect names consumed by combined fields so they can be hidden
+      const combinedNames = new Set();
+      for (const opt of (group.options || [])) {
+        if (opt.type === 'combined' && opt.combine) {
+          for (const col of opt.combine) {
+            if (col !== opt.name) combinedNames.add(col);
+          }
+        }
+      }
+      return (group.options || [])
+        .filter(opt => !combinedNames.has(opt.name))
+        .map(opt => ({
+          ...opt,
+          label: opt.label || null,
+        }));
     },
 
     isOptionVisible(opt, group) {
       if (!opt.show_when) return true;
+      // Touch dirty to make Alpine reactive to changes
+      const _dirty = JSON.stringify(this.dirty);
       for (const [key, expected] of Object.entries(opt.show_when)) {
         const [sec, name] = key.split('.');
         const val = this.getVal(sec, name);
@@ -576,6 +629,101 @@ function settingsPanel() {
       this.message = msg;
       this.messageType = type;
       setTimeout(() => this.message = '', 3000);
+    },
+  };
+}
+
+/* ── Combined field (multi-row entries like newznab hosts/keys) ── */
+function combinedField(section, opt) {
+  return {
+    rows: [],
+    section,
+    opt,
+    init() {
+      const panel = this.getPanel();
+      // Parse comma-separated values for each column
+      const cols = opt.combine || [];
+      const colVals = cols.map(col => {
+        const raw = panel.getVal(section, col) || '';
+        return String(raw).split(',').map(s => s.trim());
+      });
+      const maxRows = Math.max(1, ...colVals.map(c => c.length));
+      this.rows = [];
+      for (let i = 0; i < maxRows; i++) {
+        this.rows.push(cols.map((_, ci) => colVals[ci][i] || ''));
+      }
+    },
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      // Fallback: walk up to [x-data="settingsPanel()"]
+      if (!el) {
+        el = document.querySelector('[x-data="settingsPanel()"]');
+      }
+      return el ? Alpine.$data(el) : null;
+    },
+    sync() {
+      const panel = this.getPanel();
+      if (!panel) return;
+      const cols = this.opt.combine || [];
+      cols.forEach((col, ci) => {
+        const val = this.rows.map(r => r[ci] || '').join(',');
+        panel.setVal(this.section, col, val);
+      });
+    },
+    updateRow(rowIdx, colIdx, value) {
+      this.rows[rowIdx][colIdx] = value;
+      this.sync();
+    },
+    addRow() {
+      this.rows.push(this.opt.combine.map(() => ''));
+    },
+    removeRow(idx) {
+      if (this.rows.length > 1) {
+        this.rows.splice(idx, 1);
+        this.sync();
+      }
+    },
+  };
+}
+
+/* ── Directories field (multi-path) ── */
+function directoriesField(section, opt) {
+  return {
+    dirs: [],
+    section,
+    opt,
+    init() {
+      const panel = this.getPanel();
+      const raw = panel ? panel.getVal(section, opt.name) : '';
+      // CouchPotato uses :: as delimiter for directories
+      const parts = String(raw || '').split('::').filter(s => s.trim());
+      this.dirs = parts.length ? parts : [''];
+    },
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
+    },
+    sync() {
+      const panel = this.getPanel();
+      if (!panel) return;
+      const val = this.dirs.filter(d => d.trim()).join('::');
+      panel.setVal(this.section, this.opt.name, val);
+    },
+    updateDir(idx, value) {
+      this.dirs[idx] = value;
+      this.sync();
+    },
+    addDir() {
+      this.dirs.push('');
+    },
+    removeDir(idx) {
+      if (this.dirs.length > 1) {
+        this.dirs.splice(idx, 1);
+        this.sync();
+      }
     },
   };
 }

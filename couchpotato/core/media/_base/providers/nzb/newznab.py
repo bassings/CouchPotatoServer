@@ -234,11 +234,9 @@ config = [{
             'tab': 'searcher',
             'list': 'nzb_providers',
             'name': 'newznab',
+            'label': 'Newznab',
             'order': 10,
-            'description': 'Enable <a href="http://newznab.com/" target="_blank">NewzNab</a> such as <a href="https://nzb.su" target="_blank">NZB.su</a>, \
-                <a href="https://nzbs.org" target="_blank">NZBs.org</a>, <a href="http://dognzb.cr/login" target="_blank">DOGnzb.cr</a>, \
-                <a href="https://github.com/spotweb/spotweb" target="_blank">Spotweb</a>, <a href="https://nzbgeek.info/" target="_blank">NZBGeek</a>, \
-                <a href="https://www.nzbfinder.ws" target="_blank">NZBFinder</a>, <a href="https://www.usenet-crawler.com" target="_blank">Usenet-Crawler</a>',
+            'description': 'Newznab-compatible usenet indexers (NZBGeek, NZB.su, DOGnzb, etc.).',
             'wizard': True,
             'icon': 'iVBORw0KGgoAAAANSUhEUgAAABAAAAAQAgMAAABinRfyAAAACVBMVEVjhwD///86aRovd/sBAAAAMklEQVQI12NgAIPQUCCRmQkjssDEShiRuRIqwZqZGcDAGBrqANUhGgIkWAOABKMDxCAA24UK50b26SAAAAAASUVORK5CYII=',
             'options': [
