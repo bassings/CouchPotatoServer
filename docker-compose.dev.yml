@@ -1,0 +1,14 @@
+services:
+  couchpotato-dev:
+    build: .
+    container_name: couchpotato-dev
+    ports:
+      - "5051:5050"
+    environment:
+      - TZ=Australia/Brisbane
+    volumes:
+      # Mount source for live UI changes
+      - ./couchpotato:/app/couchpotato:ro
+    tmpfs:
+      - /config
+      - /data
