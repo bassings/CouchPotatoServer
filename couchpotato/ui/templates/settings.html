@@ -308,6 +308,10 @@
                                    @input="updateDir(dirIdx, $event.target.value)"
                                    placeholder="/path/to/movies"
                                    class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                            <button @click="browseDir(dirIdx)" type="button"
+                                    class="px-2 py-1.5 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
+                              Browse
+                            </button>
                             <button @click="removeDir(dirIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
                               <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                             </button>
@@ -324,8 +328,32 @@
                       </div>
                     </template>
 
+                    <!-- Directory (single path with browse) -->
+                    <template x-if="opt.type === 'directory'">
+                      <div>
+                        <div class="flex gap-2">
+                          <input type="text"
+                                 :value="getVal(group.section, opt.name)"
+                                 @input="setVal(group.section, opt.name, $event.target.value)"
+                                 :placeholder="opt.default != null ? String(opt.default) : '/path/to/folder'"
+                                 class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                          <button @click="browseDirectory(group.section, opt.name)" type="button"
+                                  class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
+                            Browse
+                          </button>
+                        </div>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
+                      </div>
+                    </template>
+
                     <!-- Text (default) -->
-                    <template x-if="!opt.type || opt.type === 'string' || opt.type === 'directory'">
+                    <template x-if="!opt.type || opt.type === 'string'">
                       <div>
                         <input type="text"
                                :value="getVal(group.section, opt.name)"
@@ -388,6 +416,51 @@
   <div x-show="message" x-transition class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium"
        :class="messageType === 'success' ? 'bg-cp-success/20 text-cp-success' : 'bg-cp-danger/20 text-cp-danger'"
        x-text="message"></div>
+
+  <!-- Directory Browser Modal -->
+  <div x-show="browserOpen" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+    <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+      <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+        <h3 class="text-sm font-medium">Browse Folders</h3>
+        <button @click="browserOpen = false" class="text-cp-muted hover:text-cp-text">
+          <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+      
+      <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
+        <div class="flex items-center gap-2 text-xs">
+          <button @click="loadDirectories(browserParent)" :disabled="browserIsRoot" 
+                  class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed">
+            ↑ Up
+          </button>
+          <span class="text-cp-muted font-mono truncate" x-text="browserPath"></span>
+        </div>
+      </div>
+      
+      <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]">
+        <div x-show="browserLoading" class="flex items-center justify-center py-8">
+          <svg class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+        </div>
+        <div x-show="!browserLoading && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
+          Empty folder
+        </div>
+        <template x-for="dir in browserDirs" :key="dir">
+          <button @click="selectDirectory(dir)" 
+                  class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02]">
+            <svg class="w-4 h-4 text-cp-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+            </svg>
+            <span class="truncate" x-text="dir.split('/').filter(Boolean).pop() || dir"></span>
+          </button>
+        </template>
+      </div>
+      
+      <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
+        <button @click="browserOpen = false" class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">Cancel</button>
+        <button @click="confirmDirectory()" class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">Select This Folder</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -495,6 +568,15 @@ function settingsPanel() {
     // Auto-save state
     lastSaved: false,
     saveTimers: {},
+
+    // Directory browser state
+    browserOpen: false,
+    browserPath: '/',
+    browserDirs: [],
+    browserLoading: false,
+    browserTarget: null,  // { section, name, index? } for callback
+    browserParent: '/',
+    browserIsRoot: true,
 
     // Obsolete/dead sections to hide
     hiddenSections: new Set([
@@ -1074,6 +1156,54 @@ function settingsPanel() {
       this.messageType = type;
       setTimeout(() => this.message = '', 3000);
     },
+
+    // Directory browser methods
+    async browseDirectory(section, name, index = null) {
+      this.browserTarget = { section, name, index };
+      this.browserOpen = true;
+      // Start from current value if set, otherwise root
+      const currentVal = this.getVal(section, name);
+      const startPath = (currentVal && typeof currentVal === 'string' && currentVal.startsWith('/')) ? currentVal : '/';
+      this.browserPath = startPath;
+      await this.loadDirectories(startPath);
+    },
+
+    async loadDirectories(path) {
+      this.browserLoading = true;
+      try {
+        const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
+        const data = await resp.json();
+        this.browserPath = path;
+        this.browserDirs = data.dirs || [];
+        this.browserParent = data.parent;
+        this.browserIsRoot = data.is_root;
+      } catch (e) {
+        console.error('Failed to load directories:', e);
+        this.browserDirs = [];
+      }
+      this.browserLoading = false;
+    },
+
+    selectDirectory(dir) {
+      this.loadDirectories(dir);
+    },
+
+    confirmDirectory() {
+      const path = this.browserPath;
+      if (this.browserTarget) {
+        const { section, name, index } = this.browserTarget;
+        if (index !== null) {
+          // For directories field - dispatch custom event
+          window.dispatchEvent(new CustomEvent('directory-selected', { 
+            detail: { section, name, index, path } 
+          }));
+        } else {
+          // For single directory field
+          this.setVal(section, name, path);
+        }
+      }
+      this.browserOpen = false;
+    },
   };
 }
 
@@ -1191,12 +1321,26 @@ function directoriesField(section, opt) {
     dirs: [],
     section,
     opt,
+    _eventHandler: null,
     init() {
       const panel = this.getPanel();
       const raw = panel ? panel.getVal(section, opt.name) : '';
       // CouchPotato uses :: as delimiter for directories
       const parts = String(raw || '').split('::').filter(s => s.trim());
       this.dirs = parts.length ? parts : [''];
+      
+      // Listen for directory selection events
+      this._eventHandler = (e) => {
+        if (e.detail.section === this.section && e.detail.name === this.opt.name) {
+          this.updateDir(e.detail.index, e.detail.path);
+        }
+      };
+      window.addEventListener('directory-selected', this._eventHandler);
+    },
+    destroy() {
+      if (this._eventHandler) {
+        window.removeEventListener('directory-selected', this._eventHandler);
+      }
     },
     getPanel() {
       let el = this.$el;
@@ -1221,6 +1365,12 @@ function directoriesField(section, opt) {
       if (this.dirs.length > 1) {
         this.dirs.splice(idx, 1);
         this.sync();
+      }
+    },
+    browseDir(idx) {
+      const panel = this.getPanel();
+      if (panel) {
+        panel.browseDirectory(this.section, this.opt.name, idx);
       }
     },
   };
