@@ -289,11 +289,11 @@
                           </div>
                         </template>
                         <button @click="addRow()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add</button>
-                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
-                        <template x-if="$root.hasLearnMore(group.section, opt.name)">
+                        <p x-show="buildDescription()" class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
+                        <template x-if="hasLearnMore()">
                           <details class="mt-2 text-[10px]">
                             <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
-                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="$root.getLearnMore(group.section, opt.name)"></div>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore()"></div>
                           </details>
                         </template>
                       </div>
@@ -318,11 +318,11 @@
                           </div>
                         </template>
                         <button @click="addDir()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add folder</button>
-                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
-                        <template x-if="$root.hasLearnMore(group.section, opt.name)">
+                        <p x-show="buildDescription()" class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
+                        <template x-if="hasLearnMore()">
                           <details class="mt-2 text-[10px]">
                             <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
-                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="$root.getLearnMore(group.section, opt.name)"></div>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore()"></div>
                           </details>
                         </template>
                       </div>
@@ -578,12 +578,18 @@ function settingsPanel() {
     browserParent: '/',
     browserIsRoot: true,
 
-    // Obsolete/dead sections to hide
+    // Obsolete/dead sections to hide completely (defunct services)
     hiddenSections: new Set([
       'wdtvlive', 'windowsmediacenter', 'sonyps3', 'mediabrowser',
       'pneumatic', 'hadouken', 'homey',
       // Dead/defunct torrent trackers
       'awesomehd', 'bithdtv', 'scenetime', 'torrentbytes',
+    ]),
+    
+    // Advanced-only sections (shown only when Advanced toggle is on)
+    advancedSections: new Set([
+      'alpharatio', 'hdbits', 'torrentday', 'torrentleech',
+      'utorrent', 'putio', 'synology', 'rtorrent',
     ]),
 
     // Tabs to hide (no useful visible content)
@@ -881,6 +887,7 @@ function settingsPanel() {
       }
       this.loading = false;
       this.$watch('activeTab', () => this.updateCurrentGroups());
+      this.$watch('showAdvanced', () => this.updateCurrentGroups());
     },
 
     computeOpenGroups() {
@@ -913,6 +920,8 @@ function settingsPanel() {
       const groups = [];
       for (const [sectionName, section] of Object.entries(this.options)) {
         if (this.hiddenSections.has(sectionName)) continue;
+        // Skip advanced-only sections unless Advanced toggle is on
+        if (this.advancedSections.has(sectionName) && !this.showAdvanced) continue;
         for (const grp of (section.groups || [])) {
           let originalTab = grp.tab || 'general';
           let grpTab = this.tabRemaps[originalTab] || originalTab;
@@ -1290,6 +1299,19 @@ function combinedField(section, opt) {
       }
       return el ? Alpine.$data(el) : null;
     },
+    // Delegate to parent panel for description building
+    buildDescription() {
+      const panel = this.getPanel();
+      return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
+    },
+    hasLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.hasLearnMore(this.section, this.opt.name) : false;
+    },
+    getLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.getLearnMore(this.section, this.opt.name) : '';
+    },
     sync() {
       const panel = this.getPanel();
       if (!panel) return;
@@ -1372,6 +1394,19 @@ function directoriesField(section, opt) {
       if (panel) {
         panel.browseDirectory(this.section, this.opt.name, idx);
       }
+    },
+    // Delegate to parent panel for description building
+    buildDescription() {
+      const panel = this.getPanel();
+      return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
+    },
+    hasLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.hasLearnMore(this.section, this.opt.name) : false;
+    },
+    getLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.getLearnMore(this.section, this.opt.name) : '';
     },
   };
 }
