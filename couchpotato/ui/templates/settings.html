@@ -194,22 +194,47 @@
                       </div>
                     </template>
 
+                    <!-- Button (action button like Jackett sync) -->
+                    <template x-if="opt.type === 'button'">
+                      <div class="sm:col-span-2" x-data="buttonField(group.section, opt)">
+                        <button @click="execute()" :disabled="running"
+                                class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
+                          <span x-show="!running" x-text="opt.button_text || 'Execute'"></span>
+                          <span x-show="running" class="flex items-center gap-2">
+                            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            Running…
+                          </span>
+                        </button>
+                        <div x-show="result" class="mt-2 text-xs" :class="success ? 'text-cp-success' : 'text-cp-danger'" x-text="result"></div>
+                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                      </div>
+                    </template>
+
                     <!-- Combined (multi-entry rows like newznab hosts/keys) -->
                     <template x-if="opt.type === 'combined'">
-                      <div class="sm:col-span-2" x-data="combinedField(group.section, opt)">
-                        <template x-for="(row, rowIdx) in rows" :key="rowIdx">
-                          <div class="flex gap-2 mb-2 items-center">
-                            <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
-                              <input type="text" :placeholder="col.replace(/_/g, ' ')"
-                                     :value="row[colIdx] || ''"
-                                     @input="updateRow(rowIdx, colIdx, $event.target.value)"
-                                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                      <div class="sm:col-span-2 overflow-x-auto" x-data="combinedField(group.section, opt)">
+                        <div class="min-w-max">
+                          <!-- Column headers -->
+                          <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted/60 font-medium">
+                            <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
+                              <span class="w-32 shrink-0" x-text="col.replace(/_/g, ' ')"></span>
                             </template>
-                            <button @click="removeRow(rowIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
-                              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
-                            </button>
+                            <span class="w-4 shrink-0"></span>
                           </div>
-                        </template>
+                          <template x-for="(row, rowIdx) in rows" :key="rowIdx">
+                            <div class="flex gap-2 mb-2 items-center">
+                              <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
+                                <input type="text" :placeholder="col.replace(/_/g, ' ')"
+                                       :value="row[colIdx] || ''"
+                                       @input="updateRow(rowIdx, colIdx, $event.target.value)"
+                                       class="w-32 shrink-0 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                              </template>
+                              <button @click="removeRow(rowIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                              </button>
+                            </div>
+                          </template>
+                        </div>
                         <button @click="addRow()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add</button>
                         <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="typeof opt.description === 'object' ? Object.values(opt.description).join(' ') : (opt.description || '')"></p>
                       </div>
@@ -257,9 +282,23 @@
                     <span x-show="testing !== group.section">Test <span x-text="group.label"></span></span>
                     <span x-show="testing === group.section">Testing…</span>
                   </button>
-                  <span x-show="testResult[group.section]"
+                  <!-- Simple result for single-entry providers -->
+                  <span x-show="testResult[group.section] && !testResultDetails[group.section]"
                         :class="testResult[group.section] === 'success' ? 'text-cp-success' : 'text-cp-danger'"
                         class="ml-2 text-[11px]" x-text="testResult[group.section]"></span>
+                  <!-- Detailed results for multi-entry providers -->
+                  <div x-show="testResultDetails[group.section]" class="mt-2 space-y-1">
+                    <template x-for="(detail, idx) in (testResultDetails[group.section] || [])" :key="idx">
+                      <div class="flex items-center gap-2 text-[11px]">
+                        <span :class="detail.success ? 'text-cp-success' : 'text-cp-danger'" class="shrink-0">
+                          <template x-if="detail.success">✓</template>
+                          <template x-if="!detail.success">✗</template>
+                        </span>
+                        <span class="text-cp-muted truncate" x-text="detail.host"></span>
+                        <span x-show="detail.error" class="text-cp-danger/70 truncate" x-text="detail.error"></span>
+                      </div>
+                    </template>
+                  </div>
                 </div>
               </template>
             </div>
@@ -373,6 +412,7 @@ function settingsPanel() {
     needsRestart: false,
     testing: null,
     testResult: {},
+    testResultDetails: {},
     message: '',
     messageType: 'success',
     openGroups: {},
@@ -604,6 +644,7 @@ function settingsPanel() {
     async testProvider(group) {
       this.testing = group.section;
       this.testResult[group.section] = '';
+      this.testResultDetails[group.section] = null;
       try {
         // Route to correct API endpoint based on provider type
         let endpoint;
@@ -619,7 +660,38 @@ function settingsPanel() {
         }
         const resp = await fetch(CP.apiBase + '/' + endpoint + '/');
         const data = await resp.json();
-        this.testResult[group.section] = data.success ? 'success' : (data.message || data.msg || 'failed');
+
+        // Check if message contains multiple results (semicolon-separated for multi-entry providers)
+        const msg = data.message || data.msg || '';
+        if (!data.success && msg.includes(';')) {
+          // Parse individual results from message like "host1: OK; host2: error"
+          const details = msg.split(';').map(part => {
+            const trimmed = part.trim();
+            const colonIdx = trimmed.indexOf(':');
+            if (colonIdx > 0) {
+              const host = trimmed.substring(0, colonIdx).trim();
+              const result = trimmed.substring(colonIdx + 1).trim();
+              const success = result.toLowerCase() === 'ok' || result.toLowerCase() === 'connected';
+              return { host, success, error: success ? null : result };
+            }
+            return { host: trimmed, success: false, error: trimmed };
+          });
+          this.testResultDetails[group.section] = details;
+          const successCount = details.filter(d => d.success).length;
+          this.testResult[group.section] = successCount + '/' + details.length + ' passed';
+        } else if (data.success && msg.includes(';')) {
+          // All passed but still show details
+          const details = msg.split(';').map(part => {
+            const trimmed = part.trim();
+            const colonIdx = trimmed.indexOf(':');
+            const host = colonIdx > 0 ? trimmed.substring(0, colonIdx).trim() : trimmed;
+            return { host, success: true, error: null };
+          });
+          this.testResultDetails[group.section] = details;
+          this.testResult[group.section] = 'success';
+        } else {
+          this.testResult[group.section] = data.success ? 'success' : (msg || 'failed');
+        }
       } catch (e) {
         this.testResult[group.section] = 'error';
       }
@@ -641,6 +713,60 @@ function settingsPanel() {
       this.message = msg;
       this.messageType = type;
       setTimeout(() => this.message = '', 3000);
+    },
+  };
+}
+
+/* ── Button field (action buttons like Jackett sync) ── */
+function buttonField(section, opt) {
+  return {
+    running: false,
+    result: '',
+    success: false,
+    section,
+    opt,
+
+    async execute() {
+      if (!opt.button_action) {
+        this.result = 'No action configured';
+        this.success = false;
+        return;
+      }
+
+      this.running = true;
+      this.result = '';
+
+      try {
+        const endpoint = opt.button_action;
+        const resp = await fetch(CP.apiBase + '/' + endpoint + '/');
+        const data = await resp.json();
+
+        this.success = data.success === true;
+        if (data.success) {
+          this.result = data.message || 'Success';
+          // Reload settings to reflect any changes made by the action
+          const panel = this.getPanel();
+          if (panel) {
+            setTimeout(() => panel.init(), 500);
+          }
+        } else {
+          this.result = data.error || data.message || 'Failed';
+        }
+      } catch (e) {
+        this.success = false;
+        this.result = 'Error: ' + e.message;
+      }
+
+      this.running = false;
+    },
+
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) {
+        el = document.querySelector('[x-data="settingsPanel()"]');
+      }
+      return el ? Alpine.$data(el) : null;
     },
   };
 }
