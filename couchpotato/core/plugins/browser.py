@@ -132,7 +132,10 @@ class FileBrowser(Plugin):
 
 
     def is_hidden(self, filepath):
-        name = ss(os.path.basename(os.path.abspath(filepath)))
+        name = os.path.basename(os.path.abspath(filepath))
+        # Handle both str and bytes - use string comparison
+        if isinstance(name, bytes):
+            name = name.decode('utf-8', errors='replace')
         return name.startswith('.') or self.has_hidden_attribute(filepath)
 
     def has_hidden_attribute(self, filepath):
