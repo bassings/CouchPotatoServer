@@ -107,7 +107,7 @@
     <!-- ==================== SETTINGS TABS ==================== -->
     <div x-show="activeTab !== 'logs'" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
-        <div x-show="!group.advanced || showAdvanced" class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden">
+        <div x-show="!group.advanced || showAdvanced" class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden max-w-full">
             <!-- Group header -->
             <div class="flex items-center justify-between px-5 py-3"
                  :class="[
@@ -139,8 +139,8 @@
             </div>
 
             <!-- Group options: always visible for non-enabler groups, toggle for enabler groups -->
-            <div x-show="getEnabler(group) ? isGroupOpen(groupKey(group, groupIdx)) : true" x-transition class="px-5 py-4">
-              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+            <div x-show="getEnabler(group) ? isGroupOpen(groupKey(group, groupIdx)) : true" x-transition class="px-5 py-4 overflow-hidden">
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 overflow-hidden">
                 <template x-for="opt in getGroupOptions(group)" :key="group.section + '.' + opt.name">
                   <div x-show="opt.type !== 'enabler' && (showAdvanced || !opt.advanced) && isOptionVisible(opt, group)"
                        :class="opt.type === 'directory' || opt.type === 'directories' ? 'sm:col-span-2' : ''">
