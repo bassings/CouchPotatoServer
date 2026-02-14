@@ -243,7 +243,7 @@ class Base(NZBProvider, RSS):
                     'apikey': host['api_key'],
                 })
                 url = '%s%s' % (self.getUrl(host['host']), query)
-                data = self.urlopen(url, timeout=15, cache_timeout=0)
+                data = self.urlopen(url, timeout=15)
 
                 if data and ('error' in data.lower() and 'code="100"' in data.lower()):
                     results.append((False, '%s: Invalid API key' % urlparse(host_url).hostname))

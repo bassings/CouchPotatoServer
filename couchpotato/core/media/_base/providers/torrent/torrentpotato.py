@@ -327,7 +327,7 @@ class Base(TorrentProvider):
                     host.get('pass_key', ''),
                     host.get('name', '')
                 )
-                data = self.urlopen(test_url, timeout=15, cache_timeout=0)
+                data = self.urlopen(test_url, timeout=15)
 
                 hostname = urlparse(host_url).hostname or host_url
                 if data:
