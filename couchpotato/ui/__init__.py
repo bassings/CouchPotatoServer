@@ -95,6 +95,12 @@ def create_router(require_auth) -> APIRouter:
         tmpl = _jinja.get_template('settings.html')
         return HTMLResponse(tmpl.render(**_ctx({'current_page': 'settings'})))
 
+    @router.get('/wizard/')
+    @router.get('/wizard')
+    async def wizard_page(request: Request, user=Depends(require_auth)):
+        tmpl = _jinja.get_template('wizard.html')
+        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'wizard'})))
+
     @router.get('/logs/')
     @router.get('/logs')
     async def logs_page(request: Request, user=Depends(require_auth)):

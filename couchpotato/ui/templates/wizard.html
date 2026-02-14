@@ -1,0 +1,1449 @@
+{% extends "base.html" %}
+{% block title %}Setup Wizard — CouchPotato{% endblock %}
+{% block content %}
+<div class="min-h-screen flex items-center justify-center p-4 lg:p-8 fade-in" x-data="setupWizard()" x-init="init()">
+  <div class="w-full max-w-2xl">
+    
+    <!-- Progress bar -->
+    <div class="mb-8">
+      <div class="flex items-center justify-between mb-2">
+        <template x-for="(stepName, idx) in steps" :key="idx">
+          <div class="flex items-center" :class="idx < steps.length - 1 ? 'flex-1' : ''">
+            <button @click="goToStep(idx)"
+                    :disabled="idx > currentStep"
+                    class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all"
+                    :class="idx < currentStep ? 'bg-cp-success text-white' : 
+                            idx === currentStep ? 'bg-cp-accent text-white ring-2 ring-cp-accent/30' : 
+                            'bg-white/[0.06] text-cp-muted'">
+              <span x-show="idx < currentStep">✓</span>
+              <span x-show="idx >= currentStep" x-text="idx + 1"></span>
+            </button>
+            <div x-show="idx < steps.length - 1" 
+                 class="flex-1 h-0.5 mx-2"
+                 :class="idx < currentStep ? 'bg-cp-success' : 'bg-white/[0.06]'"></div>
+          </div>
+        </template>
+      </div>
+      <div class="text-center">
+        <span class="text-xs text-cp-muted" x-text="steps[currentStep]"></span>
+      </div>
+    </div>
+
+    <!-- Wizard card -->
+    <div class="bg-cp-card rounded-xl border border-white/[0.05] overflow-hidden">
+      
+      <!-- ==================== STEP 1: Welcome ==================== -->
+      <div x-show="currentStep === 0" x-transition class="p-6 lg:p-8">
+        <div class="text-center mb-8">
+          <div class="w-16 h-16 rounded-2xl bg-cp-accent/10 flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-cp-accent" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h1.5C5.496 19.5 6 18.996 6 18.375m-3.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-1.5A1.125 1.125 0 0118 18.375M20.625 4.5H3.375m17.25 0c.621 0 1.125.504 1.125 1.125M20.625 4.5h-1.5C18.504 4.5 18 5.004 18 5.625m3.75 0v1.5c0 .621-.504 1.125-1.125 1.125M3.375 4.5c-.621 0-1.125.504-1.125 1.125M3.375 4.5h1.5C5.496 4.5 6 5.004 6 5.625m-3.75 0v1.5c0 .621.504 1.125 1.125 1.125m0 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m1.5-3.75C5.496 8.25 6 7.746 6 7.125v-1.5M4.875 8.25C5.496 8.25 6 8.754 6 9.375v1.5m0-5.25v5.25m0-5.25C6 5.004 6.504 4.5 7.125 4.5h9.75c.621 0 1.125.504 1.125 1.125m1.125 2.625h1.5m-1.5 0A1.125 1.125 0 0118 7.125v-1.5m1.125 2.625c-.621 0-1.125.504-1.125 1.125v1.5m2.625-2.625c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125M18 5.625v5.25M7.125 12h9.75m-9.75 0A1.125 1.125 0 016 10.875M7.125 12C6.504 12 6 12.504 6 13.125m0-2.25C6 11.496 5.496 12 4.875 12M18 10.875c0 .621-.504 1.125-1.125 1.125M18 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m-12 5.25v-5.25m0 5.25c0 .621.504 1.125 1.125 1.125h9.75c.621 0 1.125-.504 1.125-1.125m-12 0v-1.5c0-.621-.504-1.125-1.125-1.125M18 18.375v-5.25m0 5.25v-1.5c0-.621.504-1.125 1.125-1.125M18 13.125v1.5c0 .621.504 1.125 1.125 1.125M18 13.125c0-.621.504-1.125 1.125-1.125M6 13.125v1.5c0 .621-.504 1.125-1.125 1.125M6 13.125C6 12.504 5.496 12 4.875 12m-1.5 0h1.5m-1.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M19.125 12h1.5m0 0c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h1.5m14.25 0h1.5"/>
+            </svg>
+          </div>
+          <h1 class="text-2xl font-semibold tracking-tight mb-2">Welcome to CouchPotato</h1>
+          <p class="text-cp-muted text-sm">Let's get you set up. This will take about 5 minutes.</p>
+        </div>
+        
+        <div class="space-y-4 text-sm text-cp-muted">
+          <div class="flex items-start gap-3 p-4 rounded-lg bg-white/[0.02]">
+            <svg class="w-5 h-5 text-cp-accent shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <div>
+              <p class="text-cp-text font-medium">Server Security</p>
+              <p class="text-xs mt-0.5">Optionally protect CouchPotato with a username and password.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-4 rounded-lg bg-white/[0.02]">
+            <svg class="w-5 h-5 text-cp-accent shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+            </svg>
+            <div>
+              <p class="text-cp-text font-medium">Search Providers</p>
+              <p class="text-xs mt-0.5">Configure where to search for movies — Usenet, Torrents, or both.</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-4 rounded-lg bg-white/[0.02]">
+            <svg class="w-5 h-5 text-cp-accent shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/>
+            </svg>
+            <div>
+              <p class="text-cp-text font-medium">Download Client</p>
+              <p class="text-xs mt-0.5">Connect your downloader (SABnzbd, qBittorrent, etc.).</p>
+            </div>
+          </div>
+          <div class="flex items-start gap-3 p-4 rounded-lg bg-white/[0.02]">
+            <svg class="w-5 h-5 text-cp-accent shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+            </svg>
+            <div>
+              <p class="text-cp-text font-medium">Movie Library</p>
+              <p class="text-xs mt-0.5">Set up automatic renaming and organization of your movies.</p>
+            </div>
+          </div>
+        </div>
+        
+        <p class="text-xs text-cp-muted/60 text-center mt-6">You can always change these settings later.</p>
+      </div>
+
+      <!-- ==================== STEP 2: Security ==================== -->
+      <div x-show="currentStep === 1" x-transition class="p-6 lg:p-8">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold tracking-tight mb-1">Server Security</h2>
+          <p class="text-sm text-cp-muted">Protect your CouchPotato with a login. Leave blank for no authentication.</p>
+        </div>
+        
+        <div class="space-y-4">
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">Username</label>
+            <input type="text" x-model="formData.username" placeholder="Leave empty to skip"
+                   class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+          </div>
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">Password</label>
+            <input type="password" x-model="formData.password" placeholder="Leave empty to skip"
+                   class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+          </div>
+        </div>
+        
+        <div class="mt-6 p-4 rounded-lg bg-cp-warning/5 border border-cp-warning/10">
+          <p class="text-xs text-cp-warning">
+            <strong>Note:</strong> If you're accessing CouchPotato from the internet, we strongly recommend setting a username and password.
+          </p>
+        </div>
+      </div>
+
+      <!-- ==================== STEP 3: Search Providers ==================== -->
+      <div x-show="currentStep === 2" x-transition class="p-6 lg:p-8">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold tracking-tight mb-1">Where to Search</h2>
+          <p class="text-sm text-cp-muted">Choose how you want to find movies.</p>
+        </div>
+        
+        <!-- Source selection -->
+        <div class="flex gap-3 mb-6">
+          <button @click="formData.searchType = 'usenet'" 
+                  :class="formData.searchType === 'usenet' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+                  class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
+            <span class="block">Usenet</span>
+            <span class="text-[10px] opacity-60">NZB indexers</span>
+          </button>
+          <button @click="formData.searchType = 'torrents'"
+                  :class="formData.searchType === 'torrents' || formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+                  class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
+            <span class="block">Torrents</span>
+            <span class="text-[10px] opacity-60">Torrent trackers</span>
+          </button>
+          <button @click="formData.searchType = 'both'"
+                  :class="formData.searchType === 'both' ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text'"
+                  class="flex-1 py-3 px-4 rounded-lg border transition-all text-sm font-medium">
+            <span class="block">Both</span>
+            <span class="text-[10px] opacity-60">Maximum coverage</span>
+          </button>
+        </div>
+
+        <!-- Usenet providers -->
+        <div x-show="formData.searchType === 'usenet' || formData.searchType === 'both'" x-transition class="space-y-4 mb-6">
+          <h3 class="text-sm font-medium text-cp-accent">Usenet Providers</h3>
+          
+          <!-- Newznab -->
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <span class="text-sm font-medium">Newznab Indexers</span>
+                <p class="text-[10px] text-cp-muted mt-0.5">Search usenet indexers like NZBGeek, DrunkenSlug, NZB.su</p>
+              </div>
+              <button @click="formData.newznab.enabled = !formData.newznab.enabled"
+                      :class="formData.newznab.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                <span :class="formData.newznab.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+              </button>
+            </div>
+            <div x-show="formData.newznab.enabled" x-transition class="space-y-3">
+              <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
+                <div class="flex gap-2 items-center">
+                  <input type="text" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'" 
+                         x-model="entry.host"
+                         class="flex-[2] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  <input type="text" placeholder="API Key" x-model="entry.api_key"
+                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  <button @click="formData.newznab.entries.splice(idx, 1)" x-show="formData.newznab.entries.length > 1"
+                          class="text-cp-muted hover:text-cp-danger transition-colors">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                  </button>
+                </div>
+              </template>
+              <button @click="formData.newznab.entries.push({host: '', api_key: ''})" 
+                      class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add another indexer</button>
+              <p class="text-[10px] text-cp-muted/60">
+                Popular indexers: <a href="https://nzbgeek.info" target="_blank" class="text-cp-accent hover:underline">NZBGeek</a>, 
+                <a href="https://drunkenslug.com" target="_blank" class="text-cp-accent hover:underline">DrunkenSlug</a>,
+                <a href="https://nzb.su" target="_blank" class="text-cp-accent hover:underline">NZB.su</a>
+              </p>
+            </div>
+          </div>
+
+          <!-- BinSearch -->
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <div class="flex items-center justify-between">
+              <div>
+                <span class="text-sm font-medium">BinSearch</span>
+                <p class="text-[10px] text-cp-muted mt-0.5">Free usenet search — no account needed, just enable.</p>
+              </div>
+              <button @click="formData.binsearch.enabled = !formData.binsearch.enabled"
+                      :class="formData.binsearch.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                <span :class="formData.binsearch.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Torrent providers -->
+        <div x-show="formData.searchType === 'torrents' || formData.searchType === 'both'" x-transition class="space-y-4">
+          <h3 class="text-sm font-medium text-cp-accent">Torrent Providers</h3>
+          
+          <!-- Easy Setup Section -->
+          <div class="space-y-3">
+            <p class="text-[11px] text-cp-muted uppercase tracking-wide">Easy Setup — No Account Needed</p>
+            
+            <!-- ThePirateBay -->
+            <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-sm font-medium">ThePirateBay</span>
+                  <p class="text-[10px] text-cp-muted mt-0.5">Search ThePirateBay for torrents. No account needed — just enable and go.</p>
+                </div>
+                <button @click="formData.thepiratebay.enabled = !formData.thepiratebay.enabled"
+                        :class="formData.thepiratebay.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                  <span :class="formData.thepiratebay.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                </button>
+              </div>
+            </div>
+
+            <!-- YTS -->
+            <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+              <div class="flex items-center justify-between">
+                <div>
+                  <span class="text-sm font-medium">YTS</span>
+                  <p class="text-[10px] text-cp-muted mt-0.5">Small, high-quality movie releases. No account needed.</p>
+                </div>
+                <button @click="formData.yts.enabled = !formData.yts.enabled"
+                        :class="formData.yts.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                  <span :class="formData.yts.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                </button>
+              </div>
+              <p x-show="formData.yts.enabled" class="text-[10px] text-cp-muted/60 mt-2">
+                ⚠️ YTS releases are highly compressed. Expect 720p at ~500MB, 1080p at ~800MB.
+              </p>
+            </div>
+          </div>
+
+          <!-- Jackett Section -->
+          <div class="space-y-3 mt-4">
+            <p class="text-[11px] text-cp-muted uppercase tracking-wide">Jackett — Many Trackers, One Interface</p>
+            
+            <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+              <div class="flex items-center justify-between mb-3">
+                <div>
+                  <span class="text-sm font-medium">Jackett / TorrentPotato</span>
+                  <p class="text-[10px] text-cp-muted mt-0.5">Jackett acts as a proxy between CouchPotato and dozens of torrent trackers.</p>
+                </div>
+                <button @click="formData.torrentpotato.enabled = !formData.torrentpotato.enabled"
+                        :class="formData.torrentpotato.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                  <span :class="formData.torrentpotato.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                </button>
+              </div>
+              <div x-show="formData.torrentpotato.enabled" x-transition class="space-y-3">
+                <div>
+                  <label class="block text-xs text-cp-muted mb-1">Jackett URL</label>
+                  <input type="text" x-model="formData.torrentpotato.jackett_url" placeholder="http://localhost:9117"
+                         class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                </div>
+                <div>
+                  <label class="block text-xs text-cp-muted mb-1">Jackett API Key</label>
+                  <input type="password" x-model="formData.torrentpotato.jackett_api_key" placeholder="Your Jackett API key"
+                         class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                </div>
+                <button @click="syncJackett()" :disabled="jackettSyncing"
+                        class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
+                  <span x-show="!jackettSyncing">Sync Trackers from Jackett</span>
+                  <span x-show="jackettSyncing" class="flex items-center gap-2">
+                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    Syncing…
+                  </span>
+                </button>
+                <p x-show="jackettSyncResult" class="text-xs" :class="jackettSyncSuccess ? 'text-cp-success' : 'text-cp-danger'" x-text="jackettSyncResult"></p>
+                <p class="text-[10px] text-cp-muted/60">
+                  Install Jackett from <a href="https://github.com/Jackett/Jackett" target="_blank" class="text-cp-accent hover:underline">github.com/Jackett/Jackett</a>
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Private Trackers -->
+          <div class="space-y-3 mt-4" x-data="{ expanded: false }">
+            <button @click="expanded = !expanded" class="flex items-center gap-2 text-[11px] text-cp-muted uppercase tracking-wide hover:text-cp-text transition-colors">
+              <svg class="w-3 h-3 transition-transform" :class="expanded ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19 9l-7 7-7-7"/>
+              </svg>
+              Private Trackers — Membership Required
+            </button>
+            
+            <div x-show="expanded" x-transition class="space-y-3">
+              <template x-for="tracker in privateTrackers" :key="tracker.id">
+                <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                  <div class="flex items-center justify-between mb-2">
+                    <div>
+                      <span class="text-sm font-medium" x-text="tracker.name"></span>
+                      <p class="text-[10px] text-cp-muted mt-0.5" x-text="tracker.description"></p>
+                    </div>
+                    <button @click="tracker.enabled = !tracker.enabled"
+                            :class="tracker.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                            class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                      <span :class="tracker.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                            class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                    </button>
+                  </div>
+                  <div x-show="tracker.enabled" x-transition class="grid grid-cols-2 gap-2 mt-3">
+                    <template x-for="field in tracker.fields" :key="field.name">
+                      <div :class="field.full ? 'col-span-2' : ''">
+                        <label class="block text-[10px] text-cp-muted mb-1" x-text="field.label"></label>
+                        <input :type="field.type || 'text'" x-model="formData.privateTrackers[tracker.id][field.name]"
+                               :placeholder="field.placeholder || ''"
+                               class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== STEP 4: Downloader ==================== -->
+      <div x-show="currentStep === 3" x-transition class="p-6 lg:p-8">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold tracking-tight mb-1">Download Clients</h2>
+          <p class="text-sm text-cp-muted">Configure your download clients. You can set up one Usenet client and one Torrent client.</p>
+        </div>
+        
+        <!-- Usenet Client Section -->
+        <div x-show="formData.searchType === 'usenet' || formData.searchType === 'both'" class="mb-6">
+          <h3 class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
+            Usenet Client
+          </h3>
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <template x-for="dl in usenetDownloaders" :key="dl.id">
+              <button @click="formData.usenetClient = formData.usenetClient === dl.id ? null : dl.id"
+                      :class="formData.usenetClient === dl.id ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text hover:border-white/[0.1]'"
+                      class="py-3 px-3 rounded-lg border transition-all text-center">
+                <span class="block text-sm font-medium" x-text="dl.name"></span>
+              </button>
+            </template>
+          </div>
+          
+          <!-- Usenet client config -->
+          <template x-if="formData.usenetClient">
+            <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+              <p class="text-xs text-cp-muted mb-4" x-html="getDownloaderHelp(formData.usenetClient)"></p>
+              <div class="space-y-3" x-html="getDownloaderFields(formData.usenetClient)"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Torrent Client Section -->
+        <div x-show="formData.searchType === 'torrents' || formData.searchType === 'both'" class="mb-6">
+          <h3 class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 7.5h-.75A2.25 2.25 0 004.5 9.75v7.5a2.25 2.25 0 002.25 2.25h7.5a2.25 2.25 0 002.25-2.25v-7.5a2.25 2.25 0 00-2.25-2.25h-.75m-6 3.75l3 3m0 0l3-3m-3 3V1.5m6 9h.75a2.25 2.25 0 012.25 2.25v7.5a2.25 2.25 0 01-2.25 2.25h-7.5a2.25 2.25 0 01-2.25-2.25v-.75"/></svg>
+            Torrent Client
+          </h3>
+          <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+            <template x-for="dl in torrentDownloaders" :key="dl.id">
+              <button @click="formData.torrentClient = formData.torrentClient === dl.id ? null : dl.id"
+                      :class="formData.torrentClient === dl.id ? 'bg-cp-accent/20 border-cp-accent/30 text-cp-accent' : 'bg-white/[0.03] border-white/[0.06] text-cp-muted hover:text-cp-text hover:border-white/[0.1]'"
+                      class="py-3 px-3 rounded-lg border transition-all text-center">
+                <span class="block text-sm font-medium" x-text="dl.name"></span>
+              </button>
+            </template>
+          </div>
+          
+          <!-- Torrent client config -->
+          <template x-if="formData.torrentClient">
+            <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+              <p class="text-xs text-cp-muted mb-4" x-html="getDownloaderHelp(formData.torrentClient)"></p>
+              <div class="space-y-3" x-html="getDownloaderFields(formData.torrentClient)"></div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Black Hole / Manual Section (always available) -->
+        <div class="mb-6">
+          <h3 class="text-sm font-medium text-cp-muted mb-3 flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/></svg>
+            Manual / Black Hole (Optional)
+          </h3>
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <div class="flex items-center justify-between mb-3">
+              <div>
+                <span class="text-sm font-medium">Black Hole</span>
+                <p class="text-[10px] text-cp-muted mt-0.5">Save NZB/torrent files to a folder for manual processing or watch folder.</p>
+              </div>
+              <button @click="formData.blackholeEnabled = !formData.blackholeEnabled"
+                      :class="formData.blackholeEnabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+                <span :class="formData.blackholeEnabled ? 'translate-x-5' : 'translate-x-0.5'"
+                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+              </button>
+            </div>
+            <div x-show="formData.blackholeEnabled" x-transition class="space-y-3">
+              <div>
+                <label class="block text-xs text-cp-muted mb-1">NZB Watch Folder</label>
+                <div class="flex gap-2">
+                  <input type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch"
+                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  <button @click="browseDirectory('blackhole_nzb')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
+                </div>
+              </div>
+              <div>
+                <label class="block text-xs text-cp-muted mb-1">Torrent Watch Folder</label>
+                <div class="flex gap-2">
+                  <input type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch"
+                         class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  <button @click="browseDirectory('blackhole_torrent')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- No clients warning -->
+        <div x-show="!formData.usenetClient && !formData.torrentClient && !formData.blackholeEnabled" 
+             class="p-4 rounded-lg bg-cp-warning/5 border border-cp-warning/10">
+          <p class="text-xs text-cp-warning">
+            <strong>Note:</strong> You haven't configured any download clients. CouchPotato will be able to search for movies but won't be able to download them automatically.
+          </p>
+        </div>
+
+        <!-- Legacy single downloader config (hidden, for backwards compat with form save) -->
+        <template x-if="false && formData.downloader">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <p class="text-xs text-cp-muted mb-4" x-html="getDownloaderHelp(formData.downloader)"></p>
+            
+            <div class="space-y-3">
+              <!-- SABnzbd -->
+              <template x-if="formData.downloader === 'sabnzbd'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">API Key</label>
+                    <input type="text" x-model="formData.downloaderConfig.sabnzbd.api_key" placeholder="Your SABnzbd API key"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Category (optional)</label>
+                    <input type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                </div>
+              </template>
+
+              <!-- NZBGet -->
+              <template x-if="formData.downloader === 'nzbget'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input type="password" x-model="formData.downloaderConfig.nzbget.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- qBittorrent -->
+              <template x-if="formData.downloader === 'qbittorrent'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input type="password" x-model="formData.downloaderConfig.qbittorrent.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Transmission -->
+              <template x-if="formData.downloader === 'transmission'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+                      <input type="text" x-model="formData.downloaderConfig.transmission.username"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+                      <input type="password" x-model="formData.downloaderConfig.transmission.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Deluge -->
+              <template x-if="formData.downloader === 'deluge'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Password</label>
+                    <input type="password" x-model="formData.downloaderConfig.deluge.password"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                </div>
+              </template>
+
+              <!-- rTorrent -->
+              <template x-if="formData.downloader === 'rtorrent'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
+                    <input type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+                      <input type="text" x-model="formData.downloaderConfig.rtorrent.username"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+                      <input type="password" x-model="formData.downloaderConfig.rtorrent.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- uTorrent -->
+              <template x-if="formData.downloader === 'utorrent'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input type="text" x-model="formData.downloaderConfig.utorrent.username"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input type="password" x-model="formData.downloaderConfig.utorrent.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Black Hole -->
+              <template x-if="formData.downloader === 'blackhole'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">NZB Directory</label>
+                    <input type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch/folder"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Torrent Directory</label>
+                    <input type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch/folder"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                </div>
+              </template>
+
+              <!-- Synology -->
+              <template x-if="formData.downloader === 'synology'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                  <div class="grid grid-cols-2 gap-3">
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input type="text" x-model="formData.downloaderConfig.synology.username"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                    <div>
+                      <label class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input type="password" x-model="formData.downloaderConfig.synology.password"
+                             class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <!-- Put.io -->
+              <template x-if="formData.downloader === 'putio'">
+                <div class="space-y-3">
+                  <div>
+                    <label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
+                    <input type="text" x-model="formData.downloaderConfig.putio.oauth_token" placeholder="Your Put.io OAuth token"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                  </div>
+                </div>
+              </template>
+
+              <!-- Test button -->
+              <div class="pt-3 border-t border-white/[0.04]">
+                <button @click="testDownloader()" :disabled="testingDownloader"
+                        class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors disabled:opacity-50">
+                  <span x-show="!testingDownloader">Test Connection</span>
+                  <span x-show="testingDownloader" class="flex items-center gap-2">
+                    <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    Testing…
+                  </span>
+                </button>
+                <span x-show="downloaderTestResult" class="ml-2 text-xs" :class="downloaderTestSuccess ? 'text-cp-success' : 'text-cp-danger'" x-text="downloaderTestResult"></span>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <!-- ==================== STEP 5: Library ==================== -->
+      <div x-show="currentStep === 4" x-transition class="p-6 lg:p-8">
+        <div class="mb-6">
+          <h2 class="text-xl font-semibold tracking-tight mb-1">Movie Library</h2>
+          <p class="text-sm text-cp-muted">Set up automatic organization of your downloaded movies.</p>
+        </div>
+        
+        <!-- Renamer toggle -->
+        <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04] mb-4">
+          <div class="flex items-center justify-between">
+            <div>
+              <span class="text-sm font-medium">Enable Automatic Renaming</span>
+              <p class="text-[10px] text-cp-muted mt-0.5">Move and rename downloaded movies to your library folder.</p>
+            </div>
+            <button @click="formData.renamer.enabled = !formData.renamer.enabled"
+                    :class="formData.renamer.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
+                    class="relative w-10 h-5 rounded-full transition-colors shrink-0">
+              <span :class="formData.renamer.enabled ? 'translate-x-5' : 'translate-x-0.5'"
+                    class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
+            </button>
+          </div>
+        </div>
+
+        <div x-show="formData.renamer.enabled" x-transition class="space-y-4">
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">Download Folder</label>
+            <div class="flex gap-2">
+              <input type="text" x-model="formData.renamer.from" placeholder="/path/to/downloads/complete"
+                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+              <button @click="browseDirectory('renamer_from')" type="button"
+                      class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
+                Browse
+              </button>
+            </div>
+            <p class="text-[10px] text-cp-muted/60 mt-1">Where your downloader saves completed files.</p>
+          </div>
+          
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">Movie Library</label>
+            <div class="flex gap-2">
+              <input type="text" x-model="formData.renamer.to" placeholder="/path/to/movies"
+                     class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+              <button @click="browseDirectory('renamer_to')" type="button"
+                      class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
+                Browse
+              </button>
+            </div>
+            <p class="text-[10px] text-cp-muted/60 mt-1">Where movies will be moved and organized.</p>
+          </div>
+
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">Folder Naming</label>
+            <input type="text" x-model="formData.renamer.folder_name" placeholder="<namethe> (<year>)"
+                   class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+            <p class="text-[10px] text-cp-muted/60 mt-1">Example: <span class="text-cp-text">The Dark Knight (2008)</span></p>
+          </div>
+
+          <div>
+            <label class="block text-xs text-cp-muted mb-1.5">File Naming</label>
+            <input type="text" x-model="formData.renamer.file_name" placeholder="<thename><cd>.<ext>"
+                   class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
+            <p class="text-[10px] text-cp-muted/60 mt-1">Example: <span class="text-cp-text">The Dark Knight.mkv</span></p>
+          </div>
+
+          <!-- Preview -->
+          <div class="p-3 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <p class="text-[10px] text-cp-muted uppercase tracking-wide mb-2">Preview</p>
+            <p class="text-xs text-cp-text font-mono">
+              <span x-text="formData.renamer.to || '/movies'"></span>/<span class="text-cp-accent" x-text="previewFolderName()"></span>/<span class="text-cp-success" x-text="previewFileName()"></span>
+            </p>
+          </div>
+
+          <!-- Available placeholders -->
+          <details class="text-xs">
+            <summary class="text-cp-muted cursor-pointer hover:text-cp-text">Available placeholders</summary>
+            <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-1 text-[10px] text-cp-muted/60">
+              <span>&lt;namethe&gt; - Moviename, The</span>
+              <span>&lt;thename&gt; - The Moviename</span>
+              <span>&lt;year&gt; - 2008</span>
+              <span>&lt;quality&gt; - 720p</span>
+              <span>&lt;ext&gt; - mkv</span>
+              <span>&lt;imdb_id&gt; - tt0123456</span>
+              <span>&lt;video&gt; - x264</span>
+              <span>&lt;audio&gt; - DTS</span>
+              <span>&lt;group&gt; - Release group</span>
+            </div>
+          </details>
+        </div>
+
+        <div x-show="!formData.renamer.enabled" class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04] text-center">
+          <p class="text-sm text-cp-muted">Downloads will stay in your download folder. You can enable renaming later in Settings.</p>
+        </div>
+      </div>
+
+      <!-- ==================== STEP 6: Done ==================== -->
+      <div x-show="currentStep === 5" x-transition class="p-6 lg:p-8">
+        <div class="text-center mb-8">
+          <div class="w-16 h-16 rounded-full bg-cp-success/10 flex items-center justify-center mx-auto mb-4">
+            <svg class="w-8 h-8 text-cp-success" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+          </div>
+          <h2 class="text-2xl font-semibold tracking-tight mb-2">You're All Set!</h2>
+          <p class="text-sm text-cp-muted">CouchPotato is ready to start searching for movies.</p>
+        </div>
+        
+        <!-- Summary -->
+        <div class="space-y-3 mb-8">
+          <div class="p-4 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+            <p class="text-xs text-cp-muted uppercase tracking-wide mb-2">Configuration Summary</p>
+            <div class="space-y-2 text-sm">
+              <div class="flex justify-between">
+                <span class="text-cp-muted">Authentication</span>
+                <span class="text-cp-text" x-text="formData.username ? 'Enabled' : 'Disabled'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-cp-muted">Search Mode</span>
+                <span class="text-cp-text capitalize" x-text="formData.searchType || 'Not configured'"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-cp-muted">Download Clients</span>
+                <span class="text-cp-text" x-text="getConfiguredClients()"></span>
+              </div>
+              <div class="flex justify-between">
+                <span class="text-cp-muted">Auto-Renaming</span>
+                <span class="text-cp-text" x-text="formData.renamer.enabled ? 'Enabled' : 'Disabled'"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="flex flex-col sm:flex-row gap-3">
+          <a :href="CP.newBase + 'settings/'" 
+             class="flex-1 py-3 px-4 rounded-lg border border-white/[0.06] text-center text-sm font-medium text-cp-muted hover:text-cp-text hover:border-white/[0.1] transition-all">
+            Go to Settings
+          </a>
+          <a :href="CP.newBase + 'add/'" 
+             class="flex-1 py-3 px-4 rounded-lg bg-cp-accent text-black text-center text-sm font-medium hover:bg-cp-accentHover transition-colors">
+            Start Searching
+          </a>
+        </div>
+      </div>
+
+      <!-- Navigation buttons -->
+      <div class="px-6 lg:px-8 py-4 border-t border-white/[0.04] flex justify-between" x-show="currentStep < 5">
+        <button @click="prevStep()" x-show="currentStep > 0"
+                class="px-4 py-2 rounded-md text-sm font-medium text-cp-muted hover:text-cp-text transition-colors">
+          ← Back
+        </button>
+        <div x-show="currentStep === 0"></div>
+        
+        <div class="flex gap-3">
+          <button @click="skipStep()" x-show="canSkip()"
+                  class="px-4 py-2 rounded-md text-sm font-medium text-cp-muted hover:text-cp-text transition-colors">
+            Skip
+          </button>
+          <button @click="nextStep()" :disabled="saving"
+                  class="px-6 py-2 rounded-md text-sm font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
+            <span x-show="!saving" x-text="currentStep === 4 ? 'Finish Setup' : 'Continue'"></span>
+            <span x-show="saving" class="flex items-center gap-2">
+              <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              Saving…
+            </span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Directory Browser Modal -->
+    <div x-show="browserOpen" x-transition class="fixed inset-0 z-50 flex items-center justify-center bg-black/60">
+      <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
+        <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+          <h3 class="text-sm font-medium">Browse Folders</h3>
+          <button @click="browserOpen = false" class="text-cp-muted hover:text-cp-text">
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+          </button>
+        </div>
+        
+        <div class="px-4 py-2 border-b border-white/[0.04] bg-white/[0.02]">
+          <div class="flex items-center gap-2 text-xs">
+            <button @click="loadDirectories(browserParent)" :disabled="browserIsRoot" 
+                    class="px-2 py-1 rounded bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] disabled:opacity-30 disabled:cursor-not-allowed">
+              ↑ Up
+            </button>
+            <span class="text-cp-muted font-mono truncate" x-text="browserPath"></span>
+          </div>
+        </div>
+        
+        <div class="flex-1 overflow-y-auto min-h-[200px] max-h-[400px]">
+          <div x-show="browserLoading" class="flex items-center justify-center py-8">
+            <svg class="w-4 h-4 animate-spin text-cp-muted" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          </div>
+          <div x-show="!browserLoading && browserDirs.length === 0" class="py-8 text-center text-xs text-cp-muted">
+            Empty folder
+          </div>
+          <template x-for="dir in browserDirs" :key="dir">
+            <button @click="selectDirectory(dir)" 
+                    class="w-full px-4 py-2 text-left text-xs hover:bg-white/[0.04] flex items-center gap-2 border-b border-white/[0.02]">
+              <svg class="w-4 h-4 text-cp-accent shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"/>
+              </svg>
+              <span class="truncate" x-text="dir.split('/').filter(Boolean).pop() || dir"></span>
+            </button>
+          </template>
+        </div>
+        
+        <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
+          <button @click="browserOpen = false" class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">Cancel</button>
+          <button @click="confirmDirectory()" class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover">Select This Folder</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div x-show="message" x-transition class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium"
+         :class="messageType === 'success' ? 'bg-cp-success/20 text-cp-success' : 'bg-cp-danger/20 text-cp-danger'"
+         x-text="message"></div>
+  </div>
+</div>
+
+<script>
+function setupWizard() {
+  return {
+    currentStep: 0,
+    steps: ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'],
+    saving: false,
+    message: '',
+    messageType: 'success',
+    
+    // Test states
+    testingDownloader: false,
+    downloaderTestResult: '',
+    downloaderTestSuccess: false,
+    jackettSyncing: false,
+    jackettSyncResult: '',
+    jackettSyncSuccess: false,
+
+    // Form data
+    formData: {
+      username: '',
+      password: '',
+      searchType: 'torrents',
+      
+      // Usenet providers
+      newznab: {
+        enabled: false,
+        entries: [{ host: '', api_key: '' }]
+      },
+      binsearch: { enabled: false },
+      
+      // Torrent providers
+      thepiratebay: { enabled: false },
+      yts: { enabled: false },
+      torrentpotato: {
+        enabled: false,
+        jackett_url: '',
+        jackett_api_key: ''
+      },
+      privateTrackers: {},
+      
+      // Downloader (legacy single selection)
+      downloader: null,
+      // New split downloaders
+      usenetClient: null,
+      torrentClient: null,
+      blackholeEnabled: false,
+      downloaderConfig: {
+        sabnzbd: { host: 'http://localhost:8080', api_key: '', category: 'movies' },
+        nzbget: { host: 'http://localhost:6789', username: 'nzbget', password: '' },
+        qbittorrent: { host: 'http://localhost:8080', username: 'admin', password: '' },
+        transmission: { host: 'http://localhost:9091', username: '', password: '' },
+        deluge: { host: 'http://localhost:8112', password: '' },
+        rtorrent: { host: '', username: '', password: '' },
+        utorrent: { host: 'http://localhost:8080/gui', username: '', password: '' },
+        blackhole: { nzb_directory: '', torrent_directory: '' },
+        synology: { host: '', username: '', password: '' },
+        putio: { oauth_token: '' }
+      },
+      
+      // Renamer
+      renamer: {
+        enabled: true,
+        from: '',
+        to: '',
+        folder_name: '<namethe> (<year>)',
+        file_name: '<thename>.<ext>'
+      }
+    },
+
+    // Downloaders list (legacy - for backwards compat)
+    downloaders: [
+      { id: 'sabnzbd', name: 'SABnzbd', type: 'Usenet' },
+      { id: 'nzbget', name: 'NZBGet', type: 'Usenet' },
+      { id: 'qbittorrent', name: 'qBittorrent', type: 'Torrent' },
+      { id: 'transmission', name: 'Transmission', type: 'Torrent' },
+      { id: 'deluge', name: 'Deluge', type: 'Torrent' },
+      { id: 'rtorrent', name: 'rTorrent', type: 'Torrent' },
+      { id: 'utorrent', name: 'uTorrent', type: 'Torrent' },
+      { id: 'blackhole', name: 'Black Hole', type: 'Manual' },
+      { id: 'synology', name: 'Synology', type: 'NAS' },
+      { id: 'putio', name: 'Put.io', type: 'Cloud' }
+    ],
+
+    // Split downloader lists for the new wizard UI
+    usenetDownloaders: [
+      { id: 'sabnzbd', name: 'SABnzbd' },
+      { id: 'nzbget', name: 'NZBGet' }
+    ],
+    
+    torrentDownloaders: [
+      { id: 'qbittorrent', name: 'qBittorrent' },
+      { id: 'transmission', name: 'Transmission' },
+      { id: 'deluge', name: 'Deluge' },
+      { id: 'rtorrent', name: 'rTorrent' },
+      { id: 'utorrent', name: 'µTorrent' },
+      { id: 'synology', name: 'Synology DS' },
+      { id: 'putio', name: 'Put.io' }
+    ],
+    
+    // Directory browser state
+    browserOpen: false,
+    browserPath: '/',
+    browserDirs: [],
+    browserLoading: false,
+    browserTarget: null,
+    browserParent: '/',
+    browserIsRoot: true,
+
+    // Private trackers
+    privateTrackers: [
+      { 
+        id: 'passthepopcorn', 
+        name: 'PassThePopcorn', 
+        description: 'Premium movie tracker',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username', placeholder: '' },
+          { name: 'password', label: 'Password', type: 'password' },
+          { name: 'passkey', label: 'Passkey', full: true }
+        ]
+      },
+      { 
+        id: 'hdbits', 
+        name: 'HDBits', 
+        description: 'High-quality HD releases',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username' },
+          { name: 'passkey', label: 'Passkey' }
+        ]
+      },
+      { 
+        id: 'iptorrents', 
+        name: 'IPTorrents', 
+        description: 'General private tracker',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username' },
+          { name: 'password', label: 'Password', type: 'password' }
+        ]
+      },
+      { 
+        id: 'torrentleech', 
+        name: 'TorrentLeech', 
+        description: 'Popular general tracker',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username' },
+          { name: 'password', label: 'Password', type: 'password' }
+        ]
+      },
+      { 
+        id: 'torrentday', 
+        name: 'TorrentDay', 
+        description: 'Scene releases',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username' },
+          { name: 'password', label: 'Password', type: 'password' }
+        ]
+      },
+      { 
+        id: 'alpharatio', 
+        name: 'AlphaRatio', 
+        description: 'General tracker',
+        enabled: false,
+        fields: [
+          { name: 'username', label: 'Username' },
+          { name: 'password', label: 'Password', type: 'password' }
+        ]
+      }
+    ],
+
+    init() {
+      // Initialize private tracker form data
+      for (const tracker of this.privateTrackers) {
+        this.formData.privateTrackers[tracker.id] = {};
+        for (const field of tracker.fields) {
+          this.formData.privateTrackers[tracker.id][field.name] = '';
+        }
+      }
+    },
+
+    goToStep(idx) {
+      if (idx <= this.currentStep) {
+        this.currentStep = idx;
+      }
+    },
+
+    canSkip() {
+      return this.currentStep === 1; // Only security step is skippable
+    },
+
+    skipStep() {
+      this.currentStep++;
+    },
+
+    async prevStep() {
+      if (this.currentStep > 0) {
+        this.currentStep--;
+      }
+    },
+
+    async nextStep() {
+      this.saving = true;
+      try {
+        await this.saveCurrentStep();
+        this.currentStep++;
+      } catch (e) {
+        this.toast('Failed to save: ' + e.message, 'error');
+      }
+      this.saving = false;
+    },
+
+    async saveCurrentStep() {
+      const saves = [];
+      
+      switch (this.currentStep) {
+        case 0: // Welcome - nothing to save
+          break;
+          
+        case 1: // Security
+          if (this.formData.username) saves.push(this.saveSetting('core', 'username', this.formData.username));
+          if (this.formData.password) saves.push(this.saveSetting('core', 'password', this.formData.password));
+          break;
+          
+        case 2: // Providers
+          // Usenet providers
+          if (this.formData.searchType === 'usenet' || this.formData.searchType === 'both') {
+            // Newznab
+            saves.push(this.saveSetting('newznab', 'enabled', this.formData.newznab.enabled ? '1' : '0'));
+            if (this.formData.newznab.enabled) {
+              const hosts = this.formData.newznab.entries.map(e => e.host).filter(h => h).join(',');
+              const keys = this.formData.newznab.entries.map(e => e.api_key).filter(k => k).join(',');
+              const use = this.formData.newznab.entries.map((e, i) => e.host ? '1' : '0').join(',');
+              saves.push(this.saveSetting('newznab', 'host', hosts));
+              saves.push(this.saveSetting('newznab', 'api_key', keys));
+              saves.push(this.saveSetting('newznab', 'use', use));
+            }
+            // BinSearch
+            saves.push(this.saveSetting('binsearch', 'enabled', this.formData.binsearch.enabled ? '1' : '0'));
+          }
+          
+          // Torrent providers
+          if (this.formData.searchType === 'torrents' || this.formData.searchType === 'both') {
+            saves.push(this.saveSetting('thepiratebay', 'enabled', this.formData.thepiratebay.enabled ? '1' : '0'));
+            saves.push(this.saveSetting('yts', 'enabled', this.formData.yts.enabled ? '1' : '0'));
+            saves.push(this.saveSetting('torrentpotato', 'enabled', this.formData.torrentpotato.enabled ? '1' : '0'));
+            if (this.formData.torrentpotato.enabled) {
+              saves.push(this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url));
+              saves.push(this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key));
+            }
+            
+            // Private trackers
+            for (const tracker of this.privateTrackers) {
+              if (tracker.enabled) {
+                saves.push(this.saveSetting(tracker.id, 'enabled', '1'));
+                for (const field of tracker.fields) {
+                  const val = this.formData.privateTrackers[tracker.id][field.name];
+                  if (val) saves.push(this.saveSetting(tracker.id, field.name, val));
+                }
+              }
+            }
+          }
+          break;
+          
+        case 3: // Downloader
+          // Save usenet client
+          if (this.formData.usenetClient) {
+            saves.push(this.saveSetting(this.formData.usenetClient, 'enabled', '1'));
+            const config = this.formData.downloaderConfig[this.formData.usenetClient];
+            for (const [key, val] of Object.entries(config)) {
+              if (val) saves.push(this.saveSetting(this.formData.usenetClient, key, val));
+            }
+          }
+          
+          // Save torrent client
+          if (this.formData.torrentClient) {
+            saves.push(this.saveSetting(this.formData.torrentClient, 'enabled', '1'));
+            const config = this.formData.downloaderConfig[this.formData.torrentClient];
+            for (const [key, val] of Object.entries(config)) {
+              if (val) saves.push(this.saveSetting(this.formData.torrentClient, key, val));
+            }
+          }
+          
+          // Save blackhole if enabled
+          if (this.formData.blackholeEnabled) {
+            saves.push(this.saveSetting('blackhole', 'enabled', '1'));
+            const bhConfig = this.formData.downloaderConfig.blackhole;
+            if (bhConfig.nzb_directory) saves.push(this.saveSetting('blackhole', 'nzb_directory', bhConfig.nzb_directory));
+            if (bhConfig.torrent_directory) saves.push(this.saveSetting('blackhole', 'torrent_directory', bhConfig.torrent_directory));
+          }
+          
+          // Legacy: also set the primary downloader for backwards compat
+          if (this.formData.usenetClient) {
+            this.formData.downloader = this.formData.usenetClient;
+          } else if (this.formData.torrentClient) {
+            this.formData.downloader = this.formData.torrentClient;
+          }
+          break;
+          
+        case 4: // Library
+          saves.push(this.saveSetting('renamer', 'enabled', this.formData.renamer.enabled ? '1' : '0'));
+          if (this.formData.renamer.enabled) {
+            if (this.formData.renamer.from) saves.push(this.saveSetting('renamer', 'from', this.formData.renamer.from));
+            if (this.formData.renamer.to) saves.push(this.saveSetting('renamer', 'to', this.formData.renamer.to));
+            if (this.formData.renamer.folder_name) saves.push(this.saveSetting('renamer', 'folder_name', this.formData.renamer.folder_name));
+            if (this.formData.renamer.file_name) saves.push(this.saveSetting('renamer', 'file_name', this.formData.renamer.file_name));
+          }
+          break;
+      }
+      
+      await Promise.all(saves);
+    },
+
+    async saveSetting(section, name, value) {
+      const params = new URLSearchParams();
+      params.append('section', section);
+      params.append('name', name);
+      params.append('value', value);
+      return fetch(CP.apiBase + '/settings.save/?' + params.toString());
+    },
+
+    async testDownloader() {
+      if (!this.formData.downloader) return;
+      
+      this.testingDownloader = true;
+      this.downloaderTestResult = '';
+      
+      // First save the config
+      try {
+        const config = this.formData.downloaderConfig[this.formData.downloader];
+        const saves = [];
+        saves.push(this.saveSetting(this.formData.downloader, 'enabled', '1'));
+        for (const [key, val] of Object.entries(config)) {
+          if (val) saves.push(this.saveSetting(this.formData.downloader, key, val));
+        }
+        await Promise.all(saves);
+        
+        // Then test
+        const resp = await fetch(CP.apiBase + '/download.' + this.formData.downloader + '.test/');
+        const data = await resp.json();
+        this.downloaderTestSuccess = data.success === true;
+        this.downloaderTestResult = data.success ? 'Connected!' : (data.message || data.error || 'Failed');
+      } catch (e) {
+        this.downloaderTestSuccess = false;
+        this.downloaderTestResult = 'Error: ' + e.message;
+      }
+      
+      this.testingDownloader = false;
+    },
+
+    async syncJackett() {
+      this.jackettSyncing = true;
+      this.jackettSyncResult = '';
+      
+      try {
+        // Save Jackett config first
+        await this.saveSetting('torrentpotato', 'enabled', '1');
+        await this.saveSetting('torrentpotato', 'jackett_url', this.formData.torrentpotato.jackett_url);
+        await this.saveSetting('torrentpotato', 'jackett_api_key', this.formData.torrentpotato.jackett_api_key);
+        
+        // Trigger sync
+        const resp = await fetch(CP.apiBase + '/provider.torrentpotato.jackett_sync/');
+        const data = await resp.json();
+        this.jackettSyncSuccess = data.success === true;
+        this.jackettSyncResult = data.success ? (data.message || 'Synced successfully!') : (data.error || data.message || 'Sync failed');
+      } catch (e) {
+        this.jackettSyncSuccess = false;
+        this.jackettSyncResult = 'Error: ' + e.message;
+      }
+      
+      this.jackettSyncing = false;
+    },
+
+    getDownloaderHelp(id) {
+      const help = {
+        sabnzbd: 'Popular usenet download client. Install from <a href="https://sabnzbd.org" target="_blank" class="text-cp-accent hover:underline">sabnzbd.org</a>. You\'ll need the host address and API key from SABnzbd\'s Config → General.',
+        nzbget: 'Fast, efficient usenet downloader. Install from <a href="https://nzbget.net" target="_blank" class="text-cp-accent hover:underline">nzbget.net</a>. Find credentials in Settings → Security.',
+        qbittorrent: 'Free, open-source torrent client. Install from <a href="https://www.qbittorrent.org" target="_blank" class="text-cp-accent hover:underline">qbittorrent.org</a>. Enable the Web UI in Tools → Options → Web UI.',
+        transmission: 'Lightweight torrent client. Install from <a href="https://transmissionbt.com" target="_blank" class="text-cp-accent hover:underline">transmissionbt.com</a>. Enable remote access in Preferences.',
+        deluge: 'Feature-rich torrent client. Install from <a href="https://deluge-torrent.org" target="_blank" class="text-cp-accent hover:underline">deluge-torrent.org</a>. Enable the WebUI plugin.',
+        rtorrent: 'Command-line torrent client, often used with ruTorrent. Configure SCGI or RPC2 access.',
+        utorrent: 'Popular torrent client. Enable Web UI in Options → Preferences → Web UI.',
+        blackhole: 'Manual mode — CouchPotato saves .nzb/.torrent files to watched folders. Your download client picks them up automatically.',
+        synology: 'Use Download Station on your Synology NAS. Enter your NAS address and credentials.',
+        putio: 'Cloud download service. Get your OAuth token from <a href="https://put.io" target="_blank" class="text-cp-accent hover:underline">put.io</a> account settings.'
+      };
+      return help[id] || '';
+    },
+
+    getDownloaderName(id) {
+      const dl = this.downloaders.find(d => d.id === id);
+      return dl ? dl.name : null;
+    },
+
+    // Generate HTML for downloader config fields
+    getDownloaderFields(id) {
+      const configs = {
+        sabnzbd: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label class="block text-xs text-cp-muted mb-1">API Key</label>
+          <input type="text" x-model="formData.downloaderConfig.sabnzbd.api_key" placeholder="Your SABnzbd API key" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label class="block text-xs text-cp-muted mb-1">Category (optional)</label>
+          <input type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
+        nzbget: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
+            <input type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
+            <input type="password" x-model="formData.downloaderConfig.nzbget.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        qbittorrent: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
+            <input type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
+            <input type="password" x-model="formData.downloaderConfig.qbittorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        transmission: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+            <input type="text" x-model="formData.downloaderConfig.transmission.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+            <input type="password" x-model="formData.downloaderConfig.transmission.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        deluge: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label class="block text-xs text-cp-muted mb-1">Password</label>
+          <input type="password" x-model="formData.downloaderConfig.deluge.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
+        rtorrent: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
+          <input type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+            <input type="text" x-model="formData.downloaderConfig.rtorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+            <input type="password" x-model="formData.downloaderConfig.rtorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        utorrent: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
+            <input type="text" x-model="formData.downloaderConfig.utorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
+            <input type="password" x-model="formData.downloaderConfig.utorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        synology: `
+          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
+          <input type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
+            <input type="text" x-model="formData.downloaderConfig.synology.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
+            <input type="password" x-model="formData.downloaderConfig.synology.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          </div>`,
+        putio: `
+          <div><label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
+          <input type="text" x-model="formData.downloaderConfig.putio.oauth_token" placeholder="Your Put.io OAuth token" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`
+      };
+      return configs[id] || '';
+    },
+
+    // Directory browser
+    async browseDirectory(target) {
+      this.browserTarget = target;
+      this.browserOpen = true;
+      this.browserPath = '/';
+      await this.loadDirectories('/');
+    },
+
+    async loadDirectories(path) {
+      this.browserLoading = true;
+      try {
+        const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
+        const data = await resp.json();
+        this.browserPath = path;
+        this.browserDirs = data.dirs || [];
+        this.browserParent = data.parent;
+        this.browserIsRoot = data.is_root;
+      } catch (e) {
+        console.error('Failed to load directories:', e);
+      }
+      this.browserLoading = false;
+    },
+
+    selectDirectory(dir) {
+      this.loadDirectories(dir);
+    },
+
+    confirmDirectory() {
+      const path = this.browserPath;
+      // Map target to the correct form field
+      switch (this.browserTarget) {
+        case 'blackhole_nzb':
+          this.formData.downloaderConfig.blackhole.nzb_directory = path;
+          break;
+        case 'blackhole_torrent':
+          this.formData.downloaderConfig.blackhole.torrent_directory = path;
+          break;
+        case 'renamer_from':
+          this.formData.renamer.from = path;
+          break;
+        case 'renamer_to':
+          this.formData.renamer.to = path;
+          break;
+      }
+      this.browserOpen = false;
+    },
+
+    getConfiguredClients() {
+      const clients = [];
+      if (this.formData.usenetClient) {
+        const dl = this.usenetDownloaders.find(d => d.id === this.formData.usenetClient);
+        if (dl) clients.push(dl.name + ' (Usenet)');
+      }
+      if (this.formData.torrentClient) {
+        const dl = this.torrentDownloaders.find(d => d.id === this.formData.torrentClient);
+        if (dl) clients.push(dl.name + ' (Torrent)');
+      }
+      if (this.formData.blackholeEnabled) {
+        clients.push('Black Hole');
+      }
+      return clients.length > 0 ? clients.join(', ') : 'Not configured';
+    },
+
+    previewFolderName() {
+      const template = this.formData.renamer.folder_name || '<namethe> (<year>)';
+      return template
+        .replace('<namethe>', 'Dark Knight, The')
+        .replace('<thename>', 'The Dark Knight')
+        .replace('<year>', '2008')
+        .replace('<quality>', '1080p')
+        .replace('<imdb_id>', 'tt0468569');
+    },
+
+    previewFileName() {
+      const template = this.formData.renamer.file_name || '<thename>.<ext>';
+      return template
+        .replace('<namethe>', 'Dark Knight, The')
+        .replace('<thename>', 'The Dark Knight')
+        .replace('<year>', '2008')
+        .replace('<quality>', '1080p')
+        .replace('<ext>', 'mkv')
+        .replace('<cd>', '')
+        .replace('<video>', 'x264')
+        .replace('<audio>', 'DTS');
+    },
+
+    toast(msg, type) {
+      this.message = msg;
+      this.messageType = type;
+      setTimeout(() => this.message = '', 3000);
+    }
+  };
+}
+</script>
+{% endblock %}

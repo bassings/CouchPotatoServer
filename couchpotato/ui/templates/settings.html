@@ -17,11 +17,25 @@
         </label>
       </template>
       <template x-if="activeTab !== 'logs'">
-        <button @click="saveAll()" :disabled="saving"
-                class="px-4 py-1.5 rounded-md text-xs font-medium bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-50">
-          <span x-show="!saving">Save Changes</span>
-          <span x-show="saving">Saving…</span>
-        </button>
+        <a href="{{ new_base }}wizard/" class="px-4 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors flex items-center gap-1.5">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z"/>
+          </svg>
+          Setup Wizard
+        </a>
+      </template>
+      <!-- Auto-save indicator (replaces Save button) -->
+      <template x-if="activeTab !== 'logs'">
+        <div class="flex items-center gap-2 text-xs">
+          <span x-show="saving" class="flex items-center gap-1.5 text-cp-muted">
+            <svg class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            Saving…
+          </span>
+          <span x-show="lastSaved && !saving" class="text-cp-success flex items-center gap-1">
+            <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7"/></svg>
+            Saved
+          </span>
+        </div>
       </template>
     </div>
   </div>
@@ -143,18 +157,27 @@
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4 overflow-hidden">
                 <template x-for="opt in getGroupOptions(group)" :key="group.section + '.' + opt.name">
                   <div x-show="opt.type !== 'enabler' && (showAdvanced || !opt.advanced) && isOptionVisible(opt, group)"
-                       :class="opt.type === 'directory' || opt.type === 'directories' ? 'sm:col-span-2' : ''">
-                    <label class="block text-xs text-cp-muted mb-1.5" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
+                       :class="(opt.type === 'directory' || opt.type === 'directories' || opt.type === 'combined' || opt.type === 'button') ? 'sm:col-span-2' : ''">
+                    <label x-show="opt.type !== 'combined'" class="block text-xs text-cp-muted mb-1.5" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
 
                     <!-- Bool / checkbox -->
                     <template x-if="opt.type === 'bool'">
-                      <label class="flex items-center gap-2 cursor-pointer">
-                        <input type="checkbox"
-                               :checked="getVal(group.section, opt.name)"
-                               @change="setVal(group.section, opt.name, $event.target.checked)"
-                               class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-                        <span class="text-[11px] text-cp-muted" x-html="opt.description || ''"></span>
-                      </label>
+                      <div>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox"
+                                 :checked="getVal(group.section, opt.name)"
+                                 @change="setVal(group.section, opt.name, $event.target.checked)"
+                                 class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+                          <span class="text-[11px] text-cp-muted" x-html="buildDescription(group.section, opt)"></span>
+                        </label>
+                        <!-- Learn more expandable -->
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
+                      </div>
                     </template>
 
                     <!-- Dropdown -->
@@ -168,7 +191,13 @@
                                     x-text="Array.isArray(v) ? v[0] : v"></option>
                           </template>
                         </select>
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
 
@@ -179,7 +208,13 @@
                                :value="getVal(group.section, opt.name)"
                                @input="setVal(group.section, opt.name, $event.target.value)"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
 
@@ -190,13 +225,19 @@
                                :value="getVal(group.section, opt.name)"
                                @input="setVal(group.section, opt.name, $event.target.value)"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
 
                     <!-- Button (action button like Jackett sync) -->
                     <template x-if="opt.type === 'button'">
-                      <div class="sm:col-span-2" x-data="buttonField(group.section, opt)">
+                      <div x-data="buttonField(group.section, opt)">
                         <button @click="execute()" :disabled="running"
                                 class="px-4 py-2 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-50">
                           <span x-show="!running" x-text="opt.button_text || 'Execute'"></span>
@@ -206,24 +247,24 @@
                           </span>
                         </button>
                         <div x-show="result" class="mt-2 text-xs" :class="success ? 'text-cp-success' : 'text-cp-danger'" x-text="result"></div>
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
                       </div>
                     </template>
 
                     <!-- Combined (multi-entry rows like newznab hosts/keys) -->
                     <template x-if="opt.type === 'combined'">
-                      <div class="sm:col-span-2" x-data="combinedField(group.section, opt)">
+                      <div x-data="combinedField(group.section, opt)">
                         <!-- Column headers -->
                         <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted/60 font-medium">
                           <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
-                            <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : 'flex-1 min-w-0'" x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
+                            <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')" x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
                           </template>
                           <span class="w-4 shrink-0"></span>
                         </div>
                         <template x-for="(row, rowIdx) in rows" :key="rowIdx">
                           <div class="flex gap-2 mb-2 items-center">
                             <template x-for="(col, colIdx) in opt.combine" :key="colIdx">
-                              <div :class="col === 'use' ? 'w-10 shrink-0 flex justify-center' : 'flex-1 min-w-0'">
+                              <div :class="col === 'use' ? 'w-10 shrink-0 flex justify-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')"
                                 <!-- Toggle for 'use' column -->
                                 <template x-if="col === 'use'">
                                   <button @click="updateRow(rowIdx, colIdx, (row[colIdx] === '1' || row[colIdx] === 1) ? '0' : '1')"
@@ -248,7 +289,13 @@
                           </div>
                         </template>
                         <button @click="addRow()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add</button>
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="typeof opt.description === 'object' ? Object.values(opt.description).join(' ') : (opt.description || '')"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
+                        <template x-if="$root.hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="$root.getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
 
@@ -267,7 +314,13 @@
                           </div>
                         </template>
                         <button @click="addDir()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add folder</button>
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description || ''"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
+                        <template x-if="$root.hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="$root.getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
 
@@ -279,7 +332,13 @@
                                @input="setVal(group.section, opt.name, $event.target.value)"
                                :placeholder="opt.default != null ? String(opt.default) : ''"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                        <p x-show="opt.description" class="text-[10px] text-cp-muted/60 mt-1" x-html="opt.description"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+                        <template x-if="hasLearnMore(group.section, opt.name)">
+                          <details class="mt-2 text-[10px]">
+                            <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+                            <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" x-html="getLearnMore(group.section, opt.name)"></div>
+                          </details>
+                        </template>
                       </div>
                     </template>
                   </div>
@@ -433,6 +492,9 @@ function settingsPanel() {
     dirty: {},
     tabOrder: [],
     currentGroups: [],
+    // Auto-save state
+    lastSaved: false,
+    saveTimers: {},
 
     // Obsolete/dead sections to hide
     hiddenSections: new Set([
@@ -458,6 +520,245 @@ function settingsPanel() {
       display: 'Suggestions',
       providers: 'Providers',
       logs: 'Logs',
+    },
+
+    // Rich contextual help for settings - supplements API descriptions
+    settingHelp: {
+      // === RENAMER ===
+      'renamer.from': {
+        description: 'The folder where CouchPotato looks for completed downloads.',
+        whenToChange: 'Set this to your download client\'s "completed downloads" folder (e.g., where SABnzbd or qBittorrent saves finished files).',
+        tip: 'Make sure CouchPotato has read/write access to this folder.',
+      },
+      'renamer.to': {
+        description: 'Your main movie library folder where films are organized.',
+        whenToChange: 'Point this to your Plex/Emby/Jellyfin media library, or wherever you want movies stored permanently.',
+        tip: 'Movies will be moved here and renamed according to your folder/file naming rules.',
+      },
+      'renamer.folder_name': {
+        description: 'How movie folders are named in your library.',
+        whenToChange: 'Customize if your media server expects a specific format, or to include quality/year info.',
+        defaultNote: 'Default "Moviename, The (2024)" works well with most media servers.',
+      },
+      'renamer.file_name': {
+        description: 'How movie files are named inside their folders.',
+        whenToChange: 'Usually the default works fine. Change if you want quality, codec, or other info in filenames.',
+        defaultNote: 'Default "<thename><cd>.<ext>" produces clean names like "The Dark Knight.mkv".',
+      },
+      'renamer.run_every': {
+        description: 'How often CouchPotato checks the download folder for new movies to process.',
+        whenToChange: 'Lower values (1-5 min) for faster processing; higher values to reduce system load.',
+        defaultNote: 'Default 1 minute is good for most setups.',
+      },
+      'renamer.force_every': {
+        description: 'Interval for forced full scans of the download folder.',
+        whenToChange: 'Increase if you have many files and want to reduce disk I/O.',
+        defaultNote: 'Default 2 hours catches anything missed by normal scans.',
+      },
+      'renamer.next_on_failed': {
+        description: 'When a download fails quality checks, automatically try the next best release.',
+        whenToChange: 'Enable for hands-off operation. Disable if you prefer to manually choose alternatives.',
+      },
+      'renamer.move_leftover': {
+        description: 'Move extra files (samples, screenshots, NFOs) along with the movie.',
+        whenToChange: 'Enable if you want to keep extras. Disable for cleaner library folders.',
+      },
+      'renamer.cleanup': {
+        description: 'Delete leftover files and empty folders after moving movies.',
+        whenToChange: 'Enable to keep your download folder tidy. Disable if you want to review files manually first.',
+      },
+      'renamer.separator': {
+        description: 'Character used between parts of the filename (e.g., spaces, dots, underscores).',
+        whenToChange: 'Change if your media server or personal preference requires a specific format.',
+      },
+      'renamer.foldersep': {
+        description: 'Character used between parts of the folder name.',
+        whenToChange: 'Usually matches the file separator. Change for different folder vs file naming styles.',
+      },
+      'renamer.file_action': {
+        description: 'What to do with movie files: move, copy, or create symbolic/hard links.',
+        whenToChange: '<strong>Move</strong>: Most common, saves space.<br><strong>Copy</strong>: Keep original in downloads.<br><strong>Link</strong>: Advanced — allows seeding while having organized library.',
+        learnMore: 'Symbolic links create a pointer to the original file. Hard links create a second reference to the same data on disk. Both allow your torrent client to continue seeding while your media server sees organized files. Links only work on the same filesystem.',
+      },
+
+      // === SEARCHER ===
+      'searcher.cron_day': {
+        description: 'Which day(s) to run the automated search for wanted movies.',
+        whenToChange: 'Limit to specific days to reduce API calls, or set to "Every day" for fastest results.',
+      },
+      'searcher.cron_hour': {
+        description: 'What hour(s) to run automated searches.',
+        whenToChange: 'Spread across hours to avoid hitting provider rate limits. Or focus on off-peak hours.',
+      },
+      'searcher.always_search': {
+        description: 'Search for movies immediately when added, even if not yet released.',
+        whenToChange: 'Enable for pre-releases and early availability. Disable to reduce unnecessary searches.',
+      },
+      'searcher.run_on_launch': {
+        description: 'Run a full search when CouchPotato starts.',
+        whenToChange: 'Enable if CP runs intermittently. Disable if it\'s always running to avoid startup load.',
+      },
+      'searcher.search_on_add': {
+        description: 'Immediately search for a movie when you add it to your wanted list.',
+        whenToChange: 'Enable for instant gratification. Disable to batch searches into scheduled times.',
+      },
+
+      // === QUALITY ===
+      'quality.order': {
+        description: 'Priority order for quality types when searching.',
+        whenToChange: 'Drag to reorder based on your preference. Higher = tried first.',
+      },
+
+      // === DOWNLOADERS (common patterns) ===
+      'sabnzbd.host': {
+        description: 'The URL where SABnzbd is running.',
+        whenToChange: 'Update if SABnzbd is on a different machine or port.',
+        defaultNote: 'Usually http://localhost:8080 for local installs.',
+      },
+      'sabnzbd.api_key': {
+        description: 'API key for authenticating with SABnzbd.',
+        whenToChange: 'Find this in SABnzbd → Config → General → API Key.',
+        tip: 'Use the full API key, not the NZB key.',
+      },
+      'sabnzbd.category': {
+        description: 'SABnzbd category for movie downloads.',
+        whenToChange: 'Match this to a category configured in SABnzbd for proper post-processing paths.',
+        defaultNote: 'Default "movies" works if you\'ve set up that category in SABnzbd.',
+      },
+      'qbittorrent.host': {
+        description: 'The URL where qBittorrent Web UI is running.',
+        whenToChange: 'Update if qBittorrent is on a different machine or port.',
+        tip: 'Enable Web UI in qBittorrent: Tools → Options → Web UI.',
+      },
+      'transmission.host': {
+        description: 'The URL where Transmission RPC is running.',
+        whenToChange: 'Update if Transmission is on a different machine or port (default 9091).',
+        tip: 'Enable remote access in Transmission preferences.',
+      },
+
+      // === CORE ===
+      'core.username': {
+        description: 'Username for logging into CouchPotato.',
+        whenToChange: 'Set a username if CouchPotato is accessible from the internet.',
+        tip: 'Leave blank to disable authentication (local-only setups).',
+      },
+      'core.password': {
+        description: 'Password for logging into CouchPotato.',
+        whenToChange: 'Required if you set a username. Use a strong, unique password.',
+      },
+      'core.port': {
+        description: 'Network port CouchPotato runs on.',
+        whenToChange: 'Change if port 5050 conflicts with another service.',
+        tip: 'After changing, access CP at the new port (e.g., http://localhost:5051).',
+      },
+      'core.launch_browser': {
+        description: 'Open a browser window when CouchPotato starts.',
+        whenToChange: 'Disable for headless/server installs, or if it\'s annoying.',
+      },
+      'core.dark_theme': {
+        description: 'Use the dark theme for the web interface.',
+        whenToChange: 'Pure preference. Dark is easier on eyes at night.',
+      },
+      'core.development': {
+        description: 'Enable development/debug mode.',
+        whenToChange: 'Only enable when troubleshooting or developing. Increases logging and may affect performance.',
+      },
+
+      // === MANAGE/LIBRARY ===
+      'manage.enabled': {
+        description: 'Enable library management to track movies you already have.',
+        whenToChange: 'Enable to see your collection in CP and track upgrades.',
+      },
+      'manage.library_refresh_interval': {
+        description: 'How often to rescan your movie library for changes.',
+        whenToChange: 'Increase for large libraries to reduce disk I/O.',
+      },
+      'manage.cleanup': {
+        description: 'Remove movies from the database if their files are deleted.',
+        whenToChange: 'Enable for automatic cleanup. Disable if you manually manage deletions.',
+      },
+
+      // === NOTIFICATIONS ===
+      'pushover.on_snatch': {
+        description: 'Send a notification when a movie starts downloading.',
+        whenToChange: 'Enable to know immediately when downloads begin.',
+      },
+      'pushover.on_download': {
+        description: 'Send a notification when a movie finishes downloading and is organized.',
+        whenToChange: 'The most useful notification — tells you when a movie is ready to watch.',
+      },
+      'telegram.on_snatch': {
+        description: 'Send a Telegram message when a movie starts downloading.',
+        whenToChange: 'Enable if you want real-time download notifications.',
+      },
+      'telegram.on_download': {
+        description: 'Send a Telegram message when a movie is ready.',
+        whenToChange: 'The key notification — your movie is organized and ready to watch.',
+      },
+
+      // === TORRENTPOTATO / JACKETT ===
+      'torrentpotato.jackett_url': {
+        description: 'URL of your Jackett instance.',
+        whenToChange: 'Point to where Jackett is running (e.g., http://localhost:9117).',
+        tip: 'Jackett aggregates multiple torrent sites into one search endpoint.',
+      },
+      'torrentpotato.jackett_api_key': {
+        description: 'API key from your Jackett configuration.',
+        whenToChange: 'Find this in Jackett\'s web UI in the top right.',
+      },
+    },
+
+    // Get enriched help for a setting
+    getSettingHelp(section, optName) {
+      const key = section + '.' + optName;
+      return this.settingHelp[key] || null;
+    },
+
+    // Build the full description HTML for a setting
+    buildDescription(section, opt) {
+      const help = this.getSettingHelp(section, opt.name);
+      const apiDesc = opt.description || '';
+      
+      if (!help) {
+        return apiDesc;
+      }
+
+      let html = '';
+      
+      // Main description (prefer our help, fall back to API)
+      const mainDesc = help.description || apiDesc;
+      if (mainDesc) {
+        html += mainDesc;
+      }
+
+      // When to change
+      if (help.whenToChange) {
+        html += '<br><span class="text-cp-accent/80">When to change:</span> ' + help.whenToChange;
+      }
+
+      // Default note
+      if (help.defaultNote) {
+        html += '<br><span class="text-cp-muted">💡 ' + help.defaultNote + '</span>';
+      }
+
+      // Tip
+      if (help.tip) {
+        html += '<br><span class="text-cp-warning/80">Tip:</span> ' + help.tip;
+      }
+
+      return html;
+    },
+
+    // Check if a setting has expandable "Learn more" content
+    hasLearnMore(section, optName) {
+      const help = this.getSettingHelp(section, optName);
+      return help && help.learnMore;
+    },
+
+    // Get "Learn more" content
+    getLearnMore(section, optName) {
+      const help = this.getSettingHelp(section, optName);
+      return help ? help.learnMore : '';
     },
 
     async init() {
@@ -612,6 +913,53 @@ function settingsPanel() {
     setVal(section, name, value) {
       const key = section + '.' + name;
       this.dirty[key] = value;
+      // Auto-save with debounce
+      this.debounceSave(section, name, value);
+    },
+
+    debounceSave(section, name, value) {
+      const key = section + '.' + name;
+      // Clear existing timer for this key
+      if (this.saveTimers[key]) {
+        clearTimeout(this.saveTimers[key]);
+      }
+      // Set new timer - save after 500ms of no changes
+      this.saveTimers[key] = setTimeout(() => {
+        this.saveSingle(section, name, value);
+      }, 500);
+    },
+
+    async saveSingle(section, name, value) {
+      this.saving = true;
+      this.lastSaved = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('section', section);
+        params.append('name', name);
+        params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
+        await fetch(CP.apiBase + '/settings.save/?' + params.toString());
+        
+        // Update local values cache
+        if (!this.values[section]) this.values[section] = {};
+        this.values[section][name] = value;
+        
+        // Remove from dirty
+        const key = section + '.' + name;
+        delete this.dirty[key];
+        
+        // Check if restart needed
+        const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
+        if (restartKeys.includes(key)) {
+          this.needsRestart = true;
+        }
+        
+        this.lastSaved = true;
+        // Hide "Saved" indicator after 2 seconds
+        setTimeout(() => { this.lastSaved = false; }, 2000);
+      } catch (e) {
+        this.toast('Failed to save: ' + e.message, 'error');
+      }
+      this.saving = false;
     },
 
     toggleGroup(key) {
