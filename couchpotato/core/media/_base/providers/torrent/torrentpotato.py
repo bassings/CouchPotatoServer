@@ -163,6 +163,13 @@ class Base(TorrentProvider):
             # Parse XML response
             root = ET.fromstring(response)
 
+            # Check for Jackett error response
+            error = root.find('.//error')
+            if error is not None:
+                error_desc = error.get('description', 'Unknown error')
+                log.error('Jackett returned error: %s', error_desc)
+                return None, f'Jackett error: {error_desc}'
+
             indexers = []
             for indexer in root.findall('.//indexer'):
                 indexer_id = indexer.get('id')
@@ -196,8 +203,15 @@ class Base(TorrentProvider):
 
     def jackettTest(self, jackett_url=None, jackett_api_key=None, **kwargs):
         """Test Jackett connection and return list of available indexers"""
-        jackett_url = jackett_url or self.conf('jackett_url')
-        jackett_api_key = jackett_api_key or self.conf('jackett_api_key')
+        saved_url = self.conf('jackett_url')
+        saved_key = self.conf('jackett_api_key')
+        
+        log.debug('jackettTest: provided url=%s, provided key=%s, saved url=%s, saved key length=%s',
+                  jackett_url, '***' if jackett_api_key else None,
+                  saved_url, len(saved_key) if saved_key else 0)
+        
+        jackett_url = jackett_url or saved_url
+        jackett_api_key = jackett_api_key or saved_key
 
         if not jackett_url or not jackett_api_key:
             return {
