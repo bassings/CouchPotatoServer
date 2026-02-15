@@ -138,7 +138,9 @@ class DownloaderBase(Provider):
         for source in sources:
             try:
                 filedata = self.urlopen(source % torrent_hash, headers = {'Referer': source % torrent_hash}, show_error = False)
-                if 'torcache' in filedata and 'file not found' in filedata.lower():
+                # Decode bytes to string for Python 3 compatibility when checking content
+                filedata_str = filedata.decode('utf-8', errors='replace') if isinstance(filedata, bytes) else filedata
+                if 'torcache' in filedata_str and 'file not found' in filedata_str.lower():
                     continue
 
                 return filedata

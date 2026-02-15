@@ -206,7 +206,10 @@ class Base(NZBProvider, RSS):
         except HTTPError as e:
             sc = e.response.status_code
             if sc in [503, 429]:
-                response = e.read().lower()
+                response = e.read()
+                if isinstance(response, bytes):
+                    response = response.decode('utf-8', errors='replace')
+                response = response.lower()
                 if sc == 429 or 'maximum api' in response or 'download limit' in response:
                     if not self.limits_reached.get(host):
                         log.error('Limit reached / to many requests for newznab provider: %s', host)
@@ -244,6 +247,9 @@ class Base(NZBProvider, RSS):
                 })
                 url = '%s%s' % (self.getUrl(host['host']), query)
                 data = self.urlopen(url, timeout=15)
+                # Decode bytes to string for Python 3 compatibility
+                if isinstance(data, bytes):
+                    data = data.decode('utf-8', errors='replace')
 
                 if data and ('error' in data.lower() and 'code="100"' in data.lower()):
                     results.append((False, '%s: Invalid API key' % urlparse(host_url).hostname))

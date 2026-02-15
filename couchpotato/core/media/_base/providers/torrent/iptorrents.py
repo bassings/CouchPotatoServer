@@ -49,6 +49,9 @@ class Base(TorrentProvider):
         current_page = 1
         while current_page <= pages and not self.shuttingDown():
             data = self.getHTMLData(base_url % (freeleech, current_page), headers = self.getRequestHeaders())
+            # Decode bytes to string for Python 3 compatibility
+            if isinstance(data, bytes):
+                data = data.decode('utf-8', errors='replace')
 
             if data:
                 html = BeautifulSoup(data)

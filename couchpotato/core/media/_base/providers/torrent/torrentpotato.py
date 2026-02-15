@@ -328,6 +328,9 @@ class Base(TorrentProvider):
                     host.get('name', '')
                 )
                 data = self.urlopen(test_url, timeout=15)
+                # Decode bytes to string for Python 3 compatibility
+                if isinstance(data, bytes):
+                    data = data.decode('utf-8', errors='replace')
 
                 hostname = urlparse(host_url).hostname or host_url
                 if data:
