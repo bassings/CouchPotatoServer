@@ -205,11 +205,11 @@ class Base(TorrentProvider):
         """Test Jackett connection and return list of available indexers"""
         saved_url = self.conf('jackett_url')
         saved_key = self.conf('jackett_api_key')
-        
+
         log.debug('jackettTest: provided url=%s, provided key=%s, saved url=%s, saved key length=%s',
                   jackett_url, '***' if jackett_api_key else None,
                   saved_url, len(saved_key) if saved_key else 0)
-        
+
         jackett_url = jackett_url or saved_url
         jackett_api_key = jackett_api_key or saved_key
 
