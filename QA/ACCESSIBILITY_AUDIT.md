@@ -11,13 +11,15 @@
 
 | Category | Critical | Major | Minor | Pass |
 |----------|----------|-------|-------|------|
-| Keyboard Navigation | 2 | 2 | 1 | 2 |
-| Screen Reader Support | 3 | 3 | 2 | 4 |
-| Color Contrast | 1 | 1 | 1 | - |
-| Motion | 1 | - | - | - |
-| Focus Management | 2 | - | - | - |
-| Forms | - | 2 | 1 | - |
-| **Total** | **9** | **8** | **5** | **6** |
+| Keyboard Navigation | ~~2~~ 0 ✅ | ~~2~~ 0 ✅ | ~~1~~ 0 ✅ | 2 |
+| Screen Reader Support | ~~3~~ 0 ✅ | ~~3~~ 0 ✅ | ~~2~~ 0 ✅ | 4 |
+| Color Contrast | ~~1~~ 0 ✅ | ~~1~~ 0 ✅ | ~~1~~ 0 ✅ | - |
+| Motion | ~~1~~ 0 ✅ | - | - | - |
+| Focus Management | ~~2~~ 0 ✅ | - | - | - |
+| Forms | - | ~~2~~ 0 ✅ | ~~1~~ 0 ✅ | - |
+| **Total** | **0** ✅ | **0** ✅ | **0** ✅ | **6** |
+
+**Status:** All 22 issues fixed in commit `af868cbb` (2026-02-16)
 
 ---
 
@@ -287,27 +289,27 @@ aria-label="{{ title }} ({{ year }}) - {{ status }}"
 
 ## Implementation Priority
 
-### Phase 1 (Critical - This Week)
-- [ ] A11Y-001: Focus trap in modals
-- [ ] A11Y-002: Keyboard-accessible refresh button
-- [ ] A11Y-003: Skip link
-- [ ] A11Y-005: Form input labels
-- [ ] A11Y-006: Reduced motion support
+### Phase 1 (Critical) ✅ COMPLETE
+- [x] A11Y-001: Focus trap in modals
+- [x] A11Y-002: Keyboard-accessible refresh button
+- [x] A11Y-003: Skip link
+- [x] A11Y-005: Form input labels
+- [x] A11Y-006: Reduced motion support
 
-### Phase 2 (Major - Next Sprint)
-- [ ] A11Y-004: Live regions for dynamic content
-- [ ] A11Y-007: Loading state announcements
-- [ ] A11Y-008: Focus restoration on modal close
-- [ ] A11Y-010: aria-hidden on decorative SVGs
-- [ ] A11Y-013: Focus indicator styles
-- [ ] A11Y-014/15: Expanded states on toggles
+### Phase 2 (Major) ✅ COMPLETE
+- [x] A11Y-004: Live regions for dynamic content
+- [x] A11Y-007: Loading state announcements
+- [x] A11Y-008: Focus restoration on modal close
+- [x] A11Y-010: aria-hidden on decorative SVGs
+- [x] A11Y-013: Focus indicator styles
+- [x] A11Y-014/15: Expanded states on toggles
 
-### Phase 3 (Polish)
-- [ ] A11Y-009: Profile dropdown labels
-- [ ] A11Y-011: Status in aria-label
-- [ ] A11Y-012: Table header scope
-- [ ] A11Y-016: Tab panel ARIA
-- [ ] Minor issues
+### Phase 3 (Polish) ✅ COMPLETE
+- [x] A11Y-009: Profile dropdown labels
+- [x] A11Y-011: Status in aria-label
+- [x] A11Y-012: Table header scope
+- [x] A11Y-016: Tab panel ARIA
+- [x] Minor issues (A11Y-018 through A11Y-022)
 
 ---
 
