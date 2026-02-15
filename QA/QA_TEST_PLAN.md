@@ -474,11 +474,25 @@
 - [ ] Sidebar collapse on mobile
 
 ### 6.2 Accessibility
-- [ ] Keyboard navigation
-- [ ] Focus states visible
+**Full audit:** See `ACCESSIBILITY_AUDIT.md` for detailed findings.
+
+**Core Checks:**
+- [ ] Keyboard navigation (all interactive elements reachable)
+- [ ] Skip link to main content
+- [ ] Focus states visible on all interactive elements
+- [ ] Focus trapped in modals
 - [ ] Alt text on images
 - [ ] Semantic HTML structure
-- [ ] Color contrast (WCAG 2.1 AA)
+- [ ] ARIA labels on form controls
+- [ ] ARIA live regions for dynamic content
+- [ ] Color contrast (WCAG 2.1 AA — 4.5:1 minimum)
+- [ ] Reduced motion support (`prefers-reduced-motion`)
+- [ ] Screen reader testing (VoiceOver/NVDA)
+
+**Tools:**
+- axe DevTools browser extension
+- Lighthouse accessibility audit
+- Manual keyboard-only testing
 
 ### 6.3 Performance
 - [ ] Initial page load time (< 3s target)
