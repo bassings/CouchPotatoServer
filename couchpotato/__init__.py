@@ -337,7 +337,9 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         if api_key_val:
             remember_me = tryInt(form.get('remember_me', 0))
             max_age = 30 * 24 * 3600 if remember_me > 0 else None
-            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True)
+            # Set cookie with path=/ to share session across all routes (new UI, old UI, API)
+            # This fixes DEF-004: Classic UI requires separate authentication
+            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True, path='/')
 
         return response
 
@@ -345,7 +347,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.get(web_base + 'logout')
     async def logout(request: Request):
         response = RedirectResponse(url='%slogin/' % web_base, status_code=302)
-        response.delete_cookie('user')
+        # Delete cookie with path=/ to match the path set during login
+        response.delete_cookie('user', path='/')
         return response
 
     # Classic UI catch-all (moved to /old/)
