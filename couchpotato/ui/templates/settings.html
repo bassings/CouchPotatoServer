@@ -6,6 +6,12 @@
     <div class="flex items-center gap-3">
       <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
       <span x-show="version" class="text-[10px] text-cp-muted bg-white/[0.04] px-2 py-0.5 rounded" x-text="'v' + version"></span>
+      <template x-if="updateAvailable">
+        <span class="text-[10px] text-cp-success bg-cp-success/10 px-2 py-0.5 rounded flex items-center gap-1">
+          <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          <span x-text="updateAvailable.hash + ' available'"></span>
+        </span>
+      </template>
     </div>
     <div class="flex items-center gap-3">
       <template x-if="activeTab !== 'logs'">
@@ -42,6 +48,23 @@
       </template>
     </div>
   </div>
+
+  <!-- Update available banner -->
+  <template x-if="updateAvailable">
+    <div class="mb-6 px-4 py-3 rounded-lg bg-cp-success/10 border border-cp-success/20 flex items-center justify-between gap-4">
+      <div class="flex items-center gap-3">
+        <svg class="w-5 h-5 text-cp-success shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+        <div>
+          <p class="text-sm font-medium text-cp-success" x-text="'Update available: ' + updateAvailable.hash"></p>
+          <p x-show="updateAvailable.docker_message" class="text-xs text-cp-muted mt-0.5" x-text="updateAvailable.docker_message"></p>
+        </div>
+      </div>
+      <a x-show="updateAvailable.changelog" :href="updateAvailable.changelog" target="_blank"
+         class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-success/20 text-cp-success hover:bg-cp-success/30 transition-colors shrink-0">
+        View Changelog
+      </a>
+    </div>
+  </template>
 
   <!-- Loading state -->
   <div x-show="loading" class="flex items-center justify-center py-20">
@@ -648,6 +671,7 @@ function settingsPanel() {
     saveTimers: {},
     // Version info
     version: '',
+    updateAvailable: null, // { hash, changelog, docker_message }
 
     // Directory browser state
     browserOpen: false,
@@ -984,6 +1008,9 @@ function settingsPanel() {
           const vData = await vResp.json();
           if (vData.version) {
             this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
+          }
+          if (vData.update_version) {
+            this.updateAvailable = vData.update_version;
           }
         } catch (e) { /* version display is optional */ }
 
