@@ -500,7 +500,7 @@ class DockerUpdater(BaseUpdater):
             else:
                 # Only get the latest stable release
                 url = 'https://api.github.com/repos/%s/%s/releases/latest' % (self.repo_user, self.repo_name)
-            
+
             data = self.getCache('github_releases', url = url)
             if not data:
                 self.last_check = now
@@ -515,7 +515,7 @@ class DockerUpdater(BaseUpdater):
                 release = releases[0]  # Most recent release (including pre-releases)
             else:
                 release = json.loads(data)
-            
+
             latest_tag = release.get('tag_name', '')
             current = self._parseVersion(version.VERSION, include_beta=include_beta)
             latest = self._parseVersion(latest_tag, include_beta=include_beta)
