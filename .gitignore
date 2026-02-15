@@ -24,3 +24,5 @@ htmlcov/
 # Test data directory
 test-data/
 .config
+# npm
+package-lock.json

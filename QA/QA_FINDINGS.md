@@ -37,46 +37,56 @@
 **File:** `couchpotato/ui/templates/wanted.html`
 
 #### DEF-003: Jackett Sync Description Shows "undefined"
-**Status:** OPEN
+**Status:** FIXED ✅
 **Location:** Settings > Searchers > TorrentPotato > Sync from Jackett
 **Description:** The help text for the Jackett sync button shows "undefined" instead of a description
-**Expected:** Should show helpful text about what the sync does
-**Severity:** Low visual impact but confusing
-**Suggested Fix:** Check settings template for missing description text
+**Root Cause:** The button template used `$root.buildDescription()` which doesn't work correctly from within a nested Alpine `x-data` scope
+**Fix Applied:** Added `buildDescription()` method to the `buttonField` component that delegates to the parent settingsPanel
+**File:** `couchpotato/ui/templates/settings.html`
 
 #### DEF-004: Classic UI Redirects to Login
-**Status:** OPEN (By Design?)
+**Status:** FIXED ✅
 **Location:** /old/ route
 **Description:** Clicking "Classic UI" in sidebar redirects to a login page instead of the classic interface
-**Analysis:** Classic UI uses separate session authentication from new UI
-**Impact:** Users cannot easily switch between UIs
-**Suggested Fix:** Share authentication between old and new UI, or remove Classic UI link
+**Root Cause:** The authentication cookie was set without a `path` parameter, defaulting to the login path instead of being shared across all routes
+**Fix Applied:** Added `path='/'` to the `set_cookie()` and `delete_cookie()` calls to ensure the session cookie is shared across new UI (/), old UI (/old/), and API routes
+**File:** `couchpotato/__init__.py`
 
 #### DEF-005: Sister Act 3 Shows Empty Year
-**Status:** OPEN (Data Issue)
-**Location:** Wanted page and movie cards
+**Status:** FIXED ✅
+**Location:** Wanted page, movie cards, search results, movie detail
 **Description:** "Sister Act 3" displays as "Sister Act 3 ()" with empty parentheses
-**Root Cause:** Movie has `year: 0` in database (no release date set)
-**Suggested Fix:** Either hide year if 0/empty, or show "TBA" instead
+**Root Cause:** Movie has `year: 0` in database (no release date set), templates didn't handle this case
+**Fix Applied:** Updated all templates to show "TBA" instead of empty year when year is 0, null, or empty
+**Files:**
+- `couchpotato/ui/templates/partials/movie_cards.html`
+- `couchpotato/ui/templates/partials/search_results.html`
+- `couchpotato/ui/templates/partials/movie_detail.html`
 
-#### DEF-006: Ascendant Missing Poster Image
-**Status:** OPEN (Data Issue)
-**Location:** Wanted page
-**Description:** "Ascendant" movie card shows placeholder instead of poster image
-**Root Cause:** Image URL may be broken or movie lacks poster in TMDB
-**Suggested Fix:** Add error handling that shows fallback, or trigger metadata refresh
+#### DEF-006: Missing Poster + Refresh Option
+**Status:** FIXED ✅
+**Location:** Wanted page, movie cards
+**Description:** Movies without posters showed a basic placeholder; no way to refresh metadata from movie cards
+**Fix Applied:**
+1. Improved the missing poster placeholder with a gradient background and clearer "No poster" text
+2. Added a refresh button to ALL movie cards (appears on hover) that triggers metadata refresh
+3. Refresh uses htmx to reload the movie grid after refresh completes
+**File:** `couchpotato/ui/templates/partials/movie_cards.html`
 
 ---
 
 ### Low (P4)
 
-#### DEF-007: The Matrix (2004) in Search Results
-**Status:** OPEN
-**Location:** Add Movie search
-**Description:** Searching "The Matrix" returns a 2004 result which appears to be incorrect/duplicate
-**Analysis:** TMDB may have incorrect entries
-**Impact:** Minor confusion for users
-**Suggested Fix:** Could filter out obvious duplicates or show more identifying info
+#### DEF-007: The Matrix (2004) Duplicate in Search Results
+**Status:** FIXED ✅
+**Location:** Add Movie search results
+**Description:** Searching "The Matrix" returns multiple results that are hard to differentiate
+**Root Cause:** TMDB returns multiple entries for the same title (remakes, re-releases, etc.)
+**Fix Applied:** Added additional identifying information to search results:
+- Director name (if available)
+- IMDB ID with link to IMDb page
+- This helps users differentiate between movies with similar titles
+**File:** `couchpotato/ui/templates/partials/search_results.html`
 
 ---
 
@@ -131,11 +141,11 @@ Show toast notifications for successful actions (movie added, deleted, etc.)
 
 ## Test Coverage Gaps
 
-1. **No E2E tests** for new htmx UI
-2. **No UI component tests** for Alpine.js components  
-3. **Limited error handling tests** for API failures
-4. **No accessibility audit** performed
-5. **No performance benchmarks** established
+1. ~~**No E2E tests** for new htmx UI~~ ✅ **ADDED:** Playwright E2E tests in `tests/e2e/`
+2. ~~**No UI component tests** for Alpine.js components~~ ✅ **ADDED:** Vitest unit tests in `tests/unit/`
+3. **Limited error handling tests** for API failures (partially addressed)
+4. ~~**No accessibility audit** performed~~ ✅ **ADDED:** axe-core accessibility tests via Playwright
+5. ~~**No performance benchmarks** established~~ ✅ **ADDED:** Lighthouse CI configuration
 
 ---
 
@@ -145,9 +155,18 @@ Show toast notifications for successful actions (movie added, deleted, etc.)
 |----------|-------|
 | Critical Defects | 0 |
 | High Defects | 1 (fixed) |
-| Medium Defects | 4 |
-| Low Defects | 1 |
+| Medium Defects | 4 (all fixed) |
+| Low Defects | 1 (fixed) |
 | Improvements | 6 |
 | Feature Ideas | 5 |
 
-**Overall Assessment:** The new htmx UI is functional and well-designed. Two bugs were found and fixed during this session. Remaining issues are minor and mostly data-related rather than code defects.
+**Overall Assessment:** The new htmx UI is functional and well-designed. All reported defects have been fixed:
+- DEF-001, DEF-002: Fixed in previous session
+- DEF-003 through DEF-007: Fixed in this session
+
+**Test Infrastructure Added:**
+- Playwright E2E tests for core user flows
+- Vitest unit tests for Alpine.js component logic
+- axe-core accessibility tests integrated
+- Lighthouse CI configuration for performance monitoring
+- GitHub Actions CI updated to run all tests

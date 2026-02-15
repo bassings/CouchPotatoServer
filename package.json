@@ -5,13 +5,13 @@
   "private": true,
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
-    "test:e2e": "playwright test",
-    "test:e2e:headed": "playwright test --headed",
-    "test:e2e:ui": "playwright test --ui",
-    "test:unit": "vitest run",
-    "test:unit:watch": "vitest",
-    "test:a11y": "playwright test --project=accessibility",
-    "test:lighthouse": "lhci autorun",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed",
+    "test:e2e:ui": "npx playwright test --ui",
+    "test:unit": "npx vitest run",
+    "test:unit:watch": "npx vitest",
+    "test:a11y": "npx playwright test --project=accessibility",
+    "test:lighthouse": "npx lhci autorun",
     "test:all": "npm run test:unit && npm run test:e2e && npm run test:lighthouse"
   },
   "devDependencies": {
