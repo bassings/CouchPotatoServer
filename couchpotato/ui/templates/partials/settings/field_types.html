@@ -190,7 +190,7 @@
 <template x-if="opt.type === 'combined'">
   <div x-data="combinedField(group.section, opt)">
     <!-- Column headers -->
-    <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted/70 font-medium" role="row">
+    <div class="flex gap-2 mb-2 items-center text-[10px] text-cp-muted font-medium" aria-hidden="true">
       <template x-for="(col, colIdx) in opt.combine" :key="'hdr-'+colIdx">
         <span :class="col === 'use' ? 'w-10 shrink-0 text-center' : (col === 'host' ? 'flex-[2] min-w-0' : 'flex-1 min-w-0')" 
               x-text="col === 'use' ? '' : col.replace(/_/g, ' ')"></span>
