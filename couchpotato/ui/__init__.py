@@ -130,9 +130,9 @@ def create_router(require_auth) -> APIRouter:
         """Return movie detail as HTML partial."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('movie.get', id=movie_id)
+            result = callApiHandler('media.get', id=movie_id)
             if isinstance(result, dict):
-                movie = result.get('movie', result)
+                movie = result.get('media', result)
             else:
                 movie = {}
         except Exception:

@@ -10,9 +10,9 @@
     <div class="flex items-center gap-3">
       {% if current_page == 'wanted' %}
       <div class="flex gap-1 text-[10px]">
-        <button @click="filterStatus = ''" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
-        <button @click="filterStatus = 'active'" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
-        <button @click="filterStatus = 'done'" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
+        <button @click="filterStatus = ''; filterMovies()" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
+        <button @click="filterStatus = 'active'; filterMovies()" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
+        <button @click="filterStatus = 'done'; filterMovies()" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
       </div>
       {% endif %}
       <div class="relative w-full sm:w-64">
