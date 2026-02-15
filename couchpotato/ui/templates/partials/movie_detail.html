@@ -1,6 +1,7 @@
 {% set info = movie.get('info', {}) %}
 {% set title = info.get('titles', ['Unknown'])[0] %}
-{% set year = info.get('year', '') %}
+{% set raw_year = info.get('year', 0) %}
+{% set year = raw_year if raw_year and raw_year != 0 else 'TBA' %}
 {% set plot = info.get('plot', '') %}
 {% set rating = info.get('rating', {}) %}
 {% set imdb_rating = rating.get('imdb', ['', 0]) if rating is mapping else ['', 0] %}
