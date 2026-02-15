@@ -456,12 +456,12 @@ class DockerUpdater(BaseUpdater):
     def getName(self):
         return 'docker'
 
-    def _parseVersion(self, tag):
+    def _parseVersion(self, tag, include_beta=False):
         """Parse a version tag like 'v3.1.0' into a tuple of ints.
-        Returns None for pre-release tags (beta, alpha, rc, dev)."""
+        Returns None for pre-release tags (beta, alpha, rc, dev) unless include_beta is True."""
         tag = tag.lstrip('v')
-        # Ignore pre-release versions
-        if any(pre in tag.lower() for pre in ['-beta', '-alpha', '-rc', '-dev', '.beta', '.alpha', '.rc', '.dev']):
+        # Ignore pre-release versions unless include_beta is enabled
+        if not include_beta and any(pre in tag.lower() for pre in ['-beta', '-alpha', '-rc', '-dev', '.beta', '.alpha', '.rc', '.dev']):
             return None
         try:
             # Strip any suffix after hyphen for comparison (e.g., "3.0.10-hotfix" -> "3.0.10")
@@ -490,20 +490,37 @@ class DockerUpdater(BaseUpdater):
         if self.last_check and (now - self.last_check) < self._check_interval:
             return self.update_version is not None
 
-        log.info('Checking GitHub Releases for newer Docker image version')
+        include_beta = self.conf('include_beta', default=False)
+        log.info('Checking GitHub Releases for newer Docker image version (include_beta=%s)', include_beta)
         try:
-            url = 'https://api.github.com/repos/%s/%s/releases/latest' % (self.repo_user, self.repo_name)
+            # Use different endpoint based on include_beta setting
+            if include_beta:
+                # Get all releases including pre-releases, find the latest one
+                url = 'https://api.github.com/repos/%s/%s/releases?per_page=10' % (self.repo_user, self.repo_name)
+            else:
+                # Only get the latest stable release
+                url = 'https://api.github.com/repos/%s/%s/releases/latest' % (self.repo_user, self.repo_name)
+            
             data = self.getCache('github_releases', url = url)
             if not data:
                 self.last_check = now
                 return False
 
-            release = json.loads(data)
+            if include_beta:
+                # Parse list of releases, find the newest one
+                releases = json.loads(data)
+                if not releases:
+                    self.last_check = now
+                    return False
+                release = releases[0]  # Most recent release (including pre-releases)
+            else:
+                release = json.loads(data)
+            
             latest_tag = release.get('tag_name', '')
-            current = self._parseVersion(version.VERSION)
-            latest = self._parseVersion(latest_tag)
+            current = self._parseVersion(version.VERSION, include_beta=include_beta)
+            latest = self._parseVersion(latest_tag, include_beta=include_beta)
 
-            # Skip if either version couldn't be parsed (e.g., beta/pre-release)
+            # Skip if either version couldn't be parsed (e.g., beta/pre-release when not included)
             if not latest or not current:
                 log.debug('Skipping version comparison: current=%s, latest=%s', current, latest)
                 self.last_check = now
