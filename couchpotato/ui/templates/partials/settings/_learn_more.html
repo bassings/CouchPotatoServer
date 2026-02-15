@@ -1,0 +1,9 @@
+{# Learn more expandable section - reused across all field types #}
+{# Expects: section, opt (or no args for combined/directories fields) #}
+<template x-if="hasLearnMore({{ section_arg | default('group.section') }}, {{ opt_arg | default('opt.name') }})">
+  <details class="mt-2 text-[10px]">
+    <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
+    <div class="mt-1.5 p-2 rounded bg-white/[0.02] border border-white/[0.04] text-cp-muted leading-relaxed" 
+         x-html="getLearnMore({{ section_arg | default('group.section') }}, {{ opt_arg | default('opt.name') }})"></div>
+  </details>
+</template>

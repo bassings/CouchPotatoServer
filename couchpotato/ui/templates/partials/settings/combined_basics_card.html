@@ -1,0 +1,71 @@
+{# Combined Basics Card - For searcher tab with grouped sections #}
+{# Requires Alpine context: group with _combinedGroups, getVal(), setVal(), buildDescription() #}
+
+<template x-if="group._isCombined">
+  <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden max-w-full">
+    <div class="px-5 py-3 border-b border-white/[0.04]">
+      <h3 class="text-sm font-medium" x-text="group.label"></h3>
+    </div>
+    <div class="px-5 py-4 space-y-6">
+      <template x-for="(subGroup, subIdx) in group._combinedGroups" :key="subIdx">
+        <div>
+          <!-- Sub-section heading -->
+          <h4 class="text-xs font-semibold text-cp-accent uppercase tracking-wide mb-3" x-text="subGroup._subLabel"></h4>
+          <p x-show="subGroup.description" class="text-[11px] text-cp-muted mb-3" x-html="subGroup.description"></p>
+          
+          <!-- Sub-section options -->
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+            <template x-for="opt in getGroupOptions(subGroup)" :key="subGroup.section + '.' + opt.name">
+              <div x-show="opt.type !== 'enabler' && isOptionVisible(opt, subGroup)"
+                   :class="(opt.type === 'directory' || opt.type === 'directories' || opt.type === 'combined' || opt.type === 'button') ? 'sm:col-span-2' : ''">
+                <label class="block text-xs text-cp-muted mb-1.5" x-text="opt.label || opt.name.replace(/_/g, ' ')"></label>
+                
+                <!-- Dropdown -->
+                <template x-if="opt.type === 'dropdown'">
+                  <div>
+                    <select @change="setVal(subGroup.section, opt.name, $event.target.value)"
+                            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
+                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                      <template x-for="v in (opt.values || [])" :key="JSON.stringify(v)">
+                        <option :value="Array.isArray(v) ? v[1] : v"
+                                :selected="String(getVal(subGroup.section, opt.name)) === String(Array.isArray(v) ? v[1] : v)"
+                                x-text="Array.isArray(v) ? v[0] : v"></option>
+                      </template>
+                    </select>
+                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                  </div>
+                </template>
+                
+                <!-- Int / Float -->
+                <template x-if="opt.type === 'int' || opt.type === 'float'">
+                  <div>
+                    <input type="number" 
+                           :step="opt.type === 'float' ? '0.1' : '1'"
+                           :value="getVal(subGroup.section, opt.name)"
+                           @input="setVal(subGroup.section, opt.name, $event.target.value)"
+                           :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                  </div>
+                </template>
+                
+                <!-- Text (default) -->
+                <template x-if="!opt.type || opt.type === 'string'">
+                  <div>
+                    <input type="text"
+                           :value="getVal(subGroup.section, opt.name)"
+                           @input="setVal(subGroup.section, opt.name, $event.target.value)"
+                           :placeholder="opt.placeholder || (opt.default != null ? String(opt.default) : '')"
+                           :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
+                           class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+</template>

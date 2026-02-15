@@ -1,0 +1,80 @@
+{# Logs Tab - Settings Page #}
+{# Requires: logsPanel() Alpine component #}
+<div x-show="activeTab === 'logs'" 
+     role="tabpanel" 
+     id="panel-logs" 
+     aria-labelledby="tab-logs" 
+     x-data="logsPanel()" 
+     x-init="$watch('$root.activeTab', v => { if(v==='logs') init(); else stopAutoRefresh(); })">
+  
+  <!-- Log controls -->
+  <div class="flex items-center gap-3 mb-4">
+    <label for="settings-log-level" class="sr-only">Filter by log level</label>
+    <select id="settings-log-level" x-model="logType" @change="refresh()"
+            class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+      <option value="all">All</option>
+      <option value="error">Errors</option>
+      <option value="warning">Warnings</option>
+      <option value="info">Info</option>
+      <option value="debug">Debug</option>
+    </select>
+    <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
+      <input type="checkbox" id="settings-auto-refresh" x-model="autoRefresh" @change="toggleAutoRefresh()"
+             class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
+      <span>Auto-refresh</span>
+    </label>
+    <button @click="refresh()" 
+            class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors" 
+            aria-label="Refresh logs">
+      Refresh
+    </button>
+    <button @click="clearLogs()" 
+            class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors" 
+            aria-label="Clear all logs">
+      Clear
+    </button>
+  </div>
+
+  <!-- Loading state -->
+  <div x-show="logLoading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
+    <div class="flex items-center gap-3 text-cp-muted text-sm">
+      <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+      </svg>
+      <span>Loading logs…</span>
+    </div>
+  </div>
+
+  <!-- Log entries -->
+  <div class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden font-mono text-[11px] leading-relaxed">
+    <div class="max-h-[calc(100vh-280px)] overflow-y-auto" id="log-container">
+      <!-- Empty state -->
+      <template x-if="logs.length === 0 && !logLoading">
+        <div class="px-4 py-8 text-center text-cp-muted text-xs">No log entries found.</div>
+      </template>
+      
+      <!-- Log entries -->
+      <template x-for="(entry, idx) in logs" :key="idx">
+        <div class="px-4 py-1.5 border-b border-white/[0.02] hover:bg-white/[0.02] transition-colors"
+             :class="{
+               'text-cp-danger bg-cp-danger/[0.03]': entry.type === 'ERROR',
+               'text-cp-warning bg-cp-warning/[0.03]': entry.type === 'WARNING',
+               'text-cp-text': entry.type === 'INFO',
+               'text-cp-muted': entry.type === 'DEBUG',
+             }">
+          <span class="text-cp-muted/50 select-none" x-text="entry.time"></span>
+          <span class="inline-block w-14 text-center font-medium"
+                :class="{
+                  'text-cp-danger': entry.type === 'ERROR',
+                  'text-cp-warning': entry.type === 'WARNING',
+                  'text-cp-accent': entry.type === 'INFO',
+                  'text-cp-muted': entry.type === 'DEBUG',
+                }" x-text="entry.type"></span>
+          <span class="text-cp-muted/70" x-text="'[' + entry.source + ']'"></span>
+          <span x-text="entry.message"></span>
+        </div>
+      </template>
+    </div>
+  </div>
+</div>

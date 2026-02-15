@@ -1,0 +1,702 @@
+<script>
+/* ══════════════════════════════════════════════════════════════════════════
+   SETTINGS PAGE - ALPINE.JS COMPONENTS
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Logs panel (embedded in Settings) ── */
+function logsPanel() {
+  return {
+    logs: [],
+    logLoading: false,
+    logType: 'all',
+    autoRefresh: true,
+    refreshTimer: null,
+
+    async init() {
+      await this.refresh();
+      if (this.autoRefresh) this.startAutoRefresh();
+    },
+
+    async refresh() {
+      this.logLoading = true;
+      try {
+        const typeParam = this.logType !== 'all' ? '&type=' + this.logType : '';
+        const resp = await fetch(CP.apiBase + '/logging.partial/?limit=500' + typeParam);
+        const data = await resp.json();
+        if (data.success !== false) {
+          this.logs = this.parseLogs(data.log || data.lines || []);
+        }
+      } catch (e) {
+        console.error('Failed to load logs', e);
+      }
+      this.logLoading = false;
+      this.$nextTick(() => {
+        const el = document.getElementById('log-container');
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    },
+
+    parseLogs(lines) {
+      if (!Array.isArray(lines)) return [];
+      return lines.map(line => {
+        if (typeof line === 'object' && line.time) {
+          const msg = line.message || '';
+          const srcMatch = msg.match(/^\[([^\]]*)\]\s*(.*)/);
+          return {
+            time: line.time,
+            type: (line.type || 'INFO').toUpperCase(),
+            source: srcMatch ? srcMatch[1].trim() : '',
+            message: srcMatch ? srcMatch[2] : msg,
+          };
+        }
+        if (typeof line !== 'string') return { time: '', type: 'INFO', source: '', message: String(line) };
+        const m = line.match(/^(\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s+(ERROR|WARNING|INFO|DEBUG)\s+\[([^\]]*)\]\s*(.*)$/);
+        if (m) return { time: m[1], type: m[2], source: m[3].trim(), message: m[4] };
+        const levelMatch = line.match(/\b(ERROR|WARNING|INFO|DEBUG)\b/);
+        return { time: '', type: levelMatch ? levelMatch[1] : 'INFO', source: '', message: line };
+      });
+    },
+
+    async clearLogs() {
+      try {
+        await fetch(CP.apiBase + '/logging.clear/');
+        this.logs = [];
+      } catch (e) {
+        console.error('Failed to clear logs');
+      }
+    },
+
+    startAutoRefresh() {
+      this.stopAutoRefresh();
+      this.refreshTimer = setInterval(() => this.refresh(), 10000);
+    },
+
+    stopAutoRefresh() {
+      if (this.refreshTimer) {
+        clearInterval(this.refreshTimer);
+        this.refreshTimer = null;
+      }
+    },
+
+    toggleAutoRefresh() {
+      if (this.autoRefresh) this.startAutoRefresh();
+      else this.stopAutoRefresh();
+    },
+  };
+}
+
+/* ── Settings panel (main) ── */
+function settingsPanel() {
+  return {
+    activeTab: 'general',
+    loading: true,
+    saving: false,
+    showAdvanced: false,
+    needsRestart: false,
+    testing: null,
+    testResult: {},
+    testResultDetails: {},
+    message: '',
+    messageType: 'success',
+    openGroups: {},
+    options: {},
+    values: {},
+    dirty: {},
+    tabOrder: [],
+    currentGroups: [],
+    lastSaved: false,
+    saveTimers: {},
+    version: '',
+    updateAvailable: null,
+
+    // Directory browser state
+    browserOpen: false,
+    browserPath: '/',
+    browserDirs: [],
+    browserLoading: false,
+    browserTarget: null,
+    browserParent: '/',
+    browserIsRoot: true,
+
+    // Hidden/obsolete sections
+    hiddenSections: new Set([
+      'wdtvlive', 'windowsmediacenter', 'sonyps3', 'mediabrowser',
+      'pneumatic', 'hadouken', 'homey',
+      'awesomehd', 'bithdtv', 'scenetime', 'torrentbytes',
+    ]),
+    
+    advancedSections: new Set([]),
+    hiddenTabs: new Set(['providers', 'automation']),
+    tabRemaps: { 'automation': 'display' },
+
+    tabLabels: {
+      general: 'General',
+      downloaders: 'Downloaders',
+      searcher: 'Searchers',
+      renamer: 'Renamer',
+      notifications: 'Notifications',
+      manage: 'Library',
+      display: 'Suggestions',
+      providers: 'Providers',
+      logs: 'Logs',
+    },
+
+    providerCategories: {
+      sabnzbd: { tab: 'downloaders', category: 'usenet', label: 'Usenet Clients', order: 1 },
+      nzbget: { tab: 'downloaders', category: 'usenet', label: 'Usenet Clients', order: 1 },
+      transmission: { tab: 'downloaders', category: 'torrent', label: 'Torrent Clients', order: 2 },
+      qbittorrent: { tab: 'downloaders', category: 'torrent', label: 'Torrent Clients', order: 2 },
+      deluge: { tab: 'downloaders', category: 'torrent', label: 'Torrent Clients', order: 2 },
+      rtorrent: { tab: 'downloaders', category: 'torrent', label: 'Torrent Clients', order: 2 },
+      utorrent: { tab: 'downloaders', category: 'torrent', label: 'Torrent Clients', order: 2 },
+      blackhole: { tab: 'downloaders', category: 'other', label: 'Other', order: 3 },
+      putio: { tab: 'downloaders', category: 'other', label: 'Other', order: 3 },
+      synology: { tab: 'downloaders', category: 'other', label: 'Other', order: 3 },
+      binsearch: { tab: 'searcher', category: 'usenet-free', label: 'Usenet — Free', order: 10 },
+      newznab: { tab: 'searcher', category: 'usenet-account', label: 'Usenet — Account Required', order: 11 },
+      thepiratebay: { tab: 'searcher', category: 'torrent-free', label: 'Torrents — Free', order: 20 },
+      yts: { tab: 'searcher', category: 'torrent-free', label: 'Torrents — Free', order: 20 },
+      torrentpotato: { tab: 'searcher', category: 'torrent-free', label: 'Torrents — Free', order: 20 },
+      iptorrents: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+      passthepopcorn: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+      alpharatio: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+      hdbits: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+      torrentday: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+      torrentleech: { tab: 'searcher', category: 'torrent-account', label: 'Torrents — Account Required', order: 21 },
+    },
+
+    combinedBasicsSections: {
+      'searcher': { tab: 'searcher', label: 'Basics', order: 1 },
+      'nzb': { tab: 'searcher', label: 'NZB', order: 3 },
+      'torrent': { tab: 'searcher', label: 'Torrents', order: 4 },
+    },
+    combinedBasicsGroups: new Set(['searcher', 'filter']),
+
+    // Rich contextual help for settings
+    settingHelp: {
+      'renamer.from': {
+        description: 'The folder where CouchPotato looks for completed downloads.',
+        whenToChange: 'Set this to your download client\'s "completed downloads" folder.',
+        tip: 'Make sure CouchPotato has read/write access to this folder.',
+      },
+      'renamer.to': {
+        description: 'Your main movie library folder where films are organized.',
+        whenToChange: 'Point this to your Plex/Emby/Jellyfin media library.',
+        tip: 'Movies will be moved here and renamed according to your rules.',
+      },
+      'renamer.file_action': {
+        description: 'What to do with movie files: move, copy, or create links.',
+        whenToChange: '<strong>Move</strong>: Most common.<br><strong>Copy</strong>: Keep original.<br><strong>Link</strong>: Advanced — allows seeding.',
+        learnMore: 'Symbolic links create a pointer to the original file. Hard links create a second reference to the same data. Both allow seeding while having organized files.',
+      },
+      'sabnzbd.host': {
+        description: 'The URL where SABnzbd is running.',
+        defaultNote: 'Usually http://localhost:8080 for local installs.',
+      },
+      'sabnzbd.api_key': {
+        description: 'API key for authenticating with SABnzbd.',
+        whenToChange: 'Find this in SABnzbd → Config → General → API Key.',
+      },
+    },
+
+    getSettingHelp(section, optName) {
+      return this.settingHelp[section + '.' + optName] || null;
+    },
+
+    buildDescription(section, opt) {
+      const help = this.getSettingHelp(section, opt.name);
+      const apiDesc = opt.description || '';
+      if (!help) return apiDesc;
+      let html = help.description || apiDesc;
+      if (help.whenToChange) html += '<br><span class="text-cp-accent/80">When to change:</span> ' + help.whenToChange;
+      if (help.defaultNote) html += '<br><span class="text-cp-muted">💡 ' + help.defaultNote + '</span>';
+      if (help.tip) html += '<br><span class="text-cp-warning/80">Tip:</span> ' + help.tip;
+      return html;
+    },
+
+    hasLearnMore(section, optName) {
+      const help = this.getSettingHelp(section, optName);
+      return help && help.learnMore;
+    },
+
+    getLearnMore(section, optName) {
+      const help = this.getSettingHelp(section, optName);
+      return help ? help.learnMore : '';
+    },
+
+    async init() {
+      try {
+        const resp = await fetch(CP.apiBase + '/settings/');
+        const data = await resp.json();
+        this.options = data.options || {};
+        this.values = data.values || {};
+
+        try {
+          const vResp = await fetch(CP.apiBase + '/updater.info/');
+          const vData = await vResp.json();
+          if (vData.version) this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
+          if (vData.update_version) this.updateAvailable = vData.update_version;
+        } catch (e) {}
+
+        const tabSet = new Set();
+        for (const [sectionName, section] of Object.entries(this.options)) {
+          if (this.hiddenSections.has(sectionName)) continue;
+          for (const grp of (section.groups || [])) {
+            tabSet.add(grp.tab || 'general');
+          }
+        }
+
+        const preferred = ['general', 'searcher', 'downloaders', 'renamer', 'notifications', 'automation', 'manage', 'display'];
+        this.tabOrder = preferred.filter(t => tabSet.has(t) && !this.hiddenTabs.has(t));
+        for (const t of tabSet) {
+          if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
+        }
+        this.tabOrder.push('logs');
+
+        this.computeOpenGroups();
+        this.updateCurrentGroups();
+      } catch (e) {
+        console.error('Failed to load settings', e);
+        this.toast('Failed to load settings', 'error');
+      }
+      this.loading = false;
+      this.$watch('activeTab', () => this.updateCurrentGroups());
+      this.$watch('showAdvanced', () => this.updateCurrentGroups());
+    },
+
+    computeOpenGroups() {
+      for (const tab of this.tabOrder) {
+        const groups = this.getTabGroups(tab);
+        groups.forEach((group, idx) => {
+          const key = this.groupKey(group, idx);
+          const enabler = this.getEnabler(group);
+          if (!enabler) this.openGroups[key] = true;
+          else if (this.isEnabled(group)) this.openGroups[key] = true;
+        });
+      }
+    },
+
+    updateCurrentGroups() {
+      this.currentGroups = this.getTabGroups(this.activeTab);
+    },
+
+    groupKey(group, idx) {
+      return group.section + '.' + (group.name || 'default') + '.' + (idx || 0);
+    },
+
+    getTabGroups(tab) {
+      const groups = [];
+      const combinedGroups = [];
+      
+      for (const [sectionName, section] of Object.entries(this.options)) {
+        if (this.hiddenSections.has(sectionName)) continue;
+        if (this.advancedSections.has(sectionName) && !this.showAdvanced) continue;
+        
+        for (const grp of (section.groups || [])) {
+          let originalTab = grp.tab || 'general';
+          let grpTab = this.tabRemaps[originalTab] || originalTab;
+          if (grpTab !== tab) continue;
+          
+          const combineInfo = this.combinedBasicsSections[sectionName];
+          if (tab === 'searcher' && combineInfo && combineInfo.tab === 'searcher') {
+            combinedGroups.push({
+              ...grp,
+              section: sectionName,
+              order: combineInfo.order + (grp.name === 'filter' ? 0.5 : 0),
+              _subLabel: grp.label || combineInfo.label,
+              _isCombinedPart: true,
+            });
+            continue;
+          }
+          
+          const catInfo = this.providerCategories[sectionName];
+          groups.push({ 
+            ...grp, 
+            section: sectionName, 
+            order: section.order || 999,
+            _category: catInfo ? catInfo.category : 'zzz',
+            _categoryLabel: catInfo ? catInfo.label : null,
+            _categoryOrder: catInfo ? catInfo.order : 99,
+          });
+        }
+      }
+      
+      groups.sort((a, b) => {
+        if (a._categoryOrder !== b._categoryOrder) return a._categoryOrder - b._categoryOrder;
+        return a.order - b.order;
+      });
+      
+      if (combinedGroups.length > 0) {
+        combinedGroups.sort((a, b) => a.order - b.order);
+        return [{
+          name: '_combined_basics',
+          label: 'Search Settings',
+          section: '_combined',
+          _isCombined: true,
+          _combinedGroups: combinedGroups,
+          _categoryOrder: 0,
+          order: 0,
+        }, ...groups];
+      }
+      
+      return groups;
+    },
+
+    shouldShowCategoryHeader(groupIdx) {
+      const group = this.currentGroups[groupIdx];
+      if (!group || !group._categoryLabel) return false;
+      if (groupIdx === 0) return true;
+      return this.currentGroups[groupIdx - 1]._category !== group._category;
+    },
+
+    getCategoryLabel(groupIdx) {
+      return this.currentGroups[groupIdx]?._categoryLabel || '';
+    },
+
+    getGroupOptions(group) {
+      const combinedNames = new Set();
+      for (const opt of (group.options || [])) {
+        if (opt.type === 'combined' && opt.combine) {
+          for (const col of opt.combine) {
+            if (col !== opt.name) combinedNames.add(col);
+          }
+        }
+      }
+      return (group.options || []).filter(opt => !combinedNames.has(opt.name));
+    },
+
+    isOptionVisible(opt, group) {
+      if (!opt.show_when) return true;
+      for (const [key, expected] of Object.entries(opt.show_when)) {
+        const [sec, name] = key.split('.');
+        const val = this.getVal(sec, name);
+        const boolVal = val === true || val === 'True' || val === '1' || val === 1 || val === 'true';
+        if (expected === true && !boolVal) return false;
+        if (expected === false && boolVal) return false;
+        if (typeof expected !== 'boolean' && String(val) !== String(expected)) return false;
+      }
+      return true;
+    },
+
+    getEnabler(group) {
+      return (group.options || []).find(o => o.type === 'enabler') || null;
+    },
+
+    isEnabled(group) {
+      const enabler = this.getEnabler(group);
+      if (!enabler) return true;
+      const val = this.getVal(group.section, enabler.name);
+      return val === true || val === 'True' || val === '1' || val === 1 || val === 'true';
+    },
+
+    toggleEnabler(group) {
+      const enabler = this.getEnabler(group);
+      if (!enabler) return;
+      const newVal = !this.isEnabled(group);
+      this.setVal(group.section, enabler.name, newVal);
+      const idx = this.currentGroups.indexOf(group);
+      if (idx >= 0) this.openGroups[this.groupKey(group, idx)] = newVal;
+    },
+
+    getVal(section, name) {
+      const key = section + '.' + name;
+      if (key in this.dirty) return this.dirty[key];
+      return this.values[section]?.[name] ?? '';
+    },
+
+    setVal(section, name, value) {
+      this.dirty[section + '.' + name] = value;
+      this.debounceSave(section, name, value);
+    },
+
+    debounceSave(section, name, value) {
+      const key = section + '.' + name;
+      if (this.saveTimers[key]) clearTimeout(this.saveTimers[key]);
+      this.saveTimers[key] = setTimeout(() => this.saveSingle(section, name, value), 500);
+    },
+
+    async saveSingle(section, name, value) {
+      this.saving = true;
+      this.lastSaved = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('section', section);
+        params.append('name', name);
+        params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
+        await fetch(CP.apiBase + '/settings.save/?' + params.toString());
+        
+        if (!this.values[section]) this.values[section] = {};
+        this.values[section][name] = value;
+        delete this.dirty[section + '.' + name];
+        
+        const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
+        if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;
+        
+        this.lastSaved = true;
+        setTimeout(() => { this.lastSaved = false; }, 2000);
+      } catch (e) {
+        this.toast('Failed to save: ' + e.message, 'error');
+      }
+      this.saving = false;
+    },
+
+    toggleGroup(key) { this.openGroups[key] = !this.openGroups[key]; },
+    isGroupOpen(key) { return !!this.openGroups[key]; },
+
+    async testProvider(group) {
+      this.testing = group.section;
+      this.testResult[group.section] = '';
+      this.testResultDetails[group.section] = null;
+      try {
+        let endpoint;
+        if (group.list === 'download_providers') endpoint = 'download.' + group.section + '.test';
+        else if (group.list === 'notification_providers') endpoint = 'notify.' + group.section + '.test';
+        else if (group.list === 'nzb_providers' || group.list === 'torrent_providers') endpoint = 'provider.' + group.section + '.test';
+        else endpoint = group.section + '.test';
+        
+        const resp = await fetch(CP.apiBase + '/' + endpoint + '/');
+        const data = await resp.json();
+        const msg = data.message || data.msg || '';
+        
+        if (!data.success && msg.includes(';')) {
+          const details = msg.split(';').map(part => {
+            const trimmed = part.trim();
+            const colonIdx = trimmed.indexOf(':');
+            if (colonIdx > 0) {
+              const host = trimmed.substring(0, colonIdx).trim();
+              const result = trimmed.substring(colonIdx + 1).trim();
+              const success = result.toLowerCase() === 'ok' || result.toLowerCase() === 'connected';
+              return { host, success, error: success ? null : result };
+            }
+            return { host: trimmed, success: false, error: trimmed };
+          });
+          this.testResultDetails[group.section] = details;
+          this.testResult[group.section] = details.filter(d => d.success).length + '/' + details.length + ' passed';
+        } else {
+          this.testResult[group.section] = data.success ? 'success' : (msg || 'failed');
+        }
+      } catch (e) {
+        this.testResult[group.section] = 'error';
+      }
+      this.testing = null;
+    },
+
+    async restartApp() {
+      try {
+        await fetch(CP.apiBase + '/app.restart/');
+        this.toast('Restarting…', 'success');
+        this.needsRestart = false;
+        setTimeout(() => location.reload(), 5000);
+      } catch (e) {
+        this.toast('Restart failed', 'error');
+      }
+    },
+
+    toast(msg, type) {
+      this.message = msg;
+      this.messageType = type;
+      setTimeout(() => this.message = '', 3000);
+    },
+
+    async browseDirectory(section, name, index = null) {
+      this.browserTarget = { section, name, index };
+      this.browserOpen = true;
+      const currentVal = this.getVal(section, name);
+      const startPath = (currentVal && typeof currentVal === 'string' && currentVal.startsWith('/')) ? currentVal : '/';
+      this.browserPath = startPath;
+      await this.loadDirectories(startPath);
+    },
+
+    async loadDirectories(path) {
+      this.browserLoading = true;
+      try {
+        const resp = await fetch(CP.apiBase + '/directory.list/?path=' + encodeURIComponent(path));
+        const data = await resp.json();
+        this.browserPath = path;
+        this.browserDirs = data.dirs || [];
+        this.browserParent = data.parent;
+        this.browserIsRoot = data.is_root;
+      } catch (e) {
+        this.browserDirs = [];
+      }
+      this.browserLoading = false;
+    },
+
+    selectDirectory(dir) { this.loadDirectories(dir); },
+
+    confirmDirectory() {
+      const path = this.browserPath;
+      if (this.browserTarget) {
+        const { section, name, index } = this.browserTarget;
+        if (index !== null) {
+          window.dispatchEvent(new CustomEvent('directory-selected', { detail: { section, name, index, path } }));
+        } else {
+          this.setVal(section, name, path);
+        }
+      }
+      this.browserOpen = false;
+    },
+  };
+}
+
+/* ── Button field (action buttons) ── */
+function buttonField(section, opt) {
+  return {
+    running: false,
+    result: '',
+    success: false,
+    section,
+    opt,
+
+    async execute() {
+      if (!opt.button_action) {
+        this.result = 'No action configured';
+        return;
+      }
+      this.running = true;
+      this.result = '';
+      try {
+        const resp = await fetch(CP.apiBase + '/' + opt.button_action + '/');
+        const data = await resp.json();
+        this.success = data.success === true;
+        this.result = data.success ? (data.message || 'Success') : (data.error || data.message || 'Failed');
+        if (data.success) {
+          const panel = this.getPanel();
+          if (panel) setTimeout(() => panel.init(), 500);
+        }
+      } catch (e) {
+        this.success = false;
+        this.result = 'Error: ' + e.message;
+      }
+      this.running = false;
+    },
+
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
+    },
+
+    buildDescription() {
+      const panel = this.getPanel();
+      return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
+    },
+  };
+}
+
+/* ── Combined field (multi-row entries) ── */
+function combinedField(section, opt) {
+  return {
+    rows: [],
+    section,
+    opt,
+    
+    init() {
+      const panel = this.getPanel();
+      const cols = opt.combine || [];
+      const colVals = cols.map(col => {
+        const raw = panel.getVal(section, col) || '';
+        return String(raw).split(',').map(s => s.trim());
+      });
+      const maxRows = Math.max(1, ...colVals.map(c => c.length));
+      this.rows = [];
+      for (let i = 0; i < maxRows; i++) {
+        this.rows.push(cols.map((_, ci) => colVals[ci][i] || ''));
+      }
+    },
+    
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
+    },
+    
+    buildDescription() {
+      const panel = this.getPanel();
+      return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
+    },
+    
+    hasLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.hasLearnMore(this.section, this.opt.name) : false;
+    },
+    
+    getLearnMore() {
+      const panel = this.getPanel();
+      return panel ? panel.getLearnMore(this.section, this.opt.name) : '';
+    },
+    
+    sync() {
+      const panel = this.getPanel();
+      if (!panel) return;
+      (this.opt.combine || []).forEach((col, ci) => {
+        panel.setVal(this.section, col, this.rows.map(r => r[ci] || '').join(','));
+      });
+    },
+    
+    updateRow(rowIdx, colIdx, value) {
+      this.rows[rowIdx][colIdx] = value;
+      this.sync();
+    },
+    
+    addRow() { this.rows.push(this.opt.combine.map(() => '')); },
+    
+    removeRow(idx) {
+      if (this.rows.length > 1) {
+        this.rows.splice(idx, 1);
+        this.sync();
+      }
+    },
+  };
+}
+
+/* ── Directories field (multi-path) ── */
+function directoriesField(section, opt) {
+  return {
+    dirs: [],
+    section,
+    opt,
+    _eventHandler: null,
+    
+    init() {
+      const panel = this.getPanel();
+      const raw = panel ? panel.getVal(section, opt.name) : '';
+      const parts = String(raw || '').split('::').filter(s => s.trim());
+      this.dirs = parts.length ? parts : [''];
+      
+      this._eventHandler = (e) => {
+        if (e.detail.section === this.section && e.detail.name === this.opt.name) {
+          this.updateDir(e.detail.index, e.detail.path);
+        }
+      };
+      window.addEventListener('directory-selected', this._eventHandler);
+    },
+    
+    destroy() {
+      if (this._eventHandler) window.removeEventListener('directory-selected', this._eventHandler);
+    },
+    
+    getPanel() {
+      let el = this.$el;
+      while (el && !el.__x_panel) el = el.parentElement;
+      if (!el) el = document.querySelector('[x-data="settingsPanel()"]');
+      return el ? Alpine.$data(el) : null;
+    },
+    
+    sync() {
+      const panel = this.getPanel();
+      if (panel) panel.setVal(this.section, this.opt.name, this.dirs.filter(d => d.trim()).join('::'));
+    },
+    
+    updateDir(idx, value) { this.dirs[idx] = value; this.sync(); },
+    addDir() { this.dirs.push(''); },
+    removeDir(idx) { if (this.dirs.length > 1) { this.dirs.splice(idx, 1); this.sync(); } },
+    browseDir(idx) { const panel = this.getPanel(); if (panel) panel.browseDirectory(this.section, this.opt.name, idx); },
+    buildDescription() { const panel = this.getPanel(); return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || ''); },
+    hasLearnMore() { const panel = this.getPanel(); return panel ? panel.hasLearnMore(this.section, this.opt.name) : false; },
+    getLearnMore() { const panel = this.getPanel(); return panel ? panel.getLearnMore(this.section, this.opt.name) : ''; },
+  };
+}
+</script>
