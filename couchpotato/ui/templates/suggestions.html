@@ -7,21 +7,39 @@
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1 font-light">Discover new movies from your library suggestions and chart sources.</p>
     </div>
-    <div class="flex gap-1 text-sm font-medium">
-      <button @click="activeTab = 'charts'" :class="activeTab === 'charts' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" class="px-4 py-2 rounded-lg transition-all">Charts</button>
-      <button @click="activeTab = 'personal'" :class="activeTab === 'personal' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" class="px-4 py-2 rounded-lg transition-all">For You</button>
+    <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories">
+      <button @click="activeTab = 'charts'" 
+              role="tab"
+              :aria-selected="activeTab === 'charts'"
+              aria-controls="charts-grid"
+              id="tab-charts"
+              :class="activeTab === 'charts' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+              class="px-4 py-2 rounded-lg transition-all">Charts</button>
+      <button @click="activeTab = 'personal'" 
+              role="tab"
+              :aria-selected="activeTab === 'personal'"
+              aria-controls="suggestions-grid"
+              id="tab-personal"
+              :class="activeTab === 'personal' ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+              class="px-4 py-2 rounded-lg transition-all">For You</button>
     </div>
   </div>
 
   <!-- Personal suggestions -->
-  <div x-show="activeTab === 'personal'" id="suggestions-grid"
+  <div x-show="activeTab === 'personal'" 
+       id="suggestions-grid"
+       role="tabpanel"
+       aria-labelledby="tab-personal"
        hx-get="{{ new_base }}partial/suggestions"
        hx-trigger="load"
        hx-swap="innerHTML">
   </div>
 
   <!-- Charts (IMDB, Blu-ray, etc.) -->
-  <div x-show="activeTab === 'charts'" id="charts-grid"
+  <div x-show="activeTab === 'charts'" 
+       id="charts-grid"
+       role="tabpanel"
+       aria-labelledby="tab-charts"
        hx-get="{{ new_base }}partial/charts"
        hx-trigger="load"
        hx-swap="innerHTML">

@@ -16,23 +16,28 @@
       </div>
       {% endif %}
       <div class="relative w-full sm:w-64">
-        <input type="text" x-model="search" placeholder="Filter movies..." @input="filterMovies()"
+        <label for="filter-movies" class="sr-only">Filter movies by title</label>
+        <input type="text" id="filter-movies" x-model="search" placeholder="Filter movies..." @input="filterMovies()"
                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
-        <svg class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+        <svg aria-hidden="true" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
       </div>
     </div>
   </div>
 
-  <!-- Loading indicator -->
-  <div id="loading" class="htmx-indicator items-center justify-center py-12">
-    <svg class="animate-spin w-6 h-6 text-cp-accent" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+  <!-- Loading indicator (A11Y-007) -->
+  <div id="loading" class="htmx-indicator items-center justify-center py-12" role="status" aria-live="polite">
+    <svg aria-hidden="true" class="animate-spin w-6 h-6 text-cp-accent" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+    <span class="sr-only">Loading movies...</span>
   </div>
 
-  <!-- Movie grid (loaded via htmx) -->
+  <!-- Movie grid (loaded via htmx) (A11Y-004) -->
   <div id="movie-grid"
        hx-get="{{ new_base }}partial/movies?status={{ 'active' if current_page == 'wanted' else 'done' }}"
        hx-trigger="load"
        hx-indicator="#loading"
+       aria-live="polite"
+       aria-label="Movie list"
+       role="region"
        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
   </div>
 </div>

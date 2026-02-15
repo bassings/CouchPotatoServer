@@ -15,23 +15,23 @@
        x-data="{ added: false, adding: false, profile_id: '' }">
     <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
       {% if poster %}
-      <img src="{{ poster }}" alt="{{ title }}" class="w-full h-full object-cover" loading="lazy"
+      <img src="{{ poster }}" alt="Poster for {{ title }}" class="w-full h-full object-cover" loading="lazy"
            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
       <div class="w-full h-full items-center justify-center bg-gradient-to-br from-cp-card via-cp-surface to-cp-bg" style="display:none">
         <div class="text-center">
-          <svg class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
+          <svg aria-hidden="true" class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
             <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/>
           </svg>
-          <p class="text-[9px] text-cp-muted/50 mt-2 px-2">No poster</p>
+          <p class="text-[9px] text-cp-muted/70 mt-2 px-2">No poster</p>
         </div>
       </div>
       {% else %}
       <div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-cp-card via-cp-surface to-cp-bg">
         <div class="text-center">
-          <svg class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
+          <svg aria-hidden="true" class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
             <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/>
           </svg>
-          <p class="text-[9px] text-cp-muted/50 mt-2 px-2">No poster</p>
+          <p class="text-[9px] text-cp-muted/70 mt-2 px-2">No poster</p>
         </div>
       </div>
       {% endif %}
@@ -49,11 +49,12 @@
       <p class="text-cp-muted/60 text-[9px] truncate">
         <a href="https://www.imdb.com/title/{{ imdb }}/" target="_blank" rel="noopener" 
            class="hover:text-cp-accent transition-colors" @click.stop title="View on IMDb">
-          {{ imdb }}
+          {{ imdb }} <span class="sr-only">(opens in new tab)</span>
         </a>
       </p>
       {% endif %}
-      <select x-model="profile_id" class="w-full mt-2 bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1 text-[10px] focus:outline-none focus:border-cp-accent/30"
+      <label for="profile-{{ imdb or loop.index }}" class="sr-only">Quality profile for {{ title }}</label>
+      <select id="profile-{{ imdb or loop.index }}" x-model="profile_id" class="w-full mt-2 bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1 text-[10px] focus:outline-none focus:border-cp-accent/30"
               hx-get="{{ new_base }}partial/profiles" hx-trigger="load" hx-swap="innerHTML">
         <option value="">Loading profiles…</option>
       </select>

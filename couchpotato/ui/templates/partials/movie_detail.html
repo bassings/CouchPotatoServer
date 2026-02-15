@@ -28,19 +28,20 @@
     <!-- Poster -->
     <div class="shrink-0 w-36 sm:w-44 rounded-md overflow-hidden border border-white/[0.08] mx-auto sm:mx-0 bg-cp-surface">
       {% if poster %}
-      <img src="{{ poster }}" alt="{{ title }}" class="w-full aspect-[2/3] object-cover" loading="lazy">
+      <img src="{{ poster }}" alt="Poster for {{ title }}" class="w-full aspect-[2/3] object-cover" loading="lazy">
       {% else %}
       <div class="w-full aspect-[2/3] flex items-center justify-center text-cp-muted">
-        <svg class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+        <svg aria-hidden="true" class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 15.75l5.159-5.159a2.25 2.25 0 013.182 0l5.159 5.159m-1.5-1.5l1.409-1.409a2.25 2.25 0 013.182 0l2.909 2.909M3.75 21h16.5A2.25 2.25 0 0022.5 18.75V5.25A2.25 2.25 0 0020.25 3H3.75A2.25 2.25 0 001.5 5.25v13.5A2.25 2.25 0 003.75 21z"></path></svg>
+        <span class="sr-only">No poster available</span>
       </div>
       {% endif %}
     </div>
 
     <!-- Info -->
     <div class="flex-1 min-w-0">
-      <a href="javascript:history.back()" class="text-cp-muted hover:text-cp-text text-xs mb-3 flex items-center gap-1 transition-colors">
-        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
-        Back
+      <a href="javascript:history.back()" class="text-cp-muted hover:text-cp-text text-xs mb-3 inline-flex items-center gap-1 transition-colors">
+        <svg aria-hidden="true" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path></svg>
+        Back to list
       </a>
       <h1 class="text-xl lg:text-2xl font-semibold tracking-tight">{{ title }}</h1>
       <div class="flex flex-wrap items-center gap-2.5 mt-2 text-xs text-cp-muted font-light">
@@ -79,21 +80,54 @@
         {% if imdb_id %}
         <a href="https://www.imdb.com/title/{{ imdb_id }}/" target="_blank" rel="noopener"
            class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">
-          IMDb
+          IMDb <span class="sr-only">(opens in new tab)</span>
         </a>
         {% endif %}
-        <!-- Trailer button -->
-        <button x-data="{ loading: false, videoId: null, showTrailer: false }"
-                @click="if (!videoId) { loading = true; fetch(CP.apiBase + '/movie.trailer/?id={{ movie_id }}').then(r=>r.json()).then(d => { videoId = d.video_id || null; loading = false; if(videoId) showTrailer = true; }); } else { showTrailer = true; }"
-                class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">
-          <span x-show="!loading">▶ Trailer</span>
+        <!-- Trailer button (A11Y-001, A11Y-008: Focus trap and restoration) -->
+        <button x-data="{ loading: false, videoId: null, showTrailer: false, triggerEl: null }"
+                x-ref="trailerBtn"
+                @click="triggerEl = $refs.trailerBtn; if (!videoId) { loading = true; fetch(CP.apiBase + '/movie.trailer/?id={{ movie_id }}').then(r=>r.json()).then(d => { videoId = d.video_id || null; loading = false; if(videoId) { showTrailer = true; $nextTick(() => { document.getElementById('trailer-close-btn')?.focus(); }); } }); } else { showTrailer = true; $nextTick(() => { document.getElementById('trailer-close-btn')?.focus(); }); }"
+                class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors"
+                :aria-expanded="showTrailer.toString()">
+          <span x-show="!loading" aria-hidden="true">▶</span>
+          <span x-show="!loading"> Trailer</span>
           <span x-show="loading">Loading…</span>
           <!-- Trailer modal -->
           <template x-teleport="body">
-            <div x-show="showTrailer" x-transition.opacity @click.self="showTrailer = false" class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
-              <div class="w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden relative">
-                <button @click="showTrailer = false" class="absolute top-2 right-2 z-10 text-white/60 hover:text-white">✕</button>
-                <iframe x-show="showTrailer" :src="showTrailer ? 'https://www.youtube.com/embed/' + videoId + '?autoplay=1' : ''" class="w-full h-full" frameborder="0" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+            <div x-show="showTrailer" 
+                 x-transition.opacity 
+                 @click.self="showTrailer = false; $nextTick(() => triggerEl?.focus())"
+                 @keydown.escape.window="if(showTrailer) { showTrailer = false; $nextTick(() => triggerEl?.focus()); }"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-label="Movie trailer"
+                 class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
+              <div class="w-full max-w-3xl aspect-video bg-black rounded-lg overflow-hidden relative"
+                   @keydown.tab="
+                     const focusable = $el.querySelectorAll('button, iframe');
+                     const first = focusable[0];
+                     const last = focusable[focusable.length - 1];
+                     if ($event.shiftKey && document.activeElement === first) {
+                       $event.preventDefault();
+                       last.focus();
+                     } else if (!$event.shiftKey && document.activeElement === last) {
+                       $event.preventDefault();
+                       first.focus();
+                     }
+                   ">
+                <button id="trailer-close-btn"
+                        @click="showTrailer = false; $nextTick(() => triggerEl?.focus())" 
+                        class="absolute top-2 right-2 z-10 text-white/60 hover:text-white p-1"
+                        aria-label="Close trailer">
+                  <span aria-hidden="true">✕</span>
+                </button>
+                <iframe x-show="showTrailer" 
+                        :src="showTrailer ? 'https://www.youtube.com/embed/' + videoId + '?autoplay=1' : ''" 
+                        class="w-full h-full" 
+                        frameborder="0" 
+                        allow="autoplay; encrypted-media" 
+                        allowfullscreen
+                        title="Movie trailer video"></iframe>
               </div>
             </div>
           </template>
@@ -113,12 +147,13 @@
     <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
     <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
       <table class="w-full text-xs">
+        <caption class="sr-only">Available releases for {{ title }}</caption>
         <thead>
           <tr class="border-b border-white/[0.05] text-cp-muted text-left">
-            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
-            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
-            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
-            <th class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
           </tr>
         </thead>
         <tbody>

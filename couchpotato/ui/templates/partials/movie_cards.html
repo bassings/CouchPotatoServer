@@ -19,27 +19,27 @@
      data-status="{{ status }}">
   <a href="{{ new_base }}movie/{{ movie_id }}/"
      class="block"
-     aria-label="{{ title }} ({{ year }})">
+     aria-label="{{ title }} ({{ year }}) - {{ 'wanted' if status == 'active' else status }}">
     <div class="relative aspect-[2/3] overflow-hidden bg-cp-surface">
       {% if poster %}
       <img src="{{ poster }}" alt="{{ title }}" class="w-full h-full object-cover" loading="lazy"
            onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
       <div class="w-full h-full items-center justify-center bg-gradient-to-br from-cp-card via-cp-surface to-cp-bg" style="display:none">
         <div class="text-center">
-          <svg class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
+          <svg aria-hidden="true" class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
             <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/>
           </svg>
-          <p class="text-[9px] text-cp-muted/50 mt-2 px-2">No poster</p>
+          <p class="text-[9px] text-cp-muted/70 mt-2 px-2">No poster</p>
         </div>
       </div>
       {% else %}
       <!-- Improved missing poster placeholder (DEF-006) -->
       <div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-cp-card via-cp-surface to-cp-bg">
         <div class="text-center">
-          <svg class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
+          <svg aria-hidden="true" class="w-10 h-10 mx-auto text-cp-muted/40" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="0.75">
             <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909M3.75 21h16.5a2.25 2.25 0 0 0 2.25-2.25V5.25a2.25 2.25 0 0 0-2.25-2.25H3.75a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 3.75 21Z"/>
           </svg>
-          <p class="text-[9px] text-cp-muted/50 mt-2 px-2">No poster</p>
+          <p class="text-[9px] text-cp-muted/70 mt-2 px-2">No poster</p>
         </div>
       </div>
       {% endif %}
@@ -63,16 +63,16 @@
       <p class="text-cp-muted text-[10px] mt-0.5 font-light">{{ year }}</p>
     </div>
   </a>
-  <!-- Refresh button (DEF-006) - shows on hover -->
+  <!-- Refresh button (DEF-006) - shows on hover/focus (A11Y-002) -->
   <button @click.prevent.stop="if(!refreshing) { refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; htmx.trigger('#movie-grid', 'load'); }).catch(() => { refreshing = false; }); }"
-          class="absolute top-2 left-2 p-1.5 rounded-md bg-black/60 text-white/70 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 transition-all backdrop-blur-sm"
+          class="absolute top-2 left-2 p-1.5 rounded-md bg-black/60 text-white/70 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
           :class="refreshing ? 'opacity-100' : ''"
           :disabled="refreshing"
-          title="Refresh metadata">
-    <svg x-show="!refreshing" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          :aria-label="refreshing ? 'Refreshing metadata for {{ title }}' : 'Refresh metadata for {{ title }}'">
+    <svg x-show="!refreshing" aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
     </svg>
-    <svg x-show="refreshing" class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
+    <svg x-show="refreshing" aria-hidden="true" class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none">
       <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
       <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
     </svg>
@@ -81,8 +81,8 @@
 {% endfor %}
 
 {% if not movies %}
-<div class="col-span-full text-center text-cp-muted py-20">
-  <svg class="w-12 h-12 mx-auto mb-3 text-cp-border" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
+<div class="col-span-full text-center text-cp-muted py-20" role="status">
+  <svg aria-hidden="true" class="w-12 h-12 mx-auto mb-3 text-cp-border" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
     <path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"/>
   </svg>
   <p class="text-xs font-light">No movies found</p>

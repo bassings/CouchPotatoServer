@@ -5,7 +5,8 @@
   <div class="flex items-center justify-between mb-6">
     <h1 class="text-xl font-semibold tracking-tight">Logs</h1>
     <div class="flex items-center gap-3">
-      <select x-model="logType" @change="refresh()"
+      <label for="log-level-filter" class="sr-only">Filter by log level</label>
+      <select id="log-level-filter" x-model="logType" @change="refresh()"
               class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
         <option value="all">All</option>
         <option value="error">Errors</option>
@@ -14,9 +15,9 @@
         <option value="debug">Debug</option>
       </select>
       <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
-        <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()"
+        <input type="checkbox" id="auto-refresh-toggle" x-model="autoRefresh" @change="toggleAutoRefresh()"
                class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-        Auto-refresh
+        <span>Auto-refresh</span>
       </label>
       <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
         Refresh
@@ -28,10 +29,10 @@
   </div>
 
   <!-- Loading -->
-  <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20">
+  <div x-show="loading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
     <div class="flex items-center gap-3 text-cp-muted text-sm">
-      <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-      Loading logs…
+      <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      <span>Loading logs…</span>
     </div>
   </div>
 

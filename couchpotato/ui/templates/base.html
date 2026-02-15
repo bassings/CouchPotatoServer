@@ -50,6 +50,28 @@ tailwind.config = {
   @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
   .htmx-indicator { display: none !important; }
   .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: flex !important; }
+  
+  /* A11Y: Focus indicators (A11Y-013) */
+  :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
+  
+  /* A11Y: Skip link styles (A11Y-003) */
+  .skip-link { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 9999; }
+  .skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; padding: 0.75rem 1.5rem; background: #35c5f4; color: #0d0d0d; font-weight: 600; border-radius: 0.5rem; text-decoration: none; }
+  
+  /* A11Y: Screen reader only utility */
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+  
+  /* A11Y: Reduced motion support (A11Y-006) */
+  @media (prefers-reduced-motion: reduce) {
+    .fade-in { animation: none; }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 </style>
 <script>
   const CP = {
@@ -83,6 +105,9 @@ tailwind.config = {
 </head>
 <body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="appShell()" x-init="checkForUpdates()" x-cloak>
 
+<!-- A11Y: Skip link (A11Y-003) -->
+<a href="#main-content" class="skip-link">Skip to main content</a>
+
 <!-- SIDEBAR (desktop) -->
 <aside class="fixed left-0 top-0 bottom-0 z-40 hidden lg:flex flex-col bg-black/80 backdrop-blur-xl border-r border-white/[0.04] transition-all duration-300"
        :class="sidebarCollapsed ? 'w-16' : 'w-56'">
@@ -101,8 +126,8 @@ tailwind.config = {
       ('settings', 'Settings', 'M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281z M15 12a3 3 0 11-6 0 3 3 0 016 0z'),
     ] %}
     {% for id, label, icon in nav_items %}
-    <a href="{{ new_base }}{{ id }}/" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}" aria-current="{% if current_page is defined and current_page == id %}page{% endif %}">
-      <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+    <a href="{{ new_base }}{{ id }}/" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}" {% if current_page is defined and current_page == id %}aria-current="page"{% endif %}>
+      <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path>
       </svg>
       <span class="whitespace-nowrap overflow-hidden transition-all text-[13px] font-medium" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">{{ label }}</span>
@@ -110,7 +135,7 @@ tailwind.config = {
     {% endfor %}
     <div class="pt-2 mt-2 border-t border-white/[0.04]">
       <a href="{{ web_base }}old/" class="w-full flex items-center gap-3 px-3 py-2 rounded transition-colors text-cp-muted hover:text-cp-text hover:bg-white/[0.03]">
-        <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
           <path stroke-linecap="round" stroke-linejoin="round" d="M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3"></path>
         </svg>
         <span class="whitespace-nowrap overflow-hidden transition-all text-[13px] font-medium" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'">Classic UI</span>
@@ -121,16 +146,20 @@ tailwind.config = {
   <a x-show="updateAvailable" :href="updateAvailable?.changelog || '#'" target="_blank"
      class="mx-2 mb-2 px-3 py-2 rounded-lg bg-cp-success/10 border border-cp-success/20 flex items-center gap-2 text-cp-success hover:bg-cp-success/15 transition-colors"
      :class="sidebarCollapsed ? 'justify-center' : ''">
-    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+    <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
     <span class="text-xs font-medium whitespace-nowrap overflow-hidden transition-all" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'" x-text="updateAvailable?.hash + ' available'"></span>
+    <span class="sr-only">Update available (opens in new tab)</span>
   </a>
   <!-- Version display -->
   <div x-show="version && !updateAvailable" class="mx-2 mb-2 px-3 py-1.5 text-center"
        :class="sidebarCollapsed ? '' : ''">
     <span class="text-[10px] text-cp-muted" x-text="'v' + version"></span>
   </div>
-  <button @click="sidebarCollapsed = !sidebarCollapsed" class="p-4 border-t border-white/[0.04] text-cp-muted hover:text-cp-text transition-colors" aria-label="Toggle sidebar">
-    <svg class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+  <button @click="sidebarCollapsed = !sidebarCollapsed" 
+          class="p-4 border-t border-white/[0.04] text-cp-muted hover:text-cp-text transition-colors" 
+          :aria-expanded="(!sidebarCollapsed).toString()"
+          :aria-label="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'">
+    <svg aria-hidden="true" class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path>
     </svg>
   </button>
@@ -144,19 +173,23 @@ tailwind.config = {
       <span class="font-semibold text-sm tracking-tight">CouchPotato</span>
     </a>
   </div>
-  <button @click="mobileMenu = !mobileMenu" class="text-cp-muted hover:text-cp-text" aria-label="Toggle menu">
-    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+  <button @click="mobileMenu = !mobileMenu" 
+          class="text-cp-muted hover:text-cp-text" 
+          :aria-expanded="mobileMenu.toString()"
+          aria-controls="mobile-menu"
+          aria-label="Toggle navigation menu">
+    <svg aria-hidden="true" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5"></path>
     </svg>
   </button>
 </header>
 
 <!-- MOBILE MENU OVERLAY -->
-<div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" class="lg:hidden fixed inset-0 z-40 bg-black/60"></div>
-<div x-show="mobileMenu" x-transition class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1">
+<div x-show="mobileMenu" x-transition.opacity @click="mobileMenu = false" class="lg:hidden fixed inset-0 z-40 bg-black/60" aria-hidden="true"></div>
+<div x-show="mobileMenu" x-transition id="mobile-menu" role="menu" class="lg:hidden fixed top-12 right-0 z-50 w-56 bg-cp-card border-l border-b border-white/[0.06] rounded-bl-md p-3 space-y-1">
   {% for id, label, icon in nav_items %}
-  <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">
-    <svg class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
+  <a href="{{ new_base }}{{ id }}/" @click="mobileMenu = false" role="menuitem" class="flex items-center gap-3 px-3 py-2 rounded transition-colors {% if current_page is defined and current_page == id %}bg-cp-accent/10 text-cp-accent{% else %}text-cp-muted hover:text-cp-text hover:bg-white/[0.03]{% endif %}">
+    <svg aria-hidden="true" class="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
     <span class="text-[13px] font-medium">{{ label }}</span>
   </a>
   {% endfor %}
@@ -164,10 +197,10 @@ tailwind.config = {
 
 <!-- MOBILE BOTTOM NAV -->
 <nav class="lg:hidden fixed bottom-0 left-0 right-0 z-40 bg-black/80 backdrop-blur-xl border-t border-white/[0.04]" aria-label="Mobile navigation">
-  <div class="flex justify-around">
+  <div class="flex justify-around" role="menubar">
     {% for id, label, icon in nav_items %}
-    <a href="{{ new_base }}{{ id }}/" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors {% if current_page is defined and current_page == id %}text-cp-accent{% else %}text-cp-muted{% endif %}">
-      <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
+    <a href="{{ new_base }}{{ id }}/" role="menuitem" class="flex flex-col items-center py-2 px-3 min-w-0 flex-1 transition-colors {% if current_page is defined and current_page == id %}text-cp-accent{% else %}text-cp-muted{% endif %}" {% if current_page is defined and current_page == id %}aria-current="page"{% endif %}>
+      <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="{{ icon }}"></path></svg>
       <span class="text-[9px] mt-0.5 truncate">{{ label }}</span>
     </a>
     {% endfor %}
@@ -175,7 +208,7 @@ tailwind.config = {
 </nav>
 
 <!-- MAIN CONTENT -->
-<main class="lg:transition-all lg:duration-300 pb-16 lg:pb-0 pt-12 lg:pt-0" :class="sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-56'">
+<main id="main-content" class="lg:transition-all lg:duration-300 pb-16 lg:pb-0 pt-12 lg:pt-0" :class="sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-56'" tabindex="-1">
   {% block content %}{% endblock %}
 </main>
 
