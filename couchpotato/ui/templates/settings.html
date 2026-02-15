@@ -120,7 +120,36 @@
 
     <!-- ==================== SETTINGS TABS ==================== -->
     <div x-show="activeTab !== 'logs'" class="space-y-4">
-      <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
+      <!-- Category headers for split tabs -->
+      <template x-for="(item, itemIdx) in getGroupsWithHeaders(activeTab)" :key="item._key || itemIdx">
+        <!-- Category header -->
+        <template x-if="item._isHeader">
+          <h2 class="text-sm font-semibold text-cp-accent pt-4 first:pt-0 flex items-center gap-2"
+              :class="item._headerType === 'other' ? 'text-cp-muted' : 'text-cp-accent'">
+            <!-- Usenet icon -->
+            <template x-if="item._headerType === 'usenet'">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+              </svg>
+            </template>
+            <!-- Torrent icon -->
+            <template x-if="item._headerType === 'torrent'">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+              </svg>
+            </template>
+            <!-- Other icon -->
+            <template x-if="item._headerType === 'other'">
+              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+              </svg>
+            </template>
+            <span x-text="item._headerLabel"></span>
+          </h2>
+        </template>
+        <!-- Regular group -->
+        <template x-if="!item._isHeader">
+          <div x-data="{ group: item, groupIdx: item._key }">
         <div x-show="!group.advanced || showAdvanced" class="bg-cp-card rounded-lg border border-white/[0.05] overflow-hidden max-w-full">
             <!-- Group header -->
             <div class="flex items-center justify-between px-5 py-3"
@@ -402,6 +431,8 @@
               </template>
             </div>
           </div>
+          </div>
+        </template>
       </template>
     </div>
   </div>
@@ -587,9 +618,18 @@ function settingsPanel() {
     ]),
     
     // Advanced-only sections (shown only when Advanced toggle is on)
-    advancedSections: new Set([
+    // Note: Downloaders and searchers are NOT advanced - they're just less common
+    advancedSections: new Set([]),
+    
+    // Categorization for split views (Usenet vs Torrents)
+    usenetDownloaders: new Set(['sabnzbd', 'nzbget']),
+    torrentDownloaders: new Set(['transmission', 'qbittorrent', 'deluge', 'rtorrent', 'utorrent']),
+    // blackhole, putio, synology work with both - shown in "Other" category
+    
+    usenetSearchers: new Set(['binsearch', 'newznab']),
+    torrentSearchers: new Set([
+      'thepiratebay', 'yts', 'torrentpotato', 'iptorrents', 'passthepopcorn',
       'alpharatio', 'hdbits', 'torrentday', 'torrentleech',
-      'utorrent', 'putio', 'synology', 'rtorrent',
     ]),
 
     // Tabs to hide (no useful visible content)
@@ -926,12 +966,86 @@ function settingsPanel() {
           let originalTab = grp.tab || 'general';
           let grpTab = this.tabRemaps[originalTab] || originalTab;
           if (grpTab === tab) {
-            groups.push({ ...grp, section: sectionName, order: section.order || 999, _originalTab: originalTab });
+            // Add category for split tabs (downloaders, searcher)
+            let category = null;
+            if (tab === 'downloaders') {
+              if (this.usenetDownloaders.has(sectionName)) category = 'usenet';
+              else if (this.torrentDownloaders.has(sectionName)) category = 'torrent';
+              else if (grp.list === 'download_providers') category = 'other';
+            } else if (tab === 'searcher') {
+              if (this.usenetSearchers.has(sectionName) || grp.list === 'nzb_providers') category = 'usenet';
+              else if (this.torrentSearchers.has(sectionName) || grp.list === 'torrent_providers') category = 'torrent';
+              // General settings (searcher, nzb, torrent sections without list) stay uncategorized
+            }
+            groups.push({ ...grp, section: sectionName, order: section.order || 999, _originalTab: originalTab, _category: category });
           }
         }
       }
       groups.sort((a, b) => a.order - b.order);
       return groups;
+    },
+    
+    // Get groups organized by category for split tabs
+    getCategorizedGroups(tab) {
+      const groups = this.getTabGroups(tab);
+      if (tab === 'downloaders') {
+        return {
+          uncategorized: groups.filter(g => !g._category),
+          usenet: groups.filter(g => g._category === 'usenet'),
+          torrent: groups.filter(g => g._category === 'torrent'),
+          other: groups.filter(g => g._category === 'other'),
+        };
+      } else if (tab === 'searcher') {
+        return {
+          uncategorized: groups.filter(g => !g._category),
+          usenet: groups.filter(g => g._category === 'usenet'),
+          torrent: groups.filter(g => g._category === 'torrent'),
+        };
+      }
+      return { uncategorized: groups };
+    },
+    
+    // Get flat array with category headers for template rendering
+    getGroupsWithHeaders(tab) {
+      const items = [];
+      
+      // For non-split tabs, just return the groups
+      if (tab !== 'downloaders' && tab !== 'searcher') {
+        return this.currentGroups.map((g, i) => ({ ...g, _key: 'grp-' + i }));
+      }
+      
+      const categorized = this.getCategorizedGroups(tab);
+      
+      // Add uncategorized first (general settings)
+      for (const [i, g] of categorized.uncategorized.entries()) {
+        items.push({ ...g, _key: 'unc-' + i });
+      }
+      
+      // Usenet section
+      if (categorized.usenet?.length > 0) {
+        items.push({ _isHeader: true, _headerType: 'usenet', _headerLabel: 'Usenet', _key: 'hdr-usenet' });
+        for (const [i, g] of categorized.usenet.entries()) {
+          items.push({ ...g, _key: 'usenet-' + i });
+        }
+      }
+      
+      // Torrent section
+      if (categorized.torrent?.length > 0) {
+        items.push({ _isHeader: true, _headerType: 'torrent', _headerLabel: 'Torrents', _key: 'hdr-torrent' });
+        for (const [i, g] of categorized.torrent.entries()) {
+          items.push({ ...g, _key: 'torrent-' + i });
+        }
+      }
+      
+      // Other section (downloaders only)
+      if (tab === 'downloaders' && categorized.other?.length > 0) {
+        items.push({ _isHeader: true, _headerType: 'other', _headerLabel: 'Other', _key: 'hdr-other' });
+        for (const [i, g] of categorized.other.entries()) {
+          items.push({ ...g, _key: 'other-' + i });
+        }
+      }
+      
+      return items;
     },
 
     getGroupOptions(group) {
