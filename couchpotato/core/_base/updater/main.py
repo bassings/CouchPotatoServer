@@ -457,10 +457,16 @@ class DockerUpdater(BaseUpdater):
         return 'docker'
 
     def _parseVersion(self, tag):
-        """Parse a version tag like 'v3.1.0' into a tuple of ints."""
+        """Parse a version tag like 'v3.1.0' into a tuple of ints.
+        Returns None for pre-release tags (beta, alpha, rc, dev)."""
         tag = tag.lstrip('v')
+        # Ignore pre-release versions
+        if any(pre in tag.lower() for pre in ['-beta', '-alpha', '-rc', '-dev', '.beta', '.alpha', '.rc', '.dev']):
+            return None
         try:
-            return tuple(int(x) for x in tag.split('.'))
+            # Strip any suffix after hyphen for comparison (e.g., "3.0.10-hotfix" -> "3.0.10")
+            base_version = tag.split('-')[0]
+            return tuple(int(x) for x in base_version.split('.'))
         except (ValueError, AttributeError):
             return (0, 0, 0)
 
@@ -496,6 +502,12 @@ class DockerUpdater(BaseUpdater):
             latest_tag = release.get('tag_name', '')
             current = self._parseVersion(version.VERSION)
             latest = self._parseVersion(latest_tag)
+
+            # Skip if either version couldn't be parsed (e.g., beta/pre-release)
+            if not latest or not current:
+                log.debug('Skipping version comparison: current=%s, latest=%s', current, latest)
+                self.last_check = now
+                return False
 
             if latest > current:
                 published = release.get('published_at', '')
