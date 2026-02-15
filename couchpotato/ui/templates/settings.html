@@ -346,7 +346,7 @@
                           </span>
                         </button>
                         <div x-show="result" class="mt-2 text-xs" :class="success ? 'text-cp-success' : 'text-cp-danger'" x-text="result"></div>
-                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="$root.buildDescription(group.section, opt)"></p>
+                        <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
                       </div>
                     </template>
 
@@ -1491,6 +1491,12 @@ function buttonField(section, opt) {
         el = document.querySelector('[x-data="settingsPanel()"]');
       }
       return el ? Alpine.$data(el) : null;
+    },
+
+    // Delegate to parent panel for description building (fixes DEF-003)
+    buildDescription() {
+      const panel = this.getPanel();
+      return panel ? panel.buildDescription(this.section, this.opt) : (this.opt.description || '');
     },
   };
 }
