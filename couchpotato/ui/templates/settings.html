@@ -3,7 +3,10 @@
 {% block content %}
 <div class="p-4 lg:p-8 fade-in" x-data="settingsPanel()" x-init="init()">
   <div class="flex items-center justify-between mb-6">
-    <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
+    <div class="flex items-center gap-3">
+      <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
+      <span x-show="version" class="text-[10px] text-cp-muted bg-white/[0.04] px-2 py-0.5 rounded" x-text="'v' + version"></span>
+    </div>
     <div class="flex items-center gap-3">
       <template x-if="activeTab !== 'logs'">
         <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
@@ -643,6 +646,8 @@ function settingsPanel() {
     // Auto-save state
     lastSaved: false,
     saveTimers: {},
+    // Version info
+    version: '',
 
     // Directory browser state
     browserOpen: false,
@@ -972,6 +977,15 @@ function settingsPanel() {
         const data = await resp.json();
         this.options = data.options || {};
         this.values = data.values || {};
+
+        // Fetch version info
+        try {
+          const vResp = await fetch(CP.apiBase + '/updater.info/');
+          const vData = await vResp.json();
+          if (vData.version) {
+            this.version = vData.version.repr || vData.version.hash?.substring(0,7) || '';
+          }
+        } catch (e) { /* version display is optional */ }
 
         // Determine tab order from the data
         const tabSet = new Set();
