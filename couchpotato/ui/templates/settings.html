@@ -18,11 +18,14 @@
         <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
           <button @click="showAdvanced = !showAdvanced"
                   :class="showAdvanced ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                  class="relative w-8 h-4 rounded-full transition-colors shrink-0">
+                  class="relative w-8 h-4 rounded-full transition-colors shrink-0"
+                  role="switch"
+                  :aria-checked="showAdvanced.toString()"
+                  aria-label="Show advanced settings">
             <span :class="showAdvanced ? 'translate-x-4' : 'translate-x-0.5'"
-                  class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                  class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
           </button>
-          <span :class="showAdvanced ? 'text-cp-accent' : ''">Advanced</span>
+          <span :class="showAdvanced ? 'text-cp-accent' : ''" aria-hidden="true">Advanced</span>
         </label>
       </template>
       <template x-if="activeTab !== 'logs'">
@@ -67,27 +70,32 @@
   </template>
 
   <!-- Loading state -->
-  <div x-show="loading" class="flex items-center justify-center py-20">
+  <div x-show="loading" class="flex items-center justify-center py-20" role="status" aria-live="polite">
     <div class="flex items-center gap-3 text-cp-muted text-sm">
-      <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-      Loading settings…
+      <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+      <span>Loading settings…</span>
     </div>
   </div>
 
   <div x-show="!loading" x-cloak>
     <!-- Tabs -->
-    <div class="flex flex-wrap gap-1 mb-6 overflow-x-auto scrollbar-hide">
+    <div class="flex flex-wrap gap-1 mb-6 overflow-x-auto scrollbar-hide" role="tablist" aria-label="Settings categories">
       <template x-for="tab in tabOrder" :key="tab">
         <button @click="activeTab = tab"
+                role="tab"
+                :aria-selected="activeTab === tab"
+                :id="'tab-' + tab"
+                :aria-controls="'panel-' + tab"
                 :class="activeTab === tab ? 'bg-cp-accent text-white shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
                 class="px-4 py-2 rounded-lg transition-all text-sm font-medium" x-text="tabLabels[tab] || tab"></button>
       </template>
     </div>
 
     <!-- ==================== LOGS TAB ==================== -->
-    <div x-show="activeTab === 'logs'" x-data="logsPanel()" x-init="$watch('$root.activeTab', v => { if(v==='logs') init(); else stopAutoRefresh(); })">
+    <div x-show="activeTab === 'logs'" role="tabpanel" id="panel-logs" aria-labelledby="tab-logs" x-data="logsPanel()" x-init="$watch('$root.activeTab', v => { if(v==='logs') init(); else stopAutoRefresh(); })">
       <div class="flex items-center gap-3 mb-4">
-        <select x-model="logType" @change="refresh()"
+        <label for="settings-log-level" class="sr-only">Filter by log level</label>
+        <select id="settings-log-level" x-model="logType" @change="refresh()"
                 class="bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
           <option value="all">All</option>
           <option value="error">Errors</option>
@@ -96,22 +104,22 @@
           <option value="debug">Debug</option>
         </select>
         <label class="flex items-center gap-2 cursor-pointer text-xs text-cp-muted">
-          <input type="checkbox" x-model="autoRefresh" @change="toggleAutoRefresh()"
+          <input type="checkbox" id="settings-auto-refresh" x-model="autoRefresh" @change="toggleAutoRefresh()"
                  class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
-          Auto-refresh
+          <span>Auto-refresh</span>
         </label>
-        <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">
+        <button @click="refresh()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors" aria-label="Refresh logs">
           Refresh
         </button>
-        <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors">
+        <button @click="clearLogs()" class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors" aria-label="Clear all logs">
           Clear
         </button>
       </div>
 
-      <div x-show="logLoading && logs.length === 0" class="flex items-center justify-center py-20">
+      <div x-show="logLoading && logs.length === 0" class="flex items-center justify-center py-20" role="status" aria-live="polite">
         <div class="flex items-center gap-3 text-cp-muted text-sm">
-          <svg class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-          Loading logs…
+          <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          <span>Loading logs…</span>
         </div>
       </div>
 
@@ -194,6 +202,7 @@
                               <input type="number" :step="opt.type === 'float' ? '0.1' : '1'"
                                      :value="getVal(subGroup.section, opt.name)"
                                      @input="setVal(subGroup.section, opt.name, $event.target.value)"
+                                     :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                      class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                               <p class="text-[10px] text-cp-muted/60 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
                             </div>
@@ -205,6 +214,7 @@
                                      :value="getVal(subGroup.section, opt.name)"
                                      @input="setVal(subGroup.section, opt.name, $event.target.value)"
                                      :placeholder="opt.placeholder || (opt.default != null ? String(opt.default) : '')"
+                                     :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                      class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                               <p class="text-[10px] text-cp-muted/60 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
                             </div>
@@ -233,9 +243,12 @@
                 <template x-if="getEnabler(group)">
                   <button @click.stop="toggleEnabler(group)"
                           :class="isEnabled(group) ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                          class="relative w-8 h-4 rounded-full transition-colors shrink-0">
+                          class="relative w-8 h-4 rounded-full transition-colors shrink-0"
+                          role="switch"
+                          :aria-checked="isEnabled(group).toString()"
+                          :aria-label="'Enable ' + (group.label || group.name)">
                     <span :class="isEnabled(group) ? 'translate-x-4' : 'translate-x-0.5'"
-                          class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                          class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
                   </button>
                 </template>
                 <div>
@@ -266,6 +279,7 @@
                           <input type="checkbox"
                                  :checked="getVal(group.section, opt.name)"
                                  @change="setVal(group.section, opt.name, $event.target.checked)"
+                                 :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                  class="rounded border-white/[0.1] bg-white/[0.03] text-cp-accent focus:ring-cp-accent/30">
                           <span class="text-[11px] text-cp-muted" x-html="buildDescription(group.section, opt)"></span>
                         </label>
@@ -283,6 +297,7 @@
                     <template x-if="opt.type === 'dropdown'">
                       <div>
                         <select @change="setVal(group.section, opt.name, $event.target.value)"
+                                :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                           <template x-for="v in (opt.values || [])" :key="JSON.stringify(v)">
                             <option :value="Array.isArray(v) ? v[1] : v"
@@ -306,6 +321,7 @@
                         <input type="password"
                                :value="getVal(group.section, opt.name)"
                                @input="setVal(group.section, opt.name, $event.target.value)"
+                               :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                         <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
                         <template x-if="hasLearnMore(group.section, opt.name)">
@@ -323,6 +339,7 @@
                         <input type="number" :step="opt.type === 'float' ? '0.1' : '1'"
                                :value="getVal(group.section, opt.name)"
                                @input="setVal(group.section, opt.name, $event.target.value)"
+                               :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                         <p class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
                         <template x-if="hasLearnMore(group.section, opt.name)">
@@ -368,9 +385,12 @@
                                 <template x-if="col === 'use'">
                                   <button @click="updateRow(rowIdx, colIdx, (row[colIdx] === '1' || row[colIdx] === 1) ? '0' : '1')"
                                           :class="(row[colIdx] === '1' || row[colIdx] === 1) ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                                          class="relative w-8 h-4 rounded-full transition-colors shrink-0">
+                                          class="relative w-8 h-4 rounded-full transition-colors shrink-0"
+                                          role="switch"
+                                          :aria-checked="(row[colIdx] === '1' || row[colIdx] === 1).toString()"
+                                          :aria-label="'Enable row ' + (rowIdx + 1)">
                                     <span :class="(row[colIdx] === '1' || row[colIdx] === 1) ? 'translate-x-4' : 'translate-x-0.5'"
-                                          class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5"></span>
+                                          class="block w-3 h-3 bg-white rounded-full transition-transform absolute top-0.5" aria-hidden="true"></span>
                                   </button>
                                 </template>
                                 <!-- Text input for other columns -->
@@ -378,12 +398,13 @@
                                   <input type="text" :placeholder="col.replace(/_/g, ' ')"
                                          :value="row[colIdx] || ''"
                                          @input="updateRow(rowIdx, colIdx, $event.target.value)"
+                                         :aria-label="col.replace(/_/g, ' ') + ' for row ' + (rowIdx + 1)"
                                          class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
                                 </template>
                               </div>
                             </template>
-                            <button @click="removeRow(rowIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
-                              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            <button @click="removeRow(rowIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" :aria-label="'Remove row ' + (rowIdx + 1)">
+                              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                             </button>
                           </div>
                         </template>
@@ -406,17 +427,19 @@
                             <input type="text" :value="dir"
                                    @input="updateDir(dirIdx, $event.target.value)"
                                    placeholder="/path/to/movies"
+                                   :aria-label="(opt.label || opt.name) + ' path ' + (dirIdx + 1)"
                                    class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
                             <button @click="browseDir(dirIdx)" type="button"
+                                    :aria-label="'Browse for folder ' + (dirIdx + 1)"
                                     class="px-2 py-1.5 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                               Browse
                             </button>
-                            <button @click="removeDir(dirIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" title="Remove">
-                              <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+                            <button @click="removeDir(dirIdx)" class="text-cp-muted hover:text-cp-danger transition-colors shrink-0" :aria-label="'Remove folder ' + (dirIdx + 1)">
+                              <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                             </button>
                           </div>
                         </template>
-                        <button @click="addDir()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add folder</button>
+                        <button @click="addDir()" class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors" aria-label="Add another folder">+ Add folder</button>
                         <p x-show="buildDescription()" class="text-[10px] text-cp-muted/60 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
                         <template x-if="hasLearnMore()">
                           <details class="mt-2 text-[10px]">
@@ -435,8 +458,10 @@
                                  :value="getVal(group.section, opt.name)"
                                  @input="setVal(group.section, opt.name, $event.target.value)"
                                  :placeholder="opt.default != null ? String(opt.default) : '/path/to/folder'"
+                                 :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                                  class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                           <button @click="browseDirectory(group.section, opt.name)" type="button"
+                                  :aria-label="'Browse for ' + (opt.label || opt.name.replace(/_/g, ' '))"
                                   class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
                             Browse
                           </button>
