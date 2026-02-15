@@ -25,4 +25,3 @@ htmlcov/
 test-data/
 .config
 # npm
-package-lock.json
