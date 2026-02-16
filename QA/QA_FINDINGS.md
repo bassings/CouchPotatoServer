@@ -250,3 +250,16 @@ A comprehensive WCAG 2.1 AA audit identified 22 accessibility issues. The UI has
 - Screen reader support (ARIA labels, live regions)
 - Reduced motion preferences
 See `ACCESSIBILITY_AUDIT.md` for full details and implementation plan.
+
+## DEF-010: Jackett settings stored as bytes repr (Fixed)
+**Severity:** High  
+**Status:** Fixed (2026-02-16)
+
+**Issue:** Jackett URL and API key were stored in config.ini as `b'...'` strings (Python bytes repr) instead of the actual string values.
+
+**Root Cause:** Somewhere in the settings save path, bytes were being converted to their repr() instead of decoded.
+
+**Fix:**
+1. Manually fixed config.ini values to remove `b'...'` wrapper
+2. Added code to handle `b'...'` string wrapper in jackettSync and jackettTest functions
+3. Commits: `9ad5f0eb`, `6baf2aa8`
