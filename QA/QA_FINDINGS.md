@@ -263,3 +263,18 @@ See `ACCESSIBILITY_AUDIT.md` for full details and implementation plan.
 1. Manually fixed config.ini values to remove `b'...'` wrapper
 2. Added code to handle `b'...'` string wrapper in jackettSync and jackettTest functions
 3. Commits: `9ad5f0eb`, `6baf2aa8`
+
+### IMP-002: Keyboard Navigation for Movie Cards
+**Priority:** Low
+**Status:** DONE ✅
+**Implemented:** Arrow keys navigate between visible cards, Home/End for first/last, respects grid layout
+
+### IMP-003: Loading Skeleton for Movie Grid
+**Priority:** Low
+**Status:** DONE ✅
+**Implemented:** 12 skeleton placeholder cards with animate-pulse during loading
+
+### IMP-006: Theme Toggle (Light/Dark Mode)
+**Priority:** Low
+**Status:** DONE ✅
+**Implemented:** Toggle button in sidebar, persists to localStorage, respects system preference
