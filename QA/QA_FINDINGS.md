@@ -230,8 +230,8 @@ Show toast notifications for successful actions (movie added, deleted, etc.)
 | Medium Defects | 4 (all fixed) |
 | Low Defects | 1 (fixed) |
 | Accessibility Issues | 22 (all fixed ✅) |
-| Improvements | 6 |
-| Feature Ideas | 5 |
+| Improvements | 6 (3 medium done, 3 low remaining) |
+| Feature Ideas | 5 (1 done: PWA) |
 
 **Overall Assessment:** The new htmx UI is functional and well-designed. All reported defects have been fixed:
 - DEF-001, DEF-002: Fixed in previous session
