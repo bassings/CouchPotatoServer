@@ -13,7 +13,7 @@
                     :disabled="idx > currentStep"
                     class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium transition-all"
                     :class="idx < currentStep ? 'bg-cp-success text-white' : 
-                            idx === currentStep ? 'bg-cp-accent text-white ring-2 ring-cp-accent/30' : 
+                            idx === currentStep ? 'bg-cp-accent text-black ring-2 ring-cp-accent/30' : 
                             'bg-white/[0.06] text-cp-muted'">
               <span x-show="idx < currentStep">✓</span>
               <span x-show="idx >= currentStep" x-text="idx + 1"></span>
