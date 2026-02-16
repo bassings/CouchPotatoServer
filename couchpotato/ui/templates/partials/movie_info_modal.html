@@ -128,7 +128,7 @@
               <label for="modal-profile-select" class="sr-only">Quality profile</label>
               <select id="modal-profile-select" x-model="selectedProfile"
                       class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30"
-                      hx-get="/new/partial/profiles"
+                      hx-get="{{ new_base }}partial/profiles"
                       hx-trigger="load"
                       hx-swap="innerHTML">
                 <option value="">Select quality...</option>

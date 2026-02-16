@@ -53,10 +53,10 @@
         {% if runtime %}<span class="text-white/10">|</span><span>{{ runtime }} min</span>{% endif %}
         {% if genres %}<span class="text-white/10">|</span><span>{{ genres|join(', ') }}</span>{% endif %}
       </div>
-      <div class="flex flex-wrap items-center gap-1.5 mt-3" x-data="{ editingProfile: false, newProfile: '{{ movie.get('profile_id', '') }}', saving: false }">
+      <div class="flex flex-wrap items-center gap-1.5 mt-3" x-data="profileEditor()" x-init="init()">
         <!-- Quality profile (editable) -->
         <template x-if="!editingProfile">
-          <button @click="editingProfile = true" 
+          <button @click="startEditing()" 
                   class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors flex items-center gap-1"
                   title="Click to change quality profile">
             {% if quality_label %}{{ quality_label }}{% else %}No profile{% endif %}
@@ -69,15 +69,15 @@
           <div class="flex items-center gap-1">
             <label for="profile-edit-{{ movie_id }}" class="sr-only">Quality profile</label>
             <select id="profile-edit-{{ movie_id }}" x-model="newProfile"
-                    class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-0.5 text-[10px] focus:outline-none focus:border-cp-accent/30"
-                    hx-get="{{ new_base }}partial/profiles"
-                    hx-trigger="load"
-                    hx-swap="innerHTML">
+                    class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-0.5 text-[10px] focus:outline-none focus:border-cp-accent/30">
               <option value="">Loading...</option>
+              <template x-for="p in profiles" :key="p._id">
+                <option :value="p._id" x-text="p.label" :selected="p._id === newProfile"></option>
+              </template>
             </select>
-            <button @click="saving = true; fetch(CP.apiBase + '/movie.edit/?id={{ movie_id }}&profile_id=' + newProfile).then(() => { saving = false; location.reload(); }).catch(() => saving = false)"
+            <button @click="saveProfile()"
                     class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20"
-                    :disabled="saving">
+                    :disabled="saving || !newProfile">
               <span x-show="!saving">✓</span>
               <span x-show="saving">...</span>
             </button>
@@ -175,7 +175,7 @@
 
   <!-- Releases -->
   {% if releases %}
-  <div class="mt-8 max-w-5xl" x-data="{ downloading: {} }">
+  <div class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
     <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
     <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
       <table class="w-full text-xs">
@@ -229,11 +229,13 @@
             <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_age|int }}d</td>
             <td class="px-4 py-2.5">
               {% if r.get('status', '') == 'available' %}
-              <button @click="downloading['{{ r_id }}'] = true; fetch(CP.apiBase + '/release.manual_download/?id={{ r_id }}').then(() => { downloading['{{ r_id }}'] = false; location.reload(); }).catch(() => downloading['{{ r_id }}'] = false)"
+              <button @click="downloadRelease('{{ r_id }}')"
                       class="px-2 py-1 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20 transition-colors disabled:opacity-50"
-                      :disabled="downloading['{{ r_id }}']">
-                <span x-show="!downloading['{{ r_id }}']">⬇ Download</span>
-                <span x-show="downloading['{{ r_id }}']">...</span>
+                      :disabled="downloading['{{ r_id }}']"
+                      :class="{ 'bg-cp-danger/10 text-cp-danger': downloadErrors['{{ r_id }}'] }">
+                <span x-show="!downloading['{{ r_id }}'] && !downloadErrors['{{ r_id }}']">⬇ Download</span>
+                <span x-show="downloading['{{ r_id }}']">Snatching...</span>
+                <span x-show="downloadErrors['{{ r_id }}']" x-text="downloadErrors['{{ r_id }}']"></span>
               </button>
               {% endif %}
             </td>
@@ -245,3 +247,89 @@
   </div>
   {% endif %}
 </div>
+
+<script>
+function profileEditor() {
+  return {
+    editingProfile: false,
+    newProfile: '{{ movie.get('profile_id', '') }}',
+    saving: false,
+    profiles: [],
+    
+    init() {
+      // Preload profiles for faster editing
+      this.loadProfiles();
+    },
+    
+    async loadProfiles() {
+      try {
+        const res = await fetch(CP.apiBase + '/profile.list/');
+        const data = await res.json();
+        if (data.success && data.list) {
+          // Filter out hidden profiles
+          this.profiles = data.list.filter(p => !p.hide);
+        }
+      } catch (e) {
+        console.error('Failed to load profiles:', e);
+      }
+    },
+    
+    startEditing() {
+      this.editingProfile = true;
+    },
+    
+    async saveProfile() {
+      if (!this.newProfile) return;
+      this.saving = true;
+      try {
+        await fetch(CP.apiBase + '/movie.edit/?id={{ movie_id }}&profile_id=' + this.newProfile);
+        location.reload();
+      } catch (e) {
+        console.error('Failed to save profile:', e);
+        this.saving = false;
+      }
+    }
+  };
+}
+
+function releaseDownloader() {
+  return {
+    downloading: {},
+    downloadErrors: {},
+    
+    init() {},
+    
+    async downloadRelease(releaseId) {
+      this.downloading[releaseId] = true;
+      this.downloadErrors[releaseId] = null;
+      
+      try {
+        const res = await fetch(CP.apiBase + '/release.manual_download/?id=' + releaseId);
+        const data = await res.json();
+        
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          // Show error - likely no downloader enabled
+          this.downloadErrors[releaseId] = 'Failed';
+          this.downloading[releaseId] = false;
+          
+          // Clear error after 3 seconds
+          setTimeout(() => {
+            this.downloadErrors[releaseId] = null;
+          }, 3000);
+        }
+      } catch (e) {
+        console.error('Download failed:', e);
+        this.downloadErrors[releaseId] = 'Error';
+        this.downloading[releaseId] = false;
+        
+        setTimeout(() => {
+          this.downloadErrors[releaseId] = null;
+        }, 3000);
+      }
+    }
+  };
+}
+</script>

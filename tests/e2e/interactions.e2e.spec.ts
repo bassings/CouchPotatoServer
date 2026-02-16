@@ -263,7 +263,8 @@ test.describe('Movie Detail Page', () => {
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
     if (page.url().includes('/movie/')) {
-      const trailerBtn = page.locator('button:has-text("Trailer")');
+      // Use specific selector for the movie detail page trailer button (has x-ref="trailerBtn")
+      const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
       if (await trailerBtn.isVisible({ timeout: 3000 })) {
         await trailerBtn.click();
         await page.waitForTimeout(2000);
@@ -570,7 +571,8 @@ test.describe('Keyboard Navigation', () => {
       await movieLink.click();
       await waitForPageReady(page);
 
-      const trailerBtn = page.locator('button:has-text("Trailer")');
+      // Use specific selector for the movie detail page trailer button (has x-ref="trailerBtn")
+      const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
       if (await trailerBtn.isVisible({ timeout: 3000 })) {
         await trailerBtn.click();
         await page.waitForTimeout(1000);

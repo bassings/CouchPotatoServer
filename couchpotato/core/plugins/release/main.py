@@ -450,12 +450,23 @@ class Release(Plugin):
 
                     rel_identifier = md5(rel['url'])
 
+                    # Detect quality from release name instead of using searched quality
+                    release_name = rel.get('name', '')
+                    detected_quality = fireEvent('quality.guess', [release_name], single = True)
+                    if detected_quality:
+                        detected_quality_id = detected_quality.get('identifier', quality.get('identifier'))
+                        detected_is_3d = detected_quality.get('is_3d', is_3d)
+                    else:
+                        # Fall back to searched quality if detection fails
+                        detected_quality_id = quality.get('identifier')
+                        detected_is_3d = is_3d
+
                     release = {
                         '_t': 'release',
                         'identifier': rel_identifier,
                         'media_id': media.get('_id'),
-                        'quality': quality.get('identifier'),
-                        'is_3d': is_3d,
+                        'quality': detected_quality_id,
+                        'is_3d': detected_is_3d,
                         'status': rel.get('status', 'available'),
                         'last_edit': int(time.time()),
                         'info': {}
