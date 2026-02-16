@@ -261,6 +261,9 @@ def randomString(size = 8, chars = string.ascii_uppercase + string.digits):
 
 
 def splitString(str, split_on = ',', clean = True):
+    # Handle bytes from config (Python 3 compatibility)
+    if isinstance(str, bytes):
+        str = str.decode('utf-8', errors='replace')
     l = [x.strip() for x in str.split(split_on)] if str else []
     return removeEmpty(l) if clean else l
 
