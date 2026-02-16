@@ -28,6 +28,9 @@ def _strip_bytes_literal(value: str) -> str:
 
 def _coerce_value(value: Any, type_name: str) -> Any:
     """Use Pydantic's type coercion to convert config values."""
+    # Handle bytes from config (Python 3 compatibility)
+    if isinstance(value, bytes):
+        value = value.decode('utf-8', errors='replace')
     if isinstance(value, str):
         value = _strip_bytes_literal(value)
     if type_name in _type_adapters:
