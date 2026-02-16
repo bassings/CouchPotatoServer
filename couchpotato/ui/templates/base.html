@@ -223,7 +223,7 @@ tailwind.config = {
   </div>
   <!-- IMP-006: Theme toggle -->
   <button @click="toggleTheme()"
-          class="w-full flex items-center gap-3 px-4 py-2 text-[#e0e0e4] hover:text-white transition-colors border-t border-white/[0.04]"
+          class="w-full flex items-center gap-3 px-4 py-2 text-cp-muted hover:text-cp-text transition-colors border-t border-cp-border"
           :aria-label="darkMode ? 'Switch to light mode' : 'Switch to dark mode'">
     <svg x-show="darkMode" aria-hidden="true" class="w-4 h-4 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z"/>
@@ -234,7 +234,7 @@ tailwind.config = {
     <span class="text-[13px] whitespace-nowrap overflow-hidden transition-all" :class="sidebarCollapsed ? 'w-0 opacity-0' : 'w-auto opacity-100'" x-text="darkMode ? 'Light mode' : 'Dark mode'"></span>
   </button>
   <button @click="sidebarCollapsed = !sidebarCollapsed" 
-          class="p-4 border-t border-white/[0.04] text-cp-muted hover:text-cp-text transition-colors" 
+          class="p-4 border-t border-cp-border text-cp-muted hover:text-cp-text transition-colors" 
           :aria-expanded="(!sidebarCollapsed).toString()"
           :aria-label="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'">
     <svg aria-hidden="true" class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
