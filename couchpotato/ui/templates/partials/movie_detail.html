@@ -53,10 +53,42 @@
         {% if runtime %}<span class="text-white/10">|</span><span>{{ runtime }} min</span>{% endif %}
         {% if genres %}<span class="text-white/10">|</span><span>{{ genres|join(', ') }}</span>{% endif %}
       </div>
-      <div class="flex flex-wrap gap-1.5 mt-3">
-        {% if quality_label %}
-        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-accent/10 text-cp-accent">{{ quality_label }}</span>
-        {% endif %}
+      <div class="flex flex-wrap items-center gap-1.5 mt-3" x-data="{ editingProfile: false, newProfile: '{{ movie.get('profile_id', '') }}', saving: false }">
+        <!-- Quality profile (editable) -->
+        <template x-if="!editingProfile">
+          <button @click="editingProfile = true" 
+                  class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors flex items-center gap-1"
+                  title="Click to change quality profile">
+            {% if quality_label %}{{ quality_label }}{% else %}No profile{% endif %}
+            <svg class="w-2.5 h-2.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Z"/>
+            </svg>
+          </button>
+        </template>
+        <template x-if="editingProfile">
+          <div class="flex items-center gap-1">
+            <label for="profile-edit-{{ movie_id }}" class="sr-only">Quality profile</label>
+            <select id="profile-edit-{{ movie_id }}" x-model="newProfile"
+                    class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-0.5 text-[10px] focus:outline-none focus:border-cp-accent/30"
+                    hx-get="{{ new_base }}partial/profiles"
+                    hx-trigger="load"
+                    hx-swap="innerHTML">
+              <option value="">Loading...</option>
+            </select>
+            <button @click="saving = true; fetch(CP.apiBase + '/movie.edit/?id={{ movie_id }}&profile_id=' + newProfile).then(() => { saving = false; location.reload(); }).catch(() => saving = false)"
+                    class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20"
+                    :disabled="saving">
+              <span x-show="!saving">✓</span>
+              <span x-show="saving">...</span>
+            </button>
+            <button @click="editingProfile = false"
+                    class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-cp-muted hover:bg-white/20">
+              ✕
+            </button>
+          </div>
+        </template>
+        
+        <!-- Status badge -->
         {% if status == 'done' %}
         <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-success/10 text-cp-success">done</span>
         {% elif status == 'active' %}
@@ -143,7 +175,7 @@
 
   <!-- Releases -->
   {% if releases %}
-  <div class="mt-8 max-w-5xl">
+  <div class="mt-8 max-w-5xl" x-data="{ downloading: {} }">
     <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
     <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
       <table class="w-full text-xs">
@@ -152,17 +184,37 @@
           <tr class="border-b border-white/[0.05] text-cp-muted text-left">
             <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
             <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Score</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Source</th>
             <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
             <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
+            <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Action</th>
           </tr>
         </thead>
         <tbody>
           {% for r in releases %}
           {% set r_info = r.get('info', {}) %}
+          {% set r_quality = r.get('quality', '') %}
+          {% set r_protocol = r_info.get('protocol', 'unknown') %}
+          {% set r_score = r_info.get('score', 0) %}
+          {% set r_age = r_info.get('age', 0) %}
+          {% set r_id = r.get('_id', '') %}
           <tr class="border-b border-white/[0.03] hover:bg-white/[0.015] transition-colors">
-            <td class="px-4 py-2.5 max-w-xs truncate font-light">{{ r_info.get('name', r.get('identifier', 'Unknown')) }}</td>
+            <td class="px-4 py-2.5 max-w-xs truncate font-light" title="{{ r_info.get('name', r.get('identifier', 'Unknown')) }}">{{ r_info.get('name', r.get('identifier', 'Unknown')) }}</td>
             <td class="px-4 py-2.5">
-              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ r.get('quality', {}).get('label', '') if r.get('quality') is mapping else '' }}</span>
+              {% if r_quality %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ r_quality if r_quality is string else r_quality.get('label', r_quality) }}</span>
+              {% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>
+            <td class="px-4 py-2.5">
+              {% if r_protocol == 'nzb' %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-blue/10 text-cp-blue">NZB</span>
+              {% elif r_protocol == 'torrent' %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-warning/10 text-cp-warning">Torrent</span>
+              {% else %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-white/10 text-cp-muted">{{ r_protocol }}</span>
+              {% endif %}
             </td>
             <td class="px-4 py-2.5">
               {% set rstatus = r.get('status', '') %}
@@ -174,7 +226,17 @@
               <span class="text-cp-muted">{{ rstatus }}</span>
               {% endif %}
             </td>
-            <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_info.get('age', '') }}</td>
+            <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_age|int }}d</td>
+            <td class="px-4 py-2.5">
+              {% if r.get('status', '') == 'available' %}
+              <button @click="downloading['{{ r_id }}'] = true; fetch(CP.apiBase + '/release.manual_download/?id={{ r_id }}').then(() => { downloading['{{ r_id }}'] = false; location.reload(); }).catch(() => downloading['{{ r_id }}'] = false)"
+                      class="px-2 py-1 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20 transition-colors disabled:opacity-50"
+                      :disabled="downloading['{{ r_id }}']">
+                <span x-show="!downloading['{{ r_id }}']">⬇ Download</span>
+                <span x-show="downloading['{{ r_id }}']">...</span>
+              </button>
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>

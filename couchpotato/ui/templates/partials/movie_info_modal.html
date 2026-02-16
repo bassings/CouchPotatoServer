@@ -123,17 +123,28 @@
               IMDb <span class="sr-only">(opens in new tab)</span>
             </a>
             
-            <!-- Add button -->
-            <button @click="addMovie()"
-                    x-show="movie?.imdb && !added"
-                    class="px-3.5 py-2 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors flex items-center gap-1.5 ml-auto"
-                    :disabled="adding">
-              <svg x-show="!adding" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
-              </svg>
-              <span x-show="!adding">Add to Wanted</span>
-              <span x-show="adding">Adding...</span>
-            </button>
+            <!-- Quality profile selector -->
+            <div x-show="movie?.imdb && !added" class="flex items-center gap-2 ml-auto">
+              <label for="modal-profile-select" class="sr-only">Quality profile</label>
+              <select id="modal-profile-select" x-model="selectedProfile"
+                      class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30"
+                      hx-get="/new/partial/profiles"
+                      hx-trigger="load"
+                      hx-swap="innerHTML">
+                <option value="">Select quality...</option>
+              </select>
+              
+              <!-- Add button -->
+              <button @click="addMovie()"
+                      class="px-3.5 py-2 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors flex items-center gap-1.5"
+                      :disabled="adding || !selectedProfile">
+                <svg x-show="!adding" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+                </svg>
+                <span x-show="!adding">Add</span>
+                <span x-show="adding">Adding...</span>
+              </button>
+            </div>
             
             <!-- Added state -->
             <div x-show="added" class="px-3.5 py-2 bg-cp-success/10 text-cp-success rounded-md text-xs flex items-center gap-1.5 ml-auto">
@@ -193,6 +204,7 @@ function movieInfoModal() {
     added: false,
     adding: false,
     skipped: false,
+    selectedProfile: '',
     trailerLoading: false,
     trailerVideoId: null,
     showTrailer: false,
@@ -287,11 +299,11 @@ function movieInfoModal() {
     },
     
     async addMovie() {
-      if (!this.movie?.imdb || this.adding) return;
+      if (!this.movie?.imdb || this.adding || !this.selectedProfile) return;
       
       this.adding = true;
       try {
-        const res = await fetch(CP.apiBase + '/movie.add/?identifier=' + this.movie.imdb);
+        const res = await fetch(CP.apiBase + '/movie.add/?identifier=' + this.movie.imdb + '&profile_id=' + this.selectedProfile);
         const data = await res.json();
         this.added = data.success !== false;
       } catch (e) {
