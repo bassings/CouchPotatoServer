@@ -208,7 +208,7 @@ function settingsPanel() {
       const apiDesc = opt.description || '';
       if (!help) return apiDesc;
       let html = help.description || apiDesc;
-      if (help.whenToChange) html += '<br><span class="text-cp-accent/80">When to change:</span> ' + help.whenToChange;
+      if (help.whenToChange) html += '<br><span class="text-cp-accent">When to change:</span> ' + help.whenToChange;
       if (help.defaultNote) html += '<br><span class="text-cp-muted">💡 ' + help.defaultNote + '</span>';
       if (help.tip) html += '<br><span class="text-cp-warning/80">Tip:</span> ' + help.tip;
       return html;

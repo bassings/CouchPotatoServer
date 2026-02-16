@@ -32,7 +32,7 @@
                                 x-text="Array.isArray(v) ? v[0] : v"></option>
                       </template>
                     </select>
-                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                    <p class="text-[10px] text-cp-muted mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
                   </div>
                 </template>
                 
@@ -45,7 +45,7 @@
                            @input="setVal(subGroup.section, opt.name, $event.target.value)"
                            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                    <p class="text-[10px] text-cp-muted mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
                   </div>
                 </template>
                 
@@ -58,7 +58,7 @@
                            :placeholder="opt.placeholder || (opt.default != null ? String(opt.default) : '')"
                            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                    <p class="text-[10px] text-cp-muted/70 mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
+                    <p class="text-[10px] text-cp-muted mt-1.5" x-html="buildDescription(subGroup.section, opt)"></p>
                   </div>
                 </template>
               </div>

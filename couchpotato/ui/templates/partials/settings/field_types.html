@@ -33,7 +33,7 @@
                 x-text="Array.isArray(v) ? v[0] : v"></option>
       </template>
     </select>
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
     <template x-if="hasLearnMore(group.section, opt.name)">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -51,7 +51,7 @@
            @input="setVal(group.section, opt.name, $event.target.value)"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
     <template x-if="hasLearnMore(group.section, opt.name)">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -70,7 +70,7 @@
            @input="setVal(group.section, opt.name, $event.target.value)"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
     <template x-if="hasLearnMore(group.section, opt.name)">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -89,7 +89,7 @@
            :placeholder="opt.placeholder || (opt.default != null ? String(opt.default) : '')"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
     <template x-if="hasLearnMore(group.section, opt.name)">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -116,7 +116,7 @@
       </span>
     </button>
     <div x-show="result" class="mt-2 text-xs" :class="success ? 'text-cp-success' : 'text-cp-danger'" x-text="result" role="status"></div>
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
   </div>
 </template>
 
@@ -137,7 +137,7 @@
         Browse
       </button>
     </div>
-    <p class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
+    <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
     <template x-if="hasLearnMore(group.section, opt.name)">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -176,7 +176,7 @@
     <button @click="addDir()" 
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors" 
             aria-label="Add another folder">+ Add folder</button>
-    <p x-show="buildDescription()" class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
+    <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
     <template x-if="hasLearnMore()">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>
@@ -239,7 +239,7 @@
     <button @click="addRow()" 
             class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors"
             aria-label="Add another row">+ Add</button>
-    <p x-show="buildDescription()" class="text-[10px] text-cp-muted/70 mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
+    <p x-show="buildDescription()" class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription()"></p>
     <template x-if="hasLearnMore()">
       <details class="mt-2 text-[10px]">
         <summary class="text-cp-accent cursor-pointer hover:underline">Learn more</summary>

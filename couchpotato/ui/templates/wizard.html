@@ -83,7 +83,7 @@
           </div>
         </div>
         
-        <p class="text-xs text-cp-muted/60 text-center mt-6">You can always change these settings later.</p>
+        <p class="text-xs text-cp-muted text-center mt-6">You can always change these settings later.</p>
       </div>
 
       <!-- ==================== STEP 2: Security ==================== -->
@@ -176,7 +176,7 @@
               </template>
               <button @click="formData.newznab.entries.push({host: '', api_key: ''})" 
                       class="text-[11px] text-cp-accent hover:text-cp-accentHover transition-colors">+ Add another indexer</button>
-              <p class="text-[10px] text-cp-muted/60">
+              <p class="text-[10px] text-cp-muted">
                 Popular indexers: <a href="https://nzbgeek.info" target="_blank" class="text-cp-accent hover:underline">NZBGeek</a>, 
                 <a href="https://drunkenslug.com" target="_blank" class="text-cp-accent hover:underline">DrunkenSlug</a>,
                 <a href="https://nzb.su" target="_blank" class="text-cp-accent hover:underline">NZB.su</a>
@@ -239,7 +239,7 @@
                         class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
                 </button>
               </div>
-              <p x-show="formData.yts.enabled" class="text-[10px] text-cp-muted/60 mt-2">
+              <p x-show="formData.yts.enabled" class="text-[10px] text-cp-muted mt-2">
                 ⚠️ YTS releases are highly compressed. Expect 720p at ~500MB, 1080p at ~800MB.
               </p>
             </div>
@@ -282,7 +282,7 @@
                   </span>
                 </button>
                 <p x-show="jackettSyncResult" class="text-xs" :class="jackettSyncSuccess ? 'text-cp-success' : 'text-cp-danger'" x-text="jackettSyncResult"></p>
-                <p class="text-[10px] text-cp-muted/60">
+                <p class="text-[10px] text-cp-muted">
                   Install Jackett from <a href="https://github.com/Jackett/Jackett" target="_blank" class="text-cp-accent hover:underline">github.com/Jackett/Jackett</a>
                 </p>
               </div>
@@ -694,7 +694,7 @@
                 Browse
               </button>
             </div>
-            <p class="text-[10px] text-cp-muted/60 mt-1">Where your downloader saves completed files.</p>
+            <p class="text-[10px] text-cp-muted mt-1">Where your downloader saves completed files.</p>
           </div>
           
           <div>
@@ -707,21 +707,21 @@
                 Browse
               </button>
             </div>
-            <p class="text-[10px] text-cp-muted/60 mt-1">Where movies will be moved and organized.</p>
+            <p class="text-[10px] text-cp-muted mt-1">Where movies will be moved and organized.</p>
           </div>
 
           <div>
             <label class="block text-xs text-cp-muted mb-1.5">Folder Naming</label>
             <input type="text" x-model="formData.renamer.folder_name" placeholder="<namethe> (<year>)"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
-            <p class="text-[10px] text-cp-muted/60 mt-1">Example: <span class="text-cp-text">The Dark Knight (2008)</span></p>
+            <p class="text-[10px] text-cp-muted mt-1">Example: <span class="text-cp-text">The Dark Knight (2008)</span></p>
           </div>
 
           <div>
             <label class="block text-xs text-cp-muted mb-1.5">File Naming</label>
             <input type="text" x-model="formData.renamer.file_name" placeholder="<thename><cd>.<ext>"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
-            <p class="text-[10px] text-cp-muted/60 mt-1">Example: <span class="text-cp-text">The Dark Knight.mkv</span></p>
+            <p class="text-[10px] text-cp-muted mt-1">Example: <span class="text-cp-text">The Dark Knight.mkv</span></p>
           </div>
 
           <!-- Preview -->
@@ -735,7 +735,7 @@
           <!-- Available placeholders -->
           <details class="text-xs">
             <summary class="text-cp-muted cursor-pointer hover:text-cp-text">Available placeholders</summary>
-            <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-1 text-[10px] text-cp-muted/60">
+            <div class="mt-2 grid grid-cols-2 sm:grid-cols-3 gap-1 text-[10px] text-cp-muted">
               <span>&lt;namethe&gt; - Moviename, The</span>
               <span>&lt;thename&gt; - The Moviename</span>
               <span>&lt;year&gt; - 2008</span>

@@ -50,7 +50,7 @@
                'text-cp-text': entry.type === 'INFO',
                'text-cp-muted': entry.type === 'DEBUG',
              }">
-          <span class="text-cp-muted/50 select-none" x-text="entry.time"></span>
+          <span class="text-cp-muted select-none" x-text="entry.time"></span>
           <span class="inline-block w-14 text-center font-medium"
                 :class="{
                   'text-cp-danger': entry.type === 'ERROR',
@@ -58,7 +58,7 @@
                   'text-cp-accent': entry.type === 'INFO',
                   'text-cp-muted': entry.type === 'DEBUG',
                 }" x-text="entry.type"></span>
-          <span class="text-cp-muted/70" x-text="'[' + entry.source + ']'"></span>
+          <span class="text-cp-muted" x-text="'[' + entry.source + ']'"></span>
           <span x-text="entry.message"></span>
         </div>
       </template>
