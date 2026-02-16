@@ -160,10 +160,6 @@ class Base(TorrentProvider):
             if not response:
                 return None, 'No response from Jackett'
 
-            # Debug: log response info
-            log.debug('Jackett response type: %s, length: %d', type(response).__name__, len(response) if response else 0)
-            log.debug('Jackett response preview: %s', str(response)[:500] if response else 'None')
-
             # Parse XML response
             root = ET.fromstring(response)
 
@@ -175,14 +171,9 @@ class Base(TorrentProvider):
                 return None, f'Jackett error: {error_desc}'
 
             indexers = []
-            all_indexers = root.findall('.//indexer')
-            log.debug('Found %d total indexers in Jackett response', len(all_indexers))
-
-            for indexer in all_indexers:
+            for indexer in root.findall('.//indexer'):
                 indexer_id = indexer.get('id')
-                configured_attr = indexer.get('configured', 'false')
-                configured = configured_attr.lower() == 'true'
-                log.debug('Indexer %s: configured=%s (raw: %s)', indexer_id, configured, configured_attr)
+                configured = indexer.get('configured', 'false').lower() == 'true'
 
                 if not configured:
                     continue
