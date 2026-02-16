@@ -126,9 +126,11 @@
 
 ### IMP-001: Add Movie Count to Available Page
 **Priority:** Medium
+**Status:** DONE ✅
 **Description:** Available page doesn't show filter buttons like Wanted page. Consider adding:
 - Status filter buttons
 - Movie count in header
+**Implemented:** Unified movie list with filter buttons on both Wanted and Available pages
 
 ### IMP-002: Keyboard Navigation for Movie Cards
 **Priority:** Low
@@ -140,11 +142,15 @@
 
 ### IMP-004: Persist Filter State in URL
 **Priority:** Medium
+**Status:** DONE ✅
 **Description:** Save filter/search state in URL query params so users can bookmark/share filtered views
+**Implemented:** URL now updates with ?filter=active&q=search as you type/filter
 
 ### IMP-005: Bulk Actions for Movies
 **Priority:** Medium
+**Status:** DONE ✅
 **Description:** Allow selecting multiple movies for bulk operations (delete, change quality, refresh)
+**Implemented:** Checkbox selection on movie cards, Select All toggle, bulk Refresh and Delete buttons
 
 ### IMP-006: Dark/Light Theme Toggle
 **Priority:** Low
@@ -164,7 +170,9 @@ Track which movies have been watched (integrate with Plex/Jellyfin)
 Show quick action buttons (refresh, delete, etc.) when hovering over movie cards
 
 ### FEAT-004: Mobile App / PWA
+**Status:** DONE ✅
 Add PWA support for installable mobile experience
+**Implemented:** Web app manifest, service worker, app icons, offline caching
 
 ### FEAT-005: Notifications in UI
 Show toast notifications for successful actions (movie added, deleted, etc.)
