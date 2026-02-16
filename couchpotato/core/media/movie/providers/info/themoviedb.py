@@ -107,8 +107,9 @@ class TheMovieDb(MovieProvider):
 
         return results
 
-    def getTrailer(self, identifier = None, **kwargs):
+    def getTrailer(self, identifier = None, id = None, **kwargs):
         """Get YouTube trailer for a movie via TMDB videos endpoint."""
+        identifier = identifier or id
         if not identifier:
             return {'success': False}
 
