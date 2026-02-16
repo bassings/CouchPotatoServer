@@ -250,8 +250,13 @@ class Base(TorrentProvider):
             jackett_api_key: Jackett API key (uses saved setting if not provided)
             replace: If True, replace all existing indexers. If False, merge/add new ones.
         """
-        jackett_url = jackett_url or self.conf('jackett_url')
-        jackett_api_key = jackett_api_key or self.conf('jackett_api_key')
+        saved_url = self.conf('jackett_url')
+        saved_key = self.conf('jackett_api_key')
+        log.info('jackettSync: saved url=%s, saved key length=%d', saved_url, len(saved_key) if saved_key else 0)
+        log.info('jackettSync: provided url=%s, provided key=%s', jackett_url, '***' if jackett_api_key else None)
+        
+        jackett_url = jackett_url or saved_url
+        jackett_api_key = jackett_api_key or saved_key
 
         if not jackett_url or not jackett_api_key:
             return {
