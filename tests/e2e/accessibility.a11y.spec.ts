@@ -21,6 +21,14 @@ async function checkA11y(page: any, pageName: string) {
       console.log(`  - ${violation.id}: ${violation.description}`);
       console.log(`    Impact: ${violation.impact}`);
       console.log(`    Nodes: ${violation.nodes.length}`);
+      // Print details of each failing node
+      violation.nodes.forEach((node, idx) => {
+        console.log(`    Node ${idx + 1}: ${node.html}`);
+        console.log(`    Target: ${node.target.join(' ')}`);
+        if (node.failureSummary) {
+          console.log(`    Failure: ${node.failureSummary}`);
+        }
+      });
     });
   }
 
