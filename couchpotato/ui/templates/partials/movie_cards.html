@@ -14,9 +14,27 @@
 {% set movie_id = movie.get('_id', '') %}
 
 <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
-     x-data="{ refreshing: false }"
+     x-data="{ refreshing: false, selected: false }"
      data-title="{{ title }}"
-     data-status="{{ status }}">
+     data-status="{{ status }}"
+     data-movie-id="{{ movie_id }}">
+
+  <!-- Bulk selection checkbox (IMP-005) -->
+  <label class="absolute top-2 left-2 z-20 cursor-pointer opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
+         :class="selected ? 'opacity-100' : ''">
+    <input type="checkbox"
+           class="movie-select-checkbox sr-only"
+           data-movie-id="{{ movie_id }}"
+           x-model="selected"
+           @click.stop>
+    <span class="flex items-center justify-center w-5 h-5 rounded-md bg-black/60 backdrop-blur-sm border border-white/20 transition-colors"
+          :class="selected ? 'bg-cp-accent border-cp-accent' : ''">
+      <svg x-show="selected" class="w-3 h-3 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
+      </svg>
+    </span>
+  </label>
+
   <a href="{{ new_base }}movie/{{ movie_id }}/"
      class="block"
      aria-label="{{ title }} ({{ year }}) - {{ 'wanted' if status == 'active' else status }}">
@@ -60,12 +78,13 @@
     </div>
     <div class="p-2.5">
       <h3 class="font-medium text-xs truncate">{{ title }}</h3>
-      <p class="text-cp-muted text-[10px] mt-0.5 font-light">{{ year }}</p>
+      <p class="text-cp-muted text-[10px] mt-0.5">{{ year }}</p>
     </div>
   </a>
+
   <!-- Refresh button (DEF-006) - shows on hover/focus (A11Y-002) -->
   <button @click.prevent.stop="if(!refreshing) { refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; htmx.trigger('#movie-grid', 'load'); }).catch(() => { refreshing = false; }); }"
-          class="absolute top-2 left-2 p-1.5 rounded-md bg-black/60 text-white/90 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
+          class="absolute bottom-12 right-2 p-1.5 rounded-md bg-black/60 text-white/90 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
           :class="refreshing ? 'opacity-100' : ''"
           :disabled="refreshing"
           :aria-label="refreshing ? 'Refreshing metadata for {{ title }}' : 'Refresh metadata for {{ title }}'">
@@ -85,6 +104,6 @@
   <svg aria-hidden="true" class="w-12 h-12 mx-auto mb-3 text-cp-border" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
     <path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"/>
   </svg>
-  <p class="text-xs font-light">No movies found</p>
+  <p class="text-xs">No movies found</p>
 </div>
 {% endif %}
