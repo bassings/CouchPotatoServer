@@ -74,6 +74,8 @@ tailwind.config = {
   :root.light .border-white\/\[0\.04\], :root.light .border-white\/\[0\.05\], :root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08); }
   :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
+  /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
+  :root.light .text-cp-accent { color: #0891b2; }
 
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }
