@@ -36,6 +36,7 @@ class TheMovieDb(MovieProvider):
         addEvent('movie.search', self.search, priority = 3)
         addEvent('movie.info', self.getInfo, priority = 3)
         addEvent('movie.info_by_tmdb', self.getInfo)
+        addEvent('movie.is_movie', self.isMovie)
         addEvent('app.load', self.config)
 
         addApiView('movie.trailer', self.getTrailer)
@@ -145,6 +146,30 @@ class TheMovieDb(MovieProvider):
                 }
 
         return {'success': False}
+
+    def isMovie(self, identifier = None, **kwargs):
+        """Check if an IMDB ID corresponds to a movie (not a TV show)."""
+        if not identifier:
+            return True  # Allow if no identifier
+
+        if not identifier.startswith('tt'):
+            return True  # Non-IMDB identifiers assumed to be movies
+
+        try:
+            result = self.request('find/%s' % identifier, params={'external_source': 'imdb_id'})
+            if result:
+                # If movie_results has entries, it's a movie
+                if result.get('movie_results'):
+                    return True
+                # If tv_results has entries, it's a TV show
+                if result.get('tv_results'):
+                    log.info('IMDB ID %s is a TV show, not a movie', identifier)
+                    return False
+            # If no results found, allow it (might be a new/unlisted movie)
+            return True
+        except Exception:
+            # On error, allow the add to proceed
+            return True
 
     def getInfo(self, identifier = None, extended = True, **kwargs):
 
