@@ -59,6 +59,7 @@ jobs:
         context: .
         push: true
         tags: |
+          bassings/couchpotato:latest
           bassings/couchpotato:develop
         platforms: linux/amd64,linux/arm64
         build-args: |
@@ -79,6 +80,7 @@ jobs:
         context: .
         push: true
         tags: |
+          ghcr.io/bassings/couchpotatoserver:latest
           ghcr.io/bassings/couchpotatoserver:develop
           ghcr.io/bassings/couchpotatoserver:${{ github.sha }}
         platforms: linux/amd64,linux/arm64
