@@ -181,6 +181,38 @@ Show toast notifications for successful actions (movie added, deleted, etc.)
 
 ---
 
+## Refactoring Completed
+
+### Settings Page Component Extraction (2026-02-16)
+**Commits:** `f8bdd293` through `5017806f`
+
+**Description:** Full refactor of settings.html (1,670 lines → 67 lines) into modular partials:
+
+| Partial | Purpose |
+|---------|---------|
+| `header.html` | Title, version, advanced toggle, auto-save indicator |
+| `logs_tab.html` | Logs panel with filtering and auto-refresh |
+| `field_types.html` | All form field templates (bool, dropdown, password, int, text, button, directory, directories, combined) |
+| `provider_card.html` | Collapsible settings cards with enabler toggles |
+| `combined_basics_card.html` | Searcher tab grouped sections |
+| `test_button.html` | Provider connection testing with results |
+| `modals.html` | Restart banner, toast notifications, directory browser |
+| `scripts.html` | Alpine.js components (settingsPanel, logsPanel, buttonField, combinedField, directoriesField) |
+| `_learn_more.html` | Expandable help sections |
+
+**Additional A11Y Fixes During Refactor:**
+- Fixed invalid `aria-controls` references (removed, no matching panel IDs)
+- Removed opacity modifiers on muted text (`text-cp-muted/70` → `text-cp-muted`)
+- Brightened muted color from `#6b6b78` to `#9b9ba8` for WCAG AA contrast
+- Increased white text opacity (`/60` → `/80`, `/70` → `/90`)
+- Increased mobile nav text from 9px to 10px
+- **Fixed critical contrast issue:** Changed white text to black on accent backgrounds (tabs had 2.01 ratio, needed 4.5:1)
+
+**CI Status:** ✅ All checks passing
+**Test Status:** ✅ 548 unit tests passing
+
+---
+
 ## Summary
 
 | Category | Count |
