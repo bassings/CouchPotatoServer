@@ -66,8 +66,8 @@ test.describe('Navigation', () => {
     // Wait for sidebar to be visible (desktop only)
     const sidebar = page.locator('aside');
     if (await sidebar.isVisible()) {
-      // Click collapse button
-      await page.click('aside button[aria-label*="sidebar" i], aside button:has(svg)');
+      // Click collapse button (last button in sidebar)
+      await page.click('aside button[aria-label*="Collapse" i], aside button[aria-label*="Expand" i]');
       // Check that sidebar is collapsed (narrower width)
       await expect(sidebar).toHaveClass(/w-16/);
       // Click again to expand
