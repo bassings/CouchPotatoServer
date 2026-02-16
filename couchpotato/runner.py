@@ -239,6 +239,15 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     except Exception as e:
         log.warning('Orphan cleanup skipped: %s', e)
 
+    # Fix release quality values (detect from name instead of searched quality)
+    try:
+        from couchpotato.core.migration.fix_release_quality import fix_release_quality
+        n_fixed, n_checked = fix_release_quality(db)
+        if n_fixed:
+            log.info('Fixed quality detection for %d of %d releases.', n_fixed, n_checked)
+    except Exception as e:
+        log.warning('Release quality fix skipped: %s', e)
+
     fireEventAsync('app.load')
 
     # Run with uvicorn
