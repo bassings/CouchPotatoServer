@@ -29,12 +29,25 @@ def fix_release_quality(db):
     checked = 0
 
     try:
-        log.debug('Scanning releases for quality detection fixes...')
+        log.info('Scanning releases for quality detection fixes...')
         
-        # Scan all release records
-        for record in db.all('release', with_doc=True):
+        # Scan all release records by iterating through all status types
+        statuses = ['available', 'snatched', 'downloaded', 'done', 'ignored', 'failed']
+        all_releases = []
+        
+        for status in statuses:
             try:
-                doc = record.get('doc', record)
+                for record in db.get_many('release_status', status, with_doc=True):
+                    doc = record.get('doc', record)
+                    if doc and doc.get('_t') == 'release':
+                        all_releases.append(doc)
+            except Exception:
+                pass  # Status may not exist in DB
+        
+        log.info('Found %d releases to check', len(all_releases))
+        
+        for doc in all_releases:
+            try:
                 if doc.get('_t') != 'release':
                     continue
                 
