@@ -211,7 +211,7 @@ class Base(TorrentProvider):
             saved_url = saved_url.decode('utf-8')
         if isinstance(saved_key, bytes):
             saved_key = saved_key.decode('utf-8')
-        
+
         # Also handle str that looks like bytes repr: "b'...'"
         if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
             saved_key = saved_key[2:-1]
@@ -251,22 +251,22 @@ class Base(TorrentProvider):
         """
         saved_url = self.conf('jackett_url')
         saved_key = self.conf('jackett_api_key')
-        
+
         log.debug('jackettSync: saved_url type=%s, repr=%r', type(saved_url).__name__, saved_url)
         log.debug('jackettSync: saved_key type=%s, repr=%r', type(saved_key).__name__, saved_key[:10] if saved_key else None)
-        
+
         # Ensure values are strings (settings may return bytes)
         if isinstance(saved_url, bytes):
             saved_url = saved_url.decode('utf-8')
         if isinstance(saved_key, bytes):
             saved_key = saved_key.decode('utf-8')
-        
+
         # Also handle str that looks like bytes repr: "b'...'"
         if isinstance(saved_key, str) and saved_key.startswith("b'") and saved_key.endswith("'"):
             saved_key = saved_key[2:-1]
         if isinstance(saved_url, str) and saved_url.startswith("b'") and saved_url.endswith("'"):
             saved_url = saved_url[2:-1]
-        
+
         jackett_url = jackett_url or saved_url
         jackett_api_key = jackett_api_key or saved_key
 
