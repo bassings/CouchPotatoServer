@@ -104,6 +104,37 @@ function movieList() {
           this.updateSelectAllState();
         }
       });
+
+      // IMP-002: Keyboard navigation for movie cards
+      document.getElementById('movie-grid').addEventListener('keydown', (e) => {
+        if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+
+        const cards = [...document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"]) a')];
+        if (cards.length === 0) return;
+
+        const currentIndex = cards.indexOf(document.activeElement);
+        if (currentIndex === -1) return;
+
+        // Calculate grid columns from CSS
+        const grid = document.getElementById('movie-grid');
+        const gridStyle = window.getComputedStyle(grid);
+        const cols = gridStyle.gridTemplateColumns.split(' ').length;
+
+        let nextIndex = currentIndex;
+        switch (e.key) {
+          case 'ArrowRight': nextIndex = Math.min(currentIndex + 1, cards.length - 1); break;
+          case 'ArrowLeft': nextIndex = Math.max(currentIndex - 1, 0); break;
+          case 'ArrowDown': nextIndex = Math.min(currentIndex + cols, cards.length - 1); break;
+          case 'ArrowUp': nextIndex = Math.max(currentIndex - cols, 0); break;
+          case 'Home': nextIndex = 0; break;
+          case 'End': nextIndex = cards.length - 1; break;
+        }
+
+        if (nextIndex !== currentIndex) {
+          e.preventDefault();
+          cards[nextIndex].focus();
+        }
+      });
     },
 
     get selectedCount() {
