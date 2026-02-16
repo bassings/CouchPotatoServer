@@ -49,7 +49,7 @@
         {% elif status == 'done' %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success backdrop-blur-sm">done</span>
         {% else %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/60 backdrop-blur-sm">{{ status }}</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
       </div>
       {% if quality_label %}
@@ -65,7 +65,7 @@
   </a>
   <!-- Refresh button (DEF-006) - shows on hover/focus (A11Y-002) -->
   <button @click.prevent.stop="if(!refreshing) { refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; htmx.trigger('#movie-grid', 'load'); }).catch(() => { refreshing = false; }); }"
-          class="absolute top-2 left-2 p-1.5 rounded-md bg-black/60 text-white/70 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
+          class="absolute top-2 left-2 p-1.5 rounded-md bg-black/60 text-white/90 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
           :class="refreshing ? 'opacity-100' : ''"
           :disabled="refreshing"
           :aria-label="refreshing ? 'Refreshing metadata for {{ title }}' : 'Refresh metadata for {{ title }}'">

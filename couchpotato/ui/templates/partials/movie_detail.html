@@ -62,7 +62,7 @@
         {% elif status == 'active' %}
         <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-blue/10 text-cp-blue">wanted</span>
         {% else %}
-        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-white/10 text-white/60">{{ status }}</span>
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-white/10 text-white/80">{{ status }}</span>
         {% endif %}
       </div>
       {% if plot %}
@@ -117,7 +117,7 @@
                    ">
                 <button id="trailer-close-btn"
                         @click="showTrailer = false; $nextTick(() => triggerEl?.focus())" 
-                        class="absolute top-2 right-2 z-10 text-white/60 hover:text-white p-1"
+                        class="absolute top-2 right-2 z-10 text-white/80 hover:text-white p-1"
                         aria-label="Close trailer">
                   <span aria-hidden="true">✕</span>
                 </button>
