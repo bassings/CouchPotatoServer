@@ -1,25 +1,52 @@
 {% extends "base.html" %}
 {% block title %}{{ 'Wanted' if current_page == 'wanted' else 'Available' }} — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="movieList()">
+<div class="p-4 lg:p-8 fade-in" x-data="movieList()" x-init="init()">
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">{{ 'Wanted' if current_page == 'wanted' else 'Available' }}</h1>
-      <p class="text-cp-muted text-xs mt-1" id="movie-count"></p>
+      <p class="text-cp-muted text-xs mt-1" id="movie-count" x-text="countText"></p>
     </div>
-    <div class="flex items-center gap-3">
-      {% if current_page == 'wanted' %}
+    <div class="flex items-center gap-3 flex-wrap">
+      <!-- Bulk actions (IMP-005) -->
+      <template x-if="selectedCount > 0">
+        <div class="flex items-center gap-2">
+          <span class="text-[10px] text-cp-accent" x-text="selectedCount + ' selected'"></span>
+          <button @click="bulkRefresh()" class="px-2 py-1 text-[10px] rounded-md bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors" :disabled="bulkProcessing">
+            <span x-show="!bulkProcessing">Refresh</span>
+            <span x-show="bulkProcessing" class="flex items-center gap-1">
+              <svg class="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+              Processing...
+            </span>
+          </button>
+          <button @click="bulkDelete()" class="px-2 py-1 text-[10px] rounded-md bg-cp-error/10 text-cp-error hover:bg-cp-error/20 transition-colors" :disabled="bulkProcessing">Delete</button>
+          <button @click="clearSelection()" class="px-2 py-1 text-[10px] rounded-md bg-white/[0.03] text-cp-muted hover:text-cp-text transition-colors">Clear</button>
+        </div>
+      </template>
+
+      <!-- Filter buttons (IMP-001: now on both pages) -->
       <div class="flex gap-1 text-[10px]">
-        <button @click="filterStatus = ''; filterMovies()" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
-        <button @click="filterStatus = 'active'; filterMovies()" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
-        <button @click="filterStatus = 'done'; filterMovies()" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
+        <button @click="setFilter('')" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
+        <button @click="setFilter('active')" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
+        <button @click="setFilter('done')" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
       </div>
-      {% endif %}
+
+      <!-- Select all toggle (IMP-005) -->
+      <button @click="toggleSelectAll()" class="px-2 py-1 text-[10px] rounded-md bg-white/[0.03] text-cp-muted hover:text-cp-text transition-colors flex items-center gap-1">
+        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+        </svg>
+        <span x-text="allSelected ? 'Deselect All' : 'Select All'"></span>
+      </button>
+
       <div class="relative w-full sm:w-64">
         <label for="filter-movies" class="sr-only">Filter movies by title</label>
         <input type="text" id="filter-movies" x-model="search" placeholder="Filter movies..." @input="filterMovies()"
                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
         <svg aria-hidden="true" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
+        <button x-show="search" @click="search = ''; filterMovies()" class="absolute right-2 top-1.5 text-cp-muted hover:text-cp-text p-0.5">
+          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
       </div>
     </div>
   </div>
@@ -47,27 +74,157 @@ function movieList() {
   return {
     search: '',
     filterStatus: '',
-    filterMovies() {
-      const q = this.search.toLowerCase();
-      document.querySelectorAll('#movie-grid .poster-card').forEach(card => {
-        const title = (card.dataset.title || '').toLowerCase();
-        const status = card.dataset.status || '';
-        const matchSearch = !q || title.includes(q);
-        const matchStatus = !this.filterStatus || status === this.filterStatus;
-        card.style.display = (matchSearch && matchStatus) ? '' : 'none';
-      });
-      this.updateCount();
-    },
-    updateCount() {
-      const visible = document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"])').length;
-      const el = document.getElementById('movie-count');
-      if (el) el.textContent = visible + ' movies';
-    },
+    selectedIds: new Set(),
+    bulkProcessing: false,
+    countText: '',
+    allSelected: false,
+
     init() {
+      // IMP-004: Restore state from URL
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('filter')) this.filterStatus = params.get('filter');
+      if (params.has('q')) this.search = params.get('q');
+
       // Update count after htmx loads
       document.body.addEventListener('htmx:afterSwap', (e) => {
-        if (e.detail.target.id === 'movie-grid') this.updateCount();
+        if (e.detail.target.id === 'movie-grid') {
+          this.filterMovies();
+        }
       });
+
+      // Handle bulk selection checkbox changes
+      document.body.addEventListener('change', (e) => {
+        if (e.target.classList.contains('movie-select-checkbox')) {
+          const id = e.target.dataset.movieId;
+          if (e.target.checked) {
+            this.selectedIds.add(id);
+          } else {
+            this.selectedIds.delete(id);
+          }
+          this.updateSelectAllState();
+        }
+      });
+    },
+
+    get selectedCount() {
+      return this.selectedIds.size;
+    },
+
+    setFilter(status) {
+      this.filterStatus = status;
+      this.filterMovies();
+      this.updateUrl();
+    },
+
+    filterMovies() {
+      const q = this.search.toLowerCase().trim();
+      const cards = document.querySelectorAll('#movie-grid .poster-card');
+      let visibleCount = 0;
+      let totalCount = cards.length;
+
+      cards.forEach(card => {
+        const title = (card.dataset.title || '').toLowerCase();
+        const status = card.dataset.status || '';
+        // DEF-008 fix: More robust matching - check if any word starts with query
+        const matchSearch = !q || title.includes(q);
+        const matchStatus = !this.filterStatus || status === this.filterStatus;
+        const visible = matchSearch && matchStatus;
+        card.style.display = visible ? '' : 'none';
+        if (visible) visibleCount++;
+      });
+
+      this.countText = this.search || this.filterStatus
+        ? `${visibleCount} of ${totalCount} movies`
+        : `${totalCount} movies`;
+
+      this.updateUrl();
+    },
+
+    updateUrl() {
+      // IMP-004: Persist filter state in URL
+      const params = new URLSearchParams();
+      if (this.filterStatus) params.set('filter', this.filterStatus);
+      if (this.search) params.set('q', this.search);
+      const newUrl = params.toString()
+        ? `${window.location.pathname}?${params.toString()}`
+        : window.location.pathname;
+      window.history.replaceState({}, '', newUrl);
+    },
+
+    toggleSelectAll() {
+      const cards = document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"])');
+      if (this.allSelected) {
+        // Deselect all
+        this.selectedIds.clear();
+        document.querySelectorAll('.movie-select-checkbox').forEach(cb => cb.checked = false);
+        this.allSelected = false;
+      } else {
+        // Select all visible
+        cards.forEach(card => {
+          const id = card.dataset.movieId;
+          if (id) {
+            this.selectedIds.add(id);
+            const cb = card.querySelector('.movie-select-checkbox');
+            if (cb) cb.checked = true;
+          }
+        });
+        this.allSelected = true;
+      }
+    },
+
+    updateSelectAllState() {
+      const visibleCards = document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"])');
+      const visibleIds = new Set();
+      visibleCards.forEach(card => {
+        const id = card.dataset.movieId;
+        if (id) visibleIds.add(id);
+      });
+      this.allSelected = visibleIds.size > 0 && [...visibleIds].every(id => this.selectedIds.has(id));
+    },
+
+    clearSelection() {
+      this.selectedIds.clear();
+      document.querySelectorAll('.movie-select-checkbox').forEach(cb => cb.checked = false);
+      this.allSelected = false;
+    },
+
+    async bulkRefresh() {
+      if (this.selectedIds.size === 0) return;
+      this.bulkProcessing = true;
+      const ids = [...this.selectedIds];
+
+      try {
+        await Promise.all(ids.map(id =>
+          fetch(`${CP.apiBase}/movie.refresh/?id=${id}`)
+        ));
+        this.clearSelection();
+        htmx.trigger('#movie-grid', 'load');
+      } catch (e) {
+        console.error('Bulk refresh failed:', e);
+      } finally {
+        this.bulkProcessing = false;
+      }
+    },
+
+    async bulkDelete() {
+      if (this.selectedIds.size === 0) return;
+      const count = this.selectedIds.size;
+      if (!confirm(`Delete ${count} movie${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
+
+      this.bulkProcessing = true;
+      const ids = [...this.selectedIds];
+
+      try {
+        await Promise.all(ids.map(id =>
+          fetch(`${CP.apiBase}/movie.delete/?id=${id}&delete_from=wanted`)
+        ));
+        this.clearSelection();
+        htmx.trigger('#movie-grid', 'load');
+      } catch (e) {
+        console.error('Bulk delete failed:', e);
+      } finally {
+        this.bulkProcessing = false;
+      }
     }
   };
 }

@@ -2,8 +2,20 @@
 <html lang="en" class="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>{% block title %}CouchPotato{% endblock %}</title>
+
+<!-- PWA Meta Tags -->
+<meta name="description" content="Download movies automatically, easily and in the best quality as soon as they are available.">
+<meta name="theme-color" content="#35c5f4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CouchPotato">
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/icon-96.png">
+
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/htmx.org@2.0.4"></script>
 <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
@@ -211,6 +223,32 @@ tailwind.config = {
 <main id="main-content" class="lg:transition-all lg:duration-300 pb-16 lg:pb-0 pt-12 lg:pt-0" :class="sidebarCollapsed ? 'lg:ml-16' : 'lg:ml-56'" tabindex="-1">
   {% block content %}{% endblock %}
 </main>
+
+<!-- PWA Service Worker Registration -->
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js')
+      .then(reg => {
+        console.log('[PWA] Service Worker registered:', reg.scope);
+        // Check for updates periodically
+        reg.addEventListener('updatefound', () => {
+          const newWorker = reg.installing;
+          newWorker.addEventListener('statechange', () => {
+            if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+              // New content available, show refresh prompt
+              if (confirm('New version available! Reload to update?')) {
+                newWorker.postMessage('skipWaiting');
+                window.location.reload();
+              }
+            }
+          });
+        });
+      })
+      .catch(err => console.log('[PWA] Service Worker registration failed:', err));
+  });
+}
+</script>
 
 </body>
 </html>
