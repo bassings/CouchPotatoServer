@@ -287,8 +287,12 @@ class Plugin:
 
     def createFileName(self, data, filedata, media, unique_tag = False):
         name = self.createNzbName(data, media, unique_tag = unique_tag)
-        if data.get('protocol') == 'nzb' and 'DOCTYPE nzb' not in filedata and '</nzb>' not in filedata:
-            return '%s.%s' % (name, 'rar')
+        if data.get('protocol') == 'nzb':
+            # Handle both bytes and string filedata (Python 3 compatibility)
+            nzb_marker = b'DOCTYPE nzb' if isinstance(filedata, bytes) else 'DOCTYPE nzb'
+            nzb_end = b'</nzb>' if isinstance(filedata, bytes) else '</nzb>'
+            if nzb_marker not in filedata and nzb_end not in filedata:
+                return '%s.%s' % (name, 'rar')
         return '%s.%s' % (name, data.get('protocol'))
 
     def cpTag(self, media, unique_tag = False):

@@ -6,10 +6,18 @@ from unittest.mock import MagicMock, patch
 class TestFixReleaseQuality:
     """Test fix_release_quality migration."""
 
+    def _mock_get_many(self, mock_release):
+        """Create a side_effect for get_many that returns release for one status only."""
+        def get_many_side_effect(index_name, key, with_doc=False):
+            if key == 'available':  # Only return for first status
+                return [mock_release]
+            return []
+        return get_many_side_effect
+
     def test_detects_2160p_in_release_name(self):
         """Should detect 2160p quality from release name."""
         from couchpotato.core.migration.fix_release_quality import fix_release_quality
-        
+
         # Mock database with a release that has wrong quality
         mock_db = MagicMock()
         mock_release = {
@@ -23,14 +31,14 @@ class TestFixReleaseQuality:
                 }
             }
         }
-        mock_db.all.return_value = [mock_release]
-        
+        mock_db.get_many.side_effect = self._mock_get_many(mock_release)
+
         # Mock quality.guess to return detected quality
         with patch('couchpotato.core.migration.fix_release_quality.fireEvent') as mock_fire:
             mock_fire.return_value = {'identifier': '2160p', 'is_3d': False}
-            
+
             fixed, checked = fix_release_quality(mock_db)
-            
+
             assert checked == 1
             assert fixed == 1
             # Verify db.update was called with corrected quality
@@ -41,7 +49,7 @@ class TestFixReleaseQuality:
     def test_skips_correct_quality(self):
         """Should not update releases with correct quality."""
         from couchpotato.core.migration.fix_release_quality import fix_release_quality
-        
+
         mock_db = MagicMock()
         mock_release = {
             'doc': {
@@ -54,13 +62,13 @@ class TestFixReleaseQuality:
                 }
             }
         }
-        mock_db.all.return_value = [mock_release]
-        
+        mock_db.get_many.side_effect = self._mock_get_many(mock_release)
+
         with patch('couchpotato.core.migration.fix_release_quality.fireEvent') as mock_fire:
             mock_fire.return_value = {'identifier': '1080p', 'is_3d': False}
-            
+
             fixed, checked = fix_release_quality(mock_db)
-            
+
             assert checked == 1
             assert fixed == 0
             mock_db.update.assert_not_called()
@@ -68,7 +76,7 @@ class TestFixReleaseQuality:
     def test_skips_releases_without_name(self):
         """Should skip releases without a name in info."""
         from couchpotato.core.migration.fix_release_quality import fix_release_quality
-        
+
         mock_db = MagicMock()
         mock_release = {
             'doc': {
@@ -78,11 +86,11 @@ class TestFixReleaseQuality:
                 'info': {}  # No name
             }
         }
-        mock_db.all.return_value = [mock_release]
-        
+        mock_db.get_many.side_effect = self._mock_get_many(mock_release)
+
         with patch('couchpotato.core.migration.fix_release_quality.fireEvent') as mock_fire:
             fixed, checked = fix_release_quality(mock_db)
-            
+
             assert checked == 1
             assert fixed == 0
             mock_fire.assert_not_called()
@@ -90,7 +98,7 @@ class TestFixReleaseQuality:
     def test_handles_bytes_values(self):
         """Should handle bytes values in release data."""
         from couchpotato.core.migration.fix_release_quality import fix_release_quality
-        
+
         mock_db = MagicMock()
         mock_release = {
             'doc': {
@@ -103,12 +111,12 @@ class TestFixReleaseQuality:
                 }
             }
         }
-        mock_db.all.return_value = [mock_release]
-        
+        mock_db.get_many.side_effect = self._mock_get_many(mock_release)
+
         with patch('couchpotato.core.migration.fix_release_quality.fireEvent') as mock_fire:
             mock_fire.return_value = {'identifier': '2160p', 'is_3d': False}
-            
+
             fixed, checked = fix_release_quality(mock_db)
-            
+
             assert fixed == 1
             mock_fire.assert_called_once()
