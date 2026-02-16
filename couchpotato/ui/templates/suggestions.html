@@ -32,7 +32,22 @@
        aria-labelledby="tab-personal"
        hx-get="{{ new_base }}partial/suggestions"
        hx-trigger="load"
+       hx-indicator="#suggestions-loading"
        hx-swap="innerHTML">
+    <!-- Loading skeleton -->
+    <div id="suggestions-loading" class="htmx-indicator">
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+        {% for i in range(12) %}
+        <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
+          <div class="aspect-[2/3] bg-cp-surface"></div>
+          <div class="p-2.5">
+            <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
+            <div class="h-2 bg-cp-surface rounded w-1/3"></div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
   </div>
 
   <!-- Charts (IMDB, Blu-ray, etc.) -->
@@ -42,7 +57,25 @@
        aria-labelledby="tab-charts"
        hx-get="{{ new_base }}partial/charts"
        hx-trigger="load"
+       hx-indicator="#charts-loading"
        hx-swap="innerHTML">
+    <!-- Loading skeleton -->
+    <div id="charts-loading" class="htmx-indicator">
+      <div class="mb-8">
+        <div class="h-4 bg-cp-surface rounded w-32 mb-3 animate-pulse"></div>
+        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+          {% for i in range(12) %}
+          <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
+            <div class="aspect-[2/3] bg-cp-surface"></div>
+            <div class="p-2.5">
+              <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
+              <div class="h-2 bg-cp-surface rounded w-1/3"></div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 {% endblock %}

@@ -292,6 +292,9 @@ tailwind.config = {
   {% block content %}{% endblock %}
 </main>
 
+<!-- Movie Info Modal (used by suggestions, charts, and search) -->
+{% include "partials/movie_info_modal.html" %}
+
 <!-- PWA Service Worker Registration -->
 <script>
 if ('serviceWorker' in navigator) {
