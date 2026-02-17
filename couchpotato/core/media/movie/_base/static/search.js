@@ -2,6 +2,35 @@ var BlockSearchMovieItem = new Class({
 
 	Implements: [Options, Events],
 
+	// Quality priority for sorting profiles (highest quality first)
+	qualityPriority: {
+		'best': 0,
+		'uhd': 1,
+		'4k': 2,
+		'2160p': 3,
+		'bd50': 4,
+		'br-disk': 5,
+		'1080p': 6,
+		'hd': 7,
+		'brrip': 8,
+		'br-rip': 9,
+		'720p': 10,
+		'dvdr': 11,
+		'dvd-r': 12,
+		'dvdrip': 13,
+		'dvd-rip': 14,
+		'sd': 15,
+		'3d': 16,
+		'scr': 17,
+		'screener': 18,
+		'r5': 19,
+		'tc': 20,
+		'telecine': 21,
+		'ts': 22,
+		'telesync': 23,
+		'cam': 24
+	},
+
 	initialize: function(info, options){
 		var self = this;
 		self.setOptions(options);
@@ -111,13 +140,20 @@ var BlockSearchMovieItem = new Class({
 		if(e)
 			(e).preventDefault();
 
+		// Require profile selection
+		var selectedProfile = self.profile_select.get('value');
+		if (!selectedProfile || selectedProfile == '' || selectedProfile == '-1') {
+			alert('Please select a quality profile');
+			return;
+		}
+
 		self.loadingMask();
 
 		Api.request('movie.add', {
 			'data': {
 				'identifier': self.info.imdb,
 				'title': self.title_select.get('value'),
-				'profile_id': self.profile_select.get('value'),
+				'profile_id': selectedProfile,
 				'category_id': self.category_select.get('value')
 			},
 			'onComplete': function(json){
@@ -141,6 +177,35 @@ var BlockSearchMovieItem = new Class({
 				self.mask.fade('out');
 			}
 		});
+	},
+
+	getProfilePriority: function(profile){
+		var self = this;
+		var label = (profile.get('label') || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+		
+		// Check direct label match first
+		if (self.qualityPriority[label] !== undefined) {
+			return self.qualityPriority[label];
+		}
+		
+		// Check if label contains any priority keywords
+		for (var key in self.qualityPriority) {
+			if (label.indexOf(key) !== -1) {
+				return self.qualityPriority[key];
+			}
+		}
+		
+		// Check the first quality in the profile
+		var qualities = profile.data.qualities || [];
+		if (qualities.length > 0) {
+			var firstQ = qualities[qualities.length - 1].toLowerCase(); // Last quality is usually the best
+			if (self.qualityPriority[firstQ] !== undefined) {
+				return self.qualityPriority[firstQ];
+			}
+		}
+		
+		// Default to middle priority
+		return 50;
 	},
 
 	createOptions: function(){
@@ -201,10 +266,19 @@ var BlockSearchMovieItem = new Class({
 				});
 			}
 
-			// Fill profiles
+			// Fill profiles - sorted by quality priority (highest first)
 			var profiles = Quality.getActiveProfiles();
-			if(profiles.length == 1)
-				self.profile_select.hide();
+			
+			// Sort profiles by quality priority
+			profiles.sort(function(a, b){
+				return self.getProfilePriority(a) - self.getProfilePriority(b);
+			});
+
+			// Always add placeholder option first - profile selection is required
+			new Element('option', {
+				'value': '',
+				'text': '-- Select Profile --'
+			}).inject(self.profile_select);
 
 			profiles.each(function(profile){
 				new Element('option', {
@@ -215,10 +289,7 @@ var BlockSearchMovieItem = new Class({
 
 			self.options_el.addClass('set');
 
-			if(categories.length === 0 && self.title_select.getElements('option').length == 1 && profiles.length == 1 &&
-				!(self.info.in_wanted && self.info.in_wanted.profile_id || in_library))
-				self.add();
-
+			// Removed auto-add - always require profile selection
 		}
 
 	},

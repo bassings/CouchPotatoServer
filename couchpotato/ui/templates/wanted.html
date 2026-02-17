@@ -1,10 +1,12 @@
 {% extends "base.html" %}
-{% block title %}{{ 'Wanted' if current_page == 'wanted' else 'Available' }} — CouchPotato{% endblock %}
+{% set page_titles = {'wanted': 'Wanted', 'available': 'Available', 'library': 'Library'} %}
+{% set page_title = page_titles.get(current_page, 'Movies') %}
+{% block title %}{{ page_title }} — CouchPotato{% endblock %}
 {% block content %}
 <div class="p-4 lg:p-8 fade-in" x-data="movieList()" x-init="init()">
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
-      <h1 class="text-xl font-semibold tracking-tight">{{ 'Wanted' if current_page == 'wanted' else 'Available' }}</h1>
+      <h1 class="text-xl font-semibold tracking-tight">{{ page_title }}</h1>
       <p class="text-cp-muted text-xs mt-1" id="movie-count" x-text="countText"></p>
     </div>
     <div class="flex items-center gap-3 flex-wrap">
@@ -24,29 +26,32 @@
         </div>
       </template>
 
-      {% if current_page == 'available' %}
-      <!-- Scan Library button (Available page only) -->
+      {% if current_page == 'library' %}
+      <!-- Refresh Library button (Library page only) - syncs with disk -->
       <button x-data="{ scanning: false }"
-              @click="if(!scanning) { scanning = true; fetch(CP.apiBase + '/manage.update/?full=1').then(() => { setTimeout(() => { scanning = false; htmx.trigger('#movie-grid', 'load'); }, 2000); }).catch(() => { scanning = false; }); }"
+              @click="if(!scanning) { scanning = true; fetch(CP.apiBase + '/manage.update/?full=1').then(() => { setTimeout(() => { scanning = false; htmx.trigger('#movie-grid', 'load'); }, 3000); }).catch(() => { scanning = false; }); }"
               :disabled="scanning"
-              class="px-2.5 py-1 text-[10px] rounded-md bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors flex items-center gap-1.5 disabled:opacity-50">
+              class="px-2.5 py-1 text-[10px] rounded-md bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+              title="Scan library folders for new movies and remove deleted ones">
         <svg x-show="!scanning" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
         </svg>
         <svg x-show="scanning" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
           <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
           <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
         </svg>
-        <span x-text="scanning ? 'Scanning...' : 'Scan Library'"></span>
+        <span x-text="scanning ? 'Scanning...' : 'Refresh Library'"></span>
       </button>
       {% endif %}
 
-      <!-- Filter buttons (IMP-001: now on both pages) -->
+      {% if current_page != 'library' %}
+      <!-- Filter buttons (Wanted and Available pages only) -->
       <div class="flex gap-1 text-[10px]">
         <button @click="setFilter('')" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
         <button @click="setFilter('active')" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
         <button @click="setFilter('done')" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
       </div>
+      {% endif %}
 
       <!-- Select all toggle (IMP-005) -->
       <button @click="toggleSelectAll()" class="px-2 py-1 text-[10px] rounded-md bg-white/[0.03] text-cp-muted hover:text-cp-text transition-colors flex items-center gap-1">
@@ -83,8 +88,9 @@
   </div>
 
   <!-- Movie grid (loaded via htmx) (A11Y-004) -->
+  <!-- wanted: all active movies, available: active with releases, library: done movies -->
   <div id="movie-grid"
-       hx-get="{{ new_base }}partial/movies?status={{ 'active' if current_page == 'wanted' else 'done' }}"
+       hx-get="{{ new_base }}partial/movies?{% if current_page == 'wanted' %}status=active{% elif current_page == 'available' %}status=active&with_releases=true{% else %}status=done{% endif %}"
        hx-trigger="load"
        hx-indicator="#loading"
        aria-live="polite"
