@@ -252,7 +252,10 @@ class QualityPlugin(Plugin):
 
         # Use metadata titles as extra check
         if extra and extra.get('titles'):
-            files.extend(extra.get('titles'))
+            # Convert bytes to strings if needed
+            titles = extra.get('titles')
+            titles = [t.decode('utf-8', errors='replace') if isinstance(t, bytes) else t for t in titles]
+            files.extend(titles)
 
         for cur_file in files:
             words = re.split(r'\W+', cur_file.lower())
