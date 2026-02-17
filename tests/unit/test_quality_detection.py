@@ -301,6 +301,14 @@ class TestQualityDetection:
         assert result is not None
         assert result['identifier'] == '1080p'
 
+    def test_handles_bytes_input(self, quality_plugin):
+        """Should handle bytes input from database (Python 2/3 compat)."""
+        # Files might come as bytes from CodernityDB
+        files = [b"Movie.2025.1080p.BluRay.x264-GROUP.mkv"]
+        result = quality_plugin.guess(files, use_cache=False)
+        assert result is not None
+        assert result['identifier'] == '1080p'
+
 
 class TestContainsTagScore:
     """Test the containsTagScore method directly."""

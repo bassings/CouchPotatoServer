@@ -230,6 +230,9 @@ class QualityPlugin(Plugin):
     def guess(self, files, extra = None, size = None, use_cache = True):
         if not extra: extra = {}
 
+        # Ensure all files are strings (might be bytes from database)
+        files = [f.decode('utf-8', errors='replace') if isinstance(f, bytes) else f for f in files]
+
         # Create hash for cache
         cache_key = str([f.replace('.' + getExt(f), '') if len(getExt(f)) < 4 else f for f in files])
         if use_cache:
