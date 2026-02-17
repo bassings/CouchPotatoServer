@@ -227,7 +227,7 @@
               {% endif %}
             </td>
             <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_age|int }}d</td>
-            <td class="px-4 py-2.5">
+            <td class="px-4 py-2.5 space-x-1">
               {% if r.get('status', '') == 'available' %}
               <button @click="downloadRelease('{{ r_id }}')"
                       class="px-2 py-1 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20 transition-colors disabled:opacity-50"
@@ -236,6 +236,21 @@
                 <span x-show="!downloading['{{ r_id }}'] && !downloadErrors['{{ r_id }}']">⬇ Download</span>
                 <span x-show="downloading['{{ r_id }}']">Snatching...</span>
                 <span x-show="downloadErrors['{{ r_id }}']" x-text="downloadErrors['{{ r_id }}']"></span>
+              </button>
+              <button @click="ignoreRelease('{{ r_id }}')"
+                      class="px-2 py-1 rounded text-[9px] font-medium bg-cp-muted/10 text-cp-muted hover:bg-cp-danger/20 hover:text-cp-danger transition-colors disabled:opacity-50"
+                      :disabled="ignoring['{{ r_id }}']"
+                      title="Ignore this release (hide from future searches)">
+                <span x-show="!ignoring['{{ r_id }}']">🚫 Skip</span>
+                <span x-show="ignoring['{{ r_id }}']">...</span>
+              </button>
+              {% elif r.get('status', '') == 'ignored' %}
+              <button @click="ignoreRelease('{{ r_id }}')"
+                      class="px-2 py-1 rounded text-[9px] font-medium bg-cp-warning/10 text-cp-warning hover:bg-cp-warning/20 transition-colors disabled:opacity-50"
+                      :disabled="ignoring['{{ r_id }}']"
+                      title="Un-ignore this release">
+                <span x-show="!ignoring['{{ r_id }}']">↩ Un-skip</span>
+                <span x-show="ignoring['{{ r_id }}']">...</span>
               </button>
               {% endif %}
             </td>
@@ -296,6 +311,7 @@ function releaseDownloader() {
   return {
     downloading: {},
     downloadErrors: {},
+    ignoring: {},
     
     init() {},
     
@@ -328,6 +344,26 @@ function releaseDownloader() {
         setTimeout(() => {
           this.downloadErrors[releaseId] = null;
         }, 3000);
+      }
+    },
+    
+    async ignoreRelease(releaseId) {
+      this.ignoring[releaseId] = true;
+      
+      try {
+        const res = await fetch(CP.apiBase + '/release.ignore/?id=' + releaseId);
+        const data = await res.json();
+        
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          console.error('Failed to ignore release');
+          this.ignoring[releaseId] = false;
+        }
+      } catch (e) {
+        console.error('Ignore failed:', e);
+        this.ignoring[releaseId] = false;
       }
     }
   };
