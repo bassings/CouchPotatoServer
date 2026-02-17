@@ -303,7 +303,6 @@ class QualityPlugin(Plugin):
         return None
 
     def containsTagScore(self, quality, words, cur_file = ''):
-        cur_file = ss(cur_file)
         score = 0.0
 
         extension = words[-1]
@@ -322,7 +321,7 @@ class QualityPlugin(Plugin):
         # Check alt and tags
         for tag_type in ['identifier', 'alternative', 'tags', 'label']:
             qualities = quality.get(tag_type, [])
-            qualities = [qualities] if isinstance(qualities, (str, unicode)) else qualities
+            qualities = [qualities] if isinstance(qualities, str) else qualities
 
             for alt in qualities:
                 if isinstance(alt, tuple):
@@ -330,12 +329,14 @@ class QualityPlugin(Plugin):
                         log.debug('Found %s via %s %s in %s', quality['identifier'], tag_type, quality.get(tag_type), cur_file)
                         score += points.get(tag_type)
 
-                if isinstance(alt, (str, unicode)) and ss(alt.lower()) in words and ss(alt.lower()) not in scored_on:
+                # Python 3: compare strings directly (ss() converts to bytes which breaks comparison)
+                alt_lower = alt.lower() if isinstance(alt, str) else alt
+                if isinstance(alt, str) and alt_lower in words and alt_lower not in scored_on:
                     log.debug('Found %s via %s %s in %s', quality['identifier'], tag_type, quality.get(tag_type), cur_file)
                     score += points.get(tag_type)
 
                     # Don't score twice on same tag
-                    scored_on.append(ss(alt).lower())
+                    scored_on.append(alt_lower)
 
         # Check extension
         for ext in quality.get('ext', []):
@@ -431,9 +432,12 @@ class QualityPlugin(Plugin):
 
         if penalty and add_score != 0:
             for allow in quality.get('allow', []):
-                score[allow]['score'] -= ((penalty * 2) if self.cached_order[allow] < self.cached_order[quality['identifier']] else penalty) * 2
+                # Only penalize allowed qualities if they haven't matched their own tags strongly
+                # If they already have a positive score >= penalty, they have their own strong match
+                if score[allow]['score'] < penalty:
+                    score[allow]['score'] -= ((penalty * 2) if self.cached_order[allow] < self.cached_order[quality['identifier']] else penalty) * 2
 
-            # Give panelty for all other qualities
+            # Give penalty for all other qualities (small penalty)
             for q in self.qualities:
                 if quality.get('identifier') != q.get('identifier') and score.get(q.get('identifier')):
                     score[q.get('identifier')]['score'] -= 1
