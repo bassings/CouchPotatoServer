@@ -89,7 +89,11 @@ class Transmission(DownloaderBase):
             remote_torrent = self.trpc.add_torrent_uri(data.get('url'), arguments = params)
             torrent_params['trackerAdd'] = self.torrent_trackers
         else:
-            remote_torrent = self.trpc.add_torrent_file(b64encode(filedata), arguments = params)
+            # b64encode returns bytes in Python 3, but JSON requires strings
+            torrent_b64 = b64encode(filedata)
+            if isinstance(torrent_b64, bytes):
+                torrent_b64 = torrent_b64.decode('ascii')
+            remote_torrent = self.trpc.add_torrent_file(torrent_b64, arguments = params)
 
         if not remote_torrent:
             log.error('Failed sending torrent to Transmission')

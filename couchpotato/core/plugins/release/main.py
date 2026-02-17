@@ -481,6 +481,12 @@ class Release(Plugin):
 
                     try:
                         rls = db.get('release_identifier', rel_identifier, with_doc = True)['doc']
+                        # Update quality if it was re-detected (fixes historical incorrect quality)
+                        if rls.get('quality') != detected_quality_id:
+                            log.debug('Updating release quality: %s -> %s for "%s"',
+                                     rls.get('quality'), detected_quality_id, release_name[:50])
+                            rls['quality'] = detected_quality_id
+                            rls['is_3d'] = detected_is_3d
                     except Exception:
                         rls = db.insert(release)
                         rls.update(release)

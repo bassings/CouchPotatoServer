@@ -208,7 +208,18 @@ class YarrProvider(Provider):
     def download(self, url = '', nzb_id = ''):
         try:
             return self.urlopen(url, headers = {'User-Agent': Env.getIdentifier()}, show_error = False)
-        except Exception:
+        except Exception as e:
+            # Handle magnet link redirects (e.g., from Jackett)
+            # When a tracker returns a magnet link via redirect, requests can't follow it
+            error_str = str(e)
+            if 'magnet:?' in error_str:
+                import re
+                magnet_match = re.search(r"'(magnet:\?[^']+)'", error_str)
+                if magnet_match:
+                    magnet_url = magnet_match.group(1)
+                    log.info('Extracted magnet link from redirect: %s...', magnet_url[:60])
+                    return magnet_url
+
             log.error('Failed getting release from %s: %s', self.getName(), traceback.format_exc())
 
         return 'try_next'
