@@ -117,7 +117,7 @@ def create_router(require_auth) -> APIRouter:
     # --- htmx partials ---
 
     @router.get('/partial/movies')
-    async def partial_movies(request: Request, status: str = 'active', user=Depends(require_auth)):
+    async def partial_movies(request: Request, status: str = 'active', with_releases: bool = False, user=Depends(require_auth)):
         """Return movie card grid as HTML partial for htmx."""
         from couchpotato.api import callApiHandler
         try:
@@ -126,6 +126,10 @@ def create_router(require_auth) -> APIRouter:
                 movies = result.get('movies', [])
             else:
                 movies = []
+            
+            # Filter to only movies with releases if requested
+            if with_releases and movies:
+                movies = [m for m in movies if m.get('releases') and len(m.get('releases', [])) > 0]
         except Exception:
             log.error('Failed to fetch movies for new UI')
             movies = []
