@@ -71,6 +71,13 @@ def create_router(require_auth) -> APIRouter:
         tmpl = _jinja.get_template('wanted.html')
         return HTMLResponse(tmpl.render(**_ctx({'current_page': 'available'})))
 
+    @router.get('/library/')
+    @router.get('/library')
+    async def library(request: Request, user=Depends(require_auth)):
+        tmpl = _jinja.get_template('wanted.html')
+        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'library'})))
+
+
     @router.get('/movie/{movie_id}/')
     @router.get('/movie/{movie_id}')
     async def movie_detail(movie_id: str, request: Request, user=Depends(require_auth)):
