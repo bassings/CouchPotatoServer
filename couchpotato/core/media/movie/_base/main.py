@@ -122,7 +122,7 @@ class MovieBase(MovieTypeBase):
                 try:
                     db.get('id', m.get('profile_id'))
                     previous_profile = m.get('profile_id')
-                except RecordNotFound:
+                except (RecordNotFound, KeyError):
                     pass
                 except Exception:
                     log.error('Failed getting previous profile: %s', traceback.format_exc())

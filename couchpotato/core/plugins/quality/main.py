@@ -131,7 +131,7 @@ class QualityPlugin(Plugin):
 
         try:
             quality = db.get('quality', identifier, with_doc = True)['doc']
-        except RecordNotFound:
+        except (RecordNotFound, KeyError):
             log.error("Unable to find '%s' in the quality DB", identifier)
             quality = None
 
@@ -192,7 +192,7 @@ class QualityPlugin(Plugin):
                 existing = None
                 try:
                     existing = db.get('quality', q.get('identifier'), with_doc = reorder)
-                except RecordNotFound:
+                except (RecordNotFound, KeyError):
                     pass
 
                 if not existing:

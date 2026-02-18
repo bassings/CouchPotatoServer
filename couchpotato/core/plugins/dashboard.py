@@ -65,7 +65,7 @@ class Dashboard(Plugin):
                     log.debug('Record already deleted: %s', media_id)
                     continue
 
-                except RecordNotFound:
+                except (RecordNotFound, KeyError):
                     log.debug('Record not found: %s', media_id)
                     continue
 

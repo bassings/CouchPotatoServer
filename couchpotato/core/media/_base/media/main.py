@@ -529,7 +529,7 @@ class MediaPlugin(MediaBase):
                         elif previous_status == 'done':
                             m['status'] = 'done'
 
-                    except RecordNotFound:
+                    except (RecordNotFound, KeyError):
                         log.debug('Failed restatus, keeping previous: %s', traceback.format_exc())
                         m['status'] = previous_status
 

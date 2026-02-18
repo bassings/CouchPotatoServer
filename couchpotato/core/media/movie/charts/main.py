@@ -38,7 +38,7 @@ class Charts(Plugin):
                         in_library = db.get('media', 'imdb-%s' % identifier)
                         if in_library:
                             continue
-                    except RecordNotFound:
+                    except (RecordNotFound, KeyError):
                         pass
                 except Exception:
                     pass

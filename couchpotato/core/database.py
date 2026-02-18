@@ -295,7 +295,7 @@ class Database:
         if Env.get('desktop'):
             try:
                 list(db.all('profile', with_doc = True))
-            except RecordNotFound:
+            except (RecordNotFound, KeyError):
 
                 failed_location = '%s_failed' % db.path
                 old_db = os.path.join(Env.get('data_dir'), 'couchpotato.db.old')

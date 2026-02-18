@@ -563,7 +563,7 @@ class Release(Plugin):
                     try:
                         doc = db.get('id', ms['_id'])
                         yield doc
-                    except RecordNotFound:
+                    except (RecordNotFound, KeyError):
                         log.debug('Record not found, skipping: %s', ms['_id'])
                 else:
                     yield ms
