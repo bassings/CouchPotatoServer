@@ -32,7 +32,8 @@ class Base(NZBProvider, RSS):
     def search(self, media, quality):
         hosts = self.getHosts()
 
-        results = ResultList(self, media, quality, imdb_results = True)
+        # Don't trust imdb_results=True - providers may not filter by IMDB
+        results = ResultList(self, media, quality, imdb_results = False)
 
         for host in hosts:
             if self.isDisabled(host):
