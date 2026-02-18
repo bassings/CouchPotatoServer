@@ -55,13 +55,36 @@ def fix_index_files(db_path):
         )
 
         # Wrap bare md5() calls: md5(X) -> md5(_to_bytes(X))
-        def _wrap_md5(match):
-            inner = match.group(1)
-            if '.encode' in inner:
-                return match.group(0)  # already safe
-            return 'md5(_to_bytes(%s))' % inner
+        # Use a function to handle nested parentheses properly
+        def _wrap_md5_calls(content):
+            result = []
+            i = 0
+            while i < len(content):
+                # Look for md5(
+                if content[i:i+4] == 'md5(':
+                    start = i
+                    i += 4
+                    # Find matching closing paren, handling nesting
+                    depth = 1
+                    inner_start = i
+                    while i < len(content) and depth > 0:
+                        if content[i] == '(':
+                            depth += 1
+                        elif content[i] == ')':
+                            depth -= 1
+                        i += 1
+                    inner = content[inner_start:i-1]
+                    # Only wrap if no .encode() already present
+                    if '.encode' in inner:
+                        result.append(content[start:i])
+                    else:
+                        result.append('md5(_to_bytes(%s))' % inner)
+                else:
+                    result.append(content[i])
+                    i += 1
+            return ''.join(result)
 
-        content = re.sub(r'md5\(([^)]+)\)', _wrap_md5, content)
+        content = _wrap_md5_calls(content)
 
         with open(filepath, 'w') as f:
             f.write(content)
