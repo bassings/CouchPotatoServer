@@ -182,6 +182,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
             final_folder_name = self.doReplace(folder_name, replacements, folder=True)
             final_file_name = self.doReplace(file_name, replacements)
+            
+            # doReplace returns bytes, convert to string for os.path.join
+            if isinstance(final_folder_name, bytes):
+                final_folder_name = final_folder_name.decode('utf-8', errors='replace')
+            if isinstance(final_file_name, bytes):
+                final_file_name = final_file_name.decode('utf-8', errors='replace')
 
             rename_files[current_file] = os.path.join(destination, final_folder_name, final_file_name)
 
