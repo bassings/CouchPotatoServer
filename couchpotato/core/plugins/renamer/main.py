@@ -88,6 +88,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                               simple=not bool(release_download),
                               single=True) or {}
 
+            log.info('Renamer found %d groups to process in %s', len(groups), scan_folder)
             for group_identifier, group in groups.items():
                 if self.shuttingDown():
                     break
@@ -105,9 +106,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     def _processGroup(self, group, media_folder=None, release_download=None):
         """Process a single scanner group (rename/move files)."""
+        log.debug('_processGroup called with group: %s', group.get('meta_data', {}).get('name', 'Unknown'))
+        
         # Get the media info from the group
         media_info = group.get('media', {})
         if not media_info:
+            log.debug('No media_info in group, skipping')
             return
 
         # Determine file action
@@ -137,6 +141,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # Use namer to build file/folder names
         rename_files = group.get('rename_files', {})
         if not rename_files:
+            log.debug('No rename_files in group for %s, skipping', group.get('meta_data', {}).get('name', 'Unknown'))
             return
 
         log.info('Processing: %s', group.get('meta_data', {}).get('name', 'Unknown'))
