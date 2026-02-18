@@ -48,7 +48,9 @@ class Base(TorrentProvider):
     def search(self, media, quality):
         hosts = self.getHosts()
 
-        results = ResultList(self, media, quality, imdb_results = True)
+        # Don't trust imdb_results=True - many indexers ignore IMDB ID and just search by title
+        # This causes wrong movies to be matched (e.g., "Sister Act" results for "Sister Act 3")
+        results = ResultList(self, media, quality, imdb_results = False)
 
         for host in hosts:
             if self.isDisabled(host):

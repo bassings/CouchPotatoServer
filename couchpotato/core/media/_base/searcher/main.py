@@ -171,8 +171,32 @@ class Searcher(SearcherBase):
                 check_words = removeEmpty(re.split(r'\W+', check_movie.get('name', '')))
                 movie_words = removeEmpty(re.split(r'\W+', simplifyString(movie_name)))
 
-                if len(check_words) > 0 and len(movie_words) > 0 and len(list(set(check_words) - set(movie_words))) == 0:
-                    return True
+                if len(check_words) == 0 or len(movie_words) == 0:
+                    continue
+
+                # Check release words are subset of movie words (original logic)
+                release_extra = set(check_words) - set(movie_words)
+                if len(release_extra) > 0:
+                    continue
+
+                # Also check movie words are mostly in release (handles sequels)
+                # e.g., "Sister Act 3" should NOT match "Sister Act (1992)"
+                # Allow 1 word difference for minor variations, but sequels with numbers must match
+                movie_extra = set(movie_words) - set(check_words)
+                if len(movie_extra) > 1:
+                    log.debug('Name mismatch: release missing %d words from title: %s', len(movie_extra), list(movie_extra))
+                    continue
+
+                # If there's exactly 1 missing word and it's a number/roman numeral (sequel), reject
+                if len(movie_extra) == 1:
+                    missing_word = list(movie_extra)[0]
+                    # Check for Arabic numerals (2, 3, 4) or Roman numerals (ii, iii, iv, v, vi, vii, viii, ix, x)
+                    roman_numerals = {'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x', 'xi', 'xii'}
+                    if missing_word.isdigit() or missing_word.lower() in roman_numerals:
+                        log.debug('Name mismatch: release missing sequel number "%s" from title', missing_word)
+                        continue
+
+                return True
             except Exception:
                 pass
 
