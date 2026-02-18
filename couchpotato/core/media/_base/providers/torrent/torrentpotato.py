@@ -3,6 +3,8 @@ import re
 import traceback
 import xml.etree.ElementTree as ET
 
+from requests import HTTPError
+
 from couchpotato.api import addApiView
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, tryInt, tryFloat, cleanHost
@@ -57,8 +59,21 @@ class Base(TorrentProvider):
         return results
 
     def _searchOnHost(self, host, media, quality, results):
+        url = self.buildUrl(media, host)
 
-        torrents = self.getJsonData(self.buildUrl(media, host), cache_timeout = 1800)
+        try:
+            torrents = self.getJsonData(url, cache_timeout=1800)
+        except HTTPError as e:
+            # Handle 400 Bad Request gracefully - common for TV/Anime-only indexers
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:
+                host_name = host.get('name') or urlparse(host['host']).hostname or host['host']
+                log.warning('Indexer %s returned 400 Bad Request - likely a TV/Anime-only indexer that does not support movie searches',
+                           host_name)
+                return
+            raise
+        except Exception:
+            log.error('Failed getting results from %s: %s', host['host'], traceback.format_exc())
+            return
 
         if torrents:
             try:
@@ -147,8 +162,14 @@ class Base(TorrentProvider):
 
         return TorrentProvider.isEnabled(self) and host['host'] and host['pass_key'] and int(host['use'])
 
-    def getJackettIndexers(self, jackett_url, jackett_api_key):
-        """Fetch list of configured indexers from Jackett"""
+    def getJackettIndexers(self, jackett_url, jackett_api_key, movies_only=True):
+        """Fetch list of configured indexers from Jackett
+
+        Args:
+            jackett_url: Jackett base URL
+            jackett_api_key: Jackett API key
+            movies_only: If True, only return indexers that support movie searches
+        """
         try:
             jackett_url = cleanHost(jackett_url).rstrip('/')
             # Use the torznab endpoint with t=indexers to get all indexers
@@ -171,6 +192,7 @@ class Base(TorrentProvider):
                 return None, f'Jackett error: {error_desc}'
 
             indexers = []
+            skipped_tv_only = []
             for indexer in root.findall('.//indexer'):
                 indexer_id = indexer.get('id')
                 configured = indexer.get('configured', 'false').lower() == 'true'
@@ -181,6 +203,16 @@ class Base(TorrentProvider):
                 title_elem = indexer.find('title')
                 title = title_elem.text if title_elem is not None else indexer_id
 
+                # Check if indexer supports movie searches
+                movie_search = indexer.find('.//movie-search')
+                supports_movies = True
+                if movie_search is not None:
+                    supports_movies = movie_search.get('available', 'yes').lower() == 'yes'
+
+                if movies_only and not supports_movies:
+                    skipped_tv_only.append(title)
+                    continue
+
                 # Build the TorrentPotato URL for this indexer
                 potato_url = f'{jackett_url}/potato/{indexer_id}/api'
 
@@ -188,10 +220,15 @@ class Base(TorrentProvider):
                     'id': indexer_id,
                     'title': title,
                     'potato_url': potato_url,
-                    'configured': configured
+                    'configured': configured,
+                    'supports_movies': supports_movies
                 })
 
-            log.info('Found %d configured Jackett indexers', len(indexers))
+            if skipped_tv_only:
+                log.info('Skipped %d TV/Anime-only indexers (no movie support): %s',
+                         len(skipped_tv_only), ', '.join(skipped_tv_only))
+
+            log.info('Found %d configured Jackett indexers with movie support', len(indexers))
             return indexers, None
 
         except ET.ParseError as e:

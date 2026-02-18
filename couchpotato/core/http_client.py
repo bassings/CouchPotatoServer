@@ -245,8 +245,19 @@ class HttpClient:
 
             with self._lock:
                 self.failed_request[host] = 0
-        except (OSError, MaxRetryError):
-            if show_error:
+        except (OSError, MaxRetryError) as e:
+            # Check for HTTP 400 errors from Jackett indexers (TV/Anime-only indexers)
+            is_http_400 = (
+                hasattr(e, 'response') and
+                e.response is not None and
+                e.response.status_code == 400
+            )
+            is_jackett = '/potato/' in url or '/torznab/' in url
+
+            if is_http_400 and is_jackett:
+                # Expected error for TV/Anime-only indexers that don't support movie searches
+                log.warning('Jackett indexer returned 400 Bad Request (likely TV/Anime-only, no movie support): %s', url.split('?')[0])
+            elif show_error:
                 log.error('Failed opening url: %s %s', url, traceback.format_exc(0))
 
             self._record_failure(host, status_code)
