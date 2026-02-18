@@ -1,6 +1,7 @@
 """Tag/untag/cleanup operations for the renamer."""
 import fnmatch
 import os
+import shutil
 import traceback
 
 from couchpotato.core.helpers.variable import sp, fnEscape
@@ -103,3 +104,38 @@ Remove it if you want it to be renamed (again, or at least let it try again)
                 return True
 
         return False
+
+    def deleteFolder(self, folder, check_empty=True):
+        """Delete a folder after successful rename/move.
+        
+        Args:
+            folder: Path to folder to delete
+            check_empty: Only delete if folder is empty or contains only samples/metadata
+        """
+        folder = sp(folder)
+        if not folder or not os.path.isdir(folder):
+            return False
+
+        try:
+            # Get remaining files
+            remaining = []
+            for root, dirs, files in os.walk(folder):
+                remaining.extend(files)
+
+            # Check if folder is effectively empty (only samples/metadata remain)
+            dominated_by_samples = True
+            for f in remaining:
+                if not any(x in f.lower() for x in ['sample', '.nfo', '.txt', '.jpg', '.png', '.ignore']):
+                    dominated_by_samples = False
+                    break
+
+            if check_empty and remaining and not dominated_by_samples:
+                log.debug('Folder %s still has files, not deleting: %s', folder, remaining[:5])
+                return False
+
+            log.info('Cleaning up folder: %s', folder)
+            shutil.rmtree(folder)
+            return True
+        except Exception:
+            log.error('Failed to delete folder %s: %s', folder, traceback.format_exc())
+            return False

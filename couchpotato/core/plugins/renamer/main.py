@@ -106,7 +106,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     def _processGroup(self, group, media_folder=None, release_download=None):
         """Process a single scanner group (rename/move files)."""
-        log.debug('_processGroup called with group: %s', group.get('meta_data', {}).get('name', 'Unknown'))
+        from couchpotato.core.helpers.variable import getExt, getTitle, getIdentifier
+        from couchpotato.core.helpers.encoding import toUnicode
+        
+        meta_data = group.get('meta_data', {})
+        media_title = meta_data.get('name', 'Unknown')
+        log.debug('_processGroup called with group: %s', media_title)
         
         # Get the media info from the group
         media_info = group.get('media', {})
@@ -114,10 +119,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             log.debug('No media_info in group, skipping')
             return
 
-        # Determine file action
-        file_action = self.conf('default_file_action', default='move')
-        if release_download and self.downloadIsTorrent(release_download):
-            file_action = self.conf('file_action', default='link')
+        # Build the destination path
+        destination = media_folder or sp(self.conf('to'))
+        if not destination:
+            log.warning('No destination folder configured')
+            return
 
         # Extract if needed
         if self.conf('unrar', default=False):
@@ -125,23 +131,93 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             if isinstance(group_folder, dict):
                 log.warning('Group folder is a dict instead of a path, skipping extraction: %s', group_folder)
                 group_folder = None
-            if not group_folder or not isinstance(group_folder, str):
-                group_folder = None
-            self.extractFiles(
-                folder=group_folder,
-                media_folder=media_folder,
-            )
+            if group_folder and isinstance(group_folder, str):
+                self.extractFiles(folder=group_folder, media_folder=media_folder)
 
-        # Build the destination path
-        to_folder = media_folder or sp(self.conf('to'))
-        if not to_folder:
-            log.warning('No destination folder configured')
+        # Get movie files from group
+        movie_files = group.get('files', {}).get('movie', [])
+        if not movie_files:
+            log.debug('No movie files in group for %s, skipping', media_title)
             return
 
-        # Use namer to build file/folder names
-        rename_files = group.get('rename_files', {})
+        # Build replacements dict for naming
+        library = media_info.get('info', {})
+        replacements = {
+            'ext': 'mkv',
+            'namethe': getTitle(library) or media_title,
+            'thename': getTitle(library) or media_title,
+            'year': library.get('year', ''),
+            'first': (getTitle(library) or media_title)[0].upper(),
+            'quality': group.get('meta_data', {}).get('quality', {}).get('label', ''),
+            'quality_type': group.get('meta_data', {}).get('quality', {}).get('type', ''),
+            'video': '',
+            'audio': '',
+            'group': group.get('meta_data', {}).get('group', ''),
+            'source': group.get('meta_data', {}).get('source', ''),
+            'resolution_width': library.get('resolution_width', ''),
+            'resolution_height': library.get('resolution_height', ''),
+            'imdb_id': getIdentifier(media_info) or '',
+            'cd': '',
+            'cd_nr': '',
+            'mpaa': library.get('mpaa', ''),
+            'category': '',
+        }
+
+        # Get naming patterns from config
+        folder_name = self.conf('folder_name', default='<namethe> (<year>)')
+        file_name = self.conf('file_name', default='<thename><cd>.<ext>')
+
+        # Build rename_files mapping
+        rename_files = {}
+        
+        for idx, current_file in enumerate(movie_files):
+            replacements['ext'] = getExt(current_file)
+            
+            # Handle multi-part files
+            if len(movie_files) > 1:
+                replacements['cd'] = ' cd%d' % (idx + 1)
+                replacements['cd_nr'] = str(idx + 1)
+
+            final_folder_name = self.doReplace(folder_name, replacements, folder=True)
+            final_file_name = self.doReplace(file_name, replacements)
+
+            rename_files[current_file] = os.path.join(destination, final_folder_name, final_file_name)
+
         if not rename_files:
-            log.debug('No rename_files in group for %s, skipping', group.get('meta_data', {}).get('name', 'Unknown'))
+            log.debug('No rename_files built for %s, skipping', media_title)
             return
 
-        log.info('Processing: %s', group.get('meta_data', {}).get('name', 'Unknown'))
+        log.info('Processing: %s -> %s', media_title, list(rename_files.values())[0] if rename_files else 'unknown')
+
+        # Create destination folder if needed
+        for src, dst in rename_files.items():
+            dst_dir = os.path.dirname(dst)
+            if not os.path.isdir(dst_dir):
+                log.info('Creating folder: %s', dst_dir)
+                try:
+                    os.makedirs(dst_dir)
+                except OSError as e:
+                    if e.errno != 17:  # File exists
+                        log.error('Failed to create folder %s: %s', dst_dir, e)
+                        return
+
+        # Move/copy files
+        for src, dst in rename_files.items():
+            if not os.path.exists(src):
+                log.warning('Source file does not exist: %s', src)
+                continue
+            if os.path.exists(dst):
+                log.warning('Destination already exists: %s', dst)
+                continue
+            
+            try:
+                self.moveFile(src, dst, use_default=True)
+                log.info('Moved: %s -> %s', os.path.basename(src), dst)
+            except Exception as e:
+                log.error('Failed to move %s: %s', src, e)
+
+        # Cleanup source folder if configured
+        if self.conf('cleanup', default=True):
+            source_folder = group.get('parentdir')
+            if source_folder and os.path.isdir(source_folder):
+                self.deleteFolder(source_folder)
