@@ -200,7 +200,10 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 break
 
             quality = fireEvent('quality.single', identifier = q_identifier, single = True)
-            log.info('Search for %s in %s%s', default_title, quality['label'], ' ignoring ETA' if always_search or ignore_eta else '')
+            if not quality or not isinstance(quality, dict):
+                log.warning('Quality %s not found in database, skipping search', q_identifier)
+                continue
+            log.info('Search for %s in %s%s', default_title, quality.get('label', q_identifier), ' ignoring ETA' if always_search or ignore_eta else '')
 
             # Extend quality with profile customs
             quality['custom'] = quality_custom
@@ -216,7 +219,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             results_count = len(found_releases)
             total_result_count += results_count
             if results_count == 0:
-                log.debug('Nothing found for %s in %s', default_title, quality['label'])
+                log.debug('Nothing found for %s in %s', default_title, quality.get('label', '?'))
 
             # Keep track of releases found outside ETA window
             outside_eta_results += results_count if could_not_be_released else 0

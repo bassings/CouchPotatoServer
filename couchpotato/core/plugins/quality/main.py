@@ -132,7 +132,7 @@ class QualityPlugin(Plugin):
         try:
             quality = db.get('quality', identifier, with_doc = True)['doc']
         except RecordNotFound:
-            log.error("Unable to find '%s' in the quality DB", indentifier)
+            log.error("Unable to find '%s' in the quality DB", identifier)
             quality = None
 
         if quality:
