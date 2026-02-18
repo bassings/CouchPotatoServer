@@ -27,3 +27,7 @@ test-data/
 # npm
 playwright-report/
 test-results/
+
+# Local test data
+test_data/
+test_startup_local.py
