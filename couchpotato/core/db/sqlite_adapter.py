@@ -279,7 +279,7 @@ class SQLiteAdapter(DatabaseInterface):
                     params.append(end)
             sql += " ORDER BY json_extract(data, '$.title')"
 
-        elif index_name == 'media_title_search':
+        elif index_name in ('media_title_search', 'media_search_title'):
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
             if key is not None:
                 sql += " AND LOWER(json_extract(data, '$.title')) LIKE ?"
@@ -461,14 +461,39 @@ class SQLiteAdapter(DatabaseInterface):
         self._indexes[name] = index
         return name
 
+    def destroy_index(self, index) -> None:
+        """Remove an index registration. SQLite indexes are schema-managed."""
+        name = getattr(index, 'name', str(index)) if not isinstance(index, str) else index
+        self._indexes.pop(name, None)
+
     def reindex(self, index_name: str) -> None:
         """No-op for SQLite; indexes are automatically maintained."""
         pass
+
+    def reindex_index(self, index_name: str) -> None:
+        """No-op for SQLite; indexes are automatically maintained."""
+        pass
+
+    def count(self, func, *args, **kwargs) -> int:
+        """Count results from a query function.
+
+        CodernityDB compatibility - calls func(*args, **kwargs) and counts results.
+        """
+        results = func(*args, **kwargs)
+        return sum(1 for _ in results)
 
     def compact(self) -> None:
         """Run VACUUM on the database."""
         conn = self._get_conn()
         conn.execute("VACUUM")
+
+    def get_many(self, index_name: str, key: Any, limit: int = -1,
+                 offset: int = 0, with_doc: bool = True) -> Iterator[dict]:
+        """Get multiple documents by index lookup.
+
+        CodernityDB compatibility method - wraps query() with with_doc=True.
+        """
+        return self.query(index_name, key=key, limit=limit, offset=offset, with_doc=with_doc)
 
     def get_by_identifier(self, provider: str, identifier: str) -> dict:
         """Get a media document by provider and identifier.
