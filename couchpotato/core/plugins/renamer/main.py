@@ -108,13 +108,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """Process a single scanner group (rename/move files)."""
         from couchpotato.core.helpers.variable import getExt, getTitle, getIdentifier
         from couchpotato.core.helpers.encoding import toUnicode
-        
+
         # Get the media info from the group
         media_info = group.get('media', {})
         if not media_info:
             log.debug('No media_info in group, skipping (identifiers: %s)', group.get('identifiers', []))
             return
-        
+
         # Get title from media info (movie details from TMDB)
         library = media_info.get('info', {})
         media_title = getTitle(library) or library.get('original_title') or group.get('dirname', 'Unknown')
@@ -170,10 +170,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
         # Build rename_files mapping
         rename_files = {}
-        
+
         for idx, current_file in enumerate(movie_files):
             replacements['ext'] = getExt(current_file)
-            
+
             # Handle multi-part files
             if len(movie_files) > 1:
                 replacements['cd'] = ' cd%d' % (idx + 1)
@@ -181,7 +181,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
             final_folder_name = self.doReplace(folder_name, replacements, folder=True)
             final_file_name = self.doReplace(file_name, replacements)
-            
+
             # doReplace returns bytes, convert to string for os.path.join
             if isinstance(final_folder_name, bytes):
                 final_folder_name = final_folder_name.decode('utf-8', errors='replace')
@@ -216,7 +216,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             if os.path.exists(dst):
                 log.warning('Destination already exists: %s', dst)
                 continue
-            
+
             try:
                 self.moveFile(src, dst, use_default=True)
                 log.info('Moved: %s -> %s', os.path.basename(src), dst)

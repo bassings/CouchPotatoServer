@@ -126,7 +126,7 @@ def create_router(require_auth) -> APIRouter:
                 movies = result.get('movies', [])
             else:
                 movies = []
-            
+
             # Filter to only movies with releases if requested
             if with_releases and movies:
                 movies = [m for m in movies if m.get('releases') and len(m.get('releases', [])) > 0]

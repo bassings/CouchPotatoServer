@@ -30,11 +30,11 @@ def fix_release_quality(db):
 
     try:
         log.info('Scanning releases for quality detection fixes...')
-        
+
         # Scan all release records by iterating through all status types
         statuses = ['available', 'snatched', 'downloaded', 'done', 'ignored', 'failed']
         all_releases = []
-        
+
         for status in statuses:
             try:
                 for record in db.get_many('release_status', status, with_doc=True):
@@ -43,58 +43,58 @@ def fix_release_quality(db):
                         all_releases.append(doc)
             except Exception:
                 pass  # Status may not exist in DB
-        
+
         log.info('Found %d releases to check', len(all_releases))
-        
+
         for doc in all_releases:
             try:
                 if doc.get('_t') != 'release':
                     continue
-                
+
                 checked += 1
-                
+
                 # Get release info
                 info = doc.get('info', {})
                 release_name = info.get('name', '')
                 if isinstance(release_name, bytes):
                     release_name = release_name.decode('utf-8', errors='replace')
-                
+
                 if not release_name:
                     continue
-                
+
                 current_quality = doc.get('quality', '')
                 if isinstance(current_quality, bytes):
                     current_quality = current_quality.decode('utf-8', errors='replace')
-                
+
                 # Detect quality from release name
                 detected = fireEvent('quality.guess', [release_name], single=True)
                 if not detected:
                     continue
-                
+
                 detected_quality = detected.get('identifier', '')
                 detected_is_3d = detected.get('is_3d', False)
-                
+
                 # Check if quality needs fixing
                 if detected_quality and detected_quality != current_quality:
                     old_quality = current_quality
                     doc['quality'] = detected_quality
                     doc['is_3d'] = detected_is_3d
-                    
+
                     db.update(doc)
                     fixed += 1
-                    
+
                     # Log significant fixes (e.g., 2160p incorrectly stored as 720p)
                     if old_quality in ('720p', '1080p') and detected_quality == '2160p':
-                        log.info('Fixed quality: %s -> %s for "%s"', 
+                        log.info('Fixed quality: %s -> %s for "%s"',
                                 old_quality, detected_quality, release_name[:60])
                     else:
                         log.debug('Fixed quality: %s -> %s for "%s"',
                                  old_quality, detected_quality, release_name[:40])
-                        
+
             except (RecordNotFound, KeyError, TypeError) as e:
                 log.debug('Skipped release: %s', e)
                 continue
-                
+
     except Exception as e:
         log.warning('Could not scan releases for quality fixes: %s (%s)', e, type(e).__name__)
         import traceback

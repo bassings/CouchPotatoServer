@@ -23,26 +23,26 @@ class TestQualityDetection:
             patch('couchpotato.core.plugins.quality.main.addApiView'),
             patch('couchpotato.core.plugins.quality.main.fireEvent'),
         ]
-        
+
         # Start all patches
         mocks = [p.start() for p in patches]
         mock_env, mock_db, mock_add_event, mock_add_api, mock_fire = mocks
-        
+
         # Setup Env mock with cache
         mock_cache = MagicMock()
         mock_cache.get.return_value = None
         mock_env.get.return_value = mock_cache
-        
+
         # Mock scanner.name_year to return simple parsed name
         def mock_name_year(event_name, *args, **kwargs):
             if event_name == 'scanner.name_year':
                 return {'name': 'Movie Name', 'year': 2025}
             return None
         mock_fire.side_effect = mock_name_year
-        
+
         from couchpotato.core.plugins.quality.main import QualityPlugin
         plugin = QualityPlugin()
-        
+
         # Pre-populate cached_qualities so all() doesn't need DB
         cached = []
         for idx, q in enumerate(plugin.qualities):
@@ -52,9 +52,9 @@ class TestQualityDetection:
             q_copy['size_max'] = q.get('size', (0, 0))[1]
             cached.append(q_copy)
         plugin.cached_qualities = cached
-        
+
         yield plugin
-        
+
         # Stop all patches
         for p in patches:
             p.stop()
@@ -91,7 +91,7 @@ class TestQualityDetection:
         ("Movie.Name.2025.1080p.AMZN.WEBRip.DDP5.1.x264", "1080p"),
         # Note: REMUX + AVC is ambiguous (AVC is a bd50 tag)
         # ("Movie.2025.1080p.REMUX.AVC.DTS-HD.MA.5.1", "1080p"),
-        
+
         # With additional tags that shouldn't confuse detection
         ("Movie.Name.2025.1080p.BluRay.x264.DTS-GROUP", "1080p"),
         ("Movie.Name.2025.1080p.WEB-DL.AAC2.0.H264", "1080p"),
@@ -163,14 +163,14 @@ class TestQualityDetection:
         ("Movie.Name.2025.SCREENER.XviD", "scr"),
         ("Movie.2025.HDScr.x264", "scr"),
         ("Movie.2025.WEBRip.x264", "scr"),
-        
+
         # Cam/TS
         ("Movie.Name.2025.CAM.XviD-GROUP", "cam"),
         ("Movie.Name.2025.HDCAM.x264", "cam"),
         ("Movie.Name.2025.TS.XviD", "ts"),
         ("Movie.Name.2025.HDTS.x264", "ts"),
         ("Movie.Name.2025.TELESYNC.XviD", "ts"),
-        
+
         # Telecine
         ("Movie.Name.2025.TC.XviD", "tc"),
         ("Movie.Name.2025.TELECINE.x264", "tc"),
@@ -264,7 +264,7 @@ class TestQualityDetection:
         result_upper = quality_plugin.guess(["MOVIE.2025.1080P.BLURAY"], use_cache=False)
         result_lower = quality_plugin.guess(["movie.2025.1080p.bluray"], use_cache=False)
         result_mixed = quality_plugin.guess(["Movie.2025.1080p.BluRay"], use_cache=False)
-        
+
         assert result_upper is not None
         assert result_lower is not None
         assert result_mixed is not None
@@ -323,16 +323,16 @@ class TestContainsTagScore:
             patch('couchpotato.core.plugins.quality.main.addApiView'),
             patch('couchpotato.core.plugins.quality.main.fireEvent'),
         ]
-        
+
         mocks = [p.start() for p in patches]
         mock_env = mocks[0]
         mock_cache = MagicMock()
         mock_cache.get.return_value = None
         mock_env.get.return_value = mock_cache
-        
+
         from couchpotato.core.plugins.quality.main import QualityPlugin
         plugin = QualityPlugin()
-        
+
         # Pre-populate cached_qualities
         cached = []
         for idx, q in enumerate(plugin.qualities):
@@ -342,9 +342,9 @@ class TestContainsTagScore:
             q_copy['size_max'] = q.get('size', (0, 0))[1]
             cached.append(q_copy)
         plugin.cached_qualities = cached
-        
+
         yield plugin
-        
+
         for p in patches:
             p.stop()
 
@@ -366,25 +366,25 @@ class TestContainsTagScore:
     def test_2160p_scores_higher_than_1080p_for_2160p_release(self, quality_plugin):
         """2160p quality should score higher than 1080p for a 2160p release."""
         words = ['movie', '2025', '2160p', 'bluray', 'x265']
-        
+
         q_2160p = {'identifier': '2160p', 'label': '2160p', 'alternative': [], 'tags': ['x264', 'h264', '2160'], 'ext': ['mkv']}
         q_1080p = {'identifier': '1080p', 'label': '1080p', 'alternative': [], 'tags': ['m2ts', 'x264', 'h264', '1080'], 'ext': ['mkv', 'm2ts', 'ts']}
-        
+
         score_2160p = quality_plugin.containsTagScore(q_2160p, words, "Movie.2025.2160p.BluRay.x265")
         score_1080p = quality_plugin.containsTagScore(q_1080p, words, "Movie.2025.2160p.BluRay.x265")
-        
+
         assert score_2160p > score_1080p, \
             f"2160p score ({score_2160p}) should be higher than 1080p score ({score_1080p})"
 
     def test_1080p_scores_higher_than_2160p_for_1080p_release(self, quality_plugin):
         """1080p quality should score higher than 2160p for a 1080p release."""
         words = ['movie', '2025', '1080p', 'bluray', 'x264']
-        
+
         q_2160p = {'identifier': '2160p', 'label': '2160p', 'alternative': [], 'tags': ['x264', 'h264', '2160'], 'ext': ['mkv']}
         q_1080p = {'identifier': '1080p', 'label': '1080p', 'alternative': [], 'tags': ['m2ts', 'x264', 'h264', '1080'], 'ext': ['mkv', 'm2ts', 'ts']}
-        
+
         score_1080p = quality_plugin.containsTagScore(q_1080p, words, "Movie.2025.1080p.BluRay.x264")
         score_2160p = quality_plugin.containsTagScore(q_2160p, words, "Movie.2025.1080p.BluRay.x264")
-        
+
         assert score_1080p > score_2160p, \
             f"1080p score ({score_1080p}) should be higher than 2160p score ({score_2160p})"

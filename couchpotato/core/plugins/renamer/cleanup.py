@@ -107,7 +107,7 @@ Remove it if you want it to be renamed (again, or at least let it try again)
 
     def deleteFolder(self, folder, check_empty=True):
         """Delete a folder after successful rename/move.
-        
+
         Args:
             folder: Path to folder to delete
             check_empty: Only delete if folder is empty or contains only samples/metadata
