@@ -128,7 +128,9 @@ class SQLiteAdapter(DatabaseInterface):
 
         result = rows[0]
         if with_doc and '_id' in result:
-            return self.get('id', result['_id'])
+            doc = self.get('id', result['_id'])
+            # CodernityDB compat: wrap document in {'doc': ...} format
+            return {'doc': doc, '_id': doc['_id']}
         return result
 
     def insert(self, data: dict) -> dict:
@@ -205,7 +207,9 @@ class SQLiteAdapter(DatabaseInterface):
         for row in results:
             if with_doc and '_id' in row:
                 try:
-                    yield self.get('id', row['_id'])
+                    doc = self.get('id', row['_id'])
+                    # CodernityDB compat: wrap document in {'doc': ...} format
+                    yield {'doc': doc, '_id': doc['_id']}
                 except KeyError:
                     continue
             else:
