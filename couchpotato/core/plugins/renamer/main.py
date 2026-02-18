@@ -112,13 +112,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # Get the media info from the group
         media_info = group.get('media', {})
         if not media_info:
-            log.info('_processGroup: No media_info in group, skipping (identifiers: %s)', group.get('identifiers', []))
+            log.debug('No media_info in group, skipping (identifiers: %s)', group.get('identifiers', []))
             return
         
         # Get title from media info (movie details from TMDB)
         library = media_info.get('info', {})
         media_title = getTitle(library) or library.get('original_title') or group.get('dirname', 'Unknown')
-        log.info('_processGroup: checking %s', media_title)
+        log.debug('Processing group: %s', media_title)
 
         # Build the destination path
         destination = media_folder or sp(self.conf('to'))
@@ -138,7 +138,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # Get movie files from group
         movie_files = group.get('files', {}).get('movie', [])
         if not movie_files:
-            log.info('_processGroup: No movie files in group for %s, skipping', media_title)
+            log.debug('No movie files in group for %s, skipping', media_title)
             return
 
         # Build replacements dict for naming
