@@ -103,6 +103,12 @@ class IU_HashIndex(Index):
         self.data_start = (
             self.hash_lim + 1) * self.bucket_line_size + self._start_ind + 2
 
+    def _to_bytes(self, value):
+        """Convert string to bytes for struct packing (Python 3 compatibility)."""
+        if isinstance(value, str):
+            return value.encode('utf-8')
+        return value
+
     def open_index(self):
         if not os.path.isfile(os.path.join(self.db_path, self.name + '_buck')):
             raise IndexException("Doesn't exists")
@@ -330,8 +336,8 @@ class IU_HashIndex(Index):
             raise ElemNotFound("Location '%s' not found" % doc_id)
         found_at, _doc_id, _key, start, size, status, _next = self._locate_doc_id(doc_id, key, location)
         self.buckets.seek(found_at)
-        self.buckets.write(self.entry_struct.pack(doc_id,
-                                                  key,
+        self.buckets.write(self.entry_struct.pack(self._to_bytes(doc_id),
+                                                  self._to_bytes(key),
                                                   u_start,
                                                   u_size,
                                                   u_status,
@@ -470,8 +476,8 @@ class IU_HashIndex(Index):
             if data:
                 doc_id, l_key, start, size, status, _next = self.entry_struct.unpack(data)
                 self.buckets.seek(pos_prev)
-                self.buckets.write(self.entry_struct.pack(doc_id,
-                                                          l_key,
+                self.buckets.write(self.entry_struct.pack(self._to_bytes(doc_id),
+                                                          self._to_bytes(l_key),
                                                           start,
                                                           size,
                                                           status,
@@ -483,8 +489,8 @@ class IU_HashIndex(Index):
             if data:
                 doc_id, l_key, start, size, status, _next = self.entry_struct.unpack(data)
                 self.buckets.seek(pos_next)
-                self.buckets.write(self.entry_struct.pack(doc_id,
-                                                          l_key,
+                self.buckets.write(self.entry_struct.pack(self._to_bytes(doc_id),
+                                                          self._to_bytes(l_key),
                                                           start,
                                                           size,
                                                           status,
@@ -504,6 +510,11 @@ class IU_HashIndex(Index):
             raise TryReindexException()
         found_at, _doc_id, _key, start, size, status, _next = self._locate_doc_id(doc_id, key, location)
         self.buckets.seek(found_at)
+        # Python 3: ensure doc_id and key are bytes for struct.pack
+        if isinstance(doc_id, str):
+            doc_id = doc_id.encode('utf-8')
+        if isinstance(key, str):
+            key = key.encode('utf-8')
         self.buckets.write(self.entry_struct.pack(doc_id,
                                                   key,
                                                   start,
@@ -688,8 +699,8 @@ class IU_UniqueHashIndex(IU_HashIndex):
         if u_size == 0:
             u_size = size
         self.buckets.seek(found_at)
-        self.buckets.write(self.entry_struct.pack(key,
-                                                  rev,
+        self.buckets.write(self.entry_struct.pack(self._to_bytes(key),
+                                                  self._to_bytes(rev),
                                                   u_start,
                                                   u_size,
                                                   u_status,
@@ -733,8 +744,8 @@ class IU_UniqueHashIndex(IU_HashIndex):
                 self.buckets.seek(self.data_start)
                 wrote_at = self.buckets.tell()
 
-            self.buckets.write(self.entry_struct.pack(key,
-                                                      rev,
+            self.buckets.write(self.entry_struct.pack(self._to_bytes(key),
+                                                      self._to_bytes(rev),
                                                       start,
                                                       size,
                                                       status,
@@ -742,8 +753,8 @@ class IU_UniqueHashIndex(IU_HashIndex):
 
 #            self.flush()
             self.buckets.seek(found_at)
-            self.buckets.write(self.entry_struct.pack(_key,
-                                                      _rev,
+            self.buckets.write(self.entry_struct.pack(self._to_bytes(_key),
+                                                      self._to_bytes(_rev),
                                                       _start,
                                                       _size,
                                                       _status,
@@ -762,8 +773,8 @@ class IU_UniqueHashIndex(IU_HashIndex):
                 self.buckets.seek(self.data_start)
                 wrote_at = self.buckets.tell()
 
-            self.buckets.write(self.entry_struct.pack(key,
-                                                      rev,
+            self.buckets.write(self.entry_struct.pack(self._to_bytes(key),
+                                                      self._to_bytes(rev),
                                                       start,
                                                       size,
                                                       status,
