@@ -10,7 +10,6 @@ import re
 import tarfile
 import shutil
 
-from CodernityDB.database_super_thread_safe import SuperThreadSafeDatabase
 from argparse import ArgumentParser
 from diskcache import Cache as DiskCache
 from couchpotato.core.event import fireEventAsync, fireEvent
@@ -71,38 +70,36 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     Env.set('encoding', encoding)
 
     # Do db stuff
-    db_path = sp(os.path.join(data_dir, 'database'))
-    old_db_path = os.path.join(data_dir, 'couchpotato.db')
+    # SQLite is the primary database; CodernityDB is only for migration
+    from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
 
-    # Remove database folder if both exists
-    if os.path.isdir(db_path) and os.path.isfile(old_db_path):
-        db = SuperThreadSafeDatabase(db_path)
-        db.open()
-        db.destroy()
+    sqlite_db_dir = sp(os.path.join(data_dir, 'database_v2'))
+    sqlite_db_file = os.path.join(sqlite_db_dir, 'couchpotato.db')
+    codernity_db_path = sp(os.path.join(data_dir, 'database'))
+    codernity_backup_path = sp(os.path.join(data_dir, 'database.bak'))
 
-    # Check if database exists
-    db = SuperThreadSafeDatabase(db_path)
-    db_exists = db.exists()
+    db = SQLiteAdapter()
 
-    if not db_exists:
-        print("INFO: No existing database found, creating fresh database...")
-        db.create()
-        print("INFO: Database created successfully.")
+    # Check if SQLite database exists
+    if os.path.isfile(sqlite_db_file):
+        print("INFO: Opening existing SQLite database...")
+        db.open(sqlite_db_dir)
+        print("INFO: SQLite database opened successfully.")
+
+    # Check if old CodernityDB exists and needs migration
+    elif os.path.isdir(codernity_db_path) and not os.path.isdir(codernity_backup_path):
+        print("INFO: Found CodernityDB database, migrating to SQLite...")
+        from couchpotato.core.migration.codernity_to_sqlite import migrate_codernity_to_sqlite
+        migrate_codernity_to_sqlite(codernity_db_path, sqlite_db_dir, db)
+        print("INFO: Migration complete. Renaming old database to database.bak...")
+        os.rename(codernity_db_path, codernity_backup_path)
+        print("INFO: CodernityDB renamed to database.bak. Now using SQLite.")
+
+    # Fresh install - create new SQLite database
     else:
-        # Migrate old Python 2 index files before opening
-        from couchpotato.core.migration.fix_indexes import fix_index_files
-        n_fixed = fix_index_files(db_path)
-        if n_fixed:
-            print("INFO: Migrated %d database index file(s) for Python 3 compatibility." % n_fixed)
-            # The index hash functions changed, so bucket files must be rebuilt.
-            # Delete all non-id bucket files; they'll be recreated during reindex.
-            # The id bucket needs special handling since reindex depends on it.
-            from couchpotato.core.migration.rebuild_buckets import rebuild_after_migration
-            rebuild_after_migration(db, db_path)
-            print("INFO: Database migration and reindex complete.")
-        else:
-            db.open()
-        print("INFO: Opened existing database.")
+        print("INFO: No existing database found, creating fresh SQLite database...")
+        db.create(sqlite_db_dir)
+        print("INFO: SQLite database created successfully.")
 
     # Force creation of cachedir
     log_dir = sp(log_dir)
