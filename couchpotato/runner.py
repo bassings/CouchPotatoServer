@@ -79,11 +79,13 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     codernity_backup_path = sp(os.path.join(data_dir, 'database.bak'))
 
     db = SQLiteAdapter()
+    db_exists = False  # Track if this is an existing database
 
     # Check if SQLite database exists
     if os.path.isfile(sqlite_db_file):
         print("INFO: Opening existing SQLite database...")
         db.open(sqlite_db_dir)
+        db_exists = True
         print("INFO: SQLite database opened successfully.")
 
     # Check if old CodernityDB exists and needs migration
@@ -93,12 +95,14 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         migrate_codernity_to_sqlite(codernity_db_path, sqlite_db_dir, db)
         print("INFO: Migration complete. Renaming old database to database.bak...")
         os.rename(codernity_db_path, codernity_backup_path)
+        db_exists = True  # Migrated data counts as existing
         print("INFO: CodernityDB renamed to database.bak. Now using SQLite.")
 
     # Fresh install - create new SQLite database
     else:
         print("INFO: No existing database found, creating fresh SQLite database...")
         db.create(sqlite_db_dir)
+        db_exists = False
         print("INFO: SQLite database created successfully.")
 
     # Force creation of cachedir

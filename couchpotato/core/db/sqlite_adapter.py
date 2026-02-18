@@ -81,6 +81,17 @@ class SQLiteAdapter(DatabaseInterface):
             self._conn.close()
             self._conn = None
 
+    def get_db_details(self) -> dict:
+        """Get database size and details (CodernityDB compatibility)."""
+        if self._path is None:
+            return {'size': 0}
+        db_file = os.path.join(self._path, 'couchpotato.db') if os.path.isdir(self._path) else self._path
+        try:
+            size = os.path.getsize(db_file) if os.path.isfile(db_file) else 0
+        except OSError:
+            size = 0
+        return {'size': size}
+
     def _doc_from_row(self, row) -> dict:
         """Convert a database row back to a document dict."""
         data = json.loads(row['data'])
