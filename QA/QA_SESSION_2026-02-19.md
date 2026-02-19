@@ -48,33 +48,50 @@ KeyError: "No document found in index 'quality' for key: 2160p"
 |------|--------|-------|
 | Home/Wanted page loads | ✅ | HTTP 200 |
 | Available page loads | ✅ | HTTP 200 |
-| Suggestions page loads | ✅ | HTTP 200 |
+| Suggestions page loads | ✅ | Charts/For You tabs work |
 | Add Movie page loads | ✅ | HTTP 200 |
-| Settings page loads | ✅ | HTTP 200 |
-| Movie detail page loads | ⏳ | Need movie to test |
+| Settings page loads | ✅ | All 8 tabs load correctly |
+| Movie detail page loads | ✅ | Poster, metadata, actions shown |
 
 ### 2. Core User Flows
 | Test | Status | Notes |
 |------|--------|-------|
-| Search for movie | ✅ | API returns 3 results for "Matrix" |
-| Add movie to wanted | ⏳ | |
-| View movie details | ⏳ | |
-| Filter wanted list | ⏳ | |
-| Delete movie | ⏳ | |
+| Search for movie | ✅ | TMDB returns results with IMDB IDs |
+| Add movie to wanted | ✅ | "The Matrix" added successfully |
+| View movie details | ✅ | Title, year, runtime, genres, plot, buttons |
+| Filter wanted list | ✅ | "1 of 1" / "0 of 1" updates correctly |
+| Delete movie | ⚠️ | Button exists but no action on click |
 
 ### 3. Settings
 | Test | Status | Notes |
 |------|--------|-------|
-| Settings tabs load | ✅ | HTTP 200 |
-| Test searcher connection | ⏳ | |
-| Test downloader connection | ⏳ | |
-| Save settings persists | ⏳ | |
+| Settings tabs load | ✅ | General, Searchers, Downloaders, etc. |
+| Test searcher connection | ⏳ | No providers configured |
+| Test downloader connection | ⏳ | No providers configured |
+| Save settings persists | ⏳ | Skipped (fresh container) |
 
 ### 4. New Features (v3.1.0)
 | Test | Status | Notes |
 |------|--------|-------|
 | SQLite database works | ✅ | All quality profiles created |
 | Fresh install creates SQLite | ✅ | database_v2/ created |
+| CodernityDB compat methods | ✅ | get_many, with_doc, count all work |
+
+---
+
+## Issues Found
+
+### DEF-011: Delete button no action (LOW)
+**Severity:** Low
+**Component:** Movie detail page
+**Steps to reproduce:**
+1. View movie detail page
+2. Click Delete button
+
+**Expected:** Confirmation dialog or movie deleted
+**Actual:** No visible action
+
+**Note:** May require htmx attributes or JavaScript fix. Not blocking for release.
 
 ---
 
@@ -84,3 +101,4 @@ KeyError: "No document found in index 'quality' for key: 2160p"
 - Fresh database with SQLite (no CodernityDB migration needed)
 - Quality fill bug found and fixed (DEF-010)
 - API key: `40cbf8f9a02a4d889d611ac493098a3e`
+- Browser testing via OpenClaw browser automation
