@@ -315,17 +315,30 @@ class TestTemplateRendering:
 
     def test_new_partial_movies_with_releases_uses_available_release_filter(self, client):
         """with_releases should query backend using release_status=available."""
-        mocked_handler = MagicMock(return_value={'movies': []})
-        with patch('couchpotato.api.callApiHandler', mocked_handler):
+        captured_kwargs = {}
+
+        def capture_handler(**kwargs):
+            captured_kwargs.update(kwargs)
+            return {'movies': []}
+
+        # Register mock handler for media.list
+        old_handler = api.get('media.list')
+        api['media.list'] = capture_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
             resp = client.get('/new/partial/movies?status=active&with_releases=true')
+        finally:
+            # Restore original handler
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
 
         assert resp.status_code == 200
-        mocked_handler.assert_called_once_with(
-            'media.list',
-            type='movie',
-            status='active',
-            release_status='available',
-        )
+        assert captured_kwargs.get('type') == 'movie'
+        assert captured_kwargs.get('status') == 'active'
+        assert captured_kwargs.get('release_status') == 'available'
 
 
 # --- FastAPI App Creation Tests ---
