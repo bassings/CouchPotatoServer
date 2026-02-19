@@ -72,6 +72,13 @@ class MediaPlugin(MediaBase):
             }
         })
 
+        addApiView('media.done', self.markDone, docs = {
+            'desc': 'Mark media as done (stops searching)',
+            'params': {
+                'id': {'desc': 'Media ID'},
+            }
+        })
+
         addApiView('media.available_chars', self.charView)
 
         addEvent('app.load', self.addSingleRefreshView, priority = 100)
@@ -153,6 +160,10 @@ class MediaPlugin(MediaBase):
 
                 # Attach category
                 try: media['category'] = db.get('id', media.get('category_id'))
+                except Exception: pass
+
+                # Attach profile
+                try: media['profile'] = db.get('id', media.get('profile_id'))
                 except Exception: pass
 
                 media['releases'] = fireEvent('release.for_media', media['_id'], single = True)
@@ -485,6 +496,22 @@ class MediaPlugin(MediaBase):
         return {
             'success': True,
         }
+
+    def markDone(self, id = None, **kwargs):
+
+        db = get_db()
+
+        try:
+            media = db.get('id', id)
+        except Exception:
+            media = None
+
+        if media:
+            media['status'] = 'done'
+            db.update(media)
+            return {'success': True}
+
+        return {'success': False, 'error': 'Media not found'}
 
     def addSingleDeleteView(self):
 

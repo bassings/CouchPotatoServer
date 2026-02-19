@@ -102,13 +102,21 @@
       {% endif %}
 
       <!-- Actions -->
-      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, deleting: false }">
+      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false }">
         <button @click="refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; location.reload(); })"
                 class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="refreshing">
           <span x-show="!refreshing">Refresh</span>
           <span x-show="refreshing">Refreshing…</span>
         </button>
+        {% if status != 'done' %}
+        <button @click="markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { location.reload(); } else { markingDone = false; } }).catch(() => { markingDone = false; })"
+                class="px-3.5 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
+                :disabled="markingDone">
+          <span x-show="!markingDone">Mark as Done</span>
+          <span x-show="markingDone">Marking…</span>
+        </button>
+        {% endif %}
         {% if imdb_id %}
         <a href="https://www.imdb.com/title/{{ imdb_id }}/" target="_blank" rel="noopener"
            class="px-3.5 py-1.5 bg-white/[0.04] border border-white/[0.06] hover:border-white/[0.1] text-cp-text rounded-md text-xs transition-colors">

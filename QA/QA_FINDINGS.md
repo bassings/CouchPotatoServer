@@ -97,6 +97,19 @@
 
 ### Low (P4)
 
+#### DEF-012: Profile Not Populated in Media API Response
+**Status:** OPEN
+**Date:** 2026-02-19
+**Location:** `couchpotato/core/media/_base/media/main.py` - `get()` method
+**Description:** Movies have `profile_id` set but `profile` is `None` in API response. UI shows "No Profile" for all movies.
+**Root Cause:** The `get()` method attaches `category` and `releases` but doesn't attach `profile`. Missing join.
+**Fix:** Add profile attachment in `get()` method around line 163:
+```python
+try: media['profile'] = db.get('id', media.get('profile_id'))
+except Exception: pass
+```
+**Spec:** `specs/BUG-012-profile-not-populated.md`
+
 #### DEF-011: Delete Button No Action on Movie Detail Page
 **Status:** OPEN
 **Date:** 2026-02-19
