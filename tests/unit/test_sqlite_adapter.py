@@ -177,11 +177,11 @@ class TestSQLiteAdapterIndexQueries:
 
         active = list(db.query('media_status', key='active', with_doc=True))
         assert len(active) == 1
-        assert active[0]['title'] == 'The Matrix'
+        assert active[0]['doc']['title'] == 'The Matrix'
 
         done = list(db.query('media_status', key='done', with_doc=True))
         assert len(done) == 1
-        assert done[0]['title'] == 'Inception'
+        assert done[0]['doc']['title'] == 'Inception'
 
     def test_media_by_type_query(self, db, sample_media):
         db.insert(sample_media)
@@ -192,7 +192,7 @@ class TestSQLiteAdapterIndexQueries:
         db.insert(sample_release)
         releases = list(db.query('release', key='abc123', with_doc=True))
         assert len(releases) == 1
-        assert releases[0]['identifier'] == 'tt0133093.720p'
+        assert releases[0]['doc']['identifier'] == 'tt0133093.720p'
 
     def test_release_status_query(self, db, sample_release):
         db.insert(sample_release)
@@ -208,19 +208,19 @@ class TestSQLiteAdapterIndexQueries:
         db.insert(sample_quality)
         results = list(db.query('quality', key='1080p', with_doc=True))
         assert len(results) == 1
-        assert results[0]['size_min'] == 5000
+        assert results[0]['doc']['size_min'] == 5000
 
     def test_profile_query(self, db, sample_profile):
         db.insert(sample_profile)
         results = list(db.query('profile', with_doc=True))
         assert len(results) == 1
-        assert results[0]['label'] == 'Best'
+        assert results[0]['doc']['label'] == 'Best'
 
     def test_notification_query(self, db, sample_notification):
         db.insert(sample_notification)
         results = list(db.query('notification', with_doc=True))
         assert len(results) == 1
-        assert results[0]['message'] == 'Downloaded The Matrix (720p)'
+        assert results[0]['doc']['message'] == 'Downloaded The Matrix (720p)'
 
     def test_notification_unread_query(self, db, sample_notification):
         db.insert(sample_notification)
@@ -230,13 +230,13 @@ class TestSQLiteAdapterIndexQueries:
 
         unread = list(db.query('notification_unread', with_doc=True))
         assert len(unread) == 1
-        assert unread[0]['message'] == 'Downloaded The Matrix (720p)'
+        assert unread[0]['doc']['message'] == 'Downloaded The Matrix (720p)'
 
     def test_property_query(self, db, sample_property):
         db.insert(sample_property)
         results = list(db.query('property', key='manage.last_update', with_doc=True))
         assert len(results) == 1
-        assert results[0]['value'] == '1700000000.0'
+        assert results[0]['doc']['value'] == '1700000000.0'
 
     def test_category_query(self, db):
         cat = {'_t': 'category', 'label': 'Action', 'order': 0}
@@ -273,7 +273,7 @@ class TestSQLiteAdapterDenormalized:
         db.insert(sample_media)
         results = list(db.query('media_tag', key='classic', with_doc=True))
         assert len(results) == 1
-        assert results[0]['title'] == 'The Matrix'
+        assert results[0]['doc']['title'] == 'The Matrix'
 
     def test_media_identifiers_cleaned_on_delete(self, db, sample_media):
         result = db.insert(sample_media)
@@ -367,4 +367,4 @@ class TestSQLiteAdapterCompat:
     def test_named_index_get_with_doc(self, db, sample_property):
         db.insert(sample_property)
         doc = db.get('property', 'manage.last_update', with_doc=True)
-        assert doc['value'] == '1700000000.0'
+        assert doc['doc']['value'] == '1700000000.0'
