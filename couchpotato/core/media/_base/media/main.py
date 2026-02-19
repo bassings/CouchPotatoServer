@@ -222,6 +222,31 @@ class MediaPlugin(MediaBase):
         log.debug('No media found with identifiers: %s', identifiers)
         return False
 
+    def _releaseMatchesProfileQuality(self, release, profile):
+        qualities = (profile or {}).get('qualities') or []
+        return release.get('quality') in qualities
+
+    def _mediaHasMatchingAvailableRelease(self, media_id):
+        db = get_db()
+
+        try:
+            media = db.get('id', media_id)
+            profile_id = media.get('profile_id')
+            if not profile_id:
+                return False
+
+            profile = db.get('id', profile_id)
+            releases = fireEvent('release.for_media', media_id, single = True) or []
+            for release in releases:
+                if release.get('status') != 'available':
+                    continue
+                if self._releaseMatchesProfileQuality(release, profile):
+                    return True
+        except Exception:
+            log.debug('Failed matching available release for %s: %s', media_id, traceback.format_exc())
+
+        return False
+
     def list(self, types = None, status = None, release_status = None, status_or = False, limit_offset = None, with_tags = None, starts_with = None, search = None):
 
         db = get_db()
@@ -256,8 +281,16 @@ class MediaPlugin(MediaBase):
         # Filter on release status
         if release_status and len(release_status) > 0:
             filter_by['release_status'] = set()
-            for release_status in fireEvent('release.with_status', release_status, with_doc = False, single = True):
-                filter_by['release_status'].add(release_status.get('media_id'))
+            release_status_list = list(release_status)
+            has_available_filter = 'available' in release_status_list
+
+            for release_item in fireEvent('release.with_status', release_status_list, with_doc = False, single = True):
+                media_id = release_item.get('media_id')
+                release_item_status = release_item.get('key') or release_item.get('status')
+                if has_available_filter and (release_item_status == 'available' or release_status_list == ['available']):
+                    if not self._mediaHasMatchingAvailableRelease(media_id):
+                        continue
+                filter_by['release_status'].add(media_id)
 
         # Add search filters
         if starts_with:
@@ -392,8 +425,16 @@ class MediaPlugin(MediaBase):
         # Filter on release status
         if release_status and len(release_status) > 0:
             filter_by['release_status'] = set()
-            for release_status in fireEvent('release.with_status', release_status, with_doc = False, single = True):
-                filter_by['release_status'].add(release_status.get('media_id'))
+            release_status_list = list(release_status)
+            has_available_filter = 'available' in release_status_list
+
+            for release_item in fireEvent('release.with_status', release_status_list, with_doc = False, single = True):
+                media_id = release_item.get('media_id')
+                release_item_status = release_item.get('key') or release_item.get('status')
+                if has_available_filter and (release_item_status == 'available' or release_status_list == ['available']):
+                    if not self._mediaHasMatchingAvailableRelease(media_id):
+                        continue
+                filter_by['release_status'].add(media_id)
 
         # Filter by combining ids
         for x in filter_by:

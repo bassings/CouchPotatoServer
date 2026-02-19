@@ -121,15 +121,15 @@ def create_router(require_auth) -> APIRouter:
         """Return movie card grid as HTML partial for htmx."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('media.list', type='movie', status=status)
+            params = {'type': 'movie', 'status': status}
+            if with_releases:
+                params['release_status'] = 'available'
+
+            result = callApiHandler('media.list', **params)
             if isinstance(result, dict):
                 movies = result.get('movies', [])
             else:
                 movies = []
-
-            # Filter to only movies with releases if requested
-            if with_releases and movies:
-                movies = [m for m in movies if m.get('releases') and len(m.get('releases', [])) > 0]
         except Exception:
             log.error('Failed to fetch movies for new UI')
             movies = []

@@ -313,6 +313,20 @@ class TestTemplateRendering:
             assert resp.status_code == 200
             assert 'API' in resp.text
 
+    def test_new_partial_movies_with_releases_uses_available_release_filter(self, client):
+        """with_releases should query backend using release_status=available."""
+        mocked_handler = MagicMock(return_value={'movies': []})
+        with patch('couchpotato.api.callApiHandler', mocked_handler):
+            resp = client.get('/new/partial/movies?status=active&with_releases=true')
+
+        assert resp.status_code == 200
+        mocked_handler.assert_called_once_with(
+            'media.list',
+            type='movie',
+            status='active',
+            release_status='available',
+        )
+
 
 # --- FastAPI App Creation Tests ---
 
