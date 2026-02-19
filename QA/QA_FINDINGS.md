@@ -16,6 +16,26 @@
 
 ### High (P2)
 
+#### DEF-010: Quality Fill Fails on Fresh Database (SQLite Migration)
+**Status:** FIXED ✅
+**Date:** 2026-02-19
+**Location:** `couchpotato/core/plugins/quality/main.py`
+**Description:** Fresh database installations fail with `KeyError: "No document found in index 'quality' for key: 2160p"` when creating quality profiles.
+**Root Cause:** SQLiteAdapter raises `KeyError` when a document doesn't exist, but code only caught `RecordNotFound` (CodernityDB exception).
+**Fix Applied:** Changed all `except RecordNotFound:` to `except (RecordNotFound, KeyError):` in 8 files:
+- `couchpotato/core/plugins/quality/main.py`
+- `couchpotato/core/plugins/release/main.py`
+- `couchpotato/core/plugins/dashboard.py`
+- `couchpotato/core/database.py`
+- `couchpotato/core/media/_base/media/main.py`
+- `couchpotato/core/media/movie/_base/main.py`
+- `couchpotato/core/media/movie/charts/main.py`
+- `couchpotato/core/media/movie/providers/info/_modifier.py`
+**Test:** `tests/unit/test_quality_fill.py`
+**Commit:** `6064b722`
+
+---
+
 #### DEF-001: Movie Detail Page Shows "Unknown" Title
 **Status:** FIXED ✅
 **Location:** Movie detail pages (`/movie/{id}/`)
@@ -76,6 +96,15 @@
 ---
 
 ### Low (P4)
+
+#### DEF-011: Delete Button No Action on Movie Detail Page
+**Status:** OPEN
+**Date:** 2026-02-19
+**Location:** Movie detail page (`/movie/{id}/`)
+**Description:** Clicking the Delete button on a movie detail page does nothing visible — no confirmation dialog, no deletion.
+**Expected:** Either a confirmation dialog appears, or the movie is deleted and user redirected to Wanted page.
+**Root Cause:** TBD — likely missing htmx attributes or JavaScript handler.
+**File:** `couchpotato/ui/templates/partials/movie_detail.html`
 
 #### DEF-007: The Matrix (2004) Duplicate in Search Results
 **Status:** FIXED ✅
@@ -226,14 +255,14 @@ Show toast notifications for successful actions (movie added, deleted, etc.)
 | Category | Count |
 |----------|-------|
 | Critical Defects | 0 |
-| High Defects | 1 (fixed) |
+| High Defects | 2 (all fixed) |
 | Medium Defects | 4 (all fixed) |
-| Low Defects | 1 (fixed) |
+| Low Defects | 2 (1 fixed, 1 open) |
 | Accessibility Issues | 22 (all fixed ✅) |
-| Improvements | 6 (3 medium done, 3 low remaining) |
+| Improvements | 6 (6 done ✅) |
 | Feature Ideas | 5 (1 done: PWA) |
 
-**Overall Assessment:** The new htmx UI is functional and well-designed. All reported defects have been fixed:
+**Overall Assessment:** The new htmx UI is functional and well-designed. All critical/high/medium defects have been fixed:
 - DEF-001, DEF-002: Fixed in previous session
 - DEF-003 through DEF-007: Fixed in this session
 
