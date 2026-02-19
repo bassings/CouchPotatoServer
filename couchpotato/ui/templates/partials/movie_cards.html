@@ -9,8 +9,11 @@
 {% set status = movie.get('status', 'active')|to_str %}
 {% set profile = movie.get('profile', {}) %}
 {% set quality_label = profile.get('label', '') if profile else '' %}
-{% set releases = movie.get('releases', []) %}
-{% set has_download = releases|selectattr('status', 'equalto', 'done')|list|length > 0 if releases else false %}
+{% set releases = movie.get('releases', []) or [] %}
+{% set completed_statuses = ['done', 'seeding', 'downloaded'] %}
+{% set completed_releases = releases|selectattr('status', 'in', completed_statuses)|list %}
+{% set completed_release = completed_releases[0] if completed_releases else None %}
+{% set downloaded_quality = completed_release.get('quality', '') if completed_release else '' %}
 {% set movie_id = movie.get('_id', '') %}
 
 <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
@@ -73,6 +76,13 @@
       {% if quality_label %}
       <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-white/80 backdrop-blur-sm">{{ quality_label }}</span>
+        {% if downloaded_quality %}
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
+        {% endif %}
+      </div>
+      {% elif downloaded_quality %}
+      <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
       </div>
       {% endif %}
     </div>

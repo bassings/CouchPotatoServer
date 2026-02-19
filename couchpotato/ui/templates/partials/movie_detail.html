@@ -13,7 +13,14 @@
 {% set status = movie.get('status', '') %}
 {% set profile = movie.get('profile', {}) %}
 {% set quality_label = profile.get('label', '') if profile else '' %}
-{% set releases = movie.get('releases', []) %}
+{% set releases = movie.get('releases', []) or [] %}
+{% set profile_qualities = profile.get('qualities', []) if profile else [] %}
+{% set matching_releases = releases|selectattr('quality', 'in', profile_qualities)|list if profile_qualities else releases %}
+{% set completed_statuses = ['done', 'seeding', 'downloaded'] %}
+{% set completed_releases = releases|selectattr('status', 'in', completed_statuses)|list %}
+{% set completed_release = completed_releases[0] if completed_releases else None %}
+{% set downloaded_quality = completed_release.get('quality', '') if completed_release else '' %}
+{% set completed_status = completed_release.get('status', '') if completed_release else '' %}
 {% set movie_id = movie.get('_id', '') %}
 {% set imdb_id = info.get('imdb', '') %}
 
@@ -95,6 +102,18 @@
         <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-cp-blue/10 text-cp-blue">wanted</span>
         {% else %}
         <span class="px-2 py-0.5 rounded text-[10px] font-medium lowercase bg-white/10 text-white/80">{{ status }}</span>
+        {% endif %}
+        {% if downloaded_quality %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-cp-success/10 text-cp-success">
+          Downloaded: {{ downloaded_quality }}
+        </span>
+        {% endif %}
+        {% if completed_status == 'seeding' and downloaded_quality %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-cp-blue/10 text-cp-blue">Seeding ({{ downloaded_quality }})</span>
+        {% elif completed_status == 'downloaded' and downloaded_quality %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-cp-success/10 text-cp-success">Downloaded ({{ downloaded_quality }})</span>
+        {% elif completed_status == 'done' and downloaded_quality %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-medium bg-cp-success/10 text-cp-success">Complete ({{ downloaded_quality }})</span>
         {% endif %}
       </div>
       {% if plot %}
@@ -200,7 +219,7 @@
           </tr>
         </thead>
         <tbody>
-          {% for r in releases %}
+          {% for r in matching_releases %}
           {% set r_info = r.get('info', {}) %}
           {% set r_quality = r.get('quality', '') %}
           {% set r_protocol = r_info.get('protocol', 'unknown') %}
@@ -264,6 +283,13 @@
             </td>
           </tr>
           {% endfor %}
+          {% if not matching_releases %}
+          <tr>
+            <td colspan="7" class="px-4 py-4 text-cp-muted text-center">
+              No releases match the selected profile qualities.
+            </td>
+          </tr>
+          {% endif %}
         </tbody>
       </table>
     </div>
