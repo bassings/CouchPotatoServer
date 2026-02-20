@@ -139,7 +139,7 @@ class Release(Plugin):
             try:
                 db = get_db()
 
-                release_identifier = '%s.%s.%s' % (group['identifier'], group['meta_data'].get('audio', 'unknown'), group['meta_data']['quality']['identifier'])
+                release_identifier = '%s.%s.%s' % (group['identifier'], group['meta_data'].get('audio') or 'unknown', group['meta_data']['quality']['identifier'])
 
                 # Add movie if it doesn't exist
                 try:
