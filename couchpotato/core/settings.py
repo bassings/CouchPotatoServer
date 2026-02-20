@@ -318,13 +318,23 @@ class Settings:
 
         if self.getType(section, option) == 'directories':
             import json
-            value = json.loads(value)
+            # Accept either a JSON array or a plain "::" delimited string
+            if isinstance(value, str) and value.strip().startswith('['):
+                try:
+                    value = json.loads(value)
+                except (json.JSONDecodeError, ValueError):
+                    value = []
+            elif isinstance(value, str):
+                # Plain string — split on :: delimiter or treat as single path
+                value = [v.strip() for v in value.split(self.directories_delimiter) if v.strip()]
             if not (value and isinstance(value, list)):
                 value = []
             value = self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
 
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
-        self.set(section, option, (new_value if new_value else value).encode('unicode_escape'))
+        # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
+        # serialises as b'...' literals (Python 3 bug)
+        self.set(section, option, new_value if new_value else value)
         self.save()
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
