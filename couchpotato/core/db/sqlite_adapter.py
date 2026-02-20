@@ -231,20 +231,19 @@ class SQLiteAdapter(DatabaseInterface):
             sql += " ORDER BY _id"
 
         elif index_name == 'media':
-            # MediaIndex: lookup by provider-identifier hash
-            # key is md5(f"{provider}-{identifier}")
-            # We search media_identifiers instead
+            # MediaIndex: lookup by provider-identifier.
+            # Callers pass the key as '{provider}-{identifier}', e.g. 'imdb-tt13320622'.
+            # We look this up in the denormalised media_identifiers table.
             if key is not None:
+                key_str = str(key)
+                if '-' in key_str:
+                    provider, identifier = key_str.split('-', 1)
+                else:
+                    provider, identifier = 'imdb', key_str
                 sql = """SELECT d._id, d._rev, d.data FROM documents d
                          JOIN media_identifiers mi ON d._id = mi.media_id
-                         WHERE md5_provider_id(mi.provider, mi.identifier) = ?"""
-                # Can't use custom functions easily, so use a different approach:
-                # The caller provides the md5 hash. We need to check all combos.
-                # Simpler: just scan media_identifiers and compute.
-                # For now, do a subquery approach.
-                sql = """SELECT d._id, d._rev, d.data FROM documents d
-                         WHERE d._t = 'media'"""
-                params = []
+                         WHERE mi.provider = ? AND mi.identifier = ?"""
+                params = [provider, identifier]
             else:
                 sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
 
@@ -344,7 +343,10 @@ class SQLiteAdapter(DatabaseInterface):
                 params.append(key)
             sql += " ORDER BY json_extract(data, '$.status')"
 
-        elif index_name == 'release_id':
+        elif index_name in ('release_id', 'release_identifier'):
+            # ReleaseIDIndex — keyed by the release identifier string.
+            # Both index names map to the same column; 'release_identifier' is the
+            # name used in _database and by db.get() call-sites in release/main.py.
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
             if key is not None:
                 sql += " AND json_extract(data, '$.identifier') = ?"
