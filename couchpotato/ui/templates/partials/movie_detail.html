@@ -226,11 +226,21 @@
           {% set r_score = r_info.get('score', 0) %}
           {% set r_age = r_info.get('age', 0) %}
           {% set r_id = r.get('_id', '') %}
+          {% set r_files = r.get('files', {}) %}
+          {% set r_movie_files = r_files.get('movie', []) %}
+          {% set r_filename = r_movie_files[0].split('/')|last if r_movie_files else '' %}
+          {% set r_display_name = r_info.get('name') or r_filename or r.get('identifier', 'Unknown') %}
+          {% set r_identifier_parts = r.get('identifier', '').split('.') %}
+          {% set r_audio = r_identifier_parts[1] if r_identifier_parts|length > 2 and r_identifier_parts[1] and r_identifier_parts[1] != 'unknown' else '' %}
           <tr class="border-b border-white/[0.03] hover:bg-white/[0.015] transition-colors">
-            <td class="px-4 py-2.5 max-w-xs truncate font-light" title="{{ r_info.get('name', r.get('identifier', 'Unknown')) }}">{{ r_info.get('name', r.get('identifier', 'Unknown')) }}</td>
+            <td class="px-4 py-2.5 max-w-xs truncate font-light" title="{{ r_display_name }}">{{ r_display_name }}</td>
             <td class="px-4 py-2.5">
-              {% if r_quality %}
-              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ r_quality if r_quality is string else r_quality.get('label', r_quality) }}</span>
+              {% set q_label = r_quality if r_quality is string else r_quality.get('label', '') %}
+              {% if q_label %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ q_label }}</span>
+              {% endif %}
+              {% if r_audio %}
+              <span class="px-1.5 py-0.5 rounded text-[9px] bg-white/10 text-cp-muted ml-0.5">{{ r_audio }}</span>
               {% endif %}
             </td>
             <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>

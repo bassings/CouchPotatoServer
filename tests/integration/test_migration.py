@@ -109,8 +109,9 @@ class TestMigrate:
         adapter = SQLiteAdapter()
         adapter.open(dest_path)
         # The sample data has imdb identifiers
+        # query with_doc=True yields {'doc': {...}, '_id': '...'} (CodernityDB compat)
         media_docs = list(adapter.query('media_status', with_doc=True))
-        has_identifiers = any(d.get('identifiers') for d in media_docs)
+        has_identifiers = any(d.get('doc', d).get('identifiers') for d in media_docs)
         assert has_identifiers
         adapter.close()
 
