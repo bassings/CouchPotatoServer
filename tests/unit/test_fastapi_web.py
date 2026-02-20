@@ -313,8 +313,8 @@ class TestTemplateRendering:
             assert resp.status_code == 200
             assert 'API' in resp.text
 
-    def test_new_partial_movies_with_releases_uses_available_release_filter(self, client):
-        """with_releases should query backend using release_status=available."""
+    def test_new_partial_movies_with_releases_uses_has_releases_filter(self, client):
+        """with_releases=true should query backend using has_releases=True (not release_status)."""
         captured_kwargs = {}
 
         def capture_handler(**kwargs):
@@ -329,7 +329,6 @@ class TestTemplateRendering:
         try:
             resp = client.get('/new/partial/movies?status=active&with_releases=true')
         finally:
-            # Restore original handler
             if old_handler:
                 api['media.list'] = old_handler
             else:
@@ -338,7 +337,8 @@ class TestTemplateRendering:
         assert resp.status_code == 200
         assert captured_kwargs.get('type') == 'movie'
         assert captured_kwargs.get('status') == 'active'
-        assert captured_kwargs.get('release_status') == 'available'
+        assert captured_kwargs.get('has_releases') is True
+        assert 'release_status' not in captured_kwargs
 
 
 # --- FastAPI App Creation Tests ---

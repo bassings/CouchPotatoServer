@@ -247,7 +247,7 @@ class MediaPlugin(MediaBase):
 
         return False
 
-    def list(self, types = None, status = None, release_status = None, status_or = False, limit_offset = None, with_tags = None, starts_with = None, search = None):
+    def list(self, types = None, status = None, release_status = None, has_releases = None, status_or = False, limit_offset = None, with_tags = None, starts_with = None, search = None):
 
         db = get_db()
 
@@ -291,6 +291,18 @@ class MediaPlugin(MediaBase):
                     if not self._mediaHasMatchingAvailableRelease(media_id):
                         continue
                 filter_by['release_status'].add(media_id)
+
+        # Filter by whether media has any release at all
+        if has_releases is not None:
+            all_release_statuses = ['available', 'done', 'seeding', 'snatched', 'failed', 'missing', 'ignored']
+            media_with_releases = set()
+            for r in fireEvent('release.with_status', all_release_statuses, with_doc = False, single = True) or []:
+                if r.get('media_id'):
+                    media_with_releases.add(r['media_id'])
+            if has_releases:
+                filter_by['has_releases'] = media_with_releases
+            else:
+                filter_by['has_releases'] = set(all_media_ids) - media_with_releases
 
         # Add search filters
         if starts_with:
@@ -355,10 +367,16 @@ class MediaPlugin(MediaBase):
 
     def listView(self, **kwargs):
 
+        has_releases_raw = kwargs.get('has_releases')
+        has_releases = None
+        if has_releases_raw is not None:
+            has_releases = has_releases_raw if isinstance(has_releases_raw, bool) else str(has_releases_raw).lower() in ('true', '1', 'yes')
+
         total_movies, movies = self.list(
             types = splitString(kwargs.get('type')),
             status = splitString(kwargs.get('status')),
             release_status = splitString(kwargs.get('release_status')),
+            has_releases = has_releases,
             status_or = kwargs.get('status_or') is not None,
             limit_offset = kwargs.get('limit_offset'),
             with_tags = splitString(kwargs.get('with_tags')),

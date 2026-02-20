@@ -27,7 +27,7 @@ def getParams(params):
 
             for item in nested:
                 if item is nested[-1]:
-                    current[item] = toUnicode(unquote(value))
+                    current[item] = value if not isinstance(value, str) else toUnicode(unquote(value))
                 else:
                     try:
                         current[item]
@@ -36,9 +36,13 @@ def getParams(params):
 
                     current = current[item]
         else:
-            temp[param] = toUnicode(unquote(value))
-            if temp[param].lower() in ['true', 'false']:
-                temp[param] = temp[param].lower() != 'false'
+            if not isinstance(value, str):
+                # Pass non-string values (bool, int, etc.) through directly
+                temp[param] = value
+            else:
+                temp[param] = toUnicode(unquote(value))
+                if temp[param].lower() in ['true', 'false']:
+                    temp[param] = temp[param].lower() != 'false'
 
     return dictToList(temp)
 

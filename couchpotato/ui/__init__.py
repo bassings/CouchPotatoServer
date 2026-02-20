@@ -122,8 +122,9 @@ def create_router(require_auth) -> APIRouter:
         from couchpotato.api import callApiHandler
         try:
             params = {'type': 'movie', 'status': status}
-            if with_releases:
-                params['release_status'] = 'available'
+            # with_releases=True  → Available page: active movies that have any release
+            # with_releases=False → Wanted page: active movies with no releases yet
+            params['has_releases'] = with_releases
 
             result = callApiHandler('media.list', **params)
             if isinstance(result, dict):
