@@ -663,7 +663,13 @@ function directoriesField(section, opt) {
     init() {
       const panel = this.getPanel();
       const raw = panel ? panel.getVal(section, opt.name) : '';
-      const parts = String(raw || '').split('::').filter(s => s.trim());
+      // API returns directories as a JS array; fallback handles legacy '::' strings
+      let parts;
+      if (Array.isArray(raw)) {
+        parts = raw.filter(s => s.trim());
+      } else {
+        parts = String(raw || '').split('::').filter(s => s.trim());
+      }
       this.dirs = parts.length ? parts : [''];
       
       this._eventHandler = (e) => {
