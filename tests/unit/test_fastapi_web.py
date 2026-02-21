@@ -191,11 +191,14 @@ class TestAuthentication:
         assert 'login' in resp.headers.get('location', '')
 
     def test_getkey_with_correct_credentials(self, client, setup_env):
-        """getkey endpoint returns API key with correct credentials."""
+        """getkey endpoint returns API key with correct credentials.
+
+        Real usage: password stored as md5 hash in config, client sends md5 hash.
+        """
         from couchpotato.core.helpers.variable import md5
         setup_env['username'] = 'admin'
-        setup_env['password'] = 'pass123'
-        resp = client.get(f'/getkey/?u={md5("admin")}&p=pass123')
+        setup_env['password'] = md5('pass123')  # stored as MD5, as the app does
+        resp = client.get(f'/getkey/?u={md5("admin")}&p={md5("pass123")}')
         assert resp.status_code == 200
         data = resp.json()
         assert data['success'] is True
@@ -203,8 +206,9 @@ class TestAuthentication:
 
     def test_getkey_with_wrong_credentials(self, client, setup_env):
         """getkey endpoint fails with wrong credentials."""
+        from couchpotato.core.helpers.variable import md5
         setup_env['username'] = 'admin'
-        setup_env['password'] = 'pass123'
+        setup_env['password'] = md5('pass123')  # stored as MD5
         resp = client.get('/getkey/?u=wrong&p=wrong')
         assert resp.status_code == 200
         data = resp.json()
