@@ -13,14 +13,14 @@ test.describe('Filters', () => {
   });
 
   test('should have filter buttons on Wanted page', async ({ page }) => {
-    // Should have All, Wanted, Done buttons
+    // Should have All, Wanted, Available buttons
     const allButton = page.getByRole('button', { name: /^all$/i });
     const wantedButton = page.getByRole('button', { name: /wanted/i });
-    const doneButton = page.getByRole('button', { name: /done/i });
+    const availableButton = page.getByRole('button', { name: /available/i });
     
     await expect(allButton).toBeVisible();
     await expect(wantedButton).toBeVisible();
-    await expect(doneButton).toBeVisible();
+    await expect(availableButton).toBeVisible();
   });
 
   test('should have search filter input', async ({ page }) => {
@@ -76,17 +76,17 @@ test.describe('Filters', () => {
     }
   });
 
-  test('clicking Done filter should filter movies', async ({ page }) => {
-    const doneButton = page.getByRole('button', { name: /done/i });
-    await doneButton.click();
+  test('clicking Available filter should filter movies', async ({ page }) => {
+    const availableButton = page.getByRole('button', { name: /available/i });
+    await availableButton.click();
     
     // Button should be highlighted
-    await expect(doneButton).toHaveClass(/text-cp-success/);
+    await expect(availableButton).toHaveClass(/text-cp-success/);
     
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have status "done"
+    // All visible cards should have status "done" (available)
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     const count = await visibleCards.count();
     

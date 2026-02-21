@@ -7,7 +7,7 @@ import { test, expect, Page } from '@playwright/test';
  * Coverage:
  * - Navigation (sidebar, mobile menu)
  * - Wanted page (filters, search, movie cards, bulk actions)
- * - Available page (same as wanted)
+ * - Available route redirect behavior
  * - Add Movie page (search, add button, profile selection)
  * - Movie Detail page (refresh, trailer, delete, releases)
  * - Suggestions page (charts, add/skip buttons)
@@ -42,7 +42,6 @@ test.describe('Navigation', () => {
     // Test each nav link
     const navLinks = [
       { href: '/wanted/', text: 'Wanted' },
-      { href: '/available/', text: 'Available' },
       { href: '/suggestions/', text: 'Suggestions' },
       { href: '/add/', text: 'Add Movie' },
       { href: '/settings/', text: 'Settings' },
@@ -112,7 +111,7 @@ test.describe('Wanted Page', () => {
     await waitForPageReady(page);
 
     // Click each filter button
-    const filterBtns = page.locator('button:has-text("All"), button:has-text("Wanted"), button:has-text("Done")');
+    const filterBtns = page.locator('button:has-text("All"), button:has-text("Wanted"), button:has-text("Available")');
     const count = await filterBtns.count();
     
     for (let i = 0; i < count; i++) {
@@ -172,15 +171,16 @@ test.describe('Wanted Page', () => {
 });
 
 test.describe('Available Page', () => {
-  test('page loads and displays movies', async ({ page }) => {
+  test('route redirects to wanted page available filter', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
     await page.goto('/available/');
     await waitForPageReady(page);
 
-    // Should have heading
-    await expect(page.locator('h1:has-text("Available")')).toBeVisible();
+    // /available now redirects to the wanted page with available filter.
+    await expect(page).toHaveURL(/\/wanted\/?\?filter=available/);
+    await expect(page.locator('#movie-grid')).toBeVisible();
     checkNoErrors(page, errors);
   });
 });
