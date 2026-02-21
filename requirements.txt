@@ -37,3 +37,4 @@ natsort==8.4.0
 packaging==26.0
 six==1.17.0
 pyOpenSSL
+bcrypt==4.3.0
