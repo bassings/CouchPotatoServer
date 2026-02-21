@@ -80,20 +80,20 @@ test.describe('Filters', () => {
     const availableButton = page.getByRole('button', { name: /available/i });
     await availableButton.click();
     
-    // Button should be highlighted
-    await expect(availableButton).toHaveClass(/text-cp-success/);
+    // Button should be highlighted with accent colour
+    await expect(availableButton).toHaveClass(/text-cp-accent/);
     
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have status "done" (available)
+    // All visible cards should have data-has-releases="true" (has releases or downloading)
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     const count = await visibleCards.count();
     
     for (let i = 0; i < Math.min(count, 5); i++) {
-      const status = await visibleCards.nth(i).getAttribute('data-status');
-      if (status) {
-        expect(status).toBe('done');
+      const hasReleases = await visibleCards.nth(i).getAttribute('data-has-releases');
+      if (hasReleases !== null) {
+        expect(hasReleases).toBe('true');
       }
     }
   });

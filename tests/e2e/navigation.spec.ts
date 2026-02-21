@@ -33,11 +33,11 @@ test.describe('Navigation', () => {
     await expect(page.locator('h1')).toContainText('Wanted');
   });
 
-  test('should navigate to Available page', async ({ page }) => {
-    await page.goto('/');
-    await page.click('a[href*="available"]');
-    await expect(page).toHaveURL(/.*available/);
-    await expect(page.locator('h1')).toContainText('Available');
+  test('should redirect /available to /wanted?filter=available', async ({ page }) => {
+    // /available was removed from the sidebar and is now a redirect
+    await page.goto('/available');
+    await expect(page).toHaveURL(/.*wanted.*filter=available/);
+    await expect(page.locator('h1')).toContainText('Wanted');
   });
 
   test('should navigate to Suggestions page', async ({ page }) => {
