@@ -12,6 +12,8 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
     - uses: actions/checkout@v4
@@ -109,6 +111,10 @@ jobs:
 
   docker-release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      actions: write
     needs: create-release
     env:
       HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
