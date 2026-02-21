@@ -18,7 +18,8 @@ from couchpotato.environment import Env
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
-from jinja2 import Environment as JinjaEnv, FileSystemLoader
+from jinja2 import Environment as JinjaEnv, FileSystemLoader, select_autoescape
+from markupsafe import Markup
 
 log = CPLog(__name__)
 
@@ -36,10 +37,13 @@ class CPJSONEncoder(json.JSONEncoder):
 
 def _cp_tojson(value):
     """Custom tojson filter that handles bytes values."""
-    return json.dumps(value, cls=CPJSONEncoder)
+    return Markup(json.dumps(value, cls=CPJSONEncoder))
 
 
-_jinja_env = JinjaEnv(loader=FileSystemLoader(_template_dir))
+_jinja_env = JinjaEnv(
+    loader=FileSystemLoader(_template_dir),
+    autoescape=select_autoescape(['html', 'xml']),
+)
 _jinja_env.filters['tojson'] = _cp_tojson
 _jinja_env.policies['json.dumps_kwargs'] = {'cls': CPJSONEncoder}
 
