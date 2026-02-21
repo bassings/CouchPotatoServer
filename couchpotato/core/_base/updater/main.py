@@ -521,8 +521,10 @@ class DockerUpdater(BaseUpdater):
             latest = self._parseVersion(latest_tag, include_beta=include_beta)
 
             # Skip if either version couldn't be parsed (e.g., beta/pre-release when not included)
-            if not latest or not current:
-                log.debug('Skipping version comparison: current=%s, latest=%s', current, latest)
+            if not latest or not current or current == (0, 0, 0):
+                # current == (0, 0, 0) means VERSION is a git hash, not a semantic version.
+                # This happens with development builds; skip to avoid false "update available".
+                log.debug('Skipping version comparison: current=%s (v%s), latest=%s', current, version.VERSION, latest)
                 self.last_check = now
                 return False
 
