@@ -66,6 +66,7 @@ class QualityPlugin(Plugin):
 }"""}
         })
 
+        addEvent('app.initialize', self.deduplicateCoreProfiles, priority = 5)
         addEvent('app.initialize', self.fill, priority = 10)
         addEvent('app.load', self.fillBlank, priority = 120)
 
@@ -180,6 +181,53 @@ class QualityPlugin(Plugin):
                 self.fill(reorder = True)
         except Exception:
             log.error('Failed filling quality database with new qualities: %s', traceback.format_exc())
+
+    def deduplicateCoreProfiles(self):
+        """Remove duplicate core profiles created by startup bug.
+
+        A previous bug caused quality.fill() to insert a new core profile on
+        every startup when the database index lookup returned a false negative.
+        This migration detects and removes duplicates, keeping the oldest copy
+        of each core profile label.
+        """
+        try:
+            db = get_db()
+            all_profiles = list(db.get_many('profile', None, with_doc=True))
+
+            # Group core profiles by label
+            by_label = {}
+            for p in all_profiles:
+                doc = p.get('doc', {})
+                if not doc.get('core'):
+                    continue
+                label = doc.get('label', '')
+                if label not in by_label:
+                    by_label[label] = []
+                by_label[label].append(doc)
+
+            # Delete all but the first (oldest) for any duplicated label
+            total_removed = 0
+            for label, docs in by_label.items():
+                if len(docs) <= 1:
+                    continue
+                # Sort by _id (insertion order) to keep oldest
+                docs.sort(key=lambda d: d.get('_id', ''))
+                for duplicate in docs[1:]:
+                    try:
+                        db.delete(duplicate)
+                        total_removed += 1
+                    except Exception:
+                        pass
+
+            if total_removed:
+                log.warning('Removed %s duplicate core profile(s) from database (startup bug cleanup)', total_removed)
+            else:
+                log.debug('No duplicate core profiles found')
+
+            return True
+        except Exception:
+            log.error('Failed deduplicating core profiles: %s', traceback.format_exc())
+            return False
 
     def fill(self, reorder = False):
 
