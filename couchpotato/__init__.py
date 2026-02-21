@@ -11,7 +11,7 @@ import traceback
 from couchpotato.api import api_docs, api_docs_missing, api, api_nonblock, callApiHandler
 from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import sp, toUnicode
-from couchpotato.core.helpers.variable import md5, tryInt
+from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
@@ -301,12 +301,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             p_param = request.query_params.get('p', '')
 
             api_key_val = None
-            # Note: password is already stored as an md5 hash, not cleartext.
-            # The client sends the md5 hash of the password, so this is a
-            # hash-to-hash comparison. CodeQL flags this as cleartext but
-            # it is not.  # nosec  # codeql[py/clear-text-storage-sensitive-data]
-            if (u_param == md5(username) or not username) and (p_param == password or not password):
+            if (u_param == md5(username) or not username) and (check_password(p_param, password) or not password):
                 api_key_val = Env.setting('api_key')
+                if password and is_legacy_md5_hash(password):
+                    Env.setting('password', value=hash_password(p_param))
 
             return {'success': api_key_val is not None, 'api_key': api_key_val}
         except Exception:
@@ -328,10 +326,14 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         form = await request.form()
         username = Env.setting('username')
         password = Env.setting('password')
+        form_password = form.get('password', '')
+        form_password_md5 = md5(form_password)
 
         api_key_val = None
-        if (form.get('username') == username or not username) and (md5(form.get('password', '')) == password or not password):  # CodeQL: password is already stored as md5 hash, not cleartext
+        if (form.get('username') == username or not username) and (check_password(form_password_md5, password) or not password):
             api_key_val = Env.setting('api_key')
+            if password and is_legacy_md5_hash(password):
+                Env.setting('password', value=hash_password(form_password_md5))
 
         response = RedirectResponse(url=web_base, status_code=302)
         if api_key_val:
