@@ -19,6 +19,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history needed for git describe --tags
 
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
@@ -54,7 +56,9 @@ jobs:
         echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
         # Use nearest tag as base version so containers report a meaningful version
         # e.g. "3.1.1" even if master is 2 commits ahead of the v3.1.1 tag
-        BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "dev")
+        BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        BASE_TAG="${BASE_TAG#v}"  # strip leading 'v'
+        BASE_TAG="${BASE_TAG:-dev}"  # fallback to 'dev' if empty
         echo "base_version=${BASE_TAG}" >> $GITHUB_OUTPUT
 
     - name: Build and push to Docker Hub
