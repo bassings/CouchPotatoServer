@@ -99,7 +99,7 @@
 
 			{% if Env.setting('show_wizard') %}
 				if(!window.location.href.contains('wizard'))
-					window.location = '{{ Env.get('web_base') }}wizard/'
+					window.location = {{ (Env.get('web_base') + 'wizard/') | tojson }}
 			{% endif %}
 
 		</script>

@@ -8,7 +8,7 @@
 
         <script>
 
-            var api_base = '{{ Env.get('api_base') }}';
+            var api_base = {{ Env.get('api_base') | tojson }};
 
             var createList = function(name, documents){
                 var list;
