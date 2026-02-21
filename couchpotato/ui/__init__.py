@@ -5,7 +5,7 @@ import json
 import os
 
 from fastapi import APIRouter, Request, Depends
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment as JinjaEnv, FileSystemLoader
 
 from couchpotato.environment import Env
@@ -68,8 +68,9 @@ def create_router(require_auth) -> APIRouter:
     @router.get('/available/')
     @router.get('/available')
     async def available(request: Request, user=Depends(require_auth)):
-        tmpl = _jinja.get_template('wanted.html')
-        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'available'})))
+        wanted_path = request.url.path.rstrip('/')
+        wanted_path = wanted_path.rsplit('/available', 1)[0] + '/wanted'
+        return RedirectResponse(url='%s?filter=available' % wanted_path)
 
     @router.get('/library/')
     @router.get('/library')

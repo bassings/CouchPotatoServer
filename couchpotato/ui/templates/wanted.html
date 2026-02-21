@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% set page_titles = {'wanted': 'Wanted', 'available': 'Available', 'library': 'Library'} %}
+{% set page_titles = {'wanted': 'Wanted', 'library': 'Library'} %}
 {% set page_title = page_titles.get(current_page, 'Movies') %}
 {% block title %}{{ page_title }} — CouchPotato{% endblock %}
 {% block content %}
@@ -45,11 +45,15 @@
       {% endif %}
 
       {% if current_page != 'library' %}
-      <!-- Filter buttons (Wanted and Available pages only) -->
+      <!-- Filter buttons (Wanted page only) -->
       <div class="flex gap-1 text-[10px]">
         <button @click="setFilter('')" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
-        <button @click="setFilter('active')" :class="filterStatus === 'active' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
-        <button @click="setFilter('done')" :class="filterStatus === 'done' ? 'bg-cp-success/10 text-cp-success' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Done</button>
+        <button @click="setFilter('wanted')" :class="filterStatus === 'wanted' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
+        <button @click="setFilter('available')"
+                :class="filterStatus === 'available' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
+                class="px-2.5 py-1 rounded-md transition-colors">
+          Available
+        </button>
       </div>
       {% endif %}
 
@@ -88,9 +92,9 @@
   </div>
 
   <!-- Movie grid (loaded via htmx) (A11Y-004) -->
-  <!-- wanted: all active movies, available: active with releases, library: done movies -->
+  <!-- wanted: all active movies, library: done movies -->
   <div id="movie-grid"
-       hx-get="{{ new_base }}partial/movies?{% if current_page == 'wanted' %}status=active{% elif current_page == 'available' %}status=active&with_releases=true{% else %}status=done{% endif %}"
+       hx-get="{{ new_base }}partial/movies?{% if current_page == 'library' %}status=done{% else %}status=active{% endif %}"
        hx-trigger="load"
        hx-indicator="#loading"
        aria-live="polite"
@@ -187,9 +191,19 @@ function movieList() {
       cards.forEach(card => {
         const title = (card.dataset.title || '').toLowerCase();
         const status = card.dataset.status || '';
+        const hasReleases = card.dataset.hasReleases === 'true';
         // DEF-008 fix: More robust matching - check if any word starts with query
         const matchSearch = !q || title.includes(q);
-        const matchStatus = !this.filterStatus || status === this.filterStatus;
+        let matchStatus;
+        if (!this.filterStatus) {
+          matchStatus = true;
+        } else if (this.filterStatus === 'available') {
+          matchStatus = hasReleases;
+        } else if (this.filterStatus === 'wanted') {
+          matchStatus = !hasReleases;
+        } else {
+          matchStatus = status === this.filterStatus;
+        }
         const visible = matchSearch && matchStatus;
         card.style.display = visible ? '' : 'none';
         if (visible) visibleCount++;

@@ -340,6 +340,59 @@ class TestTemplateRendering:
         assert captured_kwargs.get('has_releases') is True
         assert 'release_status' not in captured_kwargs
 
+    def test_available_route_redirects_to_wanted_filter(self, client):
+        """Available route should redirect to wanted page with available filter for bookmark compatibility."""
+        resp = client.get('/available', follow_redirects=False)
+        assert resp.status_code in (301, 302, 307, 308)
+        assert resp.headers.get('location') == '/wanted?filter=available'
+
+    def test_wanted_page_shows_available_filter_not_done(self, client):
+        """Wanted page should expose All/Wanted/Available filters and no Done filter."""
+        resp = client.get('/wanted')
+        assert resp.status_code == 200
+        assert "setFilter('available')" in resp.text
+        assert "setFilter('done')" not in resp.text
+
+    def test_wanted_grid_always_loads_active_movies(self, client):
+        """Wanted movie grid should always use status=active (no current_page available branch)."""
+        resp = client.get('/wanted')
+        assert resp.status_code == 200
+        assert 'hx-get="/partial/movies?status=active"' in resp.text
+        assert 'with_releases=true' not in resp.text
+
+    def test_sidebar_does_not_link_available_page(self, client):
+        """Sidebar nav should no longer contain Available as a top-level item."""
+        resp = client.get('/wanted')
+        assert resp.status_code == 200
+        assert 'href="/available/"' not in resp.text
+        assert 'href="/new/available/"' not in resp.text
+
+    def test_movie_cards_include_has_releases_data_attribute(self, client):
+        """Movie cards should expose data-has-releases for wanted/available client-side filtering."""
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'active', 'info': {'titles': ['No Releases']}, 'releases': []},
+                    {'_id': 'm2', 'status': 'active', 'info': {'titles': ['Has Releases']}, 'releases': [{'status': 'available'}]},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=active')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert 'data-has-releases="false"' in resp.text
+        assert 'data-has-releases="true"' in resp.text
+
 
 # --- FastAPI App Creation Tests ---
 

@@ -20,6 +20,7 @@
      x-data="{ refreshing: false, selected: false }"
      data-title="{{ title }}"
      data-status="{{ status }}"
+     data-has-releases="{{ 'true' if releases|length > 0 else 'false' }}"
      data-movie-id="{{ movie_id }}">
 
   <!-- Bulk selection checkbox (IMP-005) -->
