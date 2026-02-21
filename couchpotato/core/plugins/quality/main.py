@@ -196,6 +196,13 @@ class QualityPlugin(Plugin):
                     pass
 
                 if not existing:
+                    # Double-check no duplicate profile exists before inserting
+                    # (guards against index lookup failures causing duplicate inserts)
+                    label = toUnicode(q.get('label'))
+                    existing_profiles = list(db.get_many('profile', None, with_doc=True))
+                    profile_labels = {p['doc'].get('label') for p in existing_profiles if p.get('doc')}
+                    profile_already_exists = label in profile_labels
+
                     db.insert({
                         '_t': 'quality',
                         'order': order,
@@ -204,16 +211,19 @@ class QualityPlugin(Plugin):
                         'size_max': tryInt(q.get('size')[1]),
                     })
 
-                    log.info('Creating profile: %s', q.get('label'))
-                    db.insert({
-                        '_t': 'profile',
-                        'order': order + 20,  # Make sure it goes behind other profiles
-                        'core': True,
-                        'qualities': [q.get('identifier')],
-                        'label': toUnicode(q.get('label')),
-                        'finish': [True],
-                        'wait_for': [0],
-                    })
+                    if not profile_already_exists:
+                        log.info('Creating profile: %s', label)
+                        db.insert({
+                            '_t': 'profile',
+                            'order': order + 20,  # Make sure it goes behind other profiles
+                            'core': True,
+                            'qualities': [q.get('identifier')],
+                            'label': label,
+                            'finish': [True],
+                            'wait_for': [0],
+                        })
+                    else:
+                        log.info('Profile already exists, skipping: %s', label)
                 elif reorder:
                     log.info2('Updating quality order')
                     existing['doc']['order'] = order
