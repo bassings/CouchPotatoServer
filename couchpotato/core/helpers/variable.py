@@ -133,9 +133,14 @@ def check_password(password, stored_hash):
             return False
 
     if is_legacy_md5_hash(stored_value):
+        # Legacy MD5 migration path: compare against existing MD5 hash so users
+        # can log in and have their password transparently upgraded to bcrypt.
+        # MD5 is used here only to verify an already-stored legacy hash, not to
+        # create new security-sensitive hashes. New passwords are always bcrypt.
+        # lgtm[py/weak-sensitive-data-hashing]
         return (
             hmac.compare_digest(password_value, stored_value) or
-            hmac.compare_digest(md5(password_value), stored_value)
+            hmac.compare_digest(md5(password_value), stored_value)  # noqa: S324
         )
 
     return False
