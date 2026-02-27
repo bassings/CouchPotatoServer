@@ -1,4 +1,6 @@
+import bcrypt
 import hashlib
+import hmac
 import os
 import random
 import re
@@ -12,6 +14,7 @@ from couchpotato.core.logger import CPLog
 
 
 log = CPLog(__name__)
+_MD5_HEX_RE = re.compile(r'^[a-f0-9]{32}$')
 
 
 def fnEscape(pattern):
@@ -102,6 +105,45 @@ def md5(text):
     # MD5 used for legacy compatibility (cache keys, existing password hashes).
     # Not used for new security-sensitive operations.
     return hashlib.md5(ss(text), usedforsecurity=False).hexdigest()
+
+
+def is_legacy_md5_hash(value):
+    if not isinstance(value, str):
+        return False
+    return _MD5_HEX_RE.match(value) is not None
+
+
+def hash_password(password):
+    if password is None:
+        return ''
+    return bcrypt.hashpw(ss(password), bcrypt.gensalt()).decode('utf-8')
+
+
+def check_password(password, stored_hash):
+    if not password or not stored_hash:
+        return False
+
+    password_value = toUnicode(password)
+    stored_value = toUnicode(stored_hash)
+
+    if stored_value.startswith(('$2a$', '$2b$', '$2y$')):
+        try:
+            return bcrypt.checkpw(ss(password_value), ss(stored_value))
+        except Exception:
+            return False
+
+    if is_legacy_md5_hash(stored_value):
+        # Legacy MD5 migration path: compare against existing MD5 hash so users
+        # can log in and have their password transparently upgraded to bcrypt.
+        # MD5 is used here only to verify an already-stored legacy hash, not to
+        # create new security-sensitive hashes. New passwords are always bcrypt.
+        # lgtm[py/weak-sensitive-data-hashing]
+        return (
+            hmac.compare_digest(password_value, stored_value) or
+            hmac.compare_digest(md5(password_value), stored_value)  # noqa: S324
+        )
+
+    return False
 
 
 def sha1(text):
