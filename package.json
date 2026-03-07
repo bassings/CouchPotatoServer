@@ -20,5 +20,8 @@
     "@playwright/test": "^1.42.0",
     "jsdom": "^28.1.0",
     "vitest": "^4.0.18"
+  },
+  "overrides": {
+    "tmp": ">=0.2.3"
   }
 }
