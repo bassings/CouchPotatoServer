@@ -1,7 +1,7 @@
 # CouchPotatoServer - Python dependencies
 
 # Web Framework
-fastapi==0.134.0
+fastapi==0.135.1
 uvicorn==0.41.0
 Jinja2==3.1.6
 python-multipart==0.0.22
@@ -16,8 +16,8 @@ tenacity==9.1.4
 
 # Network
 requests==2.32.5
-certifi==2026.1.4
-chardet==6.0.0.post1
+certifi==2026.2.25
+chardet==7.0.1
 
 # Parsing
 beautifulsoup4==4.14.3
@@ -38,9 +38,9 @@ gntp==1.0.3
 python-dateutil==2.9.0.post0
 natsort==8.4.0
 packaging==26.0
-filelock==3.23.0
-platformdirs==4.5.1
-rich==14.3.2
+filelock==3.25.0
+platformdirs==4.9.4
+rich==14.3.3
 six==1.17.0
 pyOpenSSL
-bcrypt==4.3.0
+bcrypt==5.0.0

@@ -116,7 +116,10 @@ def is_legacy_md5_hash(value):
 def hash_password(password):
     if password is None:
         return ''
-    return bcrypt.hashpw(ss(password), bcrypt.gensalt()).decode('utf-8')
+    # bcrypt 5.0+ raises ValueError for passwords >72 bytes; truncate to
+    # match the historical bcrypt behaviour (silently ignored extra bytes).
+    pw = ss(password)[:72]
+    return bcrypt.hashpw(pw, bcrypt.gensalt()).decode('utf-8')
 
 
 def check_password(password, stored_hash):
@@ -128,7 +131,8 @@ def check_password(password, stored_hash):
 
     if stored_value.startswith(('$2a$', '$2b$', '$2y$')):
         try:
-            return bcrypt.checkpw(ss(password_value), ss(stored_value))
+            # Truncate to 72 bytes to match hash_password and bcrypt 5.0+ limit
+            return bcrypt.checkpw(ss(password_value)[:72], ss(stored_value))
         except Exception:
             return False
 
