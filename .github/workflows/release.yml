@@ -143,7 +143,7 @@ jobs:
 
     - name: Build and push Docker image (stable)
       if: env.HAS_DOCKER_CREDS == 'true' && steps.prerelease.outputs.is_prerelease == 'false'
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         push: true
@@ -158,7 +158,7 @@ jobs:
 
     - name: Build and push Docker image (prerelease)
       if: env.HAS_DOCKER_CREDS == 'true' && steps.prerelease.outputs.is_prerelease == 'true'
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         push: true
@@ -179,7 +179,7 @@ jobs:
 
     - name: Build and push to GHCR (stable)
       if: steps.prerelease.outputs.is_prerelease == 'false'
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         push: true
@@ -194,7 +194,7 @@ jobs:
 
     - name: Build and push to GHCR (prerelease)
       if: steps.prerelease.outputs.is_prerelease == 'true'
-      uses: docker/build-push-action@v6
+      uses: docker/build-push-action@v7
       with:
         context: .
         push: true
