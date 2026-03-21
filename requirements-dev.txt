@@ -3,7 +3,7 @@
 
 pytest==9.0.2
 pytest-cov>=4.0
-coverage==7.13.4
+coverage==7.13.5
 httpx>=0.27.0
 ruff>=0.15.0
 pytest-timeout>=2.2.0
