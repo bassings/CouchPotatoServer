@@ -19,7 +19,7 @@
     "@lhci/cli": "^0.15.1",
     "@playwright/test": "^1.42.0",
     "jsdom": "^29.0.1",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.2"
   },
   "overrides": {
     "tmp": ">=0.2.3"
