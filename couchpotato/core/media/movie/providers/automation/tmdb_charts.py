@@ -111,8 +111,58 @@ class TMDBChartsBase(Automation):
             return None
 
     def getInfo(self, tmdb_id):
-        """Get movie info from TMDB ID."""
-        return fireEvent('movie.info', identifier='tmdb:%s' % tmdb_id, extended=False, adding=False, merge=True)
+        """Get movie info from TMDB ID.
+
+        Fetches directly from TMDB API and formats for CouchPotato.
+        """
+        data = self._tmdbRequest('/movie/%s' % tmdb_id, {
+            'append_to_response': 'alternative_titles',
+            'language': 'en'
+        })
+
+        if not data:
+            return None
+
+        # Format movie info for CouchPotato
+        year = None
+        if data.get('release_date'):
+            try:
+                year = int(data['release_date'][:4])
+            except (ValueError, TypeError):
+                pass
+
+        # Get poster URL
+        poster_path = data.get('poster_path')
+        poster = 'https://image.tmdb.org/t/p/w154%s' % poster_path if poster_path else None
+        poster_original = 'https://image.tmdb.org/t/p/original%s' % poster_path if poster_path else None
+
+        # Get backdrop
+        backdrop_path = data.get('backdrop_path')
+        backdrop = 'https://image.tmdb.org/t/p/original%s' % backdrop_path if backdrop_path else None
+
+        # Get genres
+        genres = [g.get('name') for g in data.get('genres', []) if g.get('name')]
+
+        return {
+            'tmdb_id': tmdb_id,
+            'imdb': data.get('imdb_id', ''),
+            'titles': [data.get('title', '')],
+            'original_title': data.get('original_title', ''),
+            'year': year,
+            'plot': data.get('overview', ''),
+            'tagline': data.get('tagline', ''),
+            'genres': genres,
+            'runtime': data.get('runtime'),
+            'rating': {
+                'imdb': [data.get('vote_average', 0), data.get('vote_count', 0)]
+            },
+            'images': {
+                'poster': [poster] if poster else [],
+                'poster_original': [poster_original] if poster_original else [],
+                'backdrop_original': [backdrop] if backdrop else [],
+            },
+            'via_tmdb': True,
+        }
 
     def getChartMovies(self, chart_name, max_items=40):
         """Fetch movies from a TMDB chart endpoint."""
