@@ -155,6 +155,10 @@ class TMDBChartsAutomation(TMDBChartsBase):
 
     enabled_option = 'automation_providers_enabled'
 
+    def conf(self, attr, value=None, default=None, section=None):
+        """Override conf to use tmdb_charts section."""
+        return super().conf(attr, value=value, default=default, section='tmdb_charts')
+
     def getIMDBids(self):
         """Get IMDB IDs from enabled charts for automation."""
         movies = []
@@ -180,6 +184,10 @@ class TMDBChartsDisplay(TMDBChartsBase):
     """Display TMDB charts on the Suggestions page."""
 
     chart_enabled_option = 'chart_display_enabled'
+
+    def conf(self, attr, value=None, default=None, section=None):
+        """Override conf to use tmdb_charts section."""
+        return super().conf(attr, value=value, default=default, section='tmdb_charts')
 
     def getChartList(self):
         """Get chart data for display on suggestions page."""
