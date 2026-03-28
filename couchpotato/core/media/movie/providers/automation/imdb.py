@@ -16,9 +16,16 @@ autoload = 'IMDB'
 
 
 class IMDB(MultiProvider):
+    """IMDB automation provider.
+
+    Note: IMDBCharts and IMDBAutomation are disabled as IMDB now uses WAF
+    protection that blocks scraping. Use TMDB Charts instead for chart-based
+    suggestions and automation.
+    """
 
     def getTypes(self):
-        return [IMDBWatchlist, IMDBAutomation, IMDBCharts]
+        # Only return IMDBWatchlist - charts moved to TMDB provider
+        return [IMDBWatchlist]
 
 
 class IMDBBase(Automation, RSS):
@@ -200,6 +207,9 @@ class IMDBCharts(IMDBBase):
         return movie_lists
 
 
+# IMDB Charts config removed - IMDB now uses WAF protection that blocks scraping.
+# Use TMDB Charts (tmdb_charts.py) instead for chart-based suggestions.
+
 config = [{
     'name': 'imdb',
     'groups': [
@@ -224,76 +234,6 @@ config = [{
                     'label': 'url',
                     'type': 'combined',
                     'combine': ['automation_urls_use', 'automation_urls'],
-                },
-            ],
-        },
-        {
-            'tab': 'automation',
-            'list': 'automation_providers',
-            'name': 'imdb_automation_charts',
-            'label': 'IMDB Charts Auto-Add',
-            'description': 'Automatically add movies from IMDB chart lists (Top 250, Box Office, etc.).',
-            'options': [
-                {
-                    'name': 'automation_providers_enabled',
-                    'default': False,
-                    'type': 'enabler',
-                },
-                {
-                    'name': 'automation_charts_theater',
-                    'type': 'bool',
-                    'label': 'In Theaters',
-                    'description': 'New Movies <a href="http://www.imdb.com/movies-in-theaters/" target="_blank">In-Theaters</a> chart',
-                    'default': True,
-                },
-                {
-                    'name': 'automation_charts_top250',
-                    'type': 'bool',
-                    'label': 'TOP 250',
-                    'description': 'IMDB <a href="http://www.imdb.com/chart/top/" target="_blank">TOP 250</a> chart',
-                    'default': False,
-                },
-                {
-                    'name': 'automation_charts_boxoffice',
-                    'type': 'bool',
-                    'label': 'Box office TOP 10',
-                    'description': 'IMDB Box office <a href="http://www.imdb.com/chart/" target="_blank">TOP 10</a> chart',
-                    'default': True,
-                },
-            ],
-        },
-        {
-            'tab': 'display',
-            'list': 'charts_providers',
-            'name': 'imdb_charts_display',
-            'label': 'IMDB Charts',
-            'description': 'Show IMDB chart data on the Suggestions page.',
-            'options': [
-                {
-                    'name': 'chart_display_enabled',
-                    'default': True,
-                    'type': 'enabler',
-                },
-                {
-                    'name': 'chart_display_theater',
-                    'type': 'bool',
-                    'label': 'In Theaters',
-                    'description': 'Currently playing in cinemas.',
-                    'default': False,
-                },
-                {
-                    'name': 'chart_display_top250',
-                    'type': 'bool',
-                    'label': 'IMDB Top 250',
-                    'description': 'Highest rated movies of all time.',
-                    'default': False,
-                },
-                {
-                    'name': 'chart_display_boxoffice',
-                    'type': 'bool',
-                    'label': 'Box Office Top 10',
-                    'description': 'Current box office top earners.',
-                    'default': True,
                 },
             ],
         },
