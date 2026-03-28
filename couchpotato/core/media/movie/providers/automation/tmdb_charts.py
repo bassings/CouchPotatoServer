@@ -179,6 +179,8 @@ class TMDBChartsAutomation(TMDBChartsBase):
 class TMDBChartsDisplay(TMDBChartsBase):
     """Display TMDB charts on the Suggestions page."""
 
+    chart_enabled_option = 'chart_display_enabled'
+
     def getChartList(self):
         """Get chart data for display on suggestions page."""
         movie_lists = []
