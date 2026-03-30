@@ -190,9 +190,34 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
             rename_files[current_file] = os.path.join(destination, final_folder_name, final_file_name)
 
+            # Include matching subtitle files
+            for sub_type in ('subtitle', 'subtitle_extra'):
+                if sub_type in group.get('files', {}):
+                    sub_renames = self.getRenameExtras(
+                        extra_type=sub_type,
+                        replacements=replacements,
+                        folder_name=folder_name,
+                        file_name=file_name,
+                        destination=destination,
+                        group=group,
+                        current_file=current_file,
+                        remove_multiple=(len(movie_files) > 1),
+                    )
+                    rename_files.update(sub_renames)
+
         if not rename_files:
             log.debug('No rename_files built for %s, skipping', media_title)
             return
+
+        # Move all leftover files to the movie folder if configured
+        if self.conf('move_leftover', default=False):
+            dst_dir = os.path.dirname(next(iter(rename_files.values())))
+            all_group_files = set()
+            for file_list in group.get('files', {}).values():
+                all_group_files.update(file_list)
+            for leftover in all_group_files - set(rename_files.keys()):
+                if os.path.isfile(leftover):
+                    rename_files[leftover] = os.path.join(dst_dir, os.path.basename(leftover))
 
         log.info('Processing: %s -> %s', media_title, list(rename_files.values())[0] if rename_files else 'unknown')
 
