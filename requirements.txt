@@ -9,7 +9,7 @@ python-multipart==0.0.22
 # Core Infrastructure
 blinker==1.9.0
 pydantic==2.12.5
-pydantic_core==2.41.5
+pydantic_core==2.44.0
 apscheduler==3.11.2
 tenacity==9.1.4
 
