@@ -2,9 +2,9 @@
 
 # Web Framework
 fastapi==0.135.1
-uvicorn==0.42.0
+uvicorn==0.44.0
 Jinja2==3.1.6
-python-multipart==0.0.22
+python-multipart==0.0.26
 
 # Core Infrastructure
 blinker==1.9.0
@@ -14,9 +14,9 @@ apscheduler==3.11.2
 tenacity==9.1.4
 
 # Network
-requests==2.33.0
+requests==2.33.1
 certifi==2026.2.25
-chardet==7.2.0
+chardet==7.4.1
 
 # Parsing
 beautifulsoup4==4.14.3
@@ -38,9 +38,9 @@ python-dateutil==2.9.0.post0
 natsort==8.4.0
 packaging==26.0
 filelock==3.25.2
-platformdirs==4.9.4
+platformdirs==4.9.6
 rich==14.3.3
 six==1.17.0
 pyOpenSSL
-cryptography==46.0.6
+cryptography==46.0.7
 bcrypt==5.0.0
