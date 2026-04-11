@@ -98,26 +98,25 @@
 ### Low (P4)
 
 #### DEF-012: Profile Not Populated in Media API Response
-**Status:** OPEN
+**Status:** FIXED ✅
 **Date:** 2026-02-19
+**Fixed:** 2026-03-07 (Codex)
 **Location:** `couchpotato/core/media/_base/media/main.py` - `get()` method
 **Description:** Movies have `profile_id` set but `profile` is `None` in API response. UI shows "No Profile" for all movies.
 **Root Cause:** The `get()` method attaches `category` and `releases` but doesn't attach `profile`. Missing join.
-**Fix:** Add profile attachment in `get()` method around line 163:
+**Fix Applied:** Profile attached at `main.py:165-166`:
 ```python
 try: media['profile'] = db.get('id', media.get('profile_id'))
 except Exception: pass
 ```
-**Spec:** `specs/BUG-012-profile-not-populated.md`
 
 #### DEF-011: Delete Button No Action on Movie Detail Page
-**Status:** OPEN
+**Status:** FIXED ✅
 **Date:** 2026-02-19
+**Fixed:** 2026-03-07 (Codex)
 **Location:** Movie detail page (`/movie/{id}/`)
 **Description:** Clicking the Delete button on a movie detail page does nothing visible — no confirmation dialog, no deletion.
-**Expected:** Either a confirmation dialog appears, or the movie is deleted and user redirected to Wanted page.
-**Root Cause:** TBD — likely missing htmx attributes or JavaScript handler.
-**File:** `couchpotato/ui/templates/partials/movie_detail.html`
+**Fix Applied:** Alpine.js handler added in `movie_detail.html:194-197` — shows native confirm dialog, calls `/media.delete/`, redirects to home on success.
 
 #### DEF-007: The Matrix (2004) Duplicate in Search Results
 **Status:** FIXED ✅
