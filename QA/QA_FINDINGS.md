@@ -10,7 +10,12 @@
 
 ### Critical (P1)
 
-*No critical defects found*
+#### SEC-004: JSONP Callback Injection
+**Status:** FIXED ✅
+**Date:** 2026-04-11
+**Location:** `couchpotato/__init__.py:289-294`
+**Description:** `callback_func` query parameter was reflected directly into a JavaScript response without validation, allowing arbitrary JS injection via malformed callback names.
+**Fix Applied:** Validate callback against `^[a-zA-Z_$][a-zA-Z0-9_$.]*$` before use; return HTTP 400 for invalid values.
 
 ---
 
@@ -92,6 +97,47 @@
 2. Added a refresh button to ALL movie cards (appears on hover) that triggers metadata refresh
 3. Refresh uses htmx to reload the movie grid after refresh completes
 **File:** `couchpotato/ui/templates/partials/movie_cards.html`
+
+---
+
+#### DEF-013: Silent Exception Swallow in cleanupFaults
+**Status:** FIXED ✅
+**Date:** 2026-04-11
+**Location:** `couchpotato/core/media/_base/media/main.py:108`
+**Description:** DB update failures during startup status migration were silently swallowed, causing invisible data corruption with no log trace.
+**Fix Applied:** Replaced bare `except Exception: pass` with `log.error(...)` — failures now surface in logs.
+
+#### DEF-014: markDone() Hides Database Errors
+**Status:** FIXED ✅
+**Date:** 2026-04-11
+**Location:** `couchpotato/core/media/_base/media/main.py:565`
+**Description:** All exceptions in `markDone()` returned `success: False` with no distinction between "not found" and "database error".
+**Fix Applied:** Catches `RecordNotFound`/`RecordDeleted` for missing media; logs and returns a distinct error response for unexpected DB failures.
+
+#### DEF-015: Non-list Poster Value Causes TypeError in Charts
+**Status:** FIXED ✅
+**Date:** 2026-04-11
+**Location:** `couchpotato/core/media/movie/charts/main.py:47`
+**Description:** If TMDB returns `images.poster` as a non-list type, `posters[0]` raises `TypeError` despite the length check.
+**Fix Applied:** Added `isinstance(posters, list)` guard; falls back to empty list.
+
+---
+
+### Medium (P3)
+
+#### DEF-016: Delete Multi-Document Operation Lacks Transaction Atomicity
+**Status:** OPEN
+**Date:** 2026-04-11
+**Location:** `couchpotato/core/media/_base/media/main.py:490-554`
+**Description:** Deleting a movie deletes releases then the media document as sequential individual DB operations. A crash between steps leaves orphaned release records. `media_lock` provides thread safety but not crash safety.
+**Recommendation:** Add a `transaction()` context manager to `SQLiteAdapter` wrapping multi-step deletes in `BEGIN/COMMIT/ROLLBACK`.
+
+#### DEF-017: Charts Ignore List Has Race Condition
+**Status:** OPEN
+**Date:** 2026-04-11
+**Location:** `couchpotato/core/media/movie/charts/main.py:74-80`
+**Description:** `charts_ignore` is read, modified, and written back without locking. Concurrent ignore requests can lose updates.
+**Recommendation:** Use a DB-backed list or file lock for charts_ignore persistence.
 
 ---
 

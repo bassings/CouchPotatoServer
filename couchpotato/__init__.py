@@ -5,6 +5,7 @@ Provides web views, authentication, and the main application setup.
 import asyncio
 import json
 import os
+import re
 import time
 import traceback
 
@@ -288,6 +289,9 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
         jsonp_callback = kwargs.get('callback_func')
         if jsonp_callback:
+            # Validate to alphanumeric/underscore/dot only to prevent JSONP injection
+            if not re.match(r'^[a-zA-Z_$][a-zA-Z0-9_$.]*$', str(jsonp_callback)):
+                return JSONResponse(content={'success': False, 'error': 'Invalid callback'}, status_code=400)
             return Response(
                 content=str(jsonp_callback) + '(' + (result if isinstance(result, str) else str(result)) + ')',
                 media_type='text/javascript'

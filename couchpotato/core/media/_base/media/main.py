@@ -106,7 +106,7 @@ class MediaPlugin(MediaBase):
                 media['status'] = 'done'
                 db.update(media)
             except Exception:
-                pass
+                log.error('Failed cleaning up fault status for media %s: %s', media.get('_id'), traceback.format_exc())
 
     def refresh(self, id = '', **kwargs):
         handlers = []
@@ -562,8 +562,11 @@ class MediaPlugin(MediaBase):
 
         try:
             media = db.get('id', id)
-        except Exception:
+        except (RecordNotFound, RecordDeleted):
             media = None
+        except Exception:
+            log.error('Unexpected error fetching media %s in markDone: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
 
         if media:
             media['status'] = 'done'

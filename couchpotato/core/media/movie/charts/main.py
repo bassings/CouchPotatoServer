@@ -45,6 +45,8 @@ class Charts(Plugin):
 
                 # Cache poster
                 posters = media.get('images', {}).get('poster', [])
+                if not isinstance(posters, list):
+                    posters = []
                 poster = [x for x in posters if 'tmdb' in x]
                 posters = poster if len(poster) > 0 else posters
 
