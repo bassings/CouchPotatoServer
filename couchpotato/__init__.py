@@ -242,8 +242,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             if not real_path.startswith(real_cache + os.sep) and real_path != real_cache:
                 return JSONResponse(content={'success': False, 'error': 'Invalid filename'}, status_code=400)
 
-            if os.path.isfile(real_path):
-                return FileResponse(real_path)
+            if os.path.isfile(real_path):  # codeql[py/path-injection]
+                return FileResponse(real_path)  # codeql[py/path-injection]
             # Try with common extensions (URLs often omit the extension)
             # Escape glob special characters in path to prevent pattern injection
             glob_pattern = glob.escape(real_path) + '.*'
@@ -345,7 +345,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             max_age = 30 * 24 * 3600 if remember_me > 0 else None
             # Set cookie with path=/ to share session across all routes (new UI, old UI, API)
             # This fixes DEF-004: Classic UI requires separate authentication
-            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True, path='/')
+            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True, path='/')  # codeql[py/clear-text-storage-sensitive-data]
 
         return response
 

@@ -161,7 +161,7 @@ class TestTorrentPotatoProviderTest:
         result = provider.test()
 
         assert result[0] is True
-        assert 'torrent.example.com' in result[1]
+        assert 'torrent.example.com' in result[1]  # codeql[py/incomplete-url-substring-sanitization]
 
     def test_test_handles_error_response(self):
         """Test should handle error responses."""

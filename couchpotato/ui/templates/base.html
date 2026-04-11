@@ -128,8 +128,34 @@ tailwind.config = {
       updateAvailable: null,
       version: '',
       darkMode: true,
+      toasts: [],
+      _toastId: 0,
+
+      toast(message, type = 'success', duration = 3000) {
+        const id = ++this._toastId;
+        this.toasts.push({ id, message, type });
+        setTimeout(() => this.dismissToast(id), duration);
+      },
+
+      dismissToast(id) {
+        this.toasts = this.toasts.filter(t => t.id !== id);
+      },
 
       init() {
+        // FEAT-005: Global htmx toast notifications
+        document.addEventListener('htmx:afterRequest', (evt) => {
+          const url = evt.detail?.requestConfig?.path || '';
+          const ok = evt.detail?.successful;
+          if (url.includes('movie.add')) {
+            this.toast(ok ? 'Movie added to wanted list' : 'Failed to add movie', ok ? 'success' : 'error');
+          } else if (url.includes('media.delete')) {
+            if (ok) this.toast('Movie deleted', 'success');
+          } else if (url.includes('movie.searcher.single')) {
+            if (ok) this.toast('Search started', 'info');
+          } else if (url.includes('movie.refresh')) {
+            if (ok) this.toast('Movie refreshed', 'success');
+          }
+        });
         // IMP-006: Load theme preference
         const saved = localStorage.getItem('cp-theme');
         if (saved === 'light') {
@@ -294,6 +320,24 @@ tailwind.config = {
 
 <!-- Movie Info Modal (used by suggestions, charts, and search) -->
 {% include "partials/movie_info_modal.html" %}
+
+<!-- FEAT-005: Toast notifications -->
+<div aria-live="polite" aria-atomic="false" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+  <template x-for="t in toasts" :key="t.id">
+    <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
+         :class="{
+           'bg-green-600 text-white': t.type === 'success',
+           'bg-red-600 text-white': t.type === 'error',
+           'bg-cp-accent text-cp-bg': t.type === 'info'
+         }"
+         role="status">
+      <span x-text="t.message" class="flex-1"></span>
+      <button @click="dismissToast(t.id)" class="opacity-70 hover:opacity-100 ml-1" aria-label="Dismiss">
+        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+      </button>
+    </div>
+  </template>
+</div>
 
 <!-- PWA Service Worker Registration -->
 <script>

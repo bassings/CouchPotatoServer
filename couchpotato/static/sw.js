@@ -64,8 +64,8 @@ self.addEventListener('fetch', event => {
 
   // For static assets, use cache-first
   if (url.pathname.startsWith('/static/') ||
-      url.hostname.includes('unpkg.com') ||
-      url.hostname.includes('jsdelivr.net')) {
+      url.hostname === 'unpkg.com' || url.hostname.endsWith('.unpkg.com') ||
+      url.hostname === 'jsdelivr.net' || url.hostname.endsWith('.jsdelivr.net')) {
     event.respondWith(
       caches.match(request).then(cached => {
         if (cached) return cached;

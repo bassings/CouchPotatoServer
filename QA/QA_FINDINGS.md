@@ -216,7 +216,10 @@ Add PWA support for installable mobile experience
 **Implemented:** Web app manifest, service worker, app icons, offline caching
 
 ### FEAT-005: Notifications in UI
+**Status:** DONE ✅
+**Implemented:** 2026-04-11
 Show toast notifications for successful actions (movie added, deleted, etc.)
+**Implemented:** Global toast component in `appShell()` (base.html). Hooks into htmx `afterRequest` events for movie add, delete, refresh, and search actions. Dismissible with auto-timeout after 3s.
 
 ---
 

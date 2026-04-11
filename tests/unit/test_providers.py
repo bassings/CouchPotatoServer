@@ -551,7 +551,7 @@ class TestTorrentPotatoJackettIntegration:
         assert result['success'] is True
         assert result['added'] == 1
         assert result['total'] == 2  # existing + new
-        assert 'other-indexer.com' in saved_settings['host']
+        assert 'other-indexer.com' in saved_settings['host']  # codeql[py/incomplete-url-substring-sanitization]
         assert 'yts/api' in saved_settings['host']
 
     def test_jackettSync_skips_duplicates(self):

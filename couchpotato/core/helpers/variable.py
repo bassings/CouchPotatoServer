@@ -104,7 +104,7 @@ def flattenList(l):
 def md5(text):
     # MD5 used for legacy compatibility (cache keys, existing password hashes).
     # Not used for new security-sensitive operations.
-    return hashlib.md5(ss(text), usedforsecurity=False).hexdigest()
+    return hashlib.md5(ss(text), usedforsecurity=False).hexdigest()  # codeql[py/weak-sensitive-data-hashing]
 
 
 def is_legacy_md5_hash(value):
