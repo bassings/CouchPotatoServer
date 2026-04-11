@@ -42,5 +42,6 @@ platformdirs==4.9.6
 rich==14.3.3
 six==1.17.0
 pyOpenSSL
+Pygments==2.20.0
 cryptography==46.0.7
 bcrypt==5.0.0
