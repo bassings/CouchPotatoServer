@@ -416,6 +416,13 @@ class SQLiteAdapter(DatabaseInterface):
                 params.append(key)
             sql += " ORDER BY json_extract(data, '$.order')"
 
+        elif index_name == 'collection':
+            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'collection'"
+            if key is not None:
+                sql += " AND LOWER(json_extract(data, '$.name')) = ?"
+                params.append(str(key).lower())
+            sql += " ORDER BY LOWER(json_extract(data, '$.name'))"
+
         elif index_name == 'profile':
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'profile'"
             if key is not None:

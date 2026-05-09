@@ -1,0 +1,19 @@
+<div id="movie-collections" class="mt-6 bg-cp-card border border-white/[0.05] rounded-md p-4">
+  <h2 class="text-sm font-semibold mb-3 tracking-tight">Collections</h2>
+  {% if collections %}
+  <div class="flex flex-wrap gap-2">
+    {% for collection in collections %}
+    {% set contains_movie = movie_id in (collection.media_ids or []) %}
+    <button class="px-3 py-1.5 rounded-md text-xs transition-colors {{ 'bg-cp-accent/15 text-cp-accent' if contains_movie else 'bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.08]' }}"
+            hx-get="{{ api_base }}/{{ 'collection.remove_media' if contains_movie else 'collection.add_media' }}/?id={{ collection._id }}&media_id={{ movie_id }}"
+            hx-target="#movie-collections"
+            hx-swap="outerHTML"
+            hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/collections', '#movie-collections')">
+      {{ '✓ ' if contains_movie else '+ ' }}{{ collection.name }}
+    </button>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-xs text-cp-muted">No collections yet. Create one on the <a href="{{ new_base }}collections/" class="text-cp-accent hover:underline">Collections</a> page.</p>
+  {% endif %}
+</div>

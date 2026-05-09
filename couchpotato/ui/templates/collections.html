@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Collections - CouchPotato{% endblock %}
+{% block content %}
+<div class="p-4 lg:p-8 max-w-6xl mx-auto">
+  <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-semibold tracking-tight">Collections</h1>
+      <p class="text-sm text-cp-muted mt-1">Group movies into custom lists like Marvel Movies or Weekend Watch.</p>
+    </div>
+    <form class="bg-cp-card border border-white/[0.06] rounded-lg p-3 flex flex-col sm:flex-row gap-2"
+          hx-get="{{ api_base }}/collection.create/"
+          hx-target="#collections-list"
+          hx-swap="outerHTML"
+          hx-on::after-request="if(event.detail.successful) { this.reset(); htmx.ajax('GET', '{{ new_base }}partial/collections', '#collections-list'); }">
+      <label class="sr-only" for="collection-name">Collection name</label>
+      <input id="collection-name" name="name" required placeholder="New collection"
+             class="bg-cp-bg border border-white/[0.08] rounded-md px-3 py-2 text-sm focus:border-cp-accent/40">
+      <label class="sr-only" for="collection-description">Description</label>
+      <input id="collection-description" name="description" placeholder="Description"
+             class="bg-cp-bg border border-white/[0.08] rounded-md px-3 py-2 text-sm focus:border-cp-accent/40">
+      <button class="px-3 py-2 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 rounded-md text-sm font-medium">Create</button>
+    </form>
+  </div>
+
+  <div id="collections-list"
+       hx-get="{{ new_base }}partial/collections"
+       hx-trigger="load"
+       hx-swap="outerHTML">
+    <div class="text-cp-muted text-sm">Loading collections...</div>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+<div id="collections-list" class="space-y-4">
+{% if collections %}
+  {% for collection in collections %}
+  <section class="bg-cp-card border border-white/[0.06] rounded-lg overflow-hidden" x-data="{ editing: false, deleting: false }">
+    <div class="p-4 border-b border-white/[0.05] flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+      <div class="min-w-0">
+        <template x-if="!editing">
+          <div>
+            <h2 class="text-lg font-semibold tracking-tight">{{ collection.name }}</h2>
+            {% if collection.description %}<p class="text-sm text-cp-muted mt-1">{{ collection.description }}</p>{% endif %}
+            <p class="text-xs text-cp-muted mt-2">{{ collection.media_ids|length }} movie{{ '' if collection.media_ids|length == 1 else 's' }}</p>
+          </div>
+        </template>
+        <template x-if="editing">
+          <form class="flex flex-col sm:flex-row gap-2"
+                hx-get="{{ api_base }}/collection.update/"
+                hx-target="#collections-list"
+                hx-swap="outerHTML"
+                hx-on::after-request="if(event.detail.successful) htmx.ajax('GET', '{{ new_base }}partial/collections', '#collections-list')">
+            <input type="hidden" name="id" value="{{ collection._id }}">
+            <label class="sr-only" for="collection-name-{{ collection._id }}">Collection name</label>
+            <input id="collection-name-{{ collection._id }}" name="name" value="{{ collection.name }}" required
+                   class="bg-cp-bg border border-white/[0.08] rounded-md px-3 py-2 text-sm">
+            <label class="sr-only" for="collection-description-{{ collection._id }}">Description</label>
+            <input id="collection-description-{{ collection._id }}" name="description" value="{{ collection.description }}"
+                   class="bg-cp-bg border border-white/[0.08] rounded-md px-3 py-2 text-sm">
+            <button class="px-3 py-2 bg-cp-success/10 text-cp-success rounded-md text-sm">Save</button>
+            <button type="button" @click="editing = false" class="px-3 py-2 bg-white/[0.04] text-cp-muted rounded-md text-sm">Cancel</button>
+          </form>
+        </template>
+      </div>
+      <div class="flex gap-2 shrink-0">
+        <button @click="editing = true" class="px-3 py-1.5 bg-white/[0.04] text-cp-text rounded-md text-xs hover:bg-white/[0.08]">Edit</button>
+        <button @click="if(confirm('Delete this collection?')) { deleting = true; fetch(CP.apiBase + '/collection.delete/?id={{ collection._id }}').then(() => htmx.ajax('GET', '{{ new_base }}partial/collections', '#collections-list')).finally(() => deleting = false); }"
+                :disabled="deleting"
+                class="px-3 py-1.5 bg-cp-danger/10 text-cp-danger rounded-md text-xs hover:bg-cp-danger/15 disabled:opacity-50">Delete</button>
+      </div>
+    </div>
+    <div class="p-4">
+      {% set movies = collection.movies or [] %}
+      {% if movies %}
+      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        {% for movie in movies %}
+        {% set info = movie.get('info', {}) %}
+        {% set title = info.get('titles', [movie.get('title', 'Unknown')])[0] or movie.get('title', 'Unknown') %}
+        {% set year = info.get('year', '') %}
+        {% set poster = (info.get('images', {}).get('poster', [''])|first) if info.get('images', {}).get('poster') else '' %}
+        <article class="rounded-md bg-cp-surface border border-white/[0.05] overflow-hidden group relative">
+          <a href="{{ new_base }}movie/{{ movie._id }}/" class="block">
+            <div class="aspect-[2/3] bg-cp-bg">
+              {% if poster %}<img src="{{ poster }}" alt="{{ title }}" class="w-full h-full object-cover" loading="lazy">{% endif %}
+            </div>
+            <div class="p-2">
+              <h3 class="text-xs font-medium truncate">{{ title }}</h3>
+              {% if year %}<p class="text-[10px] text-cp-muted">{{ year }}</p>{% endif %}
+            </div>
+          </a>
+          <button @click="fetch(CP.apiBase + '/collection.remove_media/?id={{ collection._id }}&media_id={{ movie._id }}').then(() => htmx.ajax('GET', '{{ new_base }}partial/collections', '#collections-list'))"
+                  class="absolute top-2 right-2 px-2 py-1 rounded bg-black/70 text-white text-[10px] opacity-0 group-hover:opacity-100 focus:opacity-100">
+            Remove
+          </button>
+        </article>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-sm text-cp-muted">No movies in this collection yet. Add one from a movie detail page.</p>
+      {% endif %}
+    </div>
+  </section>
+  {% endfor %}
+{% else %}
+  <div class="bg-cp-card border border-white/[0.06] rounded-lg p-8 text-center">
+    <p class="text-cp-muted text-sm">No collections yet.</p>
+  </div>
+{% endif %}
+</div>

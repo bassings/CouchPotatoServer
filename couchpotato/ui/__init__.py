@@ -91,6 +91,12 @@ def create_router(require_auth) -> APIRouter:
         tmpl = _jinja.get_template('suggestions.html')
         return HTMLResponse(tmpl.render(**_ctx({'current_page': 'suggestions'})))
 
+    @router.get('/collections/')
+    @router.get('/collections')
+    async def collections_page(request: Request, user=Depends(require_auth)):
+        tmpl = _jinja.get_template('collections.html')
+        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'collections'})))
+
     @router.get('/add/')
     @router.get('/add')
     async def add_movie(request: Request, user=Depends(require_auth)):
@@ -198,6 +204,34 @@ def create_router(require_auth) -> APIRouter:
             log.error('Failed to fetch charts')
         tmpl = _jinja.get_template('partials/charts.html')
         return HTMLResponse(tmpl.render(charts=charts, **_ctx()))
+
+    @router.get('/partial/collections')
+    async def partial_collections(request: Request, user=Depends(require_auth)):
+        """Return movie collections as an HTML partial."""
+        from couchpotato.api import callApiHandler
+        collections = []
+        try:
+            result = callApiHandler('collection.list')
+            if isinstance(result, dict):
+                collections = result.get('collections', [])
+        except Exception:
+            log.error('Failed to fetch collections')
+        tmpl = _jinja.get_template('partials/collections.html')
+        return HTMLResponse(tmpl.render(collections=collections, **_ctx()))
+
+    @router.get('/partial/movie/{movie_id}/collections')
+    async def partial_movie_collections(movie_id: str, request: Request, user=Depends(require_auth)):
+        """Return collection controls for one movie."""
+        from couchpotato.api import callApiHandler
+        collections = []
+        try:
+            result = callApiHandler('collection.list', include_movies='0')
+            if isinstance(result, dict):
+                collections = result.get('collections', [])
+        except Exception:
+            log.error('Failed to fetch movie collections')
+        tmpl = _jinja.get_template('partials/movie_collections.html')
+        return HTMLResponse(tmpl.render(collections=collections, movie_id=movie_id, **_ctx()))
 
     @router.get('/partial/settings/{section}')
     async def partial_settings_section(section: str, request: Request, user=Depends(require_auth)):

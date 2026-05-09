@@ -197,6 +197,11 @@
           Delete
         </button>
       </div>
+
+      <div id="movie-collections"
+           hx-get="{{ new_base }}partial/movie/{{ movie_id }}/collections"
+           hx-trigger="load"
+           hx-swap="outerHTML"></div>
     </div>
   </div>
 
