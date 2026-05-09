@@ -126,18 +126,20 @@
 ### Medium (P3)
 
 #### DEF-016: Delete Multi-Document Operation Lacks Transaction Atomicity
-**Status:** OPEN
+**Status:** FIXED ✅
 **Date:** 2026-04-11
+**Fixed:** 2026-05-09
 **Location:** `couchpotato/core/media/_base/media/main.py:490-554`
 **Description:** Deleting a movie deletes releases then the media document as sequential individual DB operations. A crash between steps leaves orphaned release records. `media_lock` provides thread safety but not crash safety.
-**Recommendation:** Add a `transaction()` context manager to `SQLiteAdapter` wrapping multi-step deletes in `BEGIN/COMMIT/ROLLBACK`.
+**Fix Applied:** Added SQLiteAdapter transaction support with BEGIN/COMMIT/ROLLBACK and nested SAVEPOINT handling, then wrapped media delete release/media mutations in a transaction when the active DB supports it.
 
 #### DEF-017: Charts Ignore List Has Race Condition
-**Status:** OPEN
+**Status:** FIXED ✅
 **Date:** 2026-04-11
+**Fixed:** 2026-05-09
 **Location:** `couchpotato/core/media/movie/charts/main.py:74-80`
 **Description:** `charts_ignore` is read, modified, and written back without locking. Concurrent ignore requests can lose updates.
-**Recommendation:** Use a DB-backed list or file lock for charts_ignore persistence.
+**Fix Applied:** Added a module-level lock around charts ignore read-modify-write, de-duplicated with a set, and sorted persisted values for deterministic output.
 
 ---
 

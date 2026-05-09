@@ -1,3 +1,5 @@
+import threading
+
 from CodernityDB.database import RecordNotFound
 from couchpotato import Env, get_db
 from couchpotato.core.helpers.variable import getTitle, splitString
@@ -9,6 +11,7 @@ from couchpotato.core.plugins.base import Plugin
 
 
 log = CPLog(__name__)
+_charts_ignore_lock = threading.Lock()
 
 
 class Charts(Plugin):
@@ -75,11 +78,11 @@ class Charts(Plugin):
 
     def ignoreView(self, imdb = None, **kwargs):
 
-        ignored = splitString(Env.prop('charts_ignore', default = ''))
-
         if imdb:
-            ignored.append(imdb)
-            Env.prop('charts_ignore', ','.join(set(ignored)))
+            with _charts_ignore_lock:
+                ignored = set(splitString(Env.prop('charts_ignore', default = '')))
+                ignored.add(imdb)
+                Env.prop('charts_ignore', ','.join(sorted(ignored)))
 
         return {
             'result': True

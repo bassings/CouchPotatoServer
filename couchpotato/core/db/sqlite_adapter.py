@@ -2,8 +2,10 @@
 import json
 import os
 import sqlite3
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 from hashlib import md5
 from string import ascii_letters
 from typing import Any, Dict, List, Optional
@@ -31,6 +33,8 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn: sqlite3.Connection | None = None
         self._path: str | None = None
         self._indexes: dict = {}  # name -> index config (for compat)
+        self._write_lock = threading.RLock()
+        self._transaction_depth = 0
 
     @property
     def path(self):
@@ -80,6 +84,46 @@ class SQLiteAdapter(DatabaseInterface):
         if self._conn is not None:
             self._conn.close()
             self._conn = None
+
+    @contextmanager
+    def transaction(self):
+        """Run multiple writes atomically.
+
+        SQLiteAdapter methods normally commit each write for CodernityDB
+        compatibility. Multi-document operations can use this context manager
+        to defer those commits until the whole operation succeeds.
+        """
+        conn = self._get_conn()
+        with self._write_lock:
+            depth = self._transaction_depth
+            savepoint = f"cp_tx_{depth}"
+
+            if depth == 0:
+                conn.execute("BEGIN")
+            else:
+                conn.execute(f"SAVEPOINT {savepoint}")
+
+            self._transaction_depth += 1
+            try:
+                yield
+            except Exception:
+                self._transaction_depth -= 1
+                if depth == 0:
+                    conn.rollback()
+                else:
+                    conn.execute(f"ROLLBACK TO SAVEPOINT {savepoint}")
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+                raise
+            else:
+                self._transaction_depth -= 1
+                if depth == 0:
+                    conn.commit()
+                else:
+                    conn.execute(f"RELEASE SAVEPOINT {savepoint}")
+
+    def _commit_if_not_transaction(self) -> None:
+        if self._transaction_depth == 0:
+            self._get_conn().commit()
 
     def get_db_details(self) -> dict:
         """Get database size and details (CodernityDB compatibility)."""
@@ -134,65 +178,68 @@ class SQLiteAdapter(DatabaseInterface):
         return result
 
     def insert(self, data: dict) -> dict:
-        conn = self._get_conn()
-        doc_id = data.get('_id', _generate_id())
-        doc_rev = _generate_rev()
-        doc_type = data.get('_t', '')
-        now = time.time()
+        with self._write_lock:
+            conn = self._get_conn()
+            doc_id = data.get('_id', _generate_id())
+            doc_rev = _generate_rev()
+            doc_type = data.get('_t', '')
+            now = time.time()
 
-        json_data = self._doc_to_json(data)
+            json_data = self._doc_to_json(data)
 
-        conn.execute(
-            "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (doc_id, doc_rev, doc_type, json_data, now, now)
-        )
+            conn.execute(
+                "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (doc_id, doc_rev, doc_type, json_data, now, now)
+            )
 
-        # Update denormalized tables
-        self._update_denormalized(doc_id, data)
-        conn.commit()
+            # Update denormalized tables
+            self._update_denormalized(doc_id, data)
+            self._commit_if_not_transaction()
 
-        return {'_id': doc_id, '_rev': doc_rev}
+            return {'_id': doc_id, '_rev': doc_rev}
 
     def update(self, data: dict) -> dict:
-        conn = self._get_conn()
-        doc_id = data.get('_id')
-        if not doc_id:
-            raise ValueError("Document must have _id for update")
+        with self._write_lock:
+            conn = self._get_conn()
+            doc_id = data.get('_id')
+            if not doc_id:
+                raise ValueError("Document must have _id for update")
 
-        # Check exists
-        existing = conn.execute("SELECT _rev FROM documents WHERE _id = ?", (doc_id,)).fetchone()
-        if existing is None:
-            raise KeyError(f"Document not found: {doc_id}")
+            # Check exists
+            existing = conn.execute("SELECT _rev FROM documents WHERE _id = ?", (doc_id,)).fetchone()
+            if existing is None:
+                raise KeyError(f"Document not found: {doc_id}")
 
-        doc_rev = _generate_rev()
-        doc_type = data.get('_t', '')
-        now = time.time()
-        json_data = self._doc_to_json(data)
+            doc_rev = _generate_rev()
+            doc_type = data.get('_t', '')
+            now = time.time()
+            json_data = self._doc_to_json(data)
 
-        conn.execute(
-            "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
-            (doc_rev, doc_type, json_data, now, doc_id)
-        )
+            conn.execute(
+                "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
+                (doc_rev, doc_type, json_data, now, doc_id)
+            )
 
-        # Update denormalized tables
-        self._update_denormalized(doc_id, data)
-        conn.commit()
+            # Update denormalized tables
+            self._update_denormalized(doc_id, data)
+            self._commit_if_not_transaction()
 
-        return {'_id': doc_id, '_rev': doc_rev}
+            return {'_id': doc_id, '_rev': doc_rev}
 
     def delete(self, data: dict) -> bool:
-        conn = self._get_conn()
-        doc_id = data.get('_id')
-        if not doc_id:
-            raise ValueError("Document must have _id for delete")
+        with self._write_lock:
+            conn = self._get_conn()
+            doc_id = data.get('_id')
+            if not doc_id:
+                raise ValueError("Document must have _id for delete")
 
-        # Clean denormalized tables
-        conn.execute("DELETE FROM media_identifiers WHERE media_id = ?", (doc_id,))
-        conn.execute("DELETE FROM media_tags WHERE media_id = ?", (doc_id,))
+            # Clean denormalized tables
+            conn.execute("DELETE FROM media_identifiers WHERE media_id = ?", (doc_id,))
+            conn.execute("DELETE FROM media_tags WHERE media_id = ?", (doc_id,))
 
-        cursor = conn.execute("DELETE FROM documents WHERE _id = ?", (doc_id,))
-        conn.commit()
-        return cursor.rowcount > 0
+            cursor = conn.execute("DELETE FROM documents WHERE _id = ?", (doc_id,))
+            self._commit_if_not_transaction()
+            return cursor.rowcount > 0
 
     def all(self, index_name: str, limit: int = -1, offset: int = 0,
             with_doc: bool = False) -> Iterator[dict]:

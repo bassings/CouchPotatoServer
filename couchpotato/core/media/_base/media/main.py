@@ -1,6 +1,7 @@
 from datetime import timedelta
 import time
 import traceback
+from contextlib import nullcontext
 from string import ascii_lowercase
 
 from CodernityDB.database import RecordNotFound, RecordDeleted
@@ -498,46 +499,48 @@ class MediaPlugin(MediaBase):
                     deleted = False
 
                     media_releases = fireEvent('release.for_media', media['_id'], single = True)
+                    transaction = db.transaction() if hasattr(db, 'transaction') else nullcontext()
 
-                    if delete_from == 'all':
-                        # Delete connected releases
-                        for release in media_releases:
-                            db.delete(release)
+                    with transaction:
+                        if delete_from == 'all':
+                            # Delete connected releases
+                            for release in media_releases:
+                                db.delete(release)
 
-                        db.delete(media)
-                        deleted = True
-                    else:
-
-                        total_releases = len(media_releases)
-                        total_deleted = 0
-                        new_media_status = None
-
-                        for release in media_releases:
-                            if delete_from in ['wanted', 'snatched', 'late']:
-                                if release.get('status') != 'done':
-                                    db.delete(release)
-                                    total_deleted += 1
-                                new_media_status = 'done'
-                            elif delete_from == 'manage':
-                                if release.get('status') == 'done' or media.get('status') == 'done':
-                                    db.delete(release)
-                                    total_deleted += 1
-
-                        if (total_releases == total_deleted) or (total_releases == 0 and not new_media_status) or (not new_media_status and delete_from == 'late'):
                             db.delete(media)
                             deleted = True
-                        elif new_media_status:
-                            media['status'] = new_media_status
-
-                            # Remove profile (no use for in manage)
-                            if new_media_status == 'done':
-                                media['profile_id'] = None
-
-                            db.update(media)
-
-                            fireEvent('media.untag', media['_id'], 'recent', single = True)
                         else:
-                            fireEvent('media.restatus', media.get('_id'), single = True)
+
+                            total_releases = len(media_releases)
+                            total_deleted = 0
+                            new_media_status = None
+
+                            for release in media_releases:
+                                if delete_from in ['wanted', 'snatched', 'late']:
+                                    if release.get('status') != 'done':
+                                        db.delete(release)
+                                        total_deleted += 1
+                                    new_media_status = 'done'
+                                elif delete_from == 'manage':
+                                    if release.get('status') == 'done' or media.get('status') == 'done':
+                                        db.delete(release)
+                                        total_deleted += 1
+
+                            if (total_releases == total_deleted) or (total_releases == 0 and not new_media_status) or (not new_media_status and delete_from == 'late'):
+                                db.delete(media)
+                                deleted = True
+                            elif new_media_status:
+                                media['status'] = new_media_status
+
+                                # Remove profile (no use for in manage)
+                                if new_media_status == 'done':
+                                    media['profile_id'] = None
+
+                                db.update(media)
+
+                                fireEvent('media.untag', media['_id'], 'recent', single = True)
+                            else:
+                                fireEvent('media.restatus', media.get('_id'), single = True)
 
                     if deleted:
                         fireEvent('notify.frontend', type = 'media.deleted', data = media)

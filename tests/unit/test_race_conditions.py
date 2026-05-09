@@ -313,3 +313,41 @@ class TestConcurrentPluginRunning:
             t.join(timeout=2)
 
         assert len(errors) == 0, f"Errors: {errors}"
+
+
+# ---------------------------------------------------------------------------
+# 4. Concurrent chart ignore updates
+# ---------------------------------------------------------------------------
+
+class TestConcurrentChartIgnore:
+    """charts.ignore should not lose concurrent updates."""
+
+    def test_concurrent_ignore_preserves_all_imdb_ids(self):
+        from couchpotato.core.media.movie.charts.main import Charts
+        from couchpotato.core.media.movie.charts import main as charts_main
+
+        stored = {"value": ""}
+        storage_lock = threading.Lock()
+
+        def fake_prop(identifier, value=None, default=None):
+            assert identifier == "charts_ignore"
+            if value is None:
+                time.sleep(0.01)
+                with storage_lock:
+                    return stored["value"] or default
+            time.sleep(0.01)
+            with storage_lock:
+                stored["value"] = value
+            return None
+
+        plugin = Charts.__new__(Charts)
+        imdb_ids = [f"tt{i:07d}" for i in range(8)]
+
+        with patch.object(charts_main.Env, "prop", side_effect=fake_prop):
+            threads = [threading.Thread(target=plugin.ignoreView, kwargs={"imdb": imdb}) for imdb in imdb_ids]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+
+        assert set(stored["value"].split(",")) == set(imdb_ids)
