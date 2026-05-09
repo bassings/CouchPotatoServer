@@ -46,6 +46,21 @@ class MediaStatusIndex(TreeBasedIndex):
             return md5(data.get('status').encode('utf-8')).hexdigest(), None
 
 
+class MediaWatchedIndex(TreeBasedIndex):
+    _version = 1
+
+    def __init__(self, *args, **kwargs):
+        kwargs['key_format'] = '1s'
+        super().__init__(*args, **kwargs)
+
+    def make_key(self, key):
+        return '1' if key in (True, 'true', 'True', '1', 1) else '0'
+
+    def make_key_value(self, data):
+        if data.get('_t') == 'media':
+            return self.make_key(data.get('watched', False)), None
+
+
 class MediaTypeIndex(TreeBasedIndex):
     _version = 1
 

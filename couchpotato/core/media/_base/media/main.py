@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import time
 import traceback
 from contextlib import nullcontext
@@ -13,7 +13,7 @@ from couchpotato.core.helpers.variable import splitString, getImdb, getTitle
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media import MediaBase
 from couchpotato.core.media_lock import media_lock
-from .index import MediaIndex, MediaStatusIndex, MediaTypeIndex, TitleSearchIndex, TitleIndex, StartsWithIndex, MediaChildrenIndex, MediaTagIndex
+from .index import MediaIndex, MediaStatusIndex, MediaWatchedIndex, MediaTypeIndex, TitleSearchIndex, TitleIndex, StartsWithIndex, MediaChildrenIndex, MediaTagIndex
 
 
 log = CPLog(__name__)
@@ -25,6 +25,7 @@ class MediaPlugin(MediaBase):
         'media': MediaIndex,
         'media_search_title': TitleSearchIndex,
         'media_status': MediaStatusIndex,
+        'media_watched': MediaWatchedIndex,
         'media_tag': MediaTagIndex,
         'media_by_type': MediaTypeIndex,
         'media_title': TitleIndex,
@@ -50,6 +51,7 @@ class MediaPlugin(MediaBase):
                 'limit_offset': {'desc': 'Limit and offset the media list. Examples: "50" or "50,30"'},
                 'starts_with': {'desc': 'Starts with these characters. Example: "a" returns all media starting with the letter "a"'},
                 'search': {'desc': 'Search media title'},
+                'watched': {'type': 'bool', 'desc': 'Filter media by watched state'},
             },
             'return': {'type': 'object', 'example': """{
     'success': True,
@@ -80,12 +82,31 @@ class MediaPlugin(MediaBase):
             }
         })
 
+        addApiView('media.watched', self.markWatched, docs = {
+            'desc': 'Mark media as watched without changing wanted/done status',
+            'params': {
+                'id': {'desc': 'Media ID'},
+                'watched_by': {'desc': 'Optional person/profile who watched it'},
+                'source': {'desc': 'Optional source for the watch event, default manual'},
+            }
+        })
+        addApiView('media.unwatched', self.markUnwatched, docs = {
+            'desc': 'Mark media as unwatched without changing wanted/done status',
+            'params': {
+                'id': {'desc': 'Media ID'},
+            }
+        })
+        addApiView('media.watch_history', self.watchHistory, docs = {
+            'desc': 'List watched movies, newest first',
+        })
+
         addApiView('media.available_chars', self.charView)
 
         addEvent('app.load', self.addSingleRefreshView, priority = 100)
         addEvent('app.load', self.addSingleListView, priority = 100)
         addEvent('app.load', self.addSingleCharView, priority = 100)
         addEvent('app.load', self.addSingleDeleteView, priority = 100)
+        addEvent('app.load', self.addSingleWatchViews, priority = 100)
         addEvent('app.load', self.cleanupFaults)
 
         addEvent('media.get', self.get)
@@ -94,6 +115,9 @@ class MediaPlugin(MediaBase):
         addEvent('media.list', self.list)
         addEvent('media.delete', self.delete)
         addEvent('media.restatus', self.restatus)
+        addEvent('media.mark_watched', self.markWatched)
+        addEvent('media.mark_unwatched', self.markUnwatched)
+        addEvent('media.watch_history', self.watchHistory)
         addEvent('media.tag', self.tag)
         addEvent('media.untag', self.unTag)
 
@@ -248,7 +272,7 @@ class MediaPlugin(MediaBase):
 
         return False
 
-    def list(self, types = None, status = None, release_status = None, has_releases = None, status_or = False, limit_offset = None, with_tags = None, starts_with = None, search = None):
+    def list(self, types = None, status = None, release_status = None, has_releases = None, watched = None, status_or = False, limit_offset = None, with_tags = None, starts_with = None, search = None):
 
         db = get_db()
 
@@ -292,6 +316,13 @@ class MediaPlugin(MediaBase):
                     if not self._mediaHasMatchingAvailableRelease(media_id):
                         continue
                 filter_by['release_status'].add(media_id)
+
+        # Filter by watch state without changing the normal wanted/done media status
+        if watched is not None:
+            filter_by['watched'] = set()
+            watched_key = watched if isinstance(watched, bool) else str(watched).lower() in ('true', '1', 'yes')
+            for media_watched in db.get_many('media_watched', watched_key):
+                filter_by['watched'].add(media_watched.get('_id'))
 
         # Filter by whether media has any release at all
         if has_releases is not None:
@@ -373,11 +404,17 @@ class MediaPlugin(MediaBase):
         if has_releases_raw is not None:
             has_releases = has_releases_raw if isinstance(has_releases_raw, bool) else str(has_releases_raw).lower() in ('true', '1', 'yes')
 
+        watched_raw = kwargs.get('watched')
+        watched = None
+        if watched_raw is not None:
+            watched = watched_raw if isinstance(watched_raw, bool) else str(watched_raw).lower() in ('true', '1', 'yes')
+
         total_movies, movies = self.list(
             types = splitString(kwargs.get('type')),
             status = splitString(kwargs.get('status')),
             release_status = splitString(kwargs.get('release_status')),
             has_releases = has_releases,
+            watched = watched,
             status_or = kwargs.get('status_or') is not None,
             limit_offset = kwargs.get('limit_offset'),
             with_tags = splitString(kwargs.get('with_tags')),
@@ -577,6 +614,89 @@ class MediaPlugin(MediaBase):
             return {'success': True}
 
         return {'success': False, 'error': 'Media not found'}
+
+    def _utcNow(self):
+        return datetime.now(timezone.utc).replace(microsecond = 0).isoformat().replace('+00:00', 'Z')
+
+    def markWatched(self, id = None, watched_by = None, source = 'manual', **kwargs):
+
+        db = get_db()
+
+        try:
+            media = db.get('id', id)
+        except (RecordNotFound, RecordDeleted):
+            media = None
+        except Exception:
+            log.error('Unexpected error fetching media %s in markWatched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
+
+        if media:
+            media['watched'] = True
+            media['watched_at'] = kwargs.get('watched_at') or self._utcNow()
+            if watched_by:
+                media['watched_by'] = watched_by
+            if source:
+                media['watched_source'] = source
+
+            db.update(media)
+            fireEvent('notify.frontend', type = 'movie.update', data = media)
+            return {'success': True, 'media': media}
+
+        return {'success': False, 'error': 'Media not found'}
+
+    def markUnwatched(self, id = None, **kwargs):
+
+        db = get_db()
+
+        try:
+            media = db.get('id', id)
+        except (RecordNotFound, RecordDeleted):
+            media = None
+        except Exception:
+            log.error('Unexpected error fetching media %s in markUnwatched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
+
+        if media:
+            media['watched'] = False
+            media.pop('watched_at', None)
+            media.pop('watched_by', None)
+            media.pop('watched_source', None)
+
+            db.update(media)
+            fireEvent('notify.frontend', type = 'movie.update', data = media)
+            return {'success': True, 'media': media}
+
+        return {'success': False, 'error': 'Media not found'}
+
+    def watchHistory(self, type = 'movie', limit_offset = None, **kwargs):
+
+        media_types = splitString(type) or ['movie']
+        total_movies, movies = self.list(types = media_types, watched = True)
+        movies = sorted(movies, key = lambda m: m.get('watched_at') or '', reverse = True)
+
+        if limit_offset:
+            splt = splitString(limit_offset) if isinstance(limit_offset, str) else limit_offset
+            limit = tryInt(splt[0])
+            offset = tryInt(0 if len(splt) == 1 else splt[1])
+            end = None if limit < 0 else offset + limit
+            movies = movies[offset:end]
+
+        return {
+            'success': True,
+            'empty': len(movies) == 0,
+            'total': total_movies,
+            'movies': movies,
+        }
+
+    def addSingleWatchViews(self):
+
+        for media_type in fireEvent('media.types', merge = True):
+            tempWatched = lambda *args, **kwargs : self.markWatched(type = media_type, **kwargs)
+            tempUnwatched = lambda *args, **kwargs : self.markUnwatched(type = media_type, **kwargs)
+            tempWatchHistory = lambda *args, **kwargs : self.watchHistory(type = media_type, **kwargs)
+            addApiView('%s.watched' % media_type, tempWatched)
+            addApiView('%s.unwatched' % media_type, tempUnwatched)
+            addApiView('%s.watch_history' % media_type, tempWatchHistory)
 
     def addSingleDeleteView(self):
 

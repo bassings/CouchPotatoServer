@@ -944,6 +944,52 @@ MA.Files = new Class({
 });
 
 
+MA.WatchToggle = new Class({
+
+	Extends: MovieAction,
+	label: 'Watch status',
+
+	create: function(){
+		var self = this;
+
+		self.button = self.createButton();
+		self.detail_button = self.createButton();
+
+	},
+
+	createButton: function(){
+		var self = this,
+			watched = self.movie.get('watched');
+
+		return new Element('a.watch_toggle', {
+			'text': watched ? 'Mark unwatched' : 'Mark watched',
+			'title': watched ? 'Remove watched marker' : 'Mark this movie as watched',
+			'events': {
+				'click': self.toggleWatched.bind(self)
+			}
+		});
+	},
+
+	toggleWatched: function(e){
+		var self = this,
+			watched = self.movie.get('watched');
+
+		if(e) (e).stop();
+
+		Api.request(watched ? 'media.unwatched' : 'media.watched', {
+			'data': {
+				'id': self.movie.get('_id')
+			},
+			'onSuccess': function(json){
+				if(json && json.media){
+					self.movie.update({data: json.media});
+				}
+			}
+		});
+	}
+
+});
+
 MA.MarkAsDone = new Class({
 
 	Extends: MovieAction,

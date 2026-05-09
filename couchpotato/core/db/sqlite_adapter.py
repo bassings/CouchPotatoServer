@@ -315,6 +315,16 @@ class SQLiteAdapter(DatabaseInterface):
                 params.append(key)
             sql += " ORDER BY json_extract(data, '$.type')"
 
+        elif index_name == 'media_watched':
+            sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
+            if key is not None:
+                watched_key = key if isinstance(key, bool) else str(key).lower() in ('true', '1', 'yes')
+                if watched_key:
+                    sql += " AND json_extract(data, '$.watched') = 1"
+                else:
+                    sql += " AND COALESCE(json_extract(data, '$.watched'), 0) != 1"
+            sql += " ORDER BY json_extract(data, '$.watched_at') DESC"
+
         elif index_name == 'media_title':
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'media'"
             if key is not None:

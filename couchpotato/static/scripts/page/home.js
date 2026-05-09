@@ -54,7 +54,7 @@ Page.Home = new Class({
 			'identifier': 'snatched',
 			'load_more': false,
 			'view': 'list',
-			'actions': [MA.MarkAsDone, MA.IMDB, MA.Release, MA.Trailer, MA.Refresh, MA.Readd, MA.Delete, MA.Category, MA.Profile],
+			'actions': [MA.MarkAsDone, MA.WatchToggle, MA.IMDB, MA.Release, MA.Trailer, MA.Refresh, MA.Readd, MA.Delete, MA.Category, MA.Profile],
 			'title': 'Snatched & Available',
 			'description': 'These movies have been snatched or have finished downloading',
 			'on_empty_element': new Element('div').adopt(
@@ -109,7 +109,7 @@ Page.Home = new Class({
 			'filter': {
 				'random': true
 			},
-			'actions': [MA.IMDB, MA.Release, MA.Trailer, MA.Refresh, MA.Delete, MA.Category, MA.Profile],
+			'actions': [MA.WatchToggle, MA.IMDB, MA.Release, MA.Trailer, MA.Refresh, MA.Delete, MA.Category, MA.Profile],
 			'load_more': false,
 			'view': 'thumb',
 			'force_view': true,
@@ -176,7 +176,7 @@ Page.Home = new Class({
 			'loader': false,
 			'load_more': false,
 			'view': 'list',
-			'actions': [MA.IMDB, MA.Trailer, MA.Refresh, MA.Delete, MA.Category, MA.Profile],
+			'actions': [MA.WatchToggle, MA.IMDB, MA.Trailer, MA.Refresh, MA.Delete, MA.Category, MA.Profile],
 			'api_call': 'dashboard.soon',
 			'onLoaded': function(){
 				self.chain.callChain();

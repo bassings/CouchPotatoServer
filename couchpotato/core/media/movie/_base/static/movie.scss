@@ -316,6 +316,15 @@ $mass_edit_height: 44px;
 				}
 			}
 
+			.watched_status {
+				display: inline-block;
+				font-size: .75em;
+				font-weight: bold;
+				margin: 2px 4px 2px 0;
+				opacity: .75;
+				text-transform: uppercase;
+			}
+
 			.quality {
 				clear: both;
 				overflow: hidden;
@@ -494,6 +503,14 @@ $mass_edit_height: 44px;
 				opacity: .5;
 				float: right;
 				margin-left: 4px;
+			}
+
+			.watched_status {
+				display: inline-block;
+				font-size: .75em;
+				font-weight: bold;
+				opacity: .75;
+				text-transform: uppercase;
 			}
 
 			.quality {

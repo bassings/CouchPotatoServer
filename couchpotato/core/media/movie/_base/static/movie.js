@@ -188,7 +188,8 @@ var Movie = new Class({
 	create: function(){
 		var self = this;
 
-		self.el.addClass('status_'+self.get('status'));
+		self.el.removeClass('watched').addClass('status_'+self.get('status'));
+		if(self.get('watched')) self.el.addClass('watched');
 
 		var eta_date = self.getETA();
 
@@ -248,6 +249,10 @@ var Movie = new Class({
 				eta_date ? new Element('div.eta', {
 					'text': eta_date,
 					'title': 'ETA'
+				}) : null,
+				self.get('watched') ? new Element('div.watched_status', {
+					'text': 'Watched',
+					'title': self.get('watched_at') ? 'Watched ' + self.get('watched_at') : 'Watched'
 				}) : null,
 				self.quality = new Element('div.quality'),
 				rating ? new Element('div.rating[title='+rating[0]+']').adopt(

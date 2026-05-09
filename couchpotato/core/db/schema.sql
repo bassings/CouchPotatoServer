@@ -29,6 +29,10 @@ CREATE INDEX IF NOT EXISTS idx_media_status ON documents(_t, json_extract(data, 
 CREATE INDEX IF NOT EXISTS idx_media_type ON documents(_t, json_extract(data, '$.type'))
     WHERE _t = 'media';
 
+-- Watched lookup/history (MediaWatchedIndex)
+CREATE INDEX IF NOT EXISTS idx_media_watched ON documents(_t, json_extract(data, '$.watched'), json_extract(data, '$.watched_at'))
+    WHERE _t = 'media';
+
 -- Title sorting (TitleIndex)
 CREATE INDEX IF NOT EXISTS idx_media_title ON documents(json_extract(data, '$.title'))
     WHERE _t = 'media';
