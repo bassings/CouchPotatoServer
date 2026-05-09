@@ -22,7 +22,7 @@ jobs:
       HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v6
       with:
         fetch-depth: 0  # Full history needed for git describe --tags
 
