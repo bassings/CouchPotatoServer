@@ -37,7 +37,7 @@ gntp==1.0.3
 # Utilities
 python-dateutil==2.9.0.post0
 natsort==8.4.0
-packaging==26.0
+packaging==26.2
 filelock==3.29.0
 platformdirs==4.9.6
 rich==15.0.0
