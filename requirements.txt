@@ -44,5 +44,5 @@ rich==15.0.0
 six==1.17.0
 pyOpenSSL
 Pygments==2.20.0
-cryptography==46.0.7
+cryptography==48.0.0
 bcrypt==5.0.0
