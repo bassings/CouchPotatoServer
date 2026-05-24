@@ -3,9 +3,9 @@
 # Web Framework
 fastapi==0.135.3
 starlette==1.0.0
-uvicorn==0.44.0
+uvicorn==0.46.0
 Jinja2==3.1.6
-python-multipart==0.0.27
+python-multipart==0.0.28
 
 # Core Infrastructure
 blinker==1.9.0
@@ -37,12 +37,12 @@ gntp==1.0.3
 # Utilities
 python-dateutil==2.9.0.post0
 natsort==8.4.0
-packaging==26.0
+packaging==26.2
 filelock==3.29.0
 platformdirs==4.9.6
 rich==15.0.0
 six==1.17.0
 pyOpenSSL
 Pygments==2.20.0
-cryptography==46.0.7
+cryptography==48.0.0
 bcrypt==5.0.0
