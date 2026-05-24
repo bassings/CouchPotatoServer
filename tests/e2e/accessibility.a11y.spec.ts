@@ -47,6 +47,40 @@ async function checkA11y(page: any, pageName: string) {
   return accessibilityScanResults;
 }
 
+async function waitForSuggestionsReady(page: any) {
+  await expect(page.getByRole('heading', { name: 'Suggestions' })).toBeVisible();
+  await expect(page.getByRole('tablist', { name: 'Suggestion categories' })).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Charts' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.locator('#charts-grid')).toBeVisible();
+  await expect(page.locator('#charts-grid')).not.toHaveClass(/htmx-request/);
+  await expect(page.locator('#charts-grid > .text-center, #charts-grid .poster-card').first()).toBeVisible();
+}
+
+async function mockSuggestionsCharts(page: any) {
+  await page.route('**/partial/charts', route => route.fulfill({
+    status: 200,
+    contentType: 'text/html',
+    body: `
+      <div class="mb-8">
+        <h2 class="text-sm font-medium mb-3">Featured</h2>
+        <button type="button"
+                class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full"
+                aria-label="View details for Example Movie (2026)">
+          <div class="relative aspect-[2/3] overflow-hidden bg-white">
+            <div class="absolute top-2 left-2">
+              <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning text-black backdrop-blur-sm">chart</span>
+            </div>
+          </div>
+          <div class="p-2.5">
+            <h3 class="font-medium text-xs truncate">Example Movie</h3>
+            <p class="text-cp-muted text-[10px] mt-0.5 font-light">2026</p>
+          </div>
+        </button>
+      </div>
+    `,
+  }));
+}
+
 test.describe('Accessibility', () => {
   test('Wanted page should be accessible', async ({ page }) => {
     await page.goto('/');
@@ -65,9 +99,9 @@ test.describe('Accessibility', () => {
   });
 
   test('Suggestions page should be accessible', async ({ page }) => {
+    await mockSuggestionsCharts(page);
     await page.goto('/suggestions/');
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await waitForSuggestionsReady(page);
     
     await checkA11y(page, 'Suggestions');
   });
