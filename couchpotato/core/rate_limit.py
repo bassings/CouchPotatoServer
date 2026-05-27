@@ -45,7 +45,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         # Don't rate-limit static assets, cached files, or page navigations
-        path = request.url.path
+        path = request.scope.get('path', '')
         if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):
             return await call_next(request)
 
