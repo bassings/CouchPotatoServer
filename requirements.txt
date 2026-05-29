@@ -2,8 +2,8 @@
 
 # Web Framework
 fastapi==0.136.3
-starlette==1.0.1
-uvicorn==0.47.0
+starlette==1.2.0
+uvicorn==0.48.0
 Jinja2==3.1.6
 python-multipart==0.0.29
 
@@ -14,14 +14,14 @@ apscheduler==3.11.2
 tenacity==9.1.4
 
 # Network
-requests==2.33.1
+requests==2.34.2
 certifi==2026.5.20
 chardet==7.4.3
 
 # Parsing
 beautifulsoup4==4.14.3
 guessit==3.8.0
-lxml
+lxml==6.1.1
 
 # Media
 enzyme==0.5.2
@@ -38,7 +38,7 @@ python-dateutil==2.9.0.post0
 natsort==8.4.0
 packaging==26.2
 filelock==3.29.0
-platformdirs==4.9.6
+platformdirs==4.10.0
 rich==15.0.0
 six==1.17.0
 pyOpenSSL
