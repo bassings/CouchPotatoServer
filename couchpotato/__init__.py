@@ -70,7 +70,7 @@ def get_current_user(request: Request):
         if not user:
             return None
         api_key = Env.setting('api_key')
-        if api_key and hmac.compare_digest(str(user), str(api_key)):
+        if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
             return user
         return None
     else:

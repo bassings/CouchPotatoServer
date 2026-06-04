@@ -6,10 +6,12 @@ and template rendering via FastAPI's TestClient.
 import os
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 
+from couchpotato import get_current_user
 from couchpotato.api import addApiView, addNonBlockApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing, callApiHandler
 from couchpotato.environment import Env
 
@@ -210,6 +212,15 @@ class TestAuthentication:
 
         assert resp.status_code in (302, 307)
         assert 'login' in resp.headers.get('location', '')
+
+    def test_auth_rejects_non_ascii_user_cookie(self, app, setup_env):
+        """Malformed user cookies are rejected without raising."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+
+        user = get_current_user(SimpleNamespace(cookies={'user': 'é'}))
+
+        assert user is None
 
     def test_auth_accepts_api_key_user_cookie(self, app, setup_env):
         """The login cookie value is accepted only when it matches the API key."""
