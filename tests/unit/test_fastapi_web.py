@@ -153,6 +153,18 @@ class TestApiEndpoints:
         assert resp.status_code == 400
         assert resp.json() == {'success': False, 'error': 'Invalid JSON body'}
 
+    def test_api_handler_empty_json_body_reaches_handler(self, client):
+        """Empty JSON POST bodies are treated as no body for compatibility."""
+        addApiView('test.empty_json_body', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.empty_json_body',
+            content='',
+            headers={'Content-Type': 'application/json'},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {'success': True, 'params': {}}
+
     def test_api_base_redirects_to_docs(self, client):
         """Empty API route redirects to docs page."""
         resp = client.get('/api/testkey123/', follow_redirects=False)
