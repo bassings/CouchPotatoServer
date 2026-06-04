@@ -455,3 +455,17 @@ class TestAppCreation:
         addApiView('test.base', lambda: {'ok': True})
         resp = client.get('/cp/api/key123/test.base')
         assert resp.status_code == 200
+
+    def test_new_ui_static_assets_respect_custom_base(self):
+        """New UI assets load under url_base for reverse-proxy installs."""
+        from couchpotato import create_app
+        Env.set('web_base', '/cp/')
+        app = create_app('key123', '/cp/')
+        client = TestClient(app)
+
+        resp = client.get('/cp/')
+
+        assert resp.status_code == 200
+        assert 'src="/cp/static/scripts/vendor/new-ui/htmx-2.0.4.min.js"' in resp.text
+        assert "navigator.serviceWorker.register('/cp/static/sw.js')" in resp.text
+        assert 'src="/static/scripts/vendor/new-ui/' not in resp.text
