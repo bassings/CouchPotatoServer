@@ -7,6 +7,15 @@
 Dockerfile
 docker-compose.yml
 .dockerignore
+.env
+.env.*
+.config/
+.openclaw/
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md
 
 # Documentation
 README.md
@@ -33,6 +42,8 @@ movies/
 Thumbs.db
 
 # Python
+.venv/
+venv/
 __pycache__/
 *.pyc
 *.pyo
@@ -57,3 +68,9 @@ wheels/
 # Test files
 test/
 tests/
+
+# Node
+node_modules/
+npm-debug.log*
+playwright-report/
+test-results/

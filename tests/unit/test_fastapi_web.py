@@ -127,6 +127,20 @@ class TestApiEndpoints:
         assert resp.status_code == 200
         assert resp.json()['method'] == 'ok'
 
+    def test_api_handler_post_form_params(self, client):
+        """POST form bodies are passed to API handlers without query-string secrets."""
+        addApiView('test.post_params', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.post_params',
+            data={'section': 'core', 'name': 'password', 'value': 'secret'},
+        )
+        assert resp.status_code == 200
+        assert resp.json()['params'] == {
+            'section': 'core',
+            'name': 'password',
+            'value': 'secret',
+        }
+
     def test_api_base_redirects_to_docs(self, client):
         """Empty API route redirects to docs page."""
         resp = client.get('/api/testkey123/', follow_redirects=False)
@@ -160,6 +174,29 @@ class TestAuthentication:
         resp = client.get('/', follow_redirects=False)
         assert resp.status_code in (302, 307)
         assert 'login' in resp.headers.get('location', '')
+
+    def test_auth_rejects_forged_user_cookie(self, app, setup_env):
+        """The user cookie must match the configured API key."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        client.cookies.set('user', 'not-the-api-key')
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code in (302, 307)
+        assert 'login' in resp.headers.get('location', '')
+
+    def test_auth_accepts_api_key_user_cookie(self, app, setup_env):
+        """The login cookie value is accepted only when it matches the API key."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        client.cookies.set('user', 'testkey123')
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code == 200
 
     def test_login_page_renders(self, app, setup_env):
         """Login page renders when credentials are set."""

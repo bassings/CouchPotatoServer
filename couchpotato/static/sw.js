@@ -11,8 +11,8 @@ const STATIC_ASSETS = [
   '/add/',
   '/static/manifest.json',
   // External CDN assets
-  'https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js',
-  'https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js'
+  '/static/scripts/vendor/new-ui/htmx-2.0.4.min.js',
+  '/static/scripts/vendor/new-ui/alpine-3.x.min.js'
 ];
 
 // Install event - cache static assets
