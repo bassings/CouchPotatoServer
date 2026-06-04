@@ -2,18 +2,25 @@
 const CACHE_NAME = 'couchpotato-v1';
 const STATIC_CACHE = 'couchpotato-static-v1';
 const DYNAMIC_CACHE = 'couchpotato-dynamic-v1';
+const SCOPE_PATH = new URL(self.registration.scope).pathname;
+const WEB_BASE = SCOPE_PATH.endsWith('/static/')
+  ? SCOPE_PATH.slice(0, -'static/'.length) || '/'
+  : '/';
+
+function withBase(path) {
+  return `${WEB_BASE}${path.replace(/^\//, '')}`.replace(/\/{2,}/g, '/');
+}
 
 // Static assets to cache on install
 const STATIC_ASSETS = [
-  '/',
-  '/wanted/',
-  '/available/',
-  '/add/',
-  '/static/manifest.json',
-  // External CDN assets
-  '/static/scripts/vendor/new-ui/htmx-2.0.4.min.js',
-  '/static/scripts/vendor/new-ui/alpine-3.x.min.js'
-];
+  '',
+  'wanted/',
+  'available/',
+  'add/',
+  'static/manifest.json',
+  'static/scripts/vendor/new-ui/htmx-2.0.4.min.js',
+  'static/scripts/vendor/new-ui/alpine-3.x.min.js'
+].map(withBase);
 
 // Install event - cache static assets
 self.addEventListener('install', event => {
@@ -55,15 +62,15 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
 
   // Skip API calls - always go to network
-  if (url.pathname.startsWith('/api/') || url.pathname.includes('.')) {
+  if (url.pathname.startsWith(withBase('api/')) || url.pathname.includes('.')) {
     // For API calls, network-first with no caching
-    if (url.pathname.startsWith('/api/')) {
+    if (url.pathname.startsWith(withBase('api/'))) {
       return;
     }
   }
 
   // For static assets, use cache-first
-  if (url.pathname.startsWith('/static/') ||
+  if (url.pathname.startsWith(withBase('static/')) ||
       url.hostname === 'unpkg.com' || url.hostname.endsWith('.unpkg.com') ||
       url.hostname === 'jsdelivr.net' || url.hostname.endsWith('.jsdelivr.net')) {
     event.respondWith(
@@ -102,7 +109,7 @@ self.addEventListener('fetch', event => {
         return caches.match(request).then(cached => {
           if (cached) return cached;
           // Return offline page if available
-          return caches.match('/').then(offline => {
+          return caches.match(withBase('')).then(offline => {
             if (offline) return offline;
             return new Response('Offline', {
               status: 503,

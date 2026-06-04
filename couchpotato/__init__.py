@@ -291,7 +291,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             if content_type in ('application/x-www-form-urlencoded', 'multipart/form-data'):
                 kwargs.update(dict(await request.form()))
             elif content_type == 'application/json':
-                body = await request.json()
+                try:
+                    body = await request.json()
+                except ValueError:
+                    return JSONResponse(content={'success': False, 'error': 'Invalid JSON body'}, status_code=400)
                 if isinstance(body, dict):
                     kwargs.update(body)
         result = callApiHandler(route, **kwargs)

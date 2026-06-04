@@ -141,6 +141,18 @@ class TestApiEndpoints:
             'value': 'secret',
         }
 
+    def test_api_handler_invalid_json_body_returns_400(self, client):
+        """Malformed JSON bodies return a controlled client error."""
+        addApiView('test.json_body', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.json_body',
+            content='not-json',
+            headers={'Content-Type': 'application/json'},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json() == {'success': False, 'error': 'Invalid JSON body'}
+
     def test_api_base_redirects_to_docs(self, client):
         """Empty API route redirects to docs page."""
         resp = client.get('/api/testkey123/', follow_redirects=False)
@@ -460,7 +472,8 @@ class TestAppCreation:
         """New UI assets load under url_base for reverse-proxy installs."""
         from couchpotato import create_app
         Env.set('web_base', '/cp/')
-        app = create_app('key123', '/cp/')
+        static_dir = os.path.join(Env.get('app_dir'), 'couchpotato', 'static')
+        app = create_app('key123', '/cp/', static_dir=static_dir)
         client = TestClient(app)
 
         resp = client.get('/cp/')
@@ -469,3 +482,8 @@ class TestAppCreation:
         assert 'src="/cp/static/scripts/vendor/new-ui/htmx-2.0.4.min.js"' in resp.text
         assert "navigator.serviceWorker.register('/cp/static/sw.js')" in resp.text
         assert 'src="/static/scripts/vendor/new-ui/' not in resp.text
+
+        sw_resp = client.get('/cp/static/sw.js')
+        assert sw_resp.status_code == 200
+        assert "SCOPE_PATH.endsWith('/static/')" in sw_resp.text
+        assert "url.pathname.startsWith(withBase('static/'))" in sw_resp.text
