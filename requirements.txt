@@ -5,7 +5,7 @@ fastapi==0.136.3
 starlette==1.2.0
 uvicorn==0.48.0
 Jinja2==3.1.6
-python-multipart==0.0.29
+python-multipart==0.0.32
 
 # Core Infrastructure
 blinker==1.9.0
