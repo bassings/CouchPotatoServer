@@ -99,7 +99,7 @@ class PutIO(DownloaderBase):
             oauth_token = kwargs.get('oauth')
         except Exception:
             return 'redirect', Env.get('web_base') + 'settings/downloaders/'
-        log.debug('oauth_token is: %s', oauth_token)
+        log.debug('Received put.io oauth token')
         self.conf('oauth_token', value = oauth_token);
         return 'redirect', Env.get('web_base') + 'settings/downloaders/'
 
@@ -184,4 +184,3 @@ class PutIO(DownloaderBase):
         return {
             'success': False,
         }
-

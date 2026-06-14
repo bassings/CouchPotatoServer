@@ -423,7 +423,10 @@ function settingsPanel() {
         params.append('section', section);
         params.append('name', name);
         params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
-        await fetch(CP.apiBase + '/settings.save/?' + params.toString());
+        await fetch(CP.apiBase + '/settings.save/', {
+          method: 'POST',
+          body: params
+        });
         
         if (!this.values[section]) this.values[section] = {};
         this.values[section][name] = value;

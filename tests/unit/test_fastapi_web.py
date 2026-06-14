@@ -6,10 +6,12 @@ and template rendering via FastAPI's TestClient.
 import os
 import json
 import pytest
+from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 
+from couchpotato import get_current_user
 from couchpotato.api import addApiView, addNonBlockApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing, callApiHandler
 from couchpotato.environment import Env
 
@@ -127,6 +129,44 @@ class TestApiEndpoints:
         assert resp.status_code == 200
         assert resp.json()['method'] == 'ok'
 
+    def test_api_handler_post_form_params(self, client):
+        """POST form bodies are passed to API handlers without query-string secrets."""
+        addApiView('test.post_params', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.post_params',
+            data={'section': 'core', 'name': 'password', 'value': 'secret'},
+        )
+        assert resp.status_code == 200
+        assert resp.json()['params'] == {
+            'section': 'core',
+            'name': 'password',
+            'value': 'secret',
+        }
+
+    def test_api_handler_invalid_json_body_returns_400(self, client):
+        """Malformed JSON bodies return a controlled client error."""
+        addApiView('test.json_body', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.json_body',
+            content='not-json',
+            headers={'Content-Type': 'application/json'},
+        )
+
+        assert resp.status_code == 400
+        assert resp.json() == {'success': False, 'error': 'Invalid JSON body'}
+
+    def test_api_handler_empty_json_body_reaches_handler(self, client):
+        """Empty JSON POST bodies are treated as no body for compatibility."""
+        addApiView('test.empty_json_body', lambda **kw: {'success': True, 'params': kw})
+        resp = client.post(
+            '/api/testkey123/test.empty_json_body',
+            content='',
+            headers={'Content-Type': 'application/json'},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {'success': True, 'params': {}}
+
     def test_api_base_redirects_to_docs(self, client):
         """Empty API route redirects to docs page."""
         resp = client.get('/api/testkey123/', follow_redirects=False)
@@ -160,6 +200,38 @@ class TestAuthentication:
         resp = client.get('/', follow_redirects=False)
         assert resp.status_code in (302, 307)
         assert 'login' in resp.headers.get('location', '')
+
+    def test_auth_rejects_forged_user_cookie(self, app, setup_env):
+        """The user cookie must match the configured API key."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        client.cookies.set('user', 'not-the-api-key')
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code in (302, 307)
+        assert 'login' in resp.headers.get('location', '')
+
+    def test_auth_rejects_non_ascii_user_cookie(self, app, setup_env):
+        """Malformed user cookies are rejected without raising."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+
+        user = get_current_user(SimpleNamespace(cookies={'user': 'é'}))
+
+        assert user is None
+
+    def test_auth_accepts_api_key_user_cookie(self, app, setup_env):
+        """The login cookie value is accepted only when it matches the API key."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        client.cookies.set('user', 'testkey123')
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code == 200
 
     def test_login_page_renders(self, app, setup_env):
         """Login page renders when credentials are set."""
@@ -418,3 +490,23 @@ class TestAppCreation:
         addApiView('test.base', lambda: {'ok': True})
         resp = client.get('/cp/api/key123/test.base')
         assert resp.status_code == 200
+
+    def test_new_ui_static_assets_respect_custom_base(self):
+        """New UI assets load under url_base for reverse-proxy installs."""
+        from couchpotato import create_app
+        Env.set('web_base', '/cp/')
+        static_dir = os.path.join(Env.get('app_dir'), 'couchpotato', 'static')
+        app = create_app('key123', '/cp/', static_dir=static_dir)
+        client = TestClient(app)
+
+        resp = client.get('/cp/')
+
+        assert resp.status_code == 200
+        assert 'src="/cp/static/scripts/vendor/new-ui/htmx-2.0.4.min.js"' in resp.text
+        assert "navigator.serviceWorker.register('/cp/static/sw.js')" in resp.text
+        assert 'src="/static/scripts/vendor/new-ui/' not in resp.text
+
+        sw_resp = client.get('/cp/static/sw.js')
+        assert sw_resp.status_code == 200
+        assert "SCOPE_PATH.endsWith('/static/')" in sw_resp.text
+        assert "url.pathname.startsWith(withBase('static/'))" in sw_resp.text

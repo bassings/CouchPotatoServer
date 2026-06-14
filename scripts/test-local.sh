@@ -12,9 +12,13 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 echo "🧪 Building test image with Python ${PYTHON_VERSION}..."
 
 docker build -t "$IMAGE_NAME" -f - "$PROJECT_DIR" <<EOF
-FROM python:${PYTHON_VERSION}-slim
+# Alpine base to match the production image (see Dockerfile)
+FROM python:${PYTHON_VERSION}-alpine
 
 WORKDIR /app
+
+# Build deps for any dependency lacking a prebuilt musllinux wheel
+RUN apk add --no-cache build-base libffi-dev openssl-dev libxml2-dev libxslt-dev
 
 # Install test dependencies
 COPY requirements.txt requirements-dev.txt ./

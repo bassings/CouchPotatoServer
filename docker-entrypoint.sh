@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/sh
 set -e
 
 # Fix ownership of mounted volumes
@@ -6,12 +6,13 @@ set -e
 chown -R couchpotato:couchpotato /config /data 2>/dev/null || true
 
 # If first arg is python3 or starts with -, treat as full command or flags
+# su-exec drops root to the couchpotato user (Alpine's lightweight gosu)
 if [ "$1" = "python3" ]; then
     # Full command override (e.g. from docker-compose command:)
-    exec gosu couchpotato "$@"
+    exec su-exec couchpotato "$@"
 elif [ "${1#-}" != "$1" ] || [ -z "$1" ]; then
     # No args or flags only — run default
-    exec gosu couchpotato python3 CouchPotato.py --console_log --data_dir=/data --config_file=/config/config.ini "$@"
+    exec su-exec couchpotato python3 CouchPotato.py --console_log --data_dir=/data --config_file=/config/config.ini "$@"
 else
     # Unknown command, just exec it
     exec "$@"

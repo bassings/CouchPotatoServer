@@ -1,0 +1,11 @@
+# Trivy ignore file — each suppression MUST be justified.
+# Only architectural false-positives belong here. Real CVEs are intentionally
+# left visible so a rebuild picks up fixes once upstream (Debian) ships them.
+
+# DS-0002: "Specify at least 1 USER command in Dockerfile with non-root user"
+# False positive given our gosu pattern. The container starts as root solely so
+# docker-entrypoint.sh can `chown -R couchpotato:couchpotato /config /data`
+# (mounted volumes can't be chowned at build time), then immediately drops
+# privileges with `exec gosu couchpotato ...`. The application never runs as
+# root. A static `USER couchpotato` would break runtime volume-permission fixup.
+DS-0002

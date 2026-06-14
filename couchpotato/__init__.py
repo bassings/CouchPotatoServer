@@ -3,6 +3,7 @@
 Provides web views, authentication, and the main application setup.
 """
 import asyncio
+import hmac
 import json
 import os
 import re
@@ -68,7 +69,10 @@ def get_current_user(request: Request):
         user = request.cookies.get('user')
         if not user:
             return None
-        return user
+        api_key = Env.setting('api_key')
+        if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
+            return user
+        return None
     else:
         return True
 
@@ -282,6 +286,21 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 raise
 
         kwargs = dict(request.query_params)
+        if request.method == 'POST':
+            content_type = request.headers.get('content-type', '').split(';', 1)[0].strip().lower()
+            if content_type in ('application/x-www-form-urlencoded', 'multipart/form-data'):
+                kwargs.update(dict(await request.form()))
+            elif content_type == 'application/json':
+                raw_body = await request.body()
+                if not raw_body.strip():
+                    body = None
+                else:
+                    try:
+                        body = json.loads(raw_body)
+                    except ValueError:
+                        return JSONResponse(content={'success': False, 'error': 'Invalid JSON body'}, status_code=400)
+                if isinstance(body, dict):
+                    kwargs.update(body)
         result = callApiHandler(route, **kwargs)
 
         if isinstance(result, tuple) and result[0] == 'redirect':

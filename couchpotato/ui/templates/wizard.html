@@ -1200,7 +1200,10 @@ function setupWizard() {
       params.append('section', section);
       params.append('name', name);
       params.append('value', value);
-      return fetch(CP.apiBase + '/settings.save/?' + params.toString());
+      return fetch(CP.apiBase + '/settings.save/', {
+        method: 'POST',
+        body: params
+      });
     },
 
     async testDownloader() {
