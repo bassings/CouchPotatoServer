@@ -8,7 +8,7 @@
 - **Repo:** https://github.com/bassings/CouchPotatoServer
 - **Stack:** Python 3.10+, FastAPI, htmx + Tailwind + Alpine.js UI, SQLite, Docker
 - **Production:** http://homemedia.maeewing.com:5050
-- **Docker Image:** ghcr.io/bassings/couchpotatoserver:latest
+- **Docker Image:** ghcr.io/bassings/couchpotatoserver:latest (Alpine Linux base, `python:3.14-alpine`)
 - **Dev container port:** 5051 (`docker-compose.dev.yml`)
 
 ---
@@ -93,6 +93,7 @@ Write failing tests first, then code to make them pass. Tests should meet a **pr
 | Database | SQLite via `SQLiteAdapter` | Replaced CodernityDB (unmaintained, Python 3 issues) |
 | Web framework | FastAPI/Uvicorn | Replaced Tornado — modern async, better typing |
 | UI | htmx + Tailwind + Alpine.js | `/` = new UI, `/old/` = classic UI |
+| Container base | `python:3.14-alpine` + `su-exec` | Debian base carried ~119 OS-package CVEs (many HIGH/CRITICAL, no upstream fix); Alpine ships **0**. Healthcheck uses Python `urllib` so no `curl`/`libcurl` in the image. |
 
 ### Database Patterns
 
@@ -174,3 +175,5 @@ codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer
 5. `diskcache` was replaced with `SQLiteCache` (CVE-2025-69872 — pickle RCE, lib abandoned)
 6. Branch protection check names must match exactly — matrix jobs report as `test (3.10)`, not `test`
 7. Dependabot PRs may need `--admin` merge if they predate CI changes
+8. Docker image is **Alpine**-based: use `apk`/`su-exec`/`adduser` in the Dockerfile, not `apt`/`gosu`/`useradd`. The entrypoint is `#!/bin/sh` (no bash). Heavy deps (cryptography, lxml, bcrypt, pydantic-core) all ship `musllinux` wheels, so multi-arch builds don't compile from source.
+9. Scan the image before release: `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --scanners vuln <image>`. Target 0 CVEs. `.trivyignore` suppresses only the DS-0002 misconfig false positive (gosu/su-exec privilege-drop pattern).
