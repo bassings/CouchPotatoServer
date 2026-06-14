@@ -1,2 +1,2 @@
-VERSION = '3.2.3-beta.1'
+VERSION = '3.4.0'
 BRANCH = 'master'
