@@ -3,6 +3,7 @@ name: Docker
 on:
   push:
     branches: [ master ]
+    tags: [ 'v*' ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -58,9 +59,15 @@ jobs:
       id: vars
       run: |
         echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-        # Use nearest tag as base version so containers report a meaningful version
-        # e.g. "3.1.1" even if master is 2 commits ahead of the v3.1.1 tag
-        BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        # On a tag push (v*), use the tag directly so the released image is
+        # versioned correctly — the tag is created after the merge to master,
+        # so a master-push build would otherwise embed the *previous* version.
+        # On a branch push, fall back to the nearest tag.
+        if [ "${{ github.ref_type }}" = "tag" ]; then
+          BASE_TAG="${{ github.ref_name }}"
+        else
+          BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        fi
         BASE_TAG="${BASE_TAG#v}"  # strip leading 'v'
         BASE_TAG="${BASE_TAG:-dev}"  # fallback to 'dev' if empty
         echo "base_version=${BASE_TAG}" >> $GITHUB_OUTPUT
