@@ -1,0 +1,28 @@
+name: Dependency Review
+
+# Fails a PR that introduces a dependency with a known vulnerability (or a
+# disallowed licence). Complements Dependabot (which only opens update PRs) and
+# CodeQL (which scans our own code, not our deps). Runs on PRs only — it diffs
+# the dependency graph between base and head, so PRs that touch no deps pass fast.
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          # Block newly-introduced high/critical vulnerabilities.
+          fail-on-severity: high
+          # Surface a summary in the PR.
+          comment-summary-in-pr: on-failure

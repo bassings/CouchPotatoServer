@@ -28,6 +28,29 @@ jobs:
     - name: Run ruff
       run: ruff check .
 
+  # Static security lint (ruff's flake8-bandit "S" rules). INFORMATIONAL for now:
+  # the legacy codebase has ~169 S findings, so this does not gate merges yet.
+  # Triage the annotations and ratchet specific S codes into the blocking `lint`
+  # job (pyproject [tool.ruff.lint] select) as they're cleared.
+  security-lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v6
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Install ruff
+      run: pip install ruff>=0.15.16
+
+    - name: ruff security lint (bandit S rules)
+      continue-on-error: true
+      run: ruff check --select S --output-format=github couchpotato/ CouchPotato.py
+
   test:
     runs-on: ubuntu-latest
     permissions:
@@ -238,3 +261,18 @@ jobs:
         sleep 15
         curl -sf http://localhost:5050/ || (docker logs cp-test && exit 1)
         docker stop cp-test
+
+    # Image vulnerability scan (the manual pre-release Trivy step, now in CI).
+    # Alpine base targets 0 CVEs; fail on fixable HIGH/CRITICAL so a regression
+    # is caught before release. ignore-unfixed keeps un-patchable upstream CVEs
+    # from blocking unrelated PRs; .trivyignore suppresses the DS-0002 false +.
+    - name: Scan image with Trivy
+      uses: aquasecurity/trivy-action@v0.36.0
+      with:
+        image-ref: couchpotato:test
+        scanners: vuln
+        severity: CRITICAL,HIGH
+        ignore-unfixed: true
+        trivyignores: .trivyignore
+        exit-code: '1'
+        format: table

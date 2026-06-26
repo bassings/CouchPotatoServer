@@ -58,7 +58,17 @@ make setup → code → make verify → open PR → Claude review + remediate �
   check to pass + conversation resolution. No separate human approval is
   required (solo-maintainer setup), so the agent review *is* the review gate.
 - **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`,
-  `ui-e2e-tests`, `claude-review`.
+  `ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
+  `dependency-review`, `docker`.
+- **SAST / security gates:**
+  - **CodeQL** (`codeql.yml`) — Python + JS static analysis, per-PR + weekly.
+  - **dependency-review** (`dependency-review.yml`) — blocks PRs that add deps
+    with known high/critical vulns.
+  - **Trivy** image scan in the `docker` job — fails on fixable HIGH/CRITICAL
+    CVEs (`ignore-unfixed`, `.trivyignore` for the DS-0002 false positive).
+  - **security-lint** (ruff `S`/bandit) — INFORMATIONAL, non-blocking (~169
+    legacy findings); ratchet S codes into the blocking `lint` as cleared.
+  - Plus the `claude-review` prompt covers security qualitatively.
 - **Note:** GitHub only runs `claude-review` with its token once the workflow
   exists on `master`; the PR that introduces/edits it is a no-op (expected).
 - **Mutation testing** runs nightly + on-demand (*Mutation Testing* workflow),

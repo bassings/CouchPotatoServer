@@ -66,4 +66,10 @@ else
   step "4/4 E2E tests — SKIPPED (--no-e2e)"
 fi
 
+# ── Informational: static security lint (bandit S rules) ────────────────────
+# Non-blocking — legacy code has many findings; surfaced for awareness only.
+step "info: security lint (ruff S — non-blocking)"
+"$PYTHON" -m ruff check --select S --statistics couchpotato/ CouchPotato.py 2>/dev/null \
+  | tail -5 || true
+
 printf '\n\033[1;32m✔ All checks passed — safe to open a PR.\033[0m\n'
