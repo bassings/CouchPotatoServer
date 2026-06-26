@@ -1,0 +1,54 @@
+name: Claude Review
+
+# Automated agent review on every PR. Authenticated with a Claude subscription
+# OAuth token (secret: CLAUDE_CODE_OAUTH_TOKEN) — no Anthropic API billing.
+# Generate the token once with `claude setup-token` and add it at:
+#   Settings → Secrets and variables → Actions → New repository secret
+#
+# The review is posted as PR comments. "Remediated before merge" is enforced by
+# branch protection (required_conversation_resolution = true): every review
+# thread Claude opens must be resolved before the PR can merge.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  claude-review:
+    name: claude-review
+    runs-on: ubuntu-latest
+    # Skip if the secret isn't configured yet, so PRs aren't blocked by a
+    # missing token while you finish setup.
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Claude PR review
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            Review the changes in this pull request as a principal engineer for
+            CouchPotatoServer (Python 3.10+ FastAPI media server; see CLAUDE.md
+            and AGENTS.md for project rules). Post your findings as inline PR
+            review comments, grouped by severity.
+
+            Focus on:
+            - Correctness and edge cases, especially around the SQLite adapter
+              and read-modify-write DB patterns (known race-condition area).
+            - Security: auth, input validation, injection, secrets, the Alpine
+              Docker image hardening (target 0 CVEs).
+            - Test quality: are new behaviours covered by tests to a principal
+              developer's standard (clear names, edge cases, failure modes)?
+            - Adherence to project rules: ruff-clean, conventional commits, no
+              committed secrets/test data, E2E specs updated for UI changes.
+
+            Be specific and actionable. If the change looks safe and complete,
+            say so plainly rather than inventing nits.

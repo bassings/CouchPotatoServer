@@ -30,14 +30,37 @@
 
 ### 1. Test Locally Before Every Push
 
+**The gate is `make verify`** — it mirrors CI exactly (ruff → Python unit →
+UI unit → E2E with auto-started server) and is the single source of truth for
+"is this safe to PR". `make setup` (run once) installs a **pre-push hook** that
+runs it automatically and blocks the push on failure.
+
 ```bash
-python3 -m pytest tests/unit/ -q   # ALL unit tests
-python3 -m ruff check .            # Lint
-# Or full Docker test:
-./scripts/test-local.sh
+make setup          # once: installs git hooks + JS deps
+make verify         # full local gate (mirrors CI) — runs on every push
+make verify-fast    # quick: lint + unit only, skips E2E
+./scripts/test-local.sh   # optional: Python unit in clean Alpine Docker
 ```
 
 **Never push untested code to remote. Never deploy untested code to production.**
+Emergency hook bypass: `git push --no-verify` (use sparingly).
+
+### Path to Production (full flow)
+
+```
+make setup → code → make verify → open PR → Claude review + remediate → approve → merge → release → deploy
+```
+
+- **PR gate:** every PR is auto-reviewed by Claude
+  (`.github/workflows/claude-review.yml`, authenticated via the
+  `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
+  thread it opens; branch protection on `master` requires conversation
+  resolution + 1 approval.
+- **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`, `ui-e2e-tests`.
+- **Mutation testing** runs nightly + on-demand (*Mutation Testing* workflow),
+  informational only: `make mutation-py` (mutmut) / `make mutation-js` (Stryker,
+  pending Alpine component extraction). See `[tool.mutmut]` in `pyproject.toml`
+  and `stryker.conf.json`.
 
 ### 1a. E2E Tests — Check for UI Changes
 

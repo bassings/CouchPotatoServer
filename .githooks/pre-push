@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+#
+# pre-push hook — blocks a push if the local gate fails, so the rule
+# "pass local testing before raising a PR" is enforced, not just documented.
+#
+# Installed by `make setup` (sets core.hooksPath to .githooks).
+# Bypass in a genuine emergency with:  git push --no-verify
+#
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+echo "🔒 pre-push: running full local gate (scripts/verify.sh)…"
+echo "   (bypass with 'git push --no-verify' — use sparingly)"
+
+if "$REPO_ROOT/scripts/verify.sh"; then
+  echo "✅ pre-push: gate passed — pushing."
+  exit 0
+else
+  echo "❌ pre-push: gate failed — push aborted. Fix the above, then retry." >&2
+  exit 1
+fi
