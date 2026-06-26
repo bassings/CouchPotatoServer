@@ -63,4 +63,19 @@ export default defineConfig({
   expect: {
     timeout: 5000,
   },
+
+  /*
+   * Local runs auto-start the app so `npm run test:e2e` works with no manual
+   * server step. CI starts the server itself (see .github/workflows/ci.yml),
+   * so we skip webServer there to avoid a port clash.
+   * Uses a throwaway .e2e-data dir — never the real ./.config the dev/docker uses.
+   */
+  webServer: process.env.CI
+    ? undefined
+    : {
+        command: 'python CouchPotato.py --data_dir=.e2e-data',
+        url: process.env.CP_TEST_URL || 'http://localhost:5050',
+        timeout: 120_000,
+        reuseExistingServer: true,
+      },
 });

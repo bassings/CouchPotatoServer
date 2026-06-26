@@ -106,3 +106,14 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401", "F403"]
 "tests/*" = ["B", "UP"]
+
+[tool.mutmut]
+# Mutation testing (mutmut 3.x). Run with: make mutation-py  (or `mutmut run`).
+# Scoped to start at the highest-value, best-covered module — the SQLite
+# adapter, which had two critical _query_index bugs post-migration and is
+# exercised by 5 unit-test files. Widen paths_to_mutate as coverage grows;
+# keep the runner pointed at the tests that actually cover the mutated paths
+# so each run stays fast enough to be useful.
+paths_to_mutate = ["couchpotato/core/db/sqlite_adapter.py"]
+tests_dir = ["tests/unit/"]
+runner = "python -m pytest -x -q tests/unit/test_sqlite_adapter.py tests/unit/test_sqlite_transactions.py tests/unit/test_db_factory.py"

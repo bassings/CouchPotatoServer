@@ -31,3 +31,14 @@ test-results/
 # Local test data
 test_data/
 test_startup_local.py
+
+# Playwright local E2E throwaway data dir
+.e2e-data
+
+# Stryker mutation testing scratch
+.stryker-tmp
+reports/mutation
+
+# mutmut cache (3.x uses a mutants dir / sqlite cache)
+.mutmut-cache
+mutants/
