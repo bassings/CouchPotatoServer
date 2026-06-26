@@ -29,9 +29,11 @@ make setup → code → make verify → open PR → Claude review + remediate �
 - Include tests for new functionality (principal-developer standard)
 - Ensure `make verify` passes locally before opening the PR
 - Every PR is auto-reviewed by **Claude** (`.github/workflows/claude-review.yml`).
-  Resolve every review thread it opens — branch protection requires conversation
-  resolution + 1 approval before merge.
-- Required CI checks: `lint`, `test-summary`, `ui-unit-tests`, `ui-e2e-tests`
+  Resolve every review thread it opens — branch protection requires the
+  `claude-review` check to pass + conversation resolution before merge (no
+  separate human approval needed).
+- Required CI checks: `lint`, `test-summary`, `ui-unit-tests`, `ui-e2e-tests`,
+  `claude-review`
 
 ## Mutation Testing
 

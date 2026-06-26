@@ -54,9 +54,13 @@ make setup → code → make verify → open PR → Claude review + remediate �
 - **PR gate:** every PR is auto-reviewed by Claude
   (`.github/workflows/claude-review.yml`, authenticated via the
   `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
-  thread it opens; branch protection on `master` requires conversation
-  resolution + 1 approval.
-- **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`, `ui-e2e-tests`.
+  thread it opens; branch protection on `master` requires the `claude-review`
+  check to pass + conversation resolution. No separate human approval is
+  required (solo-maintainer setup), so the agent review *is* the review gate.
+- **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`,
+  `ui-e2e-tests`, `claude-review`.
+- **Note:** GitHub only runs `claude-review` with its token once the workflow
+  exists on `master`; the PR that introduces/edits it is a no-op (expected).
 - **Mutation testing** runs nightly + on-demand (*Mutation Testing* workflow),
   informational only: `make mutation-py` (mutmut) / `make mutation-js` (Stryker,
   pending Alpine component extraction). See `[tool.mutmut]` in `pyproject.toml`
