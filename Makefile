@@ -2,7 +2,7 @@
 # Path to production: make setup → code → make verify (auto-enforced on push)
 #                     → PR → Claude review + remediate → merge → release.
 
-.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint mutation mutation-py mutation-js
+.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint mutation mutation-py mutation-js
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -24,6 +24,9 @@ verify-fast: ## Quick gate — lint + unit only, skips E2E
 
 lint: ## ruff lint only
 	python3 -m ruff check .
+
+security-lint: ## Static security lint (ruff bandit "S" rules — informational)
+	python3 -m ruff check --select S couchpotato/ CouchPotato.py
 
 test-py: ## Python unit tests only
 	PYTHONPATH=libs python3 -m pytest tests/unit/ -q --tb=short
