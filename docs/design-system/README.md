@@ -182,6 +182,8 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 **Leave behind:** Lobster wordmark, Open Sans, the `#ac0000` red accent, the custom icon font, and the MooTools + Uniform + ripple stack (replaced by htmx + Alpine + inline Heroicons).
 
 ## Files
+- `theme.css` — **ready-to-paste theme.** All `:root` / `:root.light` variables, the light-mode contrast + translucent overrides, scrollbars, `fade-in`, htmx indicator, and the full a11y/reduced-motion base. Values are verified against `base.html` (including the correct poster-card hover: dark `0.15`/`0.06`, light `0.3`/`0.1`). Load it after the Tailwind CDN + `tailwind.config`.
+- `screenshots/` — annotated PNGs of each section (dark), plus `13-colour-light.png` and `14-forms-light.png` for the light theme: `01-overview` · `02-colour` · `03-typography` · `04-icons` · `05-components` · `06-forms` · `07-modals` · `08-states` · `09-surfaces` · `10-motion` · `11-accessibility` · `12-migration`.
 - `couchpotato-design-system.dc.html` — static design-canvas export (tokens, components, and the **icon path data** in its `iconGroups` array). Reference/data only — not a browsable page (see "About the Design Files"); this README is authoritative.
 - `couchpotato-design-system-classic.dc.html` — the legacy red/Open Sans/Lobster system, for reference only (being retired).
 
