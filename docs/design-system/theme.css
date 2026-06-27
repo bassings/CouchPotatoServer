@@ -48,6 +48,9 @@
 ::-webkit-scrollbar-track { background: var(--cp-bg); }
 ::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+:root.light ::-webkit-scrollbar-track { background: #f0f0f0; }
+:root.light ::-webkit-scrollbar-thumb { background: #c0c0c0; }
+:root.light ::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 
