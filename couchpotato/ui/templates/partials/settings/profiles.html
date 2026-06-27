@@ -72,7 +72,7 @@
             <div class="flex items-center gap-2 min-w-0">
               {# Move up button #}
               <button @click="moveProfile(pi, 'up')"
-                      :disabled="pi === 0"
+                      :disabled="pi === 0 || isReordering"
                       class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
                       :aria-label="'Move ' + profile.label + ' up in order'">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -81,7 +81,7 @@
               </button>
               {# Move down button #}
               <button @click="moveProfile(pi, 'down')"
-                      :disabled="pi === profiles.length - 1"
+                      :disabled="pi === profiles.length - 1 || isReordering"
                       class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
                       :aria-label="'Move ' + profile.label + ' down in order'">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">

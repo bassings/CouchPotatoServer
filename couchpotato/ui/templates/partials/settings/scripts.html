@@ -725,6 +725,7 @@ function profileEditor() {
     profileToDelete: null,
     saving: false,
     deleting: false,
+    isReordering: false,
     toastMessage: '',
     toastType: 'success',
     validationErrors: [],
@@ -928,6 +929,11 @@ function profileEditor() {
 
     // ── Reorder profiles (optimistic with rollback on failure) ──
     async moveProfile(index, direction) {
+      // Guard against overlapping reorders: if a second move starts before the
+      // first save_order resolves, a failed-then-succeeded pair can leave the
+      // client rolled back to a stale snapshot while the server holds a newer
+      // order (silent split-brain). Serialise by disabling moves while in-flight.
+      if (this.isReordering) return;
       const target = direction === 'up' ? index - 1 : index + 1;
       if (target < 0 || target >= this.profiles.length) return;
 
@@ -935,6 +941,7 @@ function profileEditor() {
       const list = this.profiles.slice();
       [list[target], list[index]] = [list[index], list[target]];
       this.profiles = list;
+      this.isReordering = true;
 
       try {
         const params = new URLSearchParams();
@@ -949,6 +956,8 @@ function profileEditor() {
       } catch (e) {
         this.profiles = snapshot; // roll back the optimistic move
         this.toast('Failed to save order.', 'error');
+      } finally {
+        this.isReordering = false;
       }
     },
 
