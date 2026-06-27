@@ -1,4 +1,4 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect, Page, Locator } from '@playwright/test';
 
 /**
  * E2E tests for Category management (Settings → Categories tab).
@@ -10,7 +10,14 @@ import { test, expect, Page } from '@playwright/test';
  */
 
 const TEST_CATEGORY_NAME = 'E2E Test Category';
-const TEST_CATEGORY_NAME_2 = 'E2E Test Category B';
+// Deliberately NOT prefixed by TEST_CATEGORY_NAME: the reorder test matches edit
+// buttons by exact aria-label, but a name-prefix would still trip substring-based
+// helpers (Delete/Edit regexes) and the cleanup, so keep the two names disjoint.
+const TEST_CATEGORY_NAME_2 = 'E2E Reorder Category B';
+
+// The Name field is the only required input; target it by its placeholder so the
+// selector survives field reordering (a positional input.first() does not).
+const NAME_PLACEHOLDER = 'e.g. Horror, Kids, Documentary';
 
 /** Open the Categories tab and wait for its content to finish loading. */
 async function openCategoriesTab(page: Page) {
@@ -41,7 +48,7 @@ async function createTestCategory(page: Page) {
   const modal = page.getByTestId('category-edit-modal');
   await expect(modal).toBeVisible();
 
-  await modal.locator('input').first().fill(TEST_CATEGORY_NAME);
+  await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
   await modal.getByRole('button', { name: /create category/i }).click();
   await expect(modal).not.toBeVisible();
 
@@ -50,19 +57,37 @@ async function createTestCategory(page: Page) {
   return panel;
 }
 
-/** Remove the test category via the UI if it exists (idempotent cleanup). */
+/** Create an additional category by name within an already-open Categories panel. */
+async function addCategoryNamed(page: Page, panel: Locator, name: string) {
+  await panel.getByRole('button', { name: /new category/i }).click();
+  const modal = page.getByTestId('category-edit-modal');
+  await expect(modal).toBeVisible();
+  await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(name);
+  await modal.getByRole('button', { name: /create category/i }).click();
+  await expect(modal).not.toBeVisible();
+  await expect(panel.getByRole('button', { name: new RegExp('Delete category: ' + name, 'i') })).toBeVisible();
+}
+
+/** Delete a single category by exact name via the UI (best-effort, idempotent). */
+async function deleteCategoryNamed(page: Page, panel: Locator, name: string) {
+  const delBtn = panel.getByRole('button', { name: 'Delete category: ' + name });
+  if (await delBtn.count() === 0) return;
+  await delBtn.first().click();
+  const confirmDialog = page.getByTestId('category-delete-dialog');
+  await expect(confirmDialog).toBeVisible();
+  await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
+  await expect(confirmDialog).not.toBeVisible();
+}
+
+/** Remove BOTH test categories via the UI if they exist (idempotent cleanup). */
 async function deleteTestCategory(page: Page) {
   try {
     const panel = await openCategoriesTab(page);
-    const delBtn = panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') });
-    if (await delBtn.count() === 0) return;
-    await delBtn.first().click();
-
-    // Scope the confirm dialog to the panel's own dialog
-    const confirmDialog = page.getByTestId('category-delete-dialog');
-    await expect(confirmDialog).toBeVisible();
-    await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
-    await expect(confirmDialog).not.toBeVisible();
+    // Exact-name match, not regex: TEST_CATEGORY_NAME would otherwise also match
+    // any "… Renamed" leftover, but exact names keep cleanup unambiguous.
+    for (const name of [TEST_CATEGORY_NAME, TEST_CATEGORY_NAME + ' Renamed', TEST_CATEGORY_NAME_2]) {
+      await deleteCategoryNamed(page, panel, name);
+    }
   } catch {
     // best-effort cleanup; never fail the suite on teardown
   }
@@ -99,8 +124,8 @@ test.describe('Category management', () => {
     const modal = page.getByTestId('category-edit-modal');
     await expect(modal).toBeVisible();
 
-    // Fill in the label (required) and an optional field
-    await modal.locator('input').first().fill(TEST_CATEGORY_NAME);
+    // Fill in the label (required) — target by placeholder, not position
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
 
     await modal.getByRole('button', { name: /create category/i }).click();
 
@@ -137,7 +162,7 @@ test.describe('Category management', () => {
     // The modal title should say "Edit Category"
     await expect(modal.locator('h3')).toContainText('Edit Category');
 
-    await modal.locator('input').first().fill(renamed);
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(renamed);
     await modal.getByRole('button', { name: /save changes/i }).click();
     await expect(modal).not.toBeVisible();
     await expect(panel.getByText(renamed)).toBeVisible();
@@ -145,7 +170,7 @@ test.describe('Category management', () => {
     // Rename back so afterEach cleanup (deleteTestCategory by original name) finds it
     await panel.getByRole('button', { name: new RegExp('Edit category: ' + renamed, 'i') }).click();
     await expect(modal).toBeVisible();
-    await modal.locator('input').first().fill(TEST_CATEGORY_NAME);
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
     await modal.getByRole('button', { name: /save changes/i }).click();
     await expect(modal).not.toBeVisible();
     await expect(panel.getByText(TEST_CATEGORY_NAME)).toBeVisible();
@@ -153,60 +178,84 @@ test.describe('Category management', () => {
 
   test('reordering a category persists across reload (save_order round-trips)', async ({ page }) => {
     // Create two test categories so this test is self-contained and always runs
-    // (a fresh install has 0 categories; unlike quality profiles there are no built-ins).
-    // Clean them up in afterEach via deleteTestCategory (which finds by TEST_CATEGORY_NAME);
-    // the second is cleaned up inline at the end of the test.
-    const panel = await createTestCategory(page);
-    {
-      // Create second category via the UI (reuse the openNew → save flow)
-      await panel.getByRole('button', { name: /new category/i }).click();
-      const modal2 = page.getByTestId('category-edit-modal');
-      await expect(modal2).toBeVisible();
-      await modal2.locator('input').first().fill(TEST_CATEGORY_NAME_2);
-      await modal2.getByRole('button', { name: /create category/i }).click();
-      await expect(modal2).not.toBeVisible();
-      await expect(panel.getByText(TEST_CATEGORY_NAME_2)).toBeVisible();
-    }
+    // (a fresh install has 0 categories; unlike quality profiles there are no
+    // built-ins). Created A then B → A receives the lower order, so A precedes B.
+    const panel = await createTestCategory(page);            // A = TEST_CATEGORY_NAME
+    await addCategoryNamed(page, panel, TEST_CATEGORY_NAME_2); // B = TEST_CATEGORY_NAME_2
 
-    // Read the category order from the edit buttons' accessible names
+    // Read the category order from the edit buttons' accessible names (DOM order).
     const orderNames = (p = panel) =>
       p.getByRole('button', { name: /^Edit category:/i }).evaluateAll(
         els => els.map(e => e.getAttribute('aria-label') || ''),
       );
+    // Position of a specific test category within the order list, matched on the
+    // EXACT aria-label (not substring): TEST_CATEGORY_NAME is a prefix of nothing
+    // here, but exact match is the robust contract regardless of other rows.
+    const indexOf = async (name: string, p = panel) =>
+      (await orderNames(p)).indexOf('Edit category: ' + name);
 
-    const before = await orderNames();
-    if (before.length < 2) { test.skip(); return; }
-    const firstLabel = before[0].replace(/^Edit category:\s*/i, '');
+    // Operate only on the two test rows; never assert on absolute positions, since
+    // a non-fresh server may have pre-existing categories above them.
+    let idxA = await indexOf(TEST_CATEGORY_NAME);
+    let idxB = await indexOf(TEST_CATEGORY_NAME_2);
+    expect(idxA).toBeGreaterThanOrEqual(0);
+    expect(idxB).toBeGreaterThanOrEqual(0);
+    expect(idxA).toBeLessThan(idxB); // A created first → lower order
 
-    // Move the first category down. With the ids[] repeated-key bug, save_order
-    // returns success:false and the optimistic swap is rolled back — this test guards it.
-    await panel.getByRole('button', { name: new RegExp('Move ' + firstLabel + ' down in order', 'i') }).click();
+    // Move A down. With the ids[] repeated-key bug, save_order returns
+    // success:false and the optimistic swap is rolled back — this test guards it.
+    await panel.getByRole('button', { name: 'Move ' + TEST_CATEGORY_NAME + ' down in order' }).click();
 
-    // Wait for the optimistic swap to land in the DOM
-    await expect.poll(() => orderNames()).not.toEqual(before);
-    const after = await orderNames();
-    expect(after[0]).toBe(before[1]);
-    expect(after[1]).toBe(before[0]);
+    // A must now come AFTER B (relative order, robust to other rows).
+    await expect.poll(async () => (await indexOf(TEST_CATEGORY_NAME)) > (await indexOf(TEST_CATEGORY_NAME_2))).toBe(true);
 
-    // Re-open the tab → list re-fetched from the server; order must persist
+    // Re-open the tab → list re-fetched from the server; the swap must persist.
+    // THIS is the real wire-format guard: a rolled-back optimistic swap would
+    // show A before B again here.
     const panel2 = await openCategoriesTab(page);
-    const persisted = await orderNames(panel2);
-    expect(persisted[0]).toBe(before[1]);
-    expect(persisted[1]).toBe(before[0]);
+    expect(await indexOf(TEST_CATEGORY_NAME, panel2)).toBeGreaterThan(await indexOf(TEST_CATEGORY_NAME_2, panel2));
 
-    // Restore original order so the suite stays idempotent
-    await panel2.getByRole('button', { name: new RegExp('Move ' + firstLabel + ' up in order', 'i') }).click();
-    await expect.poll(() => orderNames(panel2)).toEqual(before);
+    // Restore original order (A before B) so the suite stays idempotent.
+    await panel2.getByRole('button', { name: 'Move ' + TEST_CATEGORY_NAME + ' up in order' }).click();
+    await expect.poll(async () => (await indexOf(TEST_CATEGORY_NAME, panel2)) < (await indexOf(TEST_CATEGORY_NAME_2, panel2))).toBe(true);
 
-    // Clean up the second test category (first is cleaned by afterEach)
-    const delBtn2 = panel2.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME_2, 'i') });
-    if (await delBtn2.count() > 0) {
-      await delBtn2.first().click();
-      const confirmDialog2 = page.getByTestId('category-delete-dialog');
-      await expect(confirmDialog2).toBeVisible();
-      await confirmDialog2.getByRole('button', { name: /^delete$/i }).click();
-      await expect(confirmDialog2).not.toBeVisible();
-    }
+    // Clean up the second test category (first is cleaned by afterEach).
+    await deleteCategoryNamed(page, panel2, TEST_CATEGORY_NAME_2);
+  });
+
+  test('reorder failure rolls back the optimistic swap and shows an error toast', async ({ page }) => {
+    // The rollback path is where a silent bug would corrupt the list, so force the
+    // server to reject the reorder and assert the client reverts cleanly.
+    const panel = await createTestCategory(page);            // A
+    await addCategoryNamed(page, panel, TEST_CATEGORY_NAME_2); // B
+
+    const orderNames = (p = panel) =>
+      p.getByRole('button', { name: /^Edit category:/i }).evaluateAll(
+        els => els.map(e => e.getAttribute('aria-label') || ''),
+      );
+    const indexOf = async (name: string, p = panel) =>
+      (await orderNames(p)).indexOf('Edit category: ' + name);
+
+    expect(await indexOf(TEST_CATEGORY_NAME)).toBeLessThan(await indexOf(TEST_CATEGORY_NAME_2));
+
+    // Force save_order to fail (HTTP 200 but success:false — the soft-failure the
+    // component checks for after resp.ok). The optimistic swap must roll back.
+    await page.route('**/category.save_order/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, message: 'DB locked' }) }),
+    );
+
+    await panel.getByRole('button', { name: 'Move ' + TEST_CATEGORY_NAME + ' down in order' }).click();
+
+    // (a) Order reverts to the original (A before B) after the failed save.
+    await expect.poll(async () => (await indexOf(TEST_CATEGORY_NAME)) < (await indexOf(TEST_CATEGORY_NAME_2))).toBe(true);
+
+    // (b) An error toast surfaces the failure.
+    const toast = page.locator('#categories-panel [role="status"][aria-live="polite"]').last();
+    await expect(toast).toContainText(/order/i);
+
+    // Stop intercepting before cleanup so the inline delete + afterEach work.
+    await page.unroute('**/category.save_order/**');
+    await deleteCategoryNamed(page, panel, TEST_CATEGORY_NAME_2);
   });
 
   test('delete category shows confirm dialog and cancel dismisses it', async ({ page }) => {
@@ -273,6 +322,31 @@ test.describe('Category management', () => {
 
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible();
+  });
+
+  test('save failure keeps the modal open and shows an error toast', async ({ page }) => {
+    const panel = await openCategoriesTab(page);
+
+    await panel.getByRole('button', { name: /new category/i }).click();
+    const modal = page.getByTestId('category-edit-modal');
+    await expect(modal).toBeVisible();
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill('Should Not Persist');
+
+    // Force category.save to soft-fail; the modal must stay open and a toast appear.
+    await page.route('**/category.save/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, message: 'boom' }) }),
+    );
+
+    await modal.getByRole('button', { name: /create category/i }).click();
+
+    const toast = page.locator('#categories-panel [role="status"][aria-live="polite"]').last();
+    await expect(toast).toContainText(/save failed/i);
+    await expect(modal).toBeVisible(); // not closed on failure
+
+    await page.unroute('**/category.save/**');
+    await page.keyboard.press('Escape');
+    await expect(modal).not.toBeVisible();
+    // Nothing was persisted (save was intercepted), so afterEach has nothing extra to clean.
   });
 
   test('edit modal closes on Escape', async ({ page }) => {

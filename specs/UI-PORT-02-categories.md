@@ -95,7 +95,7 @@ succeed on only the last ID and the persistence assertion will fail.
 
 ## Files Changed
 - `specs/UI-PORT-02-categories.md` — this file
-- `couchpotato/static/scripts/ui/category-editor.js` — pure logic module (categoryToForm, formToPayload, validateCategory)
+- `couchpotato/static/scripts/ui/category-editor.js` — pure logic module (categoryToForm, categoryFormToPayload, validateCategory)
 - `couchpotato/static/scripts/ui/index.js` — barrel re-export
 - `tests/unit/ui/category-editor.spec.ts` — vitest unit tests (TDD: written first)
 - `couchpotato/ui/templates/partials/settings/categories.html` — categories markup
