@@ -1075,7 +1075,11 @@ function categoryEditor() {
 
     // ── Helpers ──
     sortCategories(list) {
-      return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      // Coerce like categoryToForm (order may arrive as a string from the API);
+      // `!= null ? Number() : 0` keeps an explicit order=0 distinct from absent
+      // and coerces undefined/NaN safely to 0.
+      const ord = (c) => (c.order != null ? Number(c.order) : 0);
+      return list.slice().sort((a, b) => ord(a) - ord(b));
     },
 
     toast(msg, type = 'success', duration = 3000) {
@@ -1206,6 +1210,10 @@ function categoryEditor() {
       if (!deleted) return;
       this.cancelDelete();
       this.toast('"' + delLabel + '" deleted.', 'success');
+      // WCAG 2.4.3: the trigger row is gone, so cancelDelete's refocus is a
+      // no-op. Land focus on the always-present New Category button instead of
+      // dropping it to <body>.
+      this.$nextTick(() => { if (this.$refs.newCategoryBtn) this.$refs.newCategoryBtn.focus(); });
 
       try {
         await this.reload();

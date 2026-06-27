@@ -407,6 +407,44 @@ test.describe('Category management', () => {
     await expect(modal).not.toBeVisible();
   });
 
+  test('focus returns to the Edit trigger after closing the edit modal (WCAG 2.4.3)', async ({ page }) => {
+    const panel = await createTestCategory(page);
+    const editBtn = panel.getByRole('button', { name: new RegExp('Edit category: ' + TEST_CATEGORY_NAME, 'i') });
+    await editBtn.click();
+    const modal = page.getByTestId('category-edit-modal');
+    await expect(modal).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(modal).not.toBeVisible();
+    await expect(editBtn).toBeFocused();
+  });
+
+  test('focus returns to the Delete trigger after cancelling the delete dialog (WCAG 2.4.3)', async ({ page }) => {
+    const panel = await createTestCategory(page);
+    const delBtn = panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') });
+    await delBtn.click();
+    const dialog = page.getByTestId('category-delete-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('button', { name: /^cancel$/i }).click();
+    await expect(dialog).not.toBeVisible();
+    await expect(delBtn).toBeFocused();
+  });
+
+  test('focus lands on New Category after a confirmed delete (WCAG 2.4.3)', async ({ page }) => {
+    const panel = await createTestCategory(page);
+    await panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') }).click();
+    const dialog = page.getByTestId('category-delete-dialog');
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('button', { name: /^delete$/i }).click();
+    await expect(dialog).not.toBeVisible();
+    // The deleted row's trigger is gone, so focus must land on the always-present
+    // New Category button rather than dropping to <body>.
+    await expect(panel.getByRole('button', { name: /new category/i })).toBeFocused();
+    // Nothing left to clean — the category was deleted in-test.
+  });
+
   test('Categories tab renders its heading (basic a11y landmark)', async ({ page }) => {
     const panel = await openCategoriesTab(page);
     // The panel has an h2 visible in the loaded content block
