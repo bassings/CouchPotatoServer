@@ -349,12 +349,26 @@ test.describe('Category management', () => {
     // Nothing was persisted (save was intercepted), so afterEach has nothing extra to clean.
   });
 
-  test('edit modal closes on Escape', async ({ page }) => {
+  test('new-category modal closes on Escape', async ({ page }) => {
     const panel = await openCategoriesTab(page);
 
     await panel.getByRole('button', { name: /new category/i }).click();
     const modal = page.getByTestId('category-edit-modal');
     await expect(modal).toBeVisible();
+    await expect(modal.locator('h3')).toContainText('New Category');
+
+    await page.keyboard.press('Escape');
+    await expect(modal).not.toBeVisible();
+  });
+
+  test('edit modal closes on Escape', async ({ page }) => {
+    const panel = await createTestCategory(page);
+
+    // Open the edit modal on an existing category (openEdit), not the create flow
+    await panel.getByRole('button', { name: new RegExp('Edit category: ' + TEST_CATEGORY_NAME, 'i') }).click();
+    const modal = page.getByTestId('category-edit-modal');
+    await expect(modal).toBeVisible();
+    await expect(modal.locator('h3')).toContainText('Edit Category');
 
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible();

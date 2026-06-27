@@ -1042,6 +1042,7 @@ function categoryEditor() {
     saving: false,
     deleting: false,
     isReordering: false,
+    _reloadGen: 0, // bumped whenever reload() replaces the categories array
     _toastTimer: null,
     toastMessage: '',
     toastType: 'success',
@@ -1205,6 +1206,7 @@ function categoryEditor() {
       const list = this.categories.slice();
       [list[target], list[index]] = [list[index], list[target]];
       this.categories = list;
+      const gen = this._reloadGen; // generation at the time of the optimistic move
       this.isReordering = true;
 
       try {
@@ -1222,7 +1224,15 @@ function categoryEditor() {
         const data = await resp.json();
         if (!data.success) throw new Error(data.message || 'Reorder failed');
       } catch (e) {
-        this.categories = snapshot; // roll back the optimistic move
+        // Only roll back if nothing else replaced the categories array while this
+        // POST was in-flight. A concurrent saveCategory()+reload() bumps _reloadGen
+        // and writes a fresher list; clobbering it with the pre-move snapshot would
+        // silently discard the just-saved edit from the UI. (Identity comparison
+        // can't be used here — Alpine wraps `this.categories` in a reactive proxy,
+        // so `this.categories === list` is never true.)
+        if (this._reloadGen === gen) {
+          this.categories = snapshot; // roll back the optimistic move
+        }
         this.toast('Failed to save order.', 'error');
       } finally {
         this.isReordering = false;
@@ -1236,6 +1246,7 @@ function categoryEditor() {
       const data = await resp.json();
       if (!data.success) throw new Error('API returned failure');
       this.categories = this.sortCategories(data.categories || []);
+      this._reloadGen++; // signal in-flight reorders that the list was replaced
     },
 
     // ── Focus traps ──

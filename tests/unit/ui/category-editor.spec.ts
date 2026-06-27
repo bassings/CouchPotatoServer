@@ -68,6 +68,12 @@ describe('categoryToForm', () => {
     expect(form.order).toBe(0);
   });
 
+  it('defaults order to 999 when order is null', () => {
+    const doc = { ...CATEGORY_DOC, order: null };
+    const form = categoryToForm(doc);
+    expect(form.order).toBe(999);
+  });
+
   it('handles completely empty document', () => {
     const form = categoryToForm({});
     expect(form.id).toBe('');
