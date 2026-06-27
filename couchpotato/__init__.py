@@ -380,34 +380,17 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         response.delete_cookie('user', path='/')
         return response
 
-    # Classic UI catch-all (moved to /old/)
+    # Legacy /old/* catch-all — redirect to the new UI root.
+    # The views dict and view functions are retained as a porting reference and
+    # will be removed in a later cleanup PR (see specs/UI-MIGRATION.md).
     @app.get(web_base + 'old/{route:path}')
+    @app.get(web_base + 'old/')
     @app.get(web_base + 'old')
-    async def web_handler(route: str = '', request: Request = None, user=Depends(require_auth)):
-        route = route.strip('/')
-        if route in views:
-            try:
-                content = views[route](request)
-                if route == 'robots.txt':
-                    return Response(content=content, media_type='text/plain')
-                elif route == 'couchpotato.appcache':
-                    return Response(content=content, media_type='text/cache-manifest')
-                return HTMLResponse(content=content)
-            except Exception:
-                log.error("Failed doing web request '%s': %s", route, traceback.format_exc())
-                return JSONResponse({'success': False, 'error': 'Failed returning results'})
-
-        # Page not found - redirect to classic SPA
-        old_base = web_base + 'old/'
-        url = route
-        if url.startswith('static/'):
-            return Response(content='Not found', status_code=404)
-        elif url[:3] != 'api':
-            return RedirectResponse(url=old_base + '#' + url.lstrip('/'))
-        else:
-            if not Env.get('dev'):
-                time.sleep(0.1)
-            return Response(content='Wrong API key used', status_code=404)
+    async def web_handler(route: str = ''):
+        # 302 (temporary) during the in-progress UI migration to avoid
+        # permanently-cached redirects; switch to 301 or remove in the final
+        # legacy-cleanup PR.
+        return RedirectResponse(url=web_base, status_code=302)
 
     return app
 

@@ -299,10 +299,10 @@ class TestStaticFiles:
         assert 'Disallow' in resp.text
 
     def test_manifest_returns_cache_manifest(self, client):
-        """App cache manifest is served correctly."""
-        resp = client.get('/old/couchpotato.appcache')
-        assert resp.status_code == 200
-        assert 'CACHE MANIFEST' in resp.text
+        """/old/couchpotato.appcache redirects to / (legacy stack retired)."""
+        resp = client.get('/old/couchpotato.appcache', follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers.get('location') == '/'
 
 
 # --- SSE / Long-poll Tests ---
@@ -383,11 +383,10 @@ class TestTemplateRendering:
             assert 'html' in resp.text.lower()
 
     def test_docs_view_renders(self, client):
-        """API docs view renders."""
-        with patch('couchpotato.core.event.fireEvent', return_value=[]):
-            resp = client.get('/old/docs')
-            assert resp.status_code == 200
-            assert 'API' in resp.text
+        """/old/docs redirects to / (legacy stack retired; docs moved to new UI)."""
+        resp = client.get('/old/docs', follow_redirects=False)
+        assert resp.status_code == 302
+        assert resp.headers.get('location') == '/'
 
     def test_new_partial_movies_with_releases_uses_has_releases_filter(self, client):
         """with_releases=true should query backend using has_releases=True (not release_status)."""
