@@ -131,20 +131,27 @@ test.describe('Quality Profiles', () => {
     expect(createdOrder).toBeLessThan(999);
   });
 
-  test('edit an existing profile', async ({ page }) => {
-    const panel = await openProfilesTab(page);
-
-    const editBtns = panel.getByRole('button', { name: /edit profile/i });
-    if (await editBtns.count() === 0) { test.skip(); return; }
-
-    await editBtns.first().click();
-
+  test('edit an existing profile saves the change', async ({ page }) => {
+    // Operate on a created (non-core) profile so we can freely rename + clean up.
+    const panel = await createTestProfile(page);
     const modal = page.getByTestId('edit-modal');
-    await expect(modal).toBeVisible();
-    await expect(modal.getByRole('button', { name: /save changes/i })).toBeVisible();
+    const renamed = TEST_PROFILE_NAME + ' Edited';
 
-    await page.keyboard.press('Escape');
+    // Open editor, rename, save — exercises the isEdit=true save path + refresh.
+    await panel.getByRole('button', { name: new RegExp('Edit profile: ' + TEST_PROFILE_NAME, 'i') }).click();
+    await expect(modal).toBeVisible();
+    await modal.locator('input[type="text"]').first().fill(renamed);
+    await modal.getByRole('button', { name: /save changes/i }).click();
     await expect(modal).not.toBeVisible();
+    await expect(panel.getByText(renamed)).toBeVisible();
+
+    // Rename back so afterEach (which deletes TEST_PROFILE_NAME) cleans up.
+    await panel.getByRole('button', { name: new RegExp('Edit profile: ' + renamed, 'i') }).click();
+    await expect(modal).toBeVisible();
+    await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
+    await modal.getByRole('button', { name: /save changes/i }).click();
+    await expect(modal).not.toBeVisible();
+    await expect(panel.getByText(TEST_PROFILE_NAME)).toBeVisible();
   });
 
   test('reorder qualities within a profile', async ({ page }) => {

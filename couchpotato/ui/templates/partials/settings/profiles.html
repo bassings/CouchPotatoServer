@@ -8,7 +8,7 @@
      id="profiles-panel"
      aria-labelledby="tab-profiles"
      x-data="profileEditor()"
-     x-init="$watch('$root.activeTab', v => { if(v === 'profiles' && !loaded) init(); })">
+     x-init="$watch('activeTab', v => { if(v === 'profiles' && !loaded) load(); })">
 
   {# ── Loading state ── #}
   <div x-show="loading" class="flex items-center justify-center py-16" role="status" aria-live="polite">

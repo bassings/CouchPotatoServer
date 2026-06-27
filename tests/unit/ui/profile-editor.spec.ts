@@ -270,6 +270,12 @@ describe('removeQuality', () => {
     expect(result).toHaveLength(3);
   });
 
+  it('returns same array for negative index (guards the < 0 branch)', () => {
+    const result = removeQuality(types, -1);
+    expect(result).toHaveLength(3);
+    expect(result[0].qualityId).toBe(types[0].qualityId);
+  });
+
   it('returns empty array when removing the only element', () => {
     const single = [{ qualityId: '720p', finish: true, is3d: false }];
     const result = removeQuality(single, 0);

@@ -739,8 +739,10 @@ function profileEditor() {
     // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
     _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
 
-    // ── Init (lazy — fired by $watch when the tab is first opened) ──
-    async init() {
+    // ── Lazy load (named load(), NOT init(): Alpine auto-calls a method named
+    //    init() on mount, which would fetch eagerly on every settings page load.
+    //    Fired by the $watch on activeTab when the Profiles tab is first opened. ──
+    async load() {
       this.loaded = true;
       this.loading = true;
       this.loadError = '';
@@ -898,6 +900,7 @@ function profileEditor() {
     // ── Delete profile ──
     confirmDelete(profile) {
       if (profile.core) return; // built-in profiles aren't deletable (button is also disabled)
+      if (this.modalOpen) return; // never open the delete dialog over an open edit modal (keeps the two window-scoped Escape handlers mutually exclusive)
       this.profileToDelete = profile;
       this.deleteConfirmOpen = true;
       this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
@@ -1000,6 +1003,9 @@ function profileEditor() {
       ));
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
+      // Recapture focus if it has escaped the dialog entirely (programmatic
+      // focus, extension, etc.), not just at the first/last boundary.
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     },
@@ -1011,6 +1017,7 @@ function profileEditor() {
       const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     },
