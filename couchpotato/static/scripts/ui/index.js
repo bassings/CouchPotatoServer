@@ -5,3 +5,4 @@ export * from './movie-filter.js';
 export * from './settings-values.js';
 export * from './settings-help.js';
 export * from './profile-editor.js';
+export * from './category-editor.js';

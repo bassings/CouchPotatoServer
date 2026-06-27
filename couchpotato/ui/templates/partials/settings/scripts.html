@@ -92,7 +92,7 @@ function settingsPanel() {
     // Tabs that render their own x-data panel (instead of the generic group
     // list). Add new custom-panel tabs here; the generic-panel x-show in
     // settings.html keys off this Set so it never needs another && condition.
-    customPanelTabs: ['logs', 'profiles'],
+    customPanelTabs: ['logs', 'profiles', 'categories'],
     loading: true,
     saving: false,
     showAdvanced: false,
@@ -136,6 +136,7 @@ function settingsPanel() {
     tabLabels: {
       general: 'General',
       profiles: 'Profiles',
+      categories: 'Categories',
       downloaders: 'Downloaders',
       searcher: 'Searchers',
       renamer: 'Renamer',
@@ -255,6 +256,7 @@ function settingsPanel() {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
         if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
+        if (!this.hiddenTabs.has('categories') && !this.tabOrder.includes('categories')) this.tabOrder.push('categories');
         if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
 
         this.computeOpenGroups();
@@ -767,7 +769,7 @@ function profileEditor() {
 
     // ── Helpers ──
     sortProfiles(list) {
-      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     },
 
     qualityLabel(identifier) {
@@ -1021,6 +1023,291 @@ function profileEditor() {
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     },
+  };
+}
+
+/* ── Category editor (Settings → Categories tab) ── */
+/* Pure logic (categoryToForm, categoryFormToPayload, validateCategory) lives in the
+   tested CP.ui.* module so this classic script can delegate to it. */
+function categoryEditor() {
+  return {
+    // ── State ──
+    loaded: false,
+    loading: true,
+    loadError: '',
+    categories: [],
+    modalOpen: false,
+    deleteConfirmOpen: false,
+    categoryToDelete: null,
+    saving: false,
+    deleting: false,
+    isReordering: false,
+    _reloadGen: 0, // bumped whenever reload() replaces the categories array
+    _modalTrigger: null, // element to refocus when the edit modal closes (WCAG 2.4.3)
+    _deleteTrigger: null, // element to refocus when the delete dialog closes
+    _toastTimer: null,
+    toastMessage: '',
+    toastType: 'success',
+    validationErrors: [],
+    // Explicit blank shape (not {}) so the template's formState reads are defined
+    // before openNew()/openEdit() rather than relying on Alpine's undefined->'' coercion.
+    formState: { id: '', label: '', ignored: '', preferred: '', required: '', destination: '', order: 999 },
+    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
+    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
+
+    // ── Lazy load (named load(), NOT init(): Alpine auto-calls a method named
+    //    init() on mount, which would fetch eagerly on every settings page load.
+    //    Fired by the $watch on activeTab when the Categories tab is first opened. ──
+    async load() {
+      this.loaded = true;
+      this.loading = true;
+      this.loadError = '';
+      try {
+        const resp = await fetch(CP.apiBase + '/category.list/');
+        if (!resp.ok) throw new Error('category.list HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error('API returned failure');
+        this.categories = this.sortCategories(data.categories || []);
+      } catch (e) {
+        this.loadError = 'Failed to load categories: ' + e.message;
+        this.loaded = false; // allow a retry on next tab activation
+      }
+      this.loading = false;
+    },
+
+    // ── Helpers ──
+    sortCategories(list) {
+      // Single source of truth shared with categoryToForm (see categoryOrder):
+      // string orders coerce to numbers and absent order falls back to 999 so
+      // unknown-order categories sort to the END, matching the form and server.
+      const ord = CP.ui.categoryOrder;
+      return list.slice().sort((a, b) => ord(a) - ord(b));
+    },
+
+    toast(msg, type = 'success', duration = 3000) {
+      // Cancel any pending clear timer so a stale one can't wipe a newer toast
+      // early (e.g. a success toast immediately followed by a reload-error toast).
+      clearTimeout(this._toastTimer);
+      this.toastMessage = msg;
+      this.toastType = type;
+      this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, duration);
+    },
+
+    // ── Modal open/close ──
+    openNew() {
+      this._modalTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
+      this.validationErrors = [];
+      // Delegate to the tested helper so openNew/openEdit stay in sync as the
+      // category model evolves (a new field is picked up by both for free).
+      this.formState = CP.ui.categoryToForm({});
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
+    },
+
+    openEdit(category) {
+      this._modalTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
+      this.validationErrors = [];
+      this.formState = CP.ui.categoryToForm(category);
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
+    },
+
+    closeModal() {
+      this.modalOpen = false;
+      // Return keyboard focus to the trigger so SR/keyboard users aren't stranded
+      // on <body>. Skip if the trigger was removed from the DOM (e.g. its row).
+      const t = this._modalTrigger;
+      this._modalTrigger = null;
+      this.$nextTick(() => { if (t && t.isConnected) t.focus(); });
+    },
+
+    // ── Save category (save and post-save refresh have SEPARATE error paths) ──
+    async saveCategory() {
+      this.validationErrors = [];
+      const v = CP.ui.validateCategory(this.formState);
+      if (!v.valid) { this.validationErrors = v.errors; return; }
+
+      const payload = CP.ui.categoryFormToPayload(this.formState, this.categories.length);
+      // Mirror categoryFormToPayload's id guard (not a bare !!, which would call
+      // a numeric id=0 a "create"); snapshot before any await.
+      const isEdit = payload.id != null && payload.id !== '';
+      this.saving = true;
+
+      let saved = false;
+      try {
+        // categoryFormToPayload owns which keys are present: always the scalar
+        // fields, plus id (edits) XOR order (new categories append at the end).
+        // Iterating it keeps this builder from drifting when the model gains a
+        // field. All values are scalars, so plain append is correct — the bracket
+        // -key wire format only applies to the list params in moveCategory().
+        const params = new URLSearchParams();
+        for (const [k, paramVal] of Object.entries(payload)) {
+          params.append(k, String(paramVal));
+        }
+
+        const resp = await fetch(CP.apiBase + '/category.save/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Save failed');
+        saved = true;
+      } catch (e) {
+        this.toast('Save failed: ' + e.message, 'error');
+      } finally {
+        this.saving = false; // finally so a throwing catch can't latch the spinner
+      }
+
+      if (!saved) return;
+
+      // If the user dismissed the modal via Escape during the in-flight POST,
+      // suppress the toasts (they already moved on) but still reload so the list
+      // reflects the persisted save. Close + confirm BEFORE the refresh so a
+      // refresh error can never masquerade as a save error.
+      const dismissed = !this.modalOpen;
+      this.closeModal();
+      if (!dismissed) this.toast(isEdit ? 'Category updated.' : 'Category created.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        if (!dismissed) this.toast('Saved, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Delete category ──
+    confirmDelete(category) {
+      if (this.modalOpen) return; // never open the delete dialog over an open edit modal
+      this._deleteTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
+      this.categoryToDelete = category;
+      this.deleteConfirmOpen = true;
+      this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
+    },
+
+    cancelDelete(skipFocusReturn = false) {
+      this.deleteConfirmOpen = false;
+      this.categoryToDelete = null;
+      // Return focus to the Delete button that opened the dialog (cancel/escape
+      // path). On a confirmed delete, doDelete() passes skipFocusReturn=true and
+      // takes ownership of focus (→ New Category) — otherwise this would briefly
+      // focus the about-to-be-removed row before doDelete's $nextTick overrides it.
+      if (skipFocusReturn) { this._deleteTrigger = null; return; }
+      const t = this._deleteTrigger;
+      this._deleteTrigger = null;
+      this.$nextTick(() => { if (t && t.isConnected) t.focus(); });
+    },
+
+    async doDelete() {
+      if (!this.categoryToDelete) return;
+      const delId = this.categoryToDelete._id;     // snapshot before await —
+      const delLabel = this.categoryToDelete.label; // dialog may be torn down mid-flight
+      this.deleting = true;
+
+      let deleted = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('id', delId);
+        const resp = await fetch(CP.apiBase + '/category.delete/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Delete failed');
+        deleted = true;
+      } catch (e) {
+        this.toast('Delete failed: ' + e.message, 'error');
+      } finally {
+        this.deleting = false; // finally so a throwing catch can't latch the button
+      }
+
+      // On failure, leave the confirm dialog open so the user can retry;
+      // only close it on success.
+      if (!deleted) return;
+      this.cancelDelete(true); // skip the dialog's own focus-return; we own it here
+      this.toast('"' + delLabel + '" deleted.', 'success');
+      // WCAG 2.4.3: the trigger row is about to be removed by reload(); land focus
+      // on the always-present New Category button instead of dropping it to <body>.
+      this.$nextTick(() => { if (this.$refs.newCategoryBtn) this.$refs.newCategoryBtn.focus(); });
+
+      // Drop the row optimistically so a failed reload() can't leave a ghost row
+      // with live Edit/Delete buttons pointing at a server-side-deleted id.
+      this.categories = this.categories.filter(c => c._id !== delId);
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Deleted, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Reorder categories (optimistic with rollback on failure) ──
+    async moveCategory(index, direction) {
+      // Guard against overlapping reorders: serialise by disabling moves while in-flight.
+      if (this.isReordering) return;
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= this.categories.length) return;
+
+      const snapshot = this.categories.slice(); // restore point
+      const list = this.categories.slice();
+      [list[target], list[index]] = [list[index], list[target]];
+      this.categories = list;
+      const gen = this._reloadGen; // generation at the time of the optimistic move
+      this.isReordering = true;
+
+      try {
+        const params = new URLSearchParams();
+        // Indexed bracket keys (ids[0], ids[1], …), NOT repeated ids[]: the
+        // dispatcher does dict(await request.form()), which collapses repeated
+        // keys to the last value. getParams() then expands the indexed keys
+        // back into ordered lists. Repeated keys would silently send a single id
+        // and break every reorder.
+        list.forEach((c, i) => {
+          params.append(`ids[${i}]`, c._id);
+        });
+        const resp = await fetch(CP.apiBase + '/category.save_order/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Reorder failed');
+      } catch (e) {
+        // Only roll back if nothing else replaced the categories array while this
+        // POST was in-flight. A concurrent saveCategory()+reload() bumps _reloadGen
+        // and writes a fresher list; clobbering it with the pre-move snapshot would
+        // silently discard the just-saved edit from the UI. (Identity comparison
+        // can't be used here — Alpine wraps `this.categories` in a reactive proxy,
+        // so `this.categories === list` is never true.)
+        if (this._reloadGen === gen) {
+          this.categories = snapshot; // roll back the optimistic move
+        }
+        this.toast('Failed to save order: ' + e.message, 'error');
+      } finally {
+        this.isReordering = false;
+      }
+    },
+
+    // ── Reload from API (throws on failure so callers can react) ──
+    async reload() {
+      const resp = await fetch(CP.apiBase + '/category.list/');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      if (!data.success) throw new Error('API returned failure');
+      this.categories = this.sortCategories(data.categories || []);
+      this._reloadGen++; // signal in-flight reorders that the list was replaced
+    },
+
+    // ── Focus traps ──
+    // Shared cyclic focus trap for both the edit modal and the delete dialog;
+    // they differ only by their open-flag and $refs key.
+    _trapFocusIn(open, refKey, event) {
+      if (!open) return;
+      const el = this.$refs[refKey];
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+
+    trapFocus(event)       { this._trapFocusIn(this.modalOpen, 'modalEl', event); },
+    trapDeleteFocus(event) { this._trapFocusIn(this.deleteConfirmOpen, 'deleteEl', event); },
   };
 }
 

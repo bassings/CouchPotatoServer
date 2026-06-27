@@ -61,6 +61,17 @@ test.describe('Navigation', () => {
     await expect(page.locator('h1')).toContainText('Settings');
   });
 
+  test('Settings exposes a reachable Categories tab', async ({ page }) => {
+    // Smoke test for tab wiring — catches 'categories' being dropped from
+    // tabOrder/customPanelTabs independently of the categories.spec.ts suite.
+    await page.goto('/settings/');
+    await expect(page.locator('h1')).toContainText('Settings');
+    const categoriesTab = page.getByRole('tab', { name: /categories/i });
+    await expect(categoriesTab).toBeVisible();
+    await categoriesTab.click();
+    await expect(page.locator('#categories-panel')).toBeVisible();
+  });
+
   test('sidebar should collapse and expand', async ({ page }) => {
     await page.goto('/');
     // Wait for sidebar to be visible (desktop only)
