@@ -41,9 +41,9 @@
           Create profiles with multiple qualities searched in order, top to bottom.
         </p>
       </div>
+      {# No aria-label: the visible "New Profile" text IS the accessible name (WCAG 2.5.3 Label in Name); the icon is aria-hidden. #}
       <button @click="openNew()"
-              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cp-accent text-black hover:bg-cp-accentHover transition-colors"
-              aria-label="Create a new quality profile">
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
         <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
         </svg>
@@ -283,10 +283,10 @@
                 <option :value="q.identifier" x-text="q.label"></option>
               </template>
             </select>
+            {# No aria-label: visible "Add" text IS the accessible name; the adjacent select is labelled "Select quality to add". #}
             <button @click="addQualityToForm()"
                     :disabled="!selectedQualityToAdd"
-                    class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-40"
-                    aria-label="Add selected quality">
+                    class="px-3 py-1.5 rounded-md text-xs font-medium bg-cp-accent/20 text-cp-accent hover:bg-cp-accent/30 transition-colors disabled:opacity-40">
               Add
             </button>
           </div>

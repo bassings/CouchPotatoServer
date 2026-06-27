@@ -22,11 +22,12 @@ async function openProfilesTab(page: Page) {
   const panel = page.locator('#profiles-panel');
   await expect(panel).toBeVisible();
 
-  // Wait for either the loaded UI (New Profile button) or an explicit error —
-  // both are deterministic end-states, no magic delay needed.
-  await expect(
-    panel.getByRole('button', { name: /new profile/i }).or(panel.locator('[role="alert"]'))
-  ).toBeVisible();
+  // The New Profile button only renders in the loaded content block
+  // (x-show="!loading && !loadError"), so its visibility is a deterministic
+  // "init() resolved successfully" signal — no magic delay needed.
+  // (Avoid .or([role="alert"]): the error alert is always in the DOM, just
+  // hidden, so an .or() would match two elements and trip strict mode.)
+  await expect(panel.getByRole('button', { name: /new profile/i })).toBeVisible();
 
   return panel;
 }
@@ -39,7 +40,7 @@ async function deleteTestProfile(page: Page) {
     if (await delBtn.count() === 0) return;
     await delBtn.first().click();
 
-    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
     await expect(confirmDialog).toBeVisible();
     await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
     await expect(confirmDialog).not.toBeVisible();
@@ -70,7 +71,7 @@ test.describe('Quality Profiles', () => {
 
     await panel.getByRole('button', { name: /new profile/i }).click();
 
-    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
+    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
     await expect(modal).toBeVisible();
 
     await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
@@ -86,7 +87,9 @@ test.describe('Quality Profiles', () => {
 
     // Modal closes, success toast appears, profile shows in list
     await expect(modal).not.toBeVisible();
-    const toast = page.locator('[role="status"][aria-live="polite"]').last();
+    // Scope to the panel's own toast (x-text="toastMessage"); a global toast
+    // (x-text="message") also matches [role=status][aria-live=polite].
+    const toast = page.locator('#profiles-panel [role="status"][aria-live="polite"]').last();
     await expect(toast).toContainText(/created/i);
     await expect(panel.getByText(TEST_PROFILE_NAME)).toBeVisible();
   });
@@ -99,7 +102,7 @@ test.describe('Quality Profiles', () => {
 
     await editBtns.first().click();
 
-    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
+    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
     await expect(modal).toBeVisible();
     await expect(modal.getByRole('button', { name: /save changes/i })).toBeVisible();
 
@@ -115,7 +118,7 @@ test.describe('Quality Profiles', () => {
 
     await editBtns.first().click();
 
-    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
+    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
     await expect(modal).toBeVisible();
 
     const qualityItems = modal.locator('[role="listitem"]');
@@ -143,7 +146,7 @@ test.describe('Quality Profiles', () => {
 
     await deleteBtns.first().click();
 
-    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
     await expect(confirmDialog).toBeVisible();
     await expect(confirmDialog.getByText('Delete Profile')).toBeVisible();
 
@@ -159,7 +162,7 @@ test.describe('Quality Profiles', () => {
 
     await deleteBtns.first().click();
 
-    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
     await expect(confirmDialog).toBeVisible();
 
     await page.keyboard.press('Escape');
@@ -171,7 +174,7 @@ test.describe('Quality Profiles', () => {
 
     await panel.getByRole('button', { name: /new profile/i }).click();
 
-    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
+    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
     await expect(modal).toBeVisible();
 
     await modal.getByRole('button', { name: /create profile/i }).click();

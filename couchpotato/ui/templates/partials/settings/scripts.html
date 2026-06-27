@@ -850,7 +850,14 @@ function profileEditor() {
         params.append('minimum_score', String(payload.minimum_score));
         params.append('wait_for', String(payload.wait_for));
         params.append('stop_after', String(payload.stop_after));
-        params.append('types', JSON.stringify(payload.types));
+        // The API's getParams() expands bracket-notation form keys into a list
+        // of dicts (types[0][quality]=…). A JSON string would be iterated
+        // character-by-character server-side, so send discrete bracket keys.
+        payload.types.forEach((t, i) => {
+          params.append(`types[${i}][quality]`, t.quality);
+          params.append(`types[${i}][finish]`, String(t.finish));
+          params.append(`types[${i}][3d]`, String(t['3d']));
+        });
 
         const resp = await fetch(CP.apiBase + '/profile.save/', { method: 'POST', body: params });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
