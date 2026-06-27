@@ -86,11 +86,17 @@ The backend iterates `kwargs.get("types", [])`, reading `.quality`, `.finish`, `
 Response: `{ "success": true, "profile": { ...saved doc... } }`
 
 ### `POST /api/<key>/profile.save_order/`
-Params (form-encoded, repeated keys):
+Params (form-encoded, **indexed** bracket keys — NOT repeated `ids[]`):
 ```
-ids[]    = "<id1>", "<id2>", ...
-hidden[] = 0, 1, ...          (0 = visible, 1 = hidden)
+ids[0]    = "<id1>",  ids[1]    = "<id2>", ...
+hidden[0] = 0,        hidden[1] = 1, ...    (0 = visible, 1 = hidden)
 ```
+Use indexed keys because the dispatcher does `dict(await request.form())`,
+which collapses repeated keys (`ids[]`) to the last value; `getParams()` then
+expands the indexed keys back into ordered lists. Repeated keys would silently
+send a single id and break every reorder. (Same rule applies to `profile.save`
+`types[i][quality|finish|3d]`.)
+
 Response: `{ "success": true }`
 
 ### `POST /api/<key>/profile.delete/`

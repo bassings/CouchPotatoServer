@@ -730,6 +730,7 @@ function profileEditor() {
     saving: false,
     deleting: false,
     isReordering: false,
+    _toastTimer: null,
     toastMessage: '',
     toastType: 'success',
     validationErrors: [],
@@ -778,9 +779,12 @@ function profileEditor() {
     },
 
     toast(msg, type = 'success', duration = 3000) {
+      // Cancel any pending clear timer so a stale one can't wipe a newer toast
+      // early (e.g. a success toast immediately followed by a reload-error toast).
+      clearTimeout(this._toastTimer);
       this.toastMessage = msg;
       this.toastType = type;
-      setTimeout(() => { this.toastMessage = ''; }, duration);
+      this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, duration);
     },
 
     // ── Modal open/close ──
