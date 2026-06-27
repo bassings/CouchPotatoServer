@@ -129,7 +129,8 @@ Write failing tests first, then code to make them pass. Tests should meet a **pr
 |---|---|---|
 | Database | SQLite via `SQLiteAdapter` | Replaced CodernityDB (unmaintained, Python 3 issues) |
 | Web framework | FastAPI/Uvicorn | Replaced Tornado — modern async, better typing |
-| UI | htmx + Tailwind + Alpine.js | `/` = new UI, `/old/` = classic UI |
+| UI | htmx + Tailwind + Alpine.js | `/` = new UI (the only UI; legacy `/old/` is being retired — see `specs/UI-MIGRATION.md`) |
+| UI design system | `docs/design-system/README.md` is the **visual source of truth** | Tokens, typography, iconography (Heroicons), components, motion, a11y — extracted from `base.html`. Conform new UI against `docs/design-system/CONFORMANCE.md`. |
 | Container base | `python:3.14-alpine` + `su-exec` | Debian base carried ~119 OS-package CVEs (many HIGH/CRITICAL, no upstream fix); Alpine ships **0**. Healthcheck uses Python `urllib` so no `curl`/`libcurl` in the image. |
 
 ### Database Patterns

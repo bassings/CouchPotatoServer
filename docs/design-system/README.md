@@ -6,7 +6,12 @@ This package documents the **canonical design system for the modern CouchPotato 
 The system was **extracted directly from the existing codebase** (`couchpotato/ui/templates/base.html` and the `partials/`), so most tokens below already exist in the app. Treat this README as the source of truth when adding new screens or refactoring old ones.
 
 ## About the Design Files
-The `*.dc.html` files in this bundle are **design references** — interactive HTML prototypes showing the intended look and behaviour. They are **not** production code to copy verbatim.
+The `*.dc.html` files in this bundle are **static design-canvas exports** — raw reference snapshots and a data source (notably the `iconGroups` SVG path data). They are **not** production code to copy verbatim, and **not** standalone browsable pages: they were authored against a design-tool runtime (`support.js`) that is **not** part of this handoff, so the `{{ … }}` template bindings will not render. **This `README.md` is the authoritative spec;** use the `.dc.html` only as raw reference/data.
+
+### Precedence when sources disagree
+Where a `.dc.html` export diverges from this README or the live `couchpotato/ui/templates/base.html`, **base.html + this README win.** Known divergences in the exports:
+- **Poster-card hover glow:** production is `rgba(53,197,244,0.06)` → `0.15` (see `base.html`), *not* the brighter `.10`/`.25` shown in the export.
+- **Ghost button:** transparent by default (`hover:bg-white/[0.03]`, per Components below), *not* the opaque `bg-cp-surface` fill an export caption may show.
 
 Your target environment already exists: **Jinja2 templates + htmx 2 + Alpine 3 + Tailwind (CDN) + Inter**. Recreate anything from these references using that stack and the conventions already in `couchpotato/ui/templates/` — Tailwind utility classes, Alpine `x-data` components, htmx attributes, and the `cp.*` colour tokens. Do not introduce a new framework, CSS-in-JS, or a component library.
 
@@ -172,8 +177,8 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 **Leave behind:** Lobster wordmark, Open Sans, the `#ac0000` red accent, the custom icon font, and the MooTools + Uniform + ripple stack (replaced by htmx + Alpine + inline Heroicons).
 
 ## Files
-- `CouchPotato Design System.dc.html` — the full interactive reference (all tokens, icon paths, components, live theme toggle). Open in a browser. Icon path data lives in its `iconGroups` array.
-- `CouchPotato Design System (Classic).dc.html` — the legacy red/Open Sans/Lobster system, for reference only (being retired).
+- `couchpotato-design-system.dc.html` — static design-canvas export (tokens, components, and the **icon path data** in its `iconGroups` array). Reference/data only — not a browsable page (see "About the Design Files"); this README is authoritative.
+- `couchpotato-design-system-classic.dc.html` — the legacy red/Open Sans/Lobster system, for reference only (being retired).
 
 ### Source files in the repo to align with
 - `couchpotato/ui/templates/base.html` — Tailwind config, CSS variables, sidebar/chrome, toasts, theme toggle, a11y scaffolding.

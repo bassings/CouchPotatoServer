@@ -5,10 +5,12 @@ and partial must satisfy these. Each conformance PR should tick the relevant
 boxes and add tests (vitest unit for extracted logic, Playwright e2e, axe a11y).
 
 ## Tokens & theme
-- [ ] Tailwind `cp.*` colors match the README config exactly (accent `#35c5f4`, hover `#4dd4ff`, success/warning/danger fixed).
-- [ ] CSS custom properties on `:root` / `:root.light` match the dark/light table.
-- [ ] Light-mode `.text-cp-accent` override to `#0e7490` is present (AA contrast).
-- [ ] Translucent layers invert correctly in light mode (`white/[0.0x]` → black-based).
+Exact values live in [`README.md`](./README.md) (source of truth) — this checklist
+deliberately does not repeat hex values, so it can't drift out of sync.
+- [ ] Tailwind `cp.*` colors match the README config exactly (accent, hover, and the fixed success/warning/danger).
+- [ ] CSS custom properties match the README dark/light table: **`:root` holds the DARK values (the default)** and **`:root.light` holds the LIGHT values** — not inverted.
+- [ ] Light-mode `.text-cp-accent` contrast override is present (the AA value in the README tokens section).
+- [ ] Translucent layers invert correctly in light mode (`white/[0.0x]` → black-based, per README).
 - [ ] Theme toggle flips `.light` on `<html>`, persists `localStorage['cp-theme']`, respects `prefers-color-scheme` on first load.
 
 ## Typography
@@ -39,7 +41,7 @@ boxes and add tests (vitest unit for extracted logic, Playwright e2e, axe a11y).
 - [ ] `prefers-reduced-motion: reduce` collapses animation to ~0ms.
 
 ## Accessibility (axe-clean)
-- [ ] `:focus-visible` → `2px solid #35c5f4`, `outline-offset: 2px`; suppressed on mouse.
+- [ ] `:focus-visible` → `2px solid` accent ring + `outline-offset: 2px` (accent value per README); suppressed on mouse.
 - [ ] Skip link ("Skip to main content"), first tab stop, off-screen until focused.
 - [ ] `aria-current` on active nav; `aria-label` on every icon-only button; `aria-hidden` on decorative SVGs.
 - [ ] `role` + `aria-live` on toasts/status; `aria-modal` + focus trap on dialogs; `sr-only` for hidden labels.
