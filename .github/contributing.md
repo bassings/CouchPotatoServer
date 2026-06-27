@@ -42,8 +42,9 @@ Mutation testing finds behaviour your tests don't actually pin down. It runs
 informational, never a merge gate.
 
 - Python (mutmut): `make mutation-py`
-- JS (Stryker): `make mutation-js` *(inert until Alpine/htmx components are
-  extracted into importable modules under `couchpotato/static/scripts/ui/`)*
+- JS (Stryker): `make mutation-js` *(mutates the extracted UI logic in
+  `couchpotato/static/scripts/ui/`, which the inline Alpine components delegate
+  to and the vitest tests import)*
 
 ## Reporting Issues
 

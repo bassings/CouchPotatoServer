@@ -19,6 +19,13 @@
 <script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
 <script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.4.min.js"></script>
 <script defer src="{{ web_base }}static/scripts/vendor/new-ui/alpine-3.x.min.js"></script>
+<!-- Extracted, unit-tested UI logic. Module scripts are deferred, so CP.ui is
+     populated before Alpine initialises on DOMContentLoaded. -->
+<script type="module">
+  import * as ui from '{{ web_base }}static/scripts/ui/index.js';
+  window.CP = window.CP || {};
+  window.CP.ui = ui;
+</script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>
@@ -115,12 +122,14 @@ tailwind.config = {
   }
 </style>
 <script>
-  const CP = {
+  // Global so the deferred UI-logic module (below) can attach CP.ui, and so
+  // inline component scripts read it as a window property.
+  window.CP = {
     apiBase: '{{ api_base }}',
     newBase: '{{ new_base }}',
     webBase: '{{ web_base }}'
   };
-  
+
   function appShell() {
     return {
       sidebarCollapsed: false,

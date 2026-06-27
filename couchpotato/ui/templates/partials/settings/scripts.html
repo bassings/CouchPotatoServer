@@ -204,14 +204,12 @@ function settingsPanel() {
     },
 
     buildDescription(section, opt) {
-      const help = this.getSettingHelp(section, opt.name);
-      const apiDesc = opt.description || '';
-      if (!help) return apiDesc;
-      let html = help.description || apiDesc;
-      if (help.whenToChange) html += '<br><span class="text-cp-accent">When to change:</span> ' + help.whenToChange;
-      if (help.defaultNote) html += '<br><span class="text-cp-muted">💡 ' + help.defaultNote + '</span>';
-      if (help.tip) html += '<br><span class="text-cp-warning/80">Tip:</span> ' + help.tip;
-      return html;
+      // HTML assembly delegated to CP.ui.buildDescription (settings-help.js).
+      // Tolerates the no-arg call in field_types.html (opt may be undefined).
+      return CP.ui.buildDescription(
+        this.getSettingHelp(section, opt && opt.name),
+        opt && opt.description
+      );
     },
 
     hasLearnMore(section, optName) {
@@ -385,8 +383,8 @@ function settingsPanel() {
     isEnabled(group) {
       const enabler = this.getEnabler(group);
       if (!enabler) return true;
-      const val = this.getVal(group.section, enabler.name);
-      return val === true || val === 'True' || val === '1' || val === 1 || val === 'true';
+      // Value coercion delegated to CP.ui.isEnabledValue (settings-values.js).
+      return CP.ui.isEnabledValue(this.getVal(group.section, enabler.name));
     },
 
     toggleEnabler(group) {
@@ -399,9 +397,8 @@ function settingsPanel() {
     },
 
     getVal(section, name) {
-      const key = section + '.' + name;
-      if (key in this.dirty) return this.dirty[key];
-      return this.values[section]?.[name] ?? '';
+      // Pure resolution delegated to CP.ui.getVal (settings-values.js).
+      return CP.ui.getVal({ dirty: this.dirty, values: this.values }, section, name);
     },
 
     setVal(section, name, value) {

@@ -61,9 +61,8 @@ jobs:
   js-mutation:
     name: JS (Stryker)
     runs-on: ubuntu-latest
-    # Inert until Alpine/htmx components are extracted into importable modules
-    # under couchpotato/static/scripts/ui/ (see stryker.conf.json). Kept here so
-    # the pipeline is ready; tolerated-failure so an empty scope doesn't go red.
+    # Mutates the extracted UI logic under couchpotato/static/scripts/ui/
+    # (see stryker.conf.json). Informational, so a low score never blocks.
     continue-on-error: true
     permissions:
       contents: read
