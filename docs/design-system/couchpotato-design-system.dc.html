@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;letter-spacing:-.01em;}
+  :root{
+    --cp-bg:#0d0d0d; --cp-surface:#111113; --cp-card:#161618; --cp-border:#1e1e22;
+    --cp-text:#e0e0e4; --cp-muted:#9b9ba8; --cp-faint:#6a6a78;
+    --cp-accent-ink:#35c5f4; --cp-accent-tint:rgba(53,197,244,.1); --cp-chrome:rgba(0,0,0,.8);
+    --cp-h02:rgba(255,255,255,.02); --cp-h03:rgba(255,255,255,.03); --cp-h04:rgba(255,255,255,.04);
+    --cp-h05:rgba(255,255,255,.05); --cp-h06:rgba(255,255,255,.06); --cp-h08:rgba(255,255,255,.08); --cp-h12:rgba(255,255,255,.12);
+  }
+  :root.light{
+    --cp-bg:#f5f5f7; --cp-surface:#fafafa; --cp-card:#ffffff; --cp-border:#e0e0e4;
+    --cp-text:#1a1a1a; --cp-muted:#666666; --cp-faint:#999999;
+    --cp-accent-ink:#0e7490; --cp-accent-tint:rgba(53,197,244,.14); --cp-chrome:rgba(255,255,255,.85);
+    --cp-h02:rgba(0,0,0,.03); --cp-h03:rgba(0,0,0,.04); --cp-h04:rgba(0,0,0,.06);
+    --cp-h05:rgba(0,0,0,.07); --cp-h06:rgba(0,0,0,.1); --cp-h08:rgba(0,0,0,.1); --cp-h12:rgba(0,0,0,.14);
+  }
+  html{transition:background .25s ease;}
+  body{background:var(--cp-bg); transition:background .25s ease;}
+  ::selection{background:#35c5f4;color:#0d0d0d;}
+  .cp-scroll::-webkit-scrollbar{width:8px;height:8px;}
+  .cp-scroll::-webkit-scrollbar-thumb{background:#2a2a30;border-radius:4px;}
+  .cp-scroll::-webkit-scrollbar-track{background:transparent;}
+  .icon-cell:hover{border-color:rgba(53,197,244,.35)!important;background:rgba(53,197,244,.04)!important;}
+  .icon-cell:hover svg{color:#4dd4ff!important;}
+  .poster-card{transition:border-color .2s ease,box-shadow .2s ease;}
+  .poster-card:hover{border-color:rgba(53,197,244,.25)!important;box-shadow:0 0 24px rgba(53,197,244,.10);}
+  @keyframes cpSpin{to{transform:rotate(360deg);}}
+  @keyframes cpPulse{0%,100%{opacity:1;}50%{opacity:.4;}}
+  @keyframes cpFade{from{opacity:0;transform:translateY(4px);}to{opacity:1;transform:translateY(0);}}
+  .cp-spin{animation:cpSpin .8s linear infinite;}
+  .cp-pulse{animation:cpPulse 1.6s ease-in-out infinite;}
+  .cp-fade{animation:cpFade .2s ease-out;}
+  .settings-row:hover{background:rgba(255,255,255,.015);}
+  .dlg-row:hover{background:var(--cp-h04)!important;}
+  @media (prefers-reduced-motion: reduce){.cp-spin,.cp-pulse,.cp-fade{animation:none!important;}}
+</style>
+</helmet>
+
+<svg width="0" height="0" style="position:absolute;" aria-hidden="true"><defs><linearGradient id="halfFill"><stop offset="50%" stop-color="#35c5f4"></stop><stop offset="50%" stop-color="transparent"></stop></linearGradient></defs></svg>
+
+<div style="display:flex; min-height:100vh; font-family:'Inter',sans-serif; color:var(--cp-text); background:var(--cp-bg);">
+
+  <!-- Sidebar — mirrors the modern UI's collapsed-capable nav -->
+  <aside style="width:224px; flex:0 0 224px; background:var(--cp-chrome); backdrop-filter:blur(20px); border-right:1px solid var(--cp-h04); position:sticky; top:0; height:100vh; z-index:10; display:flex; flex-direction:column;">
+    <div style="display:flex; align-items:center; gap:12px; padding:0 16px; height:56px; border-bottom:1px solid var(--cp-h04);">
+      <div style="width:28px; height:28px; border-radius:6px; background:linear-gradient(135deg,#35c5f4,#1f8fbf); display:flex; align-items:center; justify-content:center; font-size:15px;">🛋️</div>
+      <span style="font-weight:600; font-size:14px; letter-spacing:-.02em;">CouchPotato</span>
+    </div>
+    <nav style="flex:1; padding:12px 8px; display:flex; flex-direction:column; gap:2px;">
+      <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="6">
+        <a href="{{ item.href }}" onClick="{{ item.onClick }}" style="display:flex; align-items:center; gap:12px; padding:8px 12px; border-radius:6px; cursor:pointer; color:{{ item.color }}; background:{{ item.bg }}; transition:background 150ms,color 150ms; text-decoration:none; font-size:13px; font-weight:500;" style-hover="{ background:'var(--cp-h03)', color:'var(--cp-text)' }">
+          <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="flex:0 0 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="{{ item.icon }}"></path></svg>
+          <span>{{ item.label }}</span>
+        </a>
+      </sc-for>
+      <div style="margin-top:8px; padding-top:8px; border-top:1px solid var(--cp-h04);">
+        <div style="display:flex; align-items:center; gap:8px; padding:8px 12px; font-size:11px; color:var(--cp-faint);">
+          <span style="width:6px; height:6px; border-radius:50%; background:#f04848;"></span>Classic UI · retired
+        </div>
+      </div>
+    </nav>
+    <button onClick="{{ toggleTheme }}" style="display:flex; align-items:center; gap:10px; width:100%; padding:11px 16px; border:none; border-top:1px solid var(--cp-h04); background:none; color:var(--cp-muted); cursor:pointer; font-family:inherit; font-size:13px; font-weight:500; text-align:left; transition:color .15s;" style-hover="{ color:'var(--cp-text)' }">
+      <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="flex:0 0 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="{{ themeIcon }}"></path></svg>
+      <span>{{ themeLabel }}</span>
+    </button>
+    <div style="padding:12px 16px; font-size:10px; color:var(--cp-faint); border-top:1px solid var(--cp-h04);">htmx · Alpine · Tailwind</div>
+  </aside>
+
+  <!-- Content -->
+  <main class="cp-scroll" style="flex:1; min-width:0;">
+
+    <!-- Hero -->
+    <header id="overview" style="position:relative; padding:64px 56px 52px; border-bottom:1px solid var(--cp-border); background:radial-gradient(120% 90% at 0% 0%, rgba(53,197,244,.08), transparent 60%);">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:18px;">Design System · v3 · htmx UI</div>
+      <h1 style="font-size:52px; font-weight:600; line-height:1.04; letter-spacing:-.03em; max-width:780px;">The visual language of <span style="color:#35c5f4;">CouchPotato</span></h1>
+      <p style="margin-top:22px; max-width:640px; font-size:17px; line-height:1.6; color:var(--cp-muted); font-weight:300;">The system of record for the modernised movie manager — Inter, a single cyan accent, dark-first theming and a Heroicons set. The classic MooTools interface is being retired; everything worth keeping lives here.</p>
+      <p style="margin-top:14px; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--cp-faint); line-height:1.7;">Jump via the sidebar — it tracks your scroll position. Toggle dark / light at the bottom-left to flip every token live.</p>
+      <div style="display:flex; gap:30px; margin-top:40px; flex-wrap:wrap;">
+        <sc-for list="{{ heroStats }}" as="s" hint-placeholder-count="4">
+          <div style="border-left:2px solid var(--cp-border); padding-left:16px;">
+            <div style="font-size:30px; font-weight:600; color:var(--cp-text); letter-spacing:-.02em;">{{ s.value }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1px; color:var(--cp-faint); text-transform:uppercase; margin-top:4px;">{{ s.label }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </header>
+
+    <!-- Colour -->
+    <section id="color" style="padding:56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">01 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Colour</h2>
+      <p style="color:var(--cp-muted); max-width:580px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">Tokens are CSS variables that flip between dark and light. One cyan accent — <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">#35c5f4</code> — replaces the classic red. Semantic colours stay fixed across themes.</p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:36px;">
+        <sc-for list="{{ themes }}" as="theme" hint-placeholder-count="2">
+          <div style="border:1px solid var(--cp-border); border-radius:12px; overflow:hidden; background:var(--cp-card);">
+            <div style="padding:14px 18px; display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--cp-border);">
+              <span style="width:10px; height:10px; border-radius:50%; background:{{ theme.dot }};"></span>
+              <span style="font-weight:600; font-size:14px;">{{ theme.name }}</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-faint); margin-left:auto;">{{ theme.css }}</span>
+            </div>
+            <sc-for list="{{ theme.swatches }}" as="sw" hint-placeholder-count="6">
+              <div style="display:flex; align-items:center; gap:14px; padding:11px 18px; border-bottom:1px solid var(--cp-h03);">
+                <span style="width:42px; height:42px; border-radius:8px; flex:0 0 42px; background:{{ sw.hex }}; border:1px solid var(--cp-h08);"></span>
+                <div style="min-width:0;">
+                  <div style="font-weight:500; font-size:13px;">{{ sw.name }}</div>
+                  <div style="font-size:12px; color:var(--cp-faint);">{{ sw.role }}</div>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--cp-faint); margin-left:auto;">{{ sw.hex }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+
+      <div style="font-size:12px; color:var(--cp-faint); margin-bottom:14px; font-family:'JetBrains Mono',monospace; letter-spacing:1px; text-transform:uppercase;">Accent &amp; semantic</div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px;">
+        <sc-for list="{{ semantic }}" as="c" hint-placeholder-count="5">
+          <div style="border:1px solid var(--cp-border); border-radius:10px; overflow:hidden; background:var(--cp-card);">
+            <div style="height:54px; background:{{ c.hex }};"></div>
+            <div style="padding:10px 12px;">
+              <div style="font-weight:500; font-size:13px;">{{ c.name }}</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-faint); margin-top:2px;">{{ c.hex }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Typography -->
+    <section id="type" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">02 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Typography</h2>
+      <p style="color:var(--cp-muted); max-width:580px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">One family — <strong style="font-weight:600;">Inter</strong>, weights 300–700, with a global <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">-0.01em</code> tracking and tighter headings. Replaces the classic Open Sans + Lobster pairing.</p>
+      <div style="border:1px solid var(--cp-border); border-radius:12px; background:var(--cp-card);">
+        <sc-for list="{{ typeSamples }}" as="t" hint-placeholder-count="5">
+          <div style="display:flex; align-items:baseline; gap:24px; padding:18px 24px; border-bottom:1px solid var(--cp-h03);">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-faint); width:140px; flex:0 0 140px;">{{ t.meta }}</span>
+            <span style="font-size:{{ t.size }}; font-weight:{{ t.weight }}; letter-spacing:{{ t.tracking }}; color:{{ t.color }}; flex:1; min-width:0;">{{ t.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Spacing / radius -->
+    <section id="metrics" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">03 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Radius &amp; metrics</h2>
+      <p style="color:var(--cp-muted); max-width:580px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">Tailwind's scale, softened from the classic 3px corners. Sidebar is 224px (collapses to 64px); focus rings are a 2px accent outline.</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:14px;">
+        <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="6">
+          <div style="border:1px solid var(--cp-border); border-radius:10px; padding:18px; background:var(--cp-card); display:flex; flex-direction:column; gap:14px;">
+            <div style="height:44px; display:flex; align-items:center;">
+              <span style="display:block; background:#35c5f4; height:{{ m.barH }}; width:{{ m.barW }}; border-radius:{{ m.barR }};"></span>
+            </div>
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:14px; color:var(--cp-text);">{{ m.value }}</div>
+              <div style="font-size:12px; color:var(--cp-faint); margin-top:2px;">{{ m.label }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Icon inventory -->
+    <section id="icons" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">04 — Iconography</div>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Icon inventory</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-bottom:8px; font-weight:300;">The classic UI shipped a 30-glyph icon font. Every glyph is remapped here to a <strong style="font-weight:600;">Heroicons</strong> outline equivalent — 24×24, <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">stroke-width 1.5</code>, <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">currentColor</code>. Glyphs with no Heroicon match (sunglasses, coffee) are drawn fresh in the same line style.</p>
+      <p style="color:var(--cp-faint); font-size:12px; margin-bottom:28px; font-family:'JetBrains Mono',monospace;">caption shows: new name · legacy glyph</p>
+
+      <sc-for list="{{ iconGroups }}" as="group" hint-placeholder-count="4">
+        <div style="margin-bottom:30px;">
+          <div style="font-size:13px; font-weight:600; color:var(--cp-muted); margin-bottom:14px; display:flex; align-items:center; gap:10px;">{{ group.title }}<span style="flex:1; height:1px; background:var(--cp-border);"></span></div>
+          <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(132px,1fr)); gap:12px;">
+            <sc-for list="{{ group.items }}" as="ic" hint-placeholder-count="6">
+              <div class="icon-cell" style="border:1px solid var(--cp-border); border-radius:10px; background:var(--cp-card); padding:18px 12px 12px; display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; transition:border-color .15s,background .15s;">
+                <svg width="26" height="26" fill="{{ ic.fill }}" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5" style="color:var(--cp-text); transition:color .15s;"><path stroke-linecap="round" stroke-linejoin="round" d="{{ ic.path }}"></path></svg>
+                <div>
+                  <div style="font-size:12px; font-weight:500; color:var(--cp-text);">{{ ic.name }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); margin-top:3px;">{{ ic.legacy }}</div>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-for>
+    </section>
+
+    <!-- Components -->
+    <section id="components" style="padding:0 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">05 — Components</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Components</h2>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Buttons</h3>
+          <div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;">
+            <a style="background:#35c5f4; color:#0d0d0d; font-weight:600; padding:8px 16px; border-radius:8px; cursor:pointer; font-size:13px;" style-hover="{ background:'#4dd4ff' }">Add movie</a>
+            <a style="color:var(--cp-text); font-weight:500; padding:8px 16px; border:1px solid var(--cp-border); border-radius:8px; cursor:pointer; font-size:13px;" style-hover="{ background:'var(--cp-h03)' }">Refresh</a>
+            <a style="color:#f04848; font-weight:500; padding:8px 16px; border:1px solid rgba(240,72,72,.3); border-radius:8px; cursor:pointer; font-size:13px;" style-hover="{ background:'rgba(240,72,72,.1)' }">Delete</a>
+          </div>
+          <div style="margin-top:18px; font-size:12px; color:var(--cp-faint); line-height:1.6;">Solid accent for primary, ghost for secondary, danger outline for destructive.</div>
+          <div style="margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-accent-ink);">bg-cp-accent · text-cp-bg · rounded-lg</div>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Inputs</h3>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <input value="The Grand Budapest Hotel" style="font-size:13px; padding:9px 12px; border-radius:8px; border:1px solid var(--cp-border); background:var(--cp-surface); color:var(--cp-text); width:100%; font-family:inherit;" />
+            <select style="font-size:13px; padding:9px 12px; border-radius:8px; border:1px solid var(--cp-border); background:var(--cp-surface); color:var(--cp-text); width:100%; font-family:inherit;"><option>1080p · BluRay</option><option>720p · WEB-DL</option></select>
+          </div>
+          <div style="margin-top:16px; font-size:12px; color:var(--cp-faint); line-height:1.6;">Surface fill, 8px radius, 2px accent focus ring.</div>
+          <div style="margin-top:8px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-accent-ink);">bg-cp-surface · border-cp-border · rounded-lg</div>
+        </div>
+      </div>
+    </section>
+
+    <section style="padding:0 56px 40px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:24px;">
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Status badges</h3>
+          <div style="display:flex; flex-direction:column; gap:10px; align-items:flex-start;">
+            <span style="padding:3px 10px; border-radius:5px; font-size:11px; font-weight:500; background:rgba(53,197,244,.2); color:#35c5f4;">wanted</span>
+            <span style="padding:3px 10px; border-radius:5px; font-size:11px; font-weight:500; background:rgba(61,220,132,.2); color:#3ddc84;">done</span>
+            <span style="padding:3px 10px; border-radius:5px; font-size:11px; font-weight:500; background:rgba(229,160,13,.2); color:#e5a00d;">snatched</span>
+            <span style="padding:3px 10px; border-radius:5px; font-size:11px; font-weight:500; background:var(--cp-h08); color:var(--cp-muted);">1080p</span>
+          </div>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Toasts</h3>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; background:#16a34a; color:#fff; font-size:13px; font-weight:500;">Movie added to wanted list</div>
+            <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; background:#dc2626; color:#fff; font-size:13px; font-weight:500;">Failed to add movie</div>
+            <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; border-radius:8px; background:#35c5f4; color:#0d0d0d; font-size:13px; font-weight:500;">Search started</div>
+          </div>
+          <div style="margin-top:10px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-accent-ink);">toast(msg, 'success' | 'error' | 'info')</div>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Rating</h3>
+          <div style="display:flex; align-items:center; gap:4px;">
+            <sc-for list="{{ ratingStars }}" as="st" hint-placeholder-count="5">
+              <svg width="22" height="22" fill="{{ st.fill }}" viewBox="0 0 24 24" stroke="#35c5f4" stroke-width="1.2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z"></path></svg>
+            </sc-for>
+            <span style="margin-left:8px; font-size:13px; color:var(--cp-muted);">8.0</span>
+          </div>
+          <div style="margin-top:18px; font-size:12px; color:var(--cp-faint); line-height:1.6;">star · star-half · star-empty, filled with accent.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Poster card + table -->
+    <section style="padding:0 56px 40px;">
+      <div style="display:grid; grid-template-columns:260px 1fr; gap:24px; align-items:start;">
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Poster card</h3>
+          <div class="poster-card" style="border-radius:8px; overflow:hidden; background:var(--cp-card); border:1px solid var(--cp-h05);">
+            <div style="position:relative; aspect-ratio:2/3; background:linear-gradient(135deg,#1c1c20,#141417,#0d0d0d); display:flex; align-items:flex-end;">
+              <span style="position:absolute; top:8px; left:8px; font-family:'JetBrains Mono',monospace; font-size:9px; color:#4a4a55; letter-spacing:1px;">POSTER 2:3</span>
+              <span style="position:absolute; top:8px; right:8px; padding:2px 6px; border-radius:4px; font-size:9px; font-weight:500; background:rgba(53,197,244,.2); color:#35c5f4; backdrop-filter:blur(4px);">wanted</span>
+              <div style="width:100%; padding:24px 10px 8px; background:linear-gradient(transparent,rgba(0,0,0,.9));">
+                <span style="padding:2px 6px; border-radius:4px; font-size:9px; font-weight:500; background:rgba(255,255,255,.1); color:rgba(255,255,255,.8);">1080p</span>
+              </div>
+            </div>
+            <div style="padding:10px;">
+              <div style="font-size:12px; font-weight:500; color:var(--cp-text); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Arrival</div>
+              <div style="font-size:10px; color:var(--cp-faint); margin-top:2px;">2016</div>
+            </div>
+          </div>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:26px; background:var(--cp-card);">
+          <h3 style="font-size:12px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:var(--cp-faint); margin-bottom:20px;">Release table</h3>
+          <div>
+            <div style="display:flex; font-weight:600; font-size:12px; color:var(--cp-muted); border-bottom:1px solid var(--cp-border); padding-bottom:8px;">
+              <span style="flex:3;">Release</span><span style="flex:1;">Source</span><span style="flex:1; text-align:right;">Size</span><span style="flex:1; text-align:right;">Seeds</span>
+            </div>
+            <sc-for list="{{ releases }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex; font-size:13px; padding:10px 0; border-bottom:1px solid var(--cp-h04); color:var(--cp-text);">
+                <span style="flex:3; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.name }}</span>
+                <span style="flex:1; color:var(--cp-faint);">{{ r.source }}</span>
+                <span style="flex:1; text-align:right; font-family:'JetBrains Mono',monospace; font-size:12px; color:var(--cp-muted);">{{ r.size }}</span>
+                <span style="flex:1; text-align:right; font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ r.seedColor }};">{{ r.seeds }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Forms & settings -->
+    <section id="forms" style="padding:0 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">06 — Components</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Forms &amp; settings</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">The settings screen drives every field from a typed schema. Ten field types share one visual grammar — <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">bg-white/[0.03]</code> fill, <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">white/[0.06]</code> border, 6px radius, 10px muted helper text, and an optional "Learn more" disclosure.</p>
+    </section>
+
+    <section style="padding:24px 56px 24px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:18px;">
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">string · int · float</div>
+          <input value="movies, downloads" style="font-size:12px; padding:8px 12px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-text); width:100%; font-family:inherit;" />
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:6px; line-height:1.5;">Comma-separated genres to ignore.</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">password</div>
+          <input type="password" value="supersecret" style="font-size:12px; padding:8px 12px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-text); width:100%; font-family:inherit; letter-spacing:.15em;" />
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:6px; line-height:1.5;">API key — never echoed back in logs.</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">dropdown</div>
+          <select style="font-size:12px; padding:8px 12px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-text); width:100%; font-family:inherit;"><option>SABnzbd</option><option>NZBGet</option><option>Transmission</option></select>
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:6px; line-height:1.5;">Active download client.</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">bool · checkbox</div>
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:11px; color:var(--cp-muted);">
+            <span style="width:15px; height:15px; border-radius:4px; border:1px solid var(--cp-h12); background:#35c5f4; display:flex; align-items:center; justify-content:center;"><svg width="11" height="11" fill="none" viewBox="0 0 24 24" stroke="#0d0d0d" stroke-width="3"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg></span>
+            Send a test notification on startup
+          </label>
+          <details style="margin-top:10px; font-size:10px;"><summary style="color:#35c5f4; cursor:pointer;">Learn more</summary><div style="margin-top:6px; padding:8px; border-radius:6px; background:var(--cp-h02); border:1px solid var(--cp-h04); color:var(--cp-muted); line-height:1.5;">Verifies your notifier credentials whenever the server boots.</div></details>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">toggle (combined 'use')</div>
+          <div style="display:flex; align-items:center; gap:12px;">
+            <button onClick="{{ toggleSwitch }}" style="position:relative; width:32px; height:16px; border-radius:9999px; border:none; cursor:pointer; transition:background .15s; background:{{ toggleBg }};">
+              <span style="display:block; width:12px; height:12px; background:#fff; border-radius:50%; position:absolute; top:2px; transition:transform .15s; transform:translateX({{ toggleX }});"></span>
+            </button>
+            <span style="font-size:11px; color:var(--cp-muted);">{{ toggleLabel }}</span>
+          </div>
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:10px; line-height:1.5;">Per-row enable in multi-host providers. Try it →</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">directory · browse</div>
+          <div style="display:flex; gap:8px;">
+            <input value="/movies" style="flex:1; min-width:0; font-size:12px; padding:8px 12px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-text); font-family:inherit;" />
+            <button style="padding:8px 12px; border-radius:6px; font-size:12px; background:var(--cp-h04); color:var(--cp-muted); border:none; cursor:pointer; white-space:nowrap;" style-hover="{ color:'var(--cp-text)', background:'var(--cp-h06)' }">Browse</button>
+          </div>
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:6px; line-height:1.5;">Opens the folder browser modal.</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">button · async action</div>
+          <button style="padding:9px 16px; border-radius:6px; font-size:12px; font-weight:500; background:rgba(53,197,244,.2); color:#35c5f4; border:none; cursor:pointer;" style-hover="{ background:'rgba(53,197,244,.3)' }">Sync from Jackett</button>
+          <p style="font-size:10px; color:var(--cp-faint); margin-top:8px; line-height:1.5;">Shows a spinner + inline success/error result.</p>
+        </div>
+
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); grid-column:span 2;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">combined · multi-row (host / api_key + use toggle)</div>
+          <div style="display:flex; gap:8px; align-items:center; font-size:10px; color:var(--cp-faint); margin-bottom:8px;"><span style="width:32px; flex:0 0 32px;"></span><span style="flex:2;">host</span><span style="flex:1;">api key</span><span style="width:16px; flex:0 0 16px;"></span></div>
+          <sc-for list="{{ combinedRows }}" as="row" hint-placeholder-count="2">
+            <div style="display:flex; gap:8px; align-items:center; margin-bottom:8px;">
+              <span style="width:32px; flex:0 0 32px; height:16px; border-radius:9999px; background:{{ row.bg }}; position:relative;"><span style="display:block; width:12px; height:12px; background:#fff; border-radius:50%; position:absolute; top:2px; transform:translateX({{ row.x }});"></span></span>
+              <input value="{{ row.host }}" style="flex:2; min-width:0; font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-text); font-family:inherit;" />
+              <input value="{{ row.key }}" style="flex:1; min-width:0; font-size:12px; padding:6px 10px; border-radius:6px; border:1px solid var(--cp-h06); background:var(--cp-h03); color:var(--cp-muted); font-family:'JetBrains Mono',monospace;" />
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="var(--cp-faint)" stroke-width="1.5" style="flex:0 0 16px;"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </div>
+          </sc-for>
+          <button style="font-size:11px; color:#35c5f4; background:none; border:none; cursor:pointer; padding:0; margin-top:4px;">+ Add</button>
+        </div>
+      </div>
+      <div style="margin-top:18px; border:1px solid var(--cp-border); border-radius:12px; background:var(--cp-card); overflow:hidden;">
+        <div style="padding:10px 18px; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; border-bottom:1px solid var(--cp-border);">settings row layout</div>
+        <sc-for list="{{ settingsRows }}" as="sr" hint-placeholder-count="3">
+          <div class="settings-row" style="display:flex; align-items:center; justify-content:space-between; gap:24px; padding:14px 18px; border-bottom:1px solid var(--cp-h03); transition:background .15s;">
+            <div style="min-width:0;"><div style="font-size:13px; color:var(--cp-text);">{{ sr.label }}</div><div style="font-size:11px; color:var(--cp-faint); margin-top:2px;">{{ sr.hint }}</div></div>
+            <div style="flex:0 0 auto;">
+              <sc-if value="{{ sr.isToggle }}" hint-placeholder-val="{{ true }}"><span style="display:inline-block; width:32px; height:16px; border-radius:9999px; background:#35c5f4; position:relative;"><span style="display:block; width:12px; height:12px; background:#fff; border-radius:50%; position:absolute; top:2px; transform:translateX(16px);"></span></span></sc-if>
+              <sc-if value="{{ sr.isChip }}" hint-placeholder-val="{{ true }}"><span style="font-size:12px; color:var(--cp-muted); font-family:'JetBrains Mono',monospace;">{{ sr.control }}</span></sc-if>
+              <sc-if value="{{ sr.isNum }}" hint-placeholder-val="{{ true }}"><span style="font-size:12px; color:var(--cp-text); font-family:'JetBrains Mono',monospace; background:var(--cp-h03); border:1px solid var(--cp-h06); border-radius:6px; padding:6px 10px;">{{ sr.control }}</span></sc-if>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Modals & overlays -->
+    <section id="modals" style="padding:24px 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">07 — Components</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Modals &amp; overlays</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">Dialogs sit on a <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">bg-black/60</code> scrim, centered, <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">max-w-lg</code>, 12px radius. Every one is <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">role="dialog" aria-modal</code> with Escape-to-close and a Tab focus trap. Header / scrollable body / footer is the standard skeleton.</p>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:1.3fr 1fr; gap:24px; align-items:start;">
+        <!-- dialog specimen on a scrim -->
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:28px; background:rgba(0,0,0,.5); background-image:radial-gradient(rgba(255,255,255,.025) 1px, transparent 1px); background-size:14px 14px;">
+          <div style="max-width:440px; margin:0 auto; background:var(--cp-card); border-radius:12px; border:1px solid var(--cp-h05); overflow:hidden; box-shadow:0 24px 60px rgba(0,0,0,.5);">
+            <div style="padding:12px 16px; border-bottom:1px solid var(--cp-h04); display:flex; align-items:center; justify-content:space-between;">
+              <h3 style="font-size:14px; font-weight:500;">Browse Folders</h3>
+              <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="var(--cp-faint)" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </div>
+            <div style="padding:8px 16px; border-bottom:1px solid var(--cp-h04); background:var(--cp-h02); display:flex; align-items:center; gap:8px;">
+              <span style="padding:3px 8px; border-radius:4px; font-size:11px; background:var(--cp-h04); color:var(--cp-muted);">↑ Up</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-faint);">/movies/incoming</span>
+            </div>
+            <div>
+              <sc-for list="{{ folderRows }}" as="f" hint-placeholder-count="3">
+                <div class="dlg-row" style="display:flex; align-items:center; gap:8px; padding:9px 16px; border-bottom:1px solid var(--cp-h02); font-size:12px; cursor:pointer; transition:background .12s;">
+                  <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#35c5f4" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 014.5 9.75h15A2.25 2.25 0 0121.75 12v.75m-8.69-6.44l-2.12-2.12a1.5 1.5 0 00-1.061-.44H4.5A2.25 2.25 0 002.25 6v12a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9a2.25 2.25 0 00-2.25-2.25h-5.379a1.5 1.5 0 01-1.06-.44z"></path></svg>
+                  <span>{{ f }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="padding:12px 16px; border-top:1px solid var(--cp-h04); display:flex; justify-content:flex-end; gap:8px;">
+              <button style="padding:8px 16px; border-radius:6px; font-size:12px; font-weight:500; color:var(--cp-muted); background:none; border:none; cursor:pointer;">Cancel</button>
+              <button style="padding:8px 16px; border-radius:6px; font-size:12px; font-weight:500; background:#35c5f4; color:#0d0d0d; border:none; cursor:pointer;" style-hover="{ background:'#4dd4ff' }">Select This Folder</button>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;">restart banner</div>
+            <div style="display:inline-flex; align-items:center; gap:12px; padding:11px 18px; border-radius:8px; background:rgba(229,160,13,.2); border:1px solid rgba(229,160,13,.3);">
+              <span style="font-size:12px; color:#e5a00d; font-weight:500;">Some changes need a restart.</span>
+              <button style="padding:4px 12px; border-radius:6px; font-size:12px; font-weight:500; background:#e5a00d; color:#000; border:none; cursor:pointer;">Restart</button>
+            </div>
+          </div>
+          <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); font-size:12px; color:var(--cp-muted); line-height:1.7;">
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">dialog contract</div>
+            <div style="display:flex; gap:8px;"><span style="color:#35c5f4;">·</span>role="dialog" aria-modal="true"</div>
+            <div style="display:flex; gap:8px;"><span style="color:#35c5f4;">·</span>Escape closes · Tab cycles within</div>
+            <div style="display:flex; gap:8px;"><span style="color:#35c5f4;">·</span>scrim click dismisses</div>
+            <div style="display:flex; gap:8px;"><span style="color:#35c5f4;">·</span>body max-h-[80vh], scrolls</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- States -->
+    <section id="states" style="padding:24px 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">08 — Patterns</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Loading, empty &amp; error states</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">htmx swaps content in place, so every async surface needs a resting state. Spinners use the shared SVG circle, lists fall back to a centered muted message, and skeletons pulse while posters load.</p>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:18px;">
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); min-height:150px; display:flex; flex-direction:column;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;">spinner</div>
+          <div style="flex:1; display:flex; align-items:center; justify-content:center;">
+            <svg class="cp-spin" width="26" height="26" viewBox="0 0 24 24" fill="none" style="color:#35c5f4;"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" style="opacity:.25;"></circle><path fill="currentColor" style="opacity:.85;" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+          </div>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); min-height:150px;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;">skeleton</div>
+          <div style="display:flex; gap:10px;">
+            <div class="cp-pulse" style="width:46px; height:68px; border-radius:6px; background:var(--cp-border); flex:0 0 46px;"></div>
+            <div class="cp-pulse" style="flex:1; display:flex; flex-direction:column; gap:8px; justify-content:center;">
+              <div style="height:9px; border-radius:4px; background:var(--cp-border); width:80%;"></div>
+              <div style="height:9px; border-radius:4px; background:var(--cp-border); width:50%;"></div>
+            </div>
+          </div>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+          <svg width="34" height="34" fill="none" viewBox="0 0 24 24" stroke="#2a2a30" stroke-width="1"><path stroke-linecap="round" stroke-linejoin="round" d="m15.75 10.5 4.72-4.72a.75.75 0 0 1 1.28.53v11.38a.75.75 0 0 1-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 0 0 2.25-2.25v-9a2.25 2.25 0 0 0-2.25-2.25h-9A2.25 2.25 0 0 0 2.25 7.5v9a2.25 2.25 0 0 0 2.25 2.25Z"></path></svg>
+          <p style="font-size:12px; color:var(--cp-faint); margin-top:12px;">No movies found</p>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); min-height:150px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+          <svg width="34" height="34" fill="none" viewBox="0 0 24 24" stroke="#f04848" stroke-width="1.2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"></path></svg>
+          <p style="font-size:12px; color:#f04848; margin-top:12px;">Something went wrong</p>
+          <p style="font-size:11px; color:var(--cp-faint); margin-top:4px;">Couldn't reach the API</p>
+        </div>
+      </div>
+      <div style="margin-top:18px; display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px;">
+        <sc-for list="{{ emptyCopy }}" as="e" hint-placeholder-count="3">
+          <div style="border:1px dashed #2a2a30; border-radius:10px; padding:16px; text-align:center; font-size:12px; color:var(--cp-faint);">"{{ e }}"</div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Surfaces & space -->
+    <section id="surfaces" style="padding:24px 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">09 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Surfaces, elevation &amp; space</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">Depth is built from three near-black layers plus translucent borders. Chrome (sidebar, top bar) floats with <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">bg-black/80 + backdrop-blur-xl</code>; cards sit flat and only the accent glow appears on hover.</p>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start;">
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">layering · bg → surface → card</div>
+          <div style="background:var(--cp-bg); border-radius:10px; padding:20px;">
+            <div style="background:var(--cp-surface); border:1px solid var(--cp-border); border-radius:8px; padding:18px;">
+              <div style="background:var(--cp-card); border:1px solid var(--cp-border); border-radius:6px; padding:14px; font-size:12px; color:var(--cp-muted);">card · var(--cp-card)</div>
+              <div style="font-size:11px; color:var(--cp-faint); margin-top:8px; font-family:'JetBrains Mono',monospace;">surface · var(--cp-surface)</div>
+            </div>
+            <div style="font-size:11px; color:var(--cp-faint); margin-top:10px; font-family:'JetBrains Mono',monospace;">bg · #0d0d0d</div>
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:16px;">
+          <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;">border opacities</div>
+            <div style="display:flex; flex-direction:column; gap:10px;">
+              <sc-for list="{{ borders }}" as="b" hint-placeholder-count="3">
+                <div style="display:flex; align-items:center; gap:12px;">
+                  <span style="width:60px; height:30px; border-radius:6px; background:var(--cp-card); border:1px solid {{ b.color }};"></span>
+                  <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-muted);">{{ b.token }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-chrome); backdrop-filter:blur(12px); position:relative; overflow:hidden;">
+            <div style="position:absolute; inset:0; background:radial-gradient(circle at 30% 20%, rgba(53,197,244,.25), transparent 60%); z-index:0;"></div>
+            <div style="position:relative; z-index:1; font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;">floating chrome</div>
+            <div style="position:relative; z-index:1; font-size:12px; color:var(--cp-text);">bg-black/80 · backdrop-blur-xl</div>
+          </div>
+        </div>
+      </div>
+      <div style="margin-top:18px;">
+        <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:14px;">spacing scale · 4px base</div>
+        <div style="display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap;">
+          <sc-for list="{{ spacing }}" as="sp" hint-placeholder-count="6">
+            <div style="text-align:center;">
+              <div style="width:{{ sp.px }}; height:{{ sp.px }}; background:#35c5f4; border-radius:3px; margin:0 auto;"></div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-muted); margin-top:8px;">{{ sp.name }}</div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:9px; color:var(--cp-faint);">{{ sp.px }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <!-- Motion -->
+    <section id="motion" style="padding:24px 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">10 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Motion</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">Restrained and fast. A single <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">fade-in</code> for swapped content, short colour/opacity transitions on interactive elements, and a hard stop under <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">prefers-reduced-motion</code>.</p>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:18px;">
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">durations</div>
+          <div style="display:flex; flex-direction:column; gap:12px;">
+            <sc-for list="{{ durations }}" as="d" hint-placeholder-count="3">
+              <div style="display:flex; align-items:center; gap:12px;">
+                <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:var(--cp-text); width:52px; flex:0 0 52px;">{{ d.ms }}</span>
+                <span style="flex:1; height:6px; border-radius:3px; background:linear-gradient(90deg,#35c5f4,#1f8fbf); max-width:{{ d.w }};"></span>
+                <span style="font-size:11px; color:var(--cp-faint);">{{ d.use }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">fade-in · live</div>
+          <button onClick="{{ replayFade }}" style="font-size:11px; color:#35c5f4; background:none; border:1px solid rgba(53,197,244,.3); border-radius:6px; padding:4px 10px; cursor:pointer; margin-bottom:14px;">Replay ↻</button>
+          <div key="{{ fadeKey }}" class="cp-fade" style="background:rgba(53,197,244,.1); border:1px solid rgba(53,197,244,.25); border-radius:8px; padding:14px; font-size:12px; color:#35c5f4;">Content swapped in</div>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); margin-top:10px;">opacity 0→1 · translateY 4px→0 · .2s</div>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:22px; background:var(--cp-card); display:flex; flex-direction:column; justify-content:center;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:12px;">reduced motion</div>
+          <p style="font-size:12px; color:var(--cp-muted); line-height:1.6;">Under <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">prefers-reduced-motion</code>, all animation and scroll-behavior collapse to ~0ms. Spinners freeze, fades disappear.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Accessibility -->
+    <section id="a11y" style="padding:24px 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">11 — Foundations</div>
+      <h2 style="font-size:30px; font-weight:600; letter-spacing:-.02em;">Accessibility</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-top:8px; font-weight:300;">Accessibility is built into the UI, not bolted on — there's a dedicated Playwright + axe suite. These are the rules every component follows.</p>
+    </section>
+
+    <section style="padding:24px 56px 40px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:18px;">
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:24px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">focus ring · live</div>
+          <div style="display:flex; gap:12px; align-items:center; flex-wrap:wrap;">
+            <button style="padding:8px 16px; border-radius:6px; font-size:13px; background:#35c5f4; color:#0d0d0d; border:none; outline:2px solid #35c5f4; outline-offset:2px; cursor:pointer;">Focused</button>
+            <input placeholder="Tab to me" style="padding:8px 12px; border-radius:6px; font-size:13px; background:var(--cp-h03); border:1px solid var(--cp-h06); color:var(--cp-text); font-family:inherit;" />
+          </div>
+          <p style="font-size:11px; color:var(--cp-faint); margin-top:14px; line-height:1.6; font-family:'JetBrains Mono',monospace;">:focus-visible → 2px #35c5f4, offset 2px</p>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:24px; background:var(--cp-card);">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">skip link</div>
+          <div style="display:inline-block; padding:10px 22px; border-radius:8px; background:#35c5f4; color:#0d0d0d; font-weight:600; font-size:13px;">Skip to main content</div>
+          <p style="font-size:11px; color:var(--cp-faint); margin-top:14px; line-height:1.6;">Off-screen until focused, then pinned top-left — first tab stop on every page.</p>
+        </div>
+        <div style="border:1px solid var(--cp-border); border-radius:12px; padding:24px; background:var(--cp-card); grid-column:span 2;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-faint); text-transform:uppercase; letter-spacing:1px; margin-bottom:16px;">checklist</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px 28px;">
+            <sc-for list="{{ a11yItems }}" as="a" hint-placeholder-count="6">
+              <div style="display:flex; gap:10px; align-items:flex-start;">
+                <svg width="16" height="16" fill="none" viewBox="0 0 24 24" stroke="#3ddc84" stroke-width="2.2" style="flex:0 0 16px; margin-top:1px;"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+                <div><span style="font-size:13px; color:var(--cp-text);">{{ a.title }}</span><span style="font-size:12px; color:var(--cp-faint);"> — {{ a.note }}</span></div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="border:1px solid rgba(53,197,244,.2); border-radius:12px; padding:24px; background:rgba(53,197,244,.04); grid-column:span 2;">
+          <div style="font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--cp-accent-ink); text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;">contrast note</div>
+          <p style="font-size:13px; color:var(--cp-muted); line-height:1.6;">The cyan accent on a light-mode tint fails AA, so <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">.text-cp-accent</code> is overridden to <code style="font-family:'JetBrains Mono',monospace; color:#0e7490;">#0e7490</code> in light mode — same hue, sufficient contrast on <code style="font-family:'JetBrains Mono',monospace;">bg-cp-accent/10</code>.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Migration -->
+    <section id="migration" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:var(--cp-accent-ink); text-transform:uppercase; margin-bottom:8px;">12 — Migration</div>
+      <h2 style="font-size:30px; font-weight:600; margin-bottom:8px; letter-spacing:-.02em;">Retiring the classic UI</h2>
+      <p style="color:var(--cp-muted); max-width:640px; font-size:15px; line-height:1.6; margin-bottom:32px; font-weight:300;">The MooTools interface still ships behind <code style="font-family:'JetBrains Mono',monospace; color:var(--cp-accent-ink);">/old/</code>. These are the patterns worth carrying into the htmx UI — and the ones to leave behind.</p>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:24px;">
+
+        <div style="border:1px solid rgba(61,220,132,.25); border-radius:12px; padding:26px; background:rgba(61,220,132,.04);">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#3ddc84" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"></path></svg>
+            <h3 style="font-size:14px; font-weight:600; color:#3ddc84;">Carry over</h3>
+          </div>
+          <sc-for list="{{ carryOver }}" as="k" hint-placeholder-count="5">
+            <div style="padding:11px 0; border-bottom:1px solid var(--cp-h04);">
+              <div style="font-size:13px; font-weight:500; color:var(--cp-text);">{{ k.title }}</div>
+              <div style="font-size:12px; color:var(--cp-muted); margin-top:3px; line-height:1.5; font-weight:300;">{{ k.note }}</div>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="border:1px solid rgba(240,72,72,.25); border-radius:12px; padding:26px; background:rgba(240,72,72,.04);">
+          <div style="display:flex; align-items:center; gap:10px; margin-bottom:18px;">
+            <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="#f04848" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"></path></svg>
+            <h3 style="font-size:14px; font-weight:600; color:#f04848;">Leave behind</h3>
+          </div>
+          <sc-for list="{{ leaveBehind }}" as="k" hint-placeholder-count="5">
+            <div style="padding:11px 0; border-bottom:1px solid var(--cp-h04);">
+              <div style="font-size:13px; font-weight:500; color:var(--cp-text);">{{ k.title }}</div>
+              <div style="font-size:12px; color:var(--cp-muted); margin-top:3px; line-height:1.5; font-weight:300;">{{ k.note }}</div>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <footer style="padding:24px 56px 48px; border-top:1px solid var(--cp-border); color:var(--cp-faint); font-size:12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+      <span style="font-family:'JetBrains Mono',monospace;">Extracted from couchpotato/ui/templates/base.html</span>
+      <span>bassings/CouchPotatoServer · v3</span>
+    </footer>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = { toggleOn: true, fadeKey: 0, activeId: 'overview', dark: true };
+  _sectionIds = ['overview','color','type','metrics','icons','components','forms','modals','states','surfaces','motion','a11y','migration'];
+  componentDidMount(){
+    if (localStorage.getItem('cp-ds-theme') === 'light') {
+      document.documentElement.classList.add('light');
+      this.setState({ dark: false });
+    }
+    this._onScroll = () => {
+      let cur = this._sectionIds[0];
+      for (const id of this._sectionIds) {
+        const el = document.getElementById(id);
+        if (el && el.getBoundingClientRect().top <= 140) cur = id;
+      }
+      if (cur !== this.state.activeId) this.setState({ activeId: cur });
+    };
+    window.addEventListener('scroll', this._onScroll, { passive: true });
+    this._onScroll();
+  }
+  componentWillUnmount(){ if (this._onScroll) window.removeEventListener('scroll', this._onScroll); }
+  renderVals(){
+    const on = this.state.toggleOn;
+    const activeId = this.state.activeId;
+    const dark = this.state.dark;
+    const jump = (id) => (e) => {
+      e.preventDefault();
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+    };
+    const N = (label, id, icon) => ({
+      label, href:'#'+id, onClick: jump(id), icon,
+      color: activeId === id ? 'var(--cp-accent-ink)' : 'var(--cp-muted)',
+      bg: activeId === id ? 'var(--cp-accent-tint)' : 'transparent',
+    });
+    const I = (name, legacy, path, fill) => ({ name, legacy, path, fill: fill || 'none' });
+
+    return {
+      navItems: [
+        N('Overview','overview','M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z', true),
+        N('Colour','color','M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.043-.025a15.994 15.994 0 011.622-3.395m3.42 3.42a15.995 15.995 0 004.764-4.648l3.876-5.814a1.151 1.151 0 00-1.597-1.597L14.146 6.32a15.996 15.996 0 00-4.649 4.763m3.42 3.42a6.776 6.776 0 00-3.42-3.42'),
+        N('Type','type','M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3'),
+        N('Icons','icons','M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z'),
+        N('Components','components','M2.25 7.125C2.25 6.504 2.754 6 3.375 6h6.75c.621 0 1.125.504 1.125 1.125v3.75c0 .621-.504 1.125-1.125 1.125h-6.75A1.125 1.125 0 012.25 10.875v-3.75zM14.25 8.625c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v8.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-8.25zM3.75 16.125c0-.621.504-1.125 1.125-1.125h5.25c.621 0 1.125.504 1.125 1.125v2.25c0 .621-.504 1.125-1.125 1.125h-5.25a1.125 1.125 0 01-1.125-1.125v-2.25z'),
+        N('Forms','forms','M10.5 1.5H8.25A2.25 2.25 0 006 3.75v16.5a2.25 2.25 0 002.25 2.25h7.5A2.25 2.25 0 0018 20.25V3.75a2.25 2.25 0 00-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3'),
+        N('Modals','modals','M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15'),
+        N('States','states','M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z'),
+        N('Surfaces','surfaces','M6.429 9.75L2.25 12l4.179 2.25m0-4.5l5.571 3 5.571-3m-11.142 0L2.25 7.5 12 2.25l9.75 5.25-4.179 2.25m0 0L21.75 12l-4.179 2.25m0 0l4.179 2.25L12 21.75 2.25 16.5l4.179-2.25m11.142 0l-5.571 3-5.571-3'),
+        N('Motion','motion','M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z'),
+        N('A11y','a11y','M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z'),
+        N('Migration','migration','M9 15L3 9m0 0l6-6M3 9h12a6 6 0 010 12h-3'),
+      ],
+      heroStats: [
+        { value:'30', label:'icons mapped' },
+        { value:'2',  label:'themes' },
+        { value:'Inter', label:'typeface' },
+        { value:'#35c5f4', label:'accent' },
+      ],
+      themes: [
+        { name:'Dark (default)', css:':root', dot:'#35c5f4', swatches:[
+          { name:'--cp-bg',      role:'app background', hex:'#0d0d0d' },
+          { name:'--cp-surface', role:'inset / inputs', hex:'#111113' },
+          { name:'--cp-card',    role:'card surface', hex:'#161618' },
+          { name:'--cp-border',  role:'dividers, borders', hex:'#1e1e22' },
+          { name:'--cp-muted',   role:'secondary text', hex:'#9b9ba8' },
+          { name:'--cp-text',    role:'primary text', hex:'#e0e0e4' },
+        ]},
+        { name:'Light', css:':root.light', dot:'#0e7490', swatches:[
+          { name:'--cp-bg',      role:'app background', hex:'#f5f5f7' },
+          { name:'--cp-surface', role:'inset / inputs', hex:'#fafafa' },
+          { name:'--cp-card',    role:'card surface', hex:'#ffffff' },
+          { name:'--cp-border',  role:'dividers, borders', hex:'#e0e0e4' },
+          { name:'--cp-muted',   role:'secondary text', hex:'#666666' },
+          { name:'--cp-text',    role:'primary text', hex:'#1a1a1a' },
+        ]},
+      ],
+      semantic: [
+        { name:'accent', hex:'#35c5f4' },
+        { name:'accentHover', hex:'#4dd4ff' },
+        { name:'success', hex:'#3ddc84' },
+        { name:'warning', hex:'#e5a00d' },
+        { name:'danger', hex:'#f04848' },
+      ],
+      typeSamples: [
+        { meta:'h1 · 52 / 600',    size:'40px', weight:'600', tracking:'-.03em', color:'#e0e0e4', text:'Now downloading' },
+        { meta:'h2 · 30 / 600',    size:'26px', weight:'600', tracking:'-.02em', color:'#e0e0e4', text:'Wanted movies' },
+        { meta:'body · 15 / 300',  size:'15px', weight:'300', tracking:'-.01em', color:'#e0e0e4', text:'CouchPotato finds and grabs the best release for everything on your list.' },
+        { meta:'label · 13 / 500', size:'13px', weight:'500', tracking:'-.01em', color:'#e0e0e4', text:'42 releases found' },
+        { meta:'mono · caption',   size:'12px', weight:'400', tracking:'0',      color:'#9b9ba8', text:'Arrival.2016.1080p.BluRay.x264' },
+      ],
+      metrics: [
+        { value:'4px',   label:'rounded', barH:'34px', barW:'46px', barR:'4px' },
+        { value:'8px',   label:'rounded-lg', barH:'34px', barW:'46px', barR:'8px' },
+        { value:'12px',  label:'rounded-xl', barH:'34px', barW:'46px', barR:'12px' },
+        { value:'224px', label:'sidebar width', barH:'12px', barW:'72px', barR:'4px' },
+        { value:'64px',  label:'collapsed', barH:'12px', barW:'30px', barR:'4px' },
+        { value:'2px',   label:'focus ring', barH:'26px', barW:'26px', barR:'6px' },
+      ],
+      iconGroups: [
+        { title:'Navigation & chrome', items:[
+          I('home','icon-home','M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25'),
+          I('film','icon-movie','M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h6M9 12h6m-6 5.25h6M5.25 6.75h.008v.008H5.25V6.75zm0 5.25h.008v.008H5.25V12zm0 5.25h.008v.008H5.25v-.008zm13.5-10.5h.008v.008h-.008V6.75zm0 5.25h.008v.008h-.008V12zm0 5.25h.008v.008h-.008v-.008z'),
+          I('magnifying-glass','icon-search','M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z'),
+          I('cog-6-tooth','icon-settings','M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.431l-1.003.827c-.293.24-.438.613-.431.992a6.759 6.759 0 010 .255c-.007.378.138.75.43.99l1.005.828c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.941-1.11.941h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.431l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.99l-1.004-.828a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.281zM15 12a3 3 0 11-6 0 3 3 0 016 0z'),
+          I('bars-3','icon-menu','M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5'),
+          I('bars-2','icon-handle','M3.75 9h16.5m-16.5 6.75h16.5'),
+          I('ellipsis','icon-dots','M6.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM12.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0zM18.75 12a.75.75 0 11-1.5 0 .75.75 0 011.5 0z'),
+          I('chevron-down','icon-dropdown','M19.5 8.25l-7.5 7.5-7.5-7.5'),
+          I('arrow-left','icon-left-arrow','M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18'),
+        ]},
+        { title:'Actions', items:[
+          I('plus','icon-plus','M12 4.5v15m7.5-7.5h-15'),
+          I('arrow-down-tray','icon-download','M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3'),
+          I('arrow-path','icon-refresh','M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99'),
+          I('arrow-uturn-right','icon-redo','M15 15l6-6m0 0l-6-6m6 6H9a6 6 0 000 12h3'),
+          I('trash','icon-delete','M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0'),
+          I('x-mark','icon-cancel','M6 18L18 6M6 6l12 12'),
+          I('check','icon-ok','M4.5 12.75l6 6 9-13.5'),
+          I('play','icon-play','M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.348a1.125 1.125 0 010 1.971l-11.54 6.347a1.125 1.125 0 01-1.667-.985V5.653z'),
+          I('eye','icon-eye','M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178zM15 12a3 3 0 11-6 0 3 3 0 016 0z'),
+          I('heart','icon-donate','M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12z'),
+        ]},
+        { title:'Status & feedback', items:[
+          I('bell','icon-notifications','M14.857 17.082a23.848 23.848 0 005.454-1.31A8.967 8.967 0 0118 9.75v-.7V9A6 6 0 006 9v.75a8.967 8.967 0 01-2.312 6.022c1.733.64 3.56 1.085 5.455 1.31m5.714 0a24.255 24.255 0 01-5.714 0m5.714 0a3 3 0 11-5.714 0'),
+          I('information-circle','icon-info','M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z'),
+          I('exclamation-triangle','icon-error','M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z'),
+          I('squares-2x2','icon-thumb','M3.75 6A2.25 2.25 0 016 3.75h2.25A2.25 2.25 0 0110.5 6v2.25a2.25 2.25 0 01-2.25 2.25H6a2.25 2.25 0 01-2.25-2.25V6zM3.75 15.75A2.25 2.25 0 016 13.5h2.25a2.25 2.25 0 012.25 2.25V18a2.25 2.25 0 01-2.25 2.25H6A2.25 2.25 0 013.75 18v-2.25zM13.5 6a2.25 2.25 0 012.25-2.25H18A2.25 2.25 0 0120.25 6v2.25A2.25 2.25 0 0118 10.5h-2.25a2.25 2.25 0 01-2.25-2.25V6zM13.5 15.75a2.25 2.25 0 012.25-2.25H18a2.25 2.25 0 012.25 2.25V18A2.25 2.25 0 0118 20.25h-2.25A2.25 2.25 0 0113.5 18v-2.25z'),
+          I('list-bullet','icon-list','M8.25 6.75h12M8.25 12h12M8.25 17.25h12M3.75 6.75h.007v.008H3.75V6.75zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 12h.007v.008H3.75V12zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zM3.75 17.25h.007v.008H3.75v-.008zm.375 0a.375.375 0 11-.75 0 .375.375 0 01.75 0z'),
+          I('funnel','icon-filter','M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 01-.659 1.591l-5.432 5.432a2.25 2.25 0 00-.659 1.591v2.927a2.25 2.25 0 01-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 00-.659-1.591L3.659 7.409A2.25 2.25 0 013 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0112 3z'),
+          I('star','icon-star','M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z', '#35c5f4'),
+          I('star-half','icon-star-half','M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z', 'url(#halfFill)'),
+          I('star-empty','icon-star-empty','M11.48 3.499a.562.562 0 011.04 0l2.125 5.111a.563.563 0 00.475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 00-.182.557l1.285 5.385a.562.562 0 01-.84.61l-4.725-2.885a.563.563 0 00-.586 0L6.982 20.54a.562.562 0 01-.84-.61l1.285-5.386a.562.562 0 00-.182-.557l-4.204-3.602a.563.563 0 01.321-.988l5.518-.442a.563.563 0 00.475-.345L11.48 3.5z'),
+        ]},
+        { title:'Empty states & mood · redrawn to match', items:[
+          I('face-frown','icon-emo-cry','M15.182 16.318A4.486 4.486 0 0012.016 15a4.486 4.486 0 00-3.198 1.318M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z'),
+          I('face-smile','icon-emo-sunglasses (alt)','M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75S9 10.164 9 9.75 9.168 9 9.375 9s.375.336.375.75zm-.375 0h.008v.015h-.008V9.75zm5.625 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm-.375 0h.008v.015h-.008V9.75z'),
+          I('sunglasses','icon-emo-sunglasses','M3 7.5h6a1.5 1.5 0 011.5 1.5 1.5 1.5 0 003 0 1.5 1.5 0 011.5-1.5h6M4.5 7.5v3a3 3 0 003 3 3 3 0 003-3v-3m3 0v3a3 3 0 003 3 3 3 0 003-3v-3'),
+          I('coffee','icon-emo-coffee','M4.5 7.5h12v6a4.5 4.5 0 01-4.5 4.5H9a4.5 4.5 0 01-4.5-4.5v-6zM16.5 9h1.5a2.25 2.25 0 010 4.5h-1.5M7.5 3.75c0 .621-.336 1.125-.75 1.5M10.5 3.75c0 .621-.336 1.125-.75 1.5M13.5 3.75c0 .621-.336 1.125-.75 1.5'),
+        ]},
+      ],
+      ratingStars: [ {fill:'#35c5f4'},{fill:'#35c5f4'},{fill:'#35c5f4'},{fill:'#35c5f4'},{fill:'url(#halfFill)'} ],
+      // Forms
+      toggleSwitch: () => this.setState(s => ({ toggleOn: !s.toggleOn })),
+      toggleBg: on ? '#35c5f4' : 'rgba(255,255,255,.08)',
+      toggleX: on ? '16px' : '2px',
+      toggleLabel: on ? 'enabled' : 'disabled',
+      combinedRows: [
+        { host:'https://api.nzbgeek.info', key:'a1b9…c4', bg:'#35c5f4', x:'16px' },
+        { host:'https://newznab.example', key:'7f2e…90', bg:'rgba(255,255,255,.08)', x:'2px' },
+      ],
+      settingsRows: [
+        { label:'Dark theme', hint:'Use the dark colour scheme', isToggle:true, isChip:false, isNum:false, control:'' },
+        { label:'Permanent unrar', hint:'Keep extracted files after import', isToggle:false, isChip:true, isNum:false, control:'bool' },
+        { label:'Minimum score', hint:'Reject releases below this', isToggle:false, isChip:false, isNum:true, control:'20' },
+      ],
+      // Theme
+      toggleTheme: () => {
+        const isLight = document.documentElement.classList.toggle('light');
+        localStorage.setItem('cp-ds-theme', isLight ? 'light' : 'dark');
+        this.setState({ dark: !isLight });
+      },
+      themeLabel: dark ? 'Light mode' : 'Dark mode',
+      themeIcon: dark
+        ? 'M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z'
+        : 'M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z',
+      // Modals
+      folderRows: ['incoming', 'sorted', '_unpack'],
+      // States
+      emptyCopy: ['No results found', 'No notifications (yet)', 'Empty folder'],
+      // Surfaces
+      borders: [
+        { token:'white/[0.04]', color:'rgba(255,255,255,.04)' },
+        { token:'white/[0.06]', color:'rgba(255,255,255,.06)' },
+        { token:'white/[0.12] · hover', color:'rgba(255,255,255,.12)' },
+      ],
+      spacing: [
+        { name:'1', px:'4px' }, { name:'2', px:'8px' }, { name:'2.5', px:'10px' },
+        { name:'3', px:'12px' }, { name:'4', px:'16px' }, { name:'6', px:'24px' },
+      ],
+      // Motion
+      durations: [
+        { ms:'150ms', w:'45%', use:'colour / hover' },
+        { ms:'200ms', w:'65%', use:'fade-in, transitions' },
+        { ms:'300ms', w:'100%', use:'sidebar collapse' },
+      ],
+      replayFade: () => this.setState(s => ({ fadeKey: s.fadeKey + 1 })),
+      fadeKey: this.state.fadeKey,
+      // A11y
+      a11yItems: [
+        { title:'aria-current', note:'on the active nav link' },
+        { title:'aria-label', note:'on every icon-only button' },
+        { title:'aria-hidden', note:'on decorative SVGs' },
+        { title:'role + aria-live', note:'on toasts & status regions' },
+        { title:'sr-only', note:'visually-hidden labels for context' },
+        { title:'aria-modal + focus trap', note:'on dialogs' },
+      ],
+      releases: [
+        { name:'Arrival.2016.1080p.BluRay.x264', source:'Torrent', size:'8.4 GB', seeds:'214', seedColor:'#3ddc84' },
+        { name:'Arrival.2016.720p.WEB-DL.DD5.1', source:'Usenet',  size:'4.1 GB', seeds:'—',   seedColor:'#6a6a78' },
+        { name:'Arrival.2016.2160p.UHD.HDR.x265', source:'Torrent', size:'22 GB',  seeds:'37',  seedColor:'#3ddc84' },
+        { name:'Arrival.2016.1080p.WEBRip.x264', source:'Torrent', size:'2.0 GB', seeds:'6',   seedColor:'#e5a00d' },
+      ],
+      carryOver: [
+        { title:'Poster grid & status badges', note:'The card layout, hover refresh and wanted/done/snatched badges already ported into movie_cards.html — keep as the core browse pattern.' },
+        { title:'Release table', note:'Sortable name/source/size/seeds rows. Restyle with cp-border dividers and mono numerics.' },
+        { title:'Quality profiles', note:'1080p / 720p / 4K labelling and the profile editor concept stay — they map straight to the badge component.' },
+        { title:'Star ratings', note:'Half-star support carries over; fill with accent instead of red.' },
+        { title:'Dark / light theming', note:'Classic had a dark mode too. The CSS-variable approach is the modern continuation.' },
+      ],
+      leaveBehind: [
+        { title:'Lobster wordmark', note:'Decorative script logo replaced by the couch mark + Inter semibold.' },
+        { title:'Open Sans 300', note:'Superseded by Inter across the board.' },
+        { title:'#ac0000 red accent', note:'Retired in favour of cyan #35c5f4 (warm orange in classic dark mode also drops).' },
+        { title:'Custom icon font', note:'The 30-glyph EOT/WOFF font is replaced by inline Heroicons SVGs — no font load, themeable via currentColor.' },
+        { title:'MooTools + Uniform + ripple', note:'Replaced by htmx + Alpine. The JS ripple effect and Uniform form styling are gone.' },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

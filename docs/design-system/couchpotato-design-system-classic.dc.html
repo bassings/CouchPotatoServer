@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;}
+  body{background:#111;}
+  ::selection{background:#ac0000;color:#fff;}
+  .cp-scroll::-webkit-scrollbar{width:10px;height:10px;}
+  .cp-scroll::-webkit-scrollbar-thumb{background:#444;border-radius:5px;}
+  .cp-scroll::-webkit-scrollbar-track{background:transparent;}
+</style>
+</helmet>
+
+<div style="display:flex; min-height:100vh; font-family:'Open Sans','Helvetica Neue',Helvetica,Arial,sans-serif; font-weight:300; color:#1a1a1a; background:#111;">
+
+  <!-- Sidebar — mirrors CouchPotato's real 132px dark header -->
+  <aside style="width:132px; flex:0 0 132px; background:#111; position:sticky; top:0; height:100vh; z-index:10; display:flex; flex-direction:column;">
+    <div style="background:#ac0000; height:80px; display:flex; align-items:center; justify-content:center; font-family:'Lobster',serif; color:#fff; font-size:34px; letter-spacing:1px;">CouchPotato</div>
+    <nav style="flex:1; padding-top:8px;">
+      <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="6">
+        <a href="{{ item.href }}" onClick="{{ item.onClick }}" style="display:block; color:#fff; letter-spacing:1px; padding:10px 20px; font-size:14px; opacity:.78; cursor:pointer; transition:background 150ms,opacity 150ms; text-decoration:none;" style-hover="{ background:'#2e2e2e', opacity:1 }">{{ item.label }}</a>
+      </sc-for>
+    </nav>
+    <div style="padding:14px 20px; font-size:11px; color:#666; letter-spacing:.5px;">v · master</div>
+  </aside>
+
+  <!-- Content -->
+  <main class="cp-scroll" style="flex:1; background:#fff; border-radius:3px 0 0 3px; min-width:0;">
+
+    <!-- Hero -->
+    <header id="overview" style="position:relative; padding:64px 56px 52px; background:#fff; border-bottom:1px solid #ebebeb; overflow:hidden;">
+      <span style="position:absolute; top:0; left:0; width:10px; height:10px; background:#ac0000;"></span>
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:#ac0000; text-transform:uppercase; margin-bottom:18px;">Design System · extracted from source</div>
+      <h1 style="font-size:54px; font-weight:300; line-height:1.05; letter-spacing:-.5px; max-width:760px;">The visual language of <span style="font-family:'Lobster',serif; color:#ac0000; font-weight:400;">CouchPotato</span></h1>
+      <p style="margin-top:22px; max-width:620px; font-size:17px; line-height:1.6; color:#555;">A reference for the automated movie download manager's web interface — colours, type, spacing and components pulled directly from the project's SCSS. Light and dark themes, one red.</p>
+      <div style="display:flex; gap:32px; margin-top:40px; flex-wrap:wrap;">
+        <sc-for list="{{ heroStats }}" as="s" hint-placeholder-count="4">
+          <div style="border-left:2px solid #ebebeb; padding-left:16px;">
+            <div style="font-size:30px; font-weight:300; color:#1a1a1a;">{{ s.value }}</div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:1px; color:#999; text-transform:uppercase; margin-top:4px;">{{ s.label }}</div>
+          </div>
+        </sc-for>
+      </div>
+    </header>
+
+    <!-- Foundations -->
+    <section id="color" style="padding:56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:#ac0000; text-transform:uppercase; margin-bottom:8px;">01 — Foundations</div>
+      <h2 style="font-size:32px; font-weight:300; margin-bottom:8px;">Colour</h2>
+      <p style="color:#666; max-width:560px; font-size:15px; line-height:1.6; margin-bottom:32px;">Six named theme variables, each mapped to a light and a dark value. A single saturated red (light) / orange (dark) carries every accent — buttons, badges, ripples, toasts.</p>
+
+      <!-- Theme pair -->
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:28px; margin-bottom:40px;">
+        <sc-for list="{{ themes }}" as="theme" hint-placeholder-count="2">
+          <div style="border:1px solid #ebebeb; border-radius:3px; overflow:hidden;">
+            <div style="padding:14px 18px; display:flex; align-items:center; gap:10px; border-bottom:1px solid #ebebeb;">
+              <span style="width:10px; height:10px; border-radius:50%; background:{{ theme.dot }};"></span>
+              <span style="font-weight:600; font-size:14px;">{{ theme.name }}</span>
+              <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#999; margin-left:auto;">{{ theme.css }}</span>
+            </div>
+            <sc-for list="{{ theme.swatches }}" as="sw" hint-placeholder-count="6">
+              <div style="display:flex; align-items:center; gap:14px; padding:12px 18px; border-bottom:1px solid #f4f4f4;">
+                <span style="width:46px; height:46px; border-radius:3px; flex:0 0 46px; background:{{ sw.hex }}; border:1px solid rgba(0,0,0,.08);"></span>
+                <div style="min-width:0;">
+                  <div style="font-weight:600; font-size:14px;">{{ sw.name }}</div>
+                  <div style="font-size:12px; color:#888;">{{ sw.role }}</div>
+                </div>
+                <span style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#aaa; margin-left:auto;">{{ sw.hex }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Typography -->
+    <section id="type" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:#ac0000; text-transform:uppercase; margin-bottom:8px;">02 — Foundations</div>
+      <h2 style="font-size:32px; font-weight:300; margin-bottom:8px;">Typography</h2>
+      <p style="color:#666; max-width:560px; font-size:15px; line-height:1.6; margin-bottom:32px;">Two families: <strong style="font-weight:600;">Open Sans</strong> at a light 300 default for all UI text, and <strong style="font-weight:600;">Lobster</strong> reserved exclusively for the wordmark. Base size 14px, line-height 1.5.</p>
+
+      <div style="border:1px solid #ebebeb; border-radius:3px;">
+        <div style="display:flex; align-items:baseline; justify-content:space-between; padding:22px 24px; border-bottom:1px solid #f4f4f4;">
+          <span style="font-family:'Lobster',serif; font-size:44px; color:#ac0000;">CouchPotato</span>
+          <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#aaa;">Lobster · wordmark only</span>
+        </div>
+        <sc-for list="{{ typeSamples }}" as="t" hint-placeholder-count="5">
+          <div style="display:flex; align-items:baseline; gap:24px; padding:18px 24px; border-bottom:1px solid #f4f4f4;">
+            <span style="font-family:'JetBrains Mono',monospace; font-size:11px; color:#aaa; width:120px; flex:0 0 120px;">{{ t.meta }}</span>
+            <span style="font-size:{{ t.size }}; font-weight:{{ t.weight }}; font-style:{{ t.style }}; flex:1; min-width:0;">{{ t.text }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Spacing & radius -->
+    <section id="space" style="padding:0 56px 56px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:#ac0000; text-transform:uppercase; margin-bottom:8px;">03 — Foundations</div>
+      <h2 style="font-size:32px; font-weight:300; margin-bottom:8px;">Space, radius &amp; metrics</h2>
+      <p style="color:#666; max-width:560px; font-size:15px; line-height:1.6; margin-bottom:32px;">A single 20px padding unit, scaled by division (½, ⅓, ¼), drives the whole layout. Corners are a tight 3px.</p>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:16px;">
+        <sc-for list="{{ metrics }}" as="m" hint-placeholder-count="6">
+          <div style="border:1px solid #ebebeb; border-radius:3px; padding:18px; display:flex; flex-direction:column; gap:12px;">
+            <div style="height:46px; display:flex; align-items:center;">
+              <span style="display:block; background:#ac0000; height:{{ m.barH }}; width:{{ m.barW }}; border-radius:{{ m.barR }};"></span>
+            </div>
+            <div>
+              <div style="font-family:'JetBrains Mono',monospace; font-size:15px; color:#1a1a1a;">{{ m.value }}</div>
+              <div style="font-size:12px; color:#888; margin-top:2px;">{{ m.label }}</div>
+            </div>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Components -->
+    <section id="components" style="padding:0 56px 16px;">
+      <div style="font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:2px; color:#ac0000; text-transform:uppercase; margin-bottom:8px;">04 — Components</div>
+      <h2 style="font-size:32px; font-weight:300;">Components</h2>
+    </section>
+
+    <!-- Buttons & inputs -->
+    <section style="padding:0 56px 48px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:28px;">
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Buttons</h3>
+          <div style="display:flex; flex-wrap:wrap; gap:14px; align-items:center;">
+            <a style="color:#ac0000; font-weight:300; padding:5px 14px; border:1px solid #ac0000; border-radius:3px; cursor:pointer; transition:all 150ms; font-size:14px;" style-hover="{ background:'#ac0000', color:'#fff' }">Add movie</a>
+            <a style="color:#fff; font-weight:300; padding:5px 14px; border:1px solid #ac0000; background:#ac0000; border-radius:3px; cursor:pointer; font-size:14px;">Refresh</a>
+            <a style="color:#bbb; font-weight:300; padding:5px 14px; border:1px solid #e2e2e2; border-radius:3px; font-size:14px; cursor:not-allowed;">Disabled</a>
+          </div>
+          <div style="margin-top:20px; font-size:12px; color:#999; line-height:1.6;">Ghost by default — outlined in primary, filling on hover with a 150ms transition.</div>
+        </div>
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Inputs</h3>
+          <div style="display:flex; flex-direction:column; gap:14px;">
+            <input value="The Grand Budapest Hotel" style="font-size:14px; font-weight:300; padding:7px 9px; border-radius:0; border:1px solid #ccc; background:#ebebeb; color:#000; width:100%;" />
+            <select style="font-size:14px; font-weight:300; padding:7px 9px; border-radius:0; border:1px solid #ccc; background:#ebebeb; color:#000; width:100%;"><option>1080p · BluRay</option><option>720p · WEB-DL</option></select>
+            <textarea rows="2" style="font-size:14px; font-weight:300; padding:7px 9px; border-radius:0; border:1px solid #ccc; background:#ebebeb; color:#000; width:100%; resize:none; font-family:inherit;">Custom search title…</textarea>
+          </div>
+          <div style="margin-top:18px; font-size:12px; color:#999; line-height:1.6;">Square corners, light grey <code style="font-family:'JetBrains Mono',monospace;">off</code> fill, 1px border.</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Badges, toast, menu -->
+    <section style="padding:0 56px 48px;">
+      <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:28px;">
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Badge &amp; status</h3>
+          <div style="display:flex; align-items:center; gap:18px; margin-bottom:18px;">
+            <div style="position:relative; width:44px; height:44px; background:#111; border-radius:3px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:20px;">🔔
+              <span style="position:absolute; top:3px; right:0; background:#ac0000; color:#fff; border-radius:50%; width:18px; height:18px; line-height:18px; text-align:center; font-size:10px; font-weight:400;">3</span>
+            </div>
+            <div style="display:flex; flex-direction:column; gap:8px;">
+              <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#1a8a3a;"><span style="width:8px;height:8px;border-radius:50%;background:#1a8a3a;"></span>Snatched</span>
+              <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#ac0000;"><span style="width:8px;height:8px;border-radius:50%;background:#ac0000;"></span>Wanted</span>
+              <span style="display:inline-flex; align-items:center; gap:6px; font-size:12px; color:#999;"><span style="width:8px;height:8px;border-radius:50%;background:#999;"></span>Done</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Toast message</h3>
+          <div style="background:#ac0000; border-radius:3px; box-shadow:0 0 15px 2px rgba(0,0,0,.15); overflow:hidden;">
+            <div style="background:#fff; border-radius:3px; padding:14px 28px 14px 18px; margin-bottom:4px; font-size:15px; position:relative;">Movie added to wanted list
+              <span style="position:absolute; right:8px; top:10px; color:#ac0000; cursor:pointer;">✕</span>
+            </div>
+          </div>
+          <div style="margin-top:16px; font-size:12px; color:#999; line-height:1.6;">A primary-filled shell wrapping a white card, bottom-right, cubic-bezier slide.</div>
+        </div>
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Dropdown menu</h3>
+          <div style="background:#ac0000; border-radius:3px 0 0 3px; box-shadow:0 0 15px 2px rgba(0,0,0,.15); display:inline-block; min-width:170px;">
+            <ul style="background:#fff; border-radius:3px 0 0 3px; overflow:hidden; list-style:none;">
+              <sc-for list="{{ menuItems }}" as="mi" hint-placeholder-count="4">
+                <li style="border-top:1px solid #ebebeb; font-size:14px;"><a style="display:block; color:#1a1a1a; padding:6px 10px; line-height:22px; cursor:pointer;" style-hover="{ background:'#ebebeb' }">{{ mi }}</a></li>
+              </sc-for>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Movie card + table -->
+    <section style="padding:0 56px 48px;">
+      <div style="display:grid; grid-template-columns:300px 1fr; gap:28px; align-items:start;">
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Movie card</h3>
+          <div style="border-radius:3px; overflow:hidden; box-shadow:0 1px 6px rgba(0,0,0,.12);">
+            <div style="position:relative; aspect-ratio:2/3; background:repeating-linear-gradient(135deg,#1c1c1c,#1c1c1c 12px,#232323 12px,#232323 24px); display:flex; align-items:flex-end;">
+              <span style="position:absolute; top:10px; left:10px; font-family:'JetBrains Mono',monospace; font-size:10px; color:#777; letter-spacing:1px;">POSTER 2:3</span>
+              <span style="position:absolute; top:8px; right:8px; background:#ac0000; color:#fff; font-size:11px; padding:3px 8px; border-radius:3px;">1080p</span>
+              <div style="width:100%; padding:14px 12px 12px; background:linear-gradient(transparent,rgba(0,0,0,.85));">
+                <div style="color:#fff; font-size:16px; line-height:1.2;">Arrival</div>
+                <div style="color:#bbb; font-size:12px; margin-top:3px;">2016 · ★ 8.0</div>
+              </div>
+            </div>
+            <div style="display:flex; background:#fff;">
+              <a style="flex:1; text-align:center; padding:9px 0; font-size:13px; color:#ac0000; cursor:pointer;" style-hover="{ background:'#ebebeb' }">Refresh</a>
+              <a style="flex:1; text-align:center; padding:9px 0; font-size:13px; color:#ac0000; border-left:1px solid #ebebeb; cursor:pointer;" style-hover="{ background:'#ebebeb' }">Delete</a>
+            </div>
+          </div>
+        </div>
+
+        <div style="border:1px solid #ebebeb; border-radius:3px; padding:26px;">
+          <h3 style="font-size:13px; font-weight:600; letter-spacing:1px; text-transform:uppercase; color:#999; margin-bottom:20px;">Release table</h3>
+          <div>
+            <div style="display:flex; font-weight:700; font-size:13px; border-bottom:1px solid rgba(0,0,0,.2); padding-bottom:6px;">
+              <span style="flex:3;">Release</span><span style="flex:1;">Source</span><span style="flex:1; text-align:right;">Size</span><span style="flex:1; text-align:right;">Seeds</span>
+            </div>
+            <sc-for list="{{ releases }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex; font-size:13px; padding:9px 0; border-bottom:1px solid rgba(0,0,0,.12); color:#333;">
+                <span style="flex:3; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">{{ r.name }}</span>
+                <span style="flex:1; color:#777;">{{ r.source }}</span>
+                <span style="flex:1; text-align:right; font-family:'JetBrains Mono',monospace; font-size:12px;">{{ r.size }}</span>
+                <span style="flex:1; text-align:right; font-family:'JetBrains Mono',monospace; font-size:12px; color:{{ r.seedColor }};">{{ r.seeds }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dark theme preview -->
+    <section id="dark" style="margin:0 56px 56px; border-radius:3px; overflow:hidden;">
+      <div style="display:flex; min-height:240px;">
+        <div style="width:88px; flex:0 0 88px; background:#111; display:flex; flex-direction:column;">
+          <div style="background:#f85c22; height:60px; display:flex; align-items:center; justify-content:center; font-family:'Lobster',serif; color:#fff; font-size:22px;">CP</div>
+          <div style="flex:1; padding-top:10px;">
+            <sc-for list="{{ darkNav }}" as="d" hint-placeholder-count="3">
+              <div style="color:#fff; opacity:.7; padding:8px 16px; font-size:13px;">{{ d }}</div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="flex:1; background:#2d2d2d; color:#fff; padding:30px 34px; position:relative;">
+          <span style="position:absolute; top:0; left:0; width:10px; height:10px; background:#f85c22;"></span>
+          <div style="font-family:'JetBrains Mono',monospace; font-size:11px; letter-spacing:2px; color:#f85c22; text-transform:uppercase;">Dark theme</div>
+          <h3 style="font-size:26px; font-weight:300; margin:10px 0 8px;">Same system, inverted</h3>
+          <p style="color:#bbb; font-size:14px; max-width:440px; line-height:1.6;">Background drops to <code style="font-family:'JetBrains Mono',monospace; color:#f85c22;">#2d2d2d</code>, text flips to white, and the accent warms from red to <code style="font-family:'JetBrains Mono',monospace; color:#f85c22;">#f85c22</code>.</p>
+          <div style="display:flex; gap:12px; margin-top:20px;">
+            <a style="color:#f85c22; padding:5px 14px; border:1px solid #f85c22; border-radius:3px; font-size:14px; cursor:pointer;" style-hover="{ background:'#f85c22', color:'#fff' }">Add movie</a>
+            <a style="color:#fff; padding:5px 14px; border:1px solid #f85c22; background:#f85c22; border-radius:3px; font-size:14px; cursor:pointer;">Refresh</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer style="padding:24px 56px 40px; border-top:1px solid #ebebeb; color:#999; font-size:12px; display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px;">
+      <span style="font-family:'JetBrains Mono',monospace;">Tokens extracted from couchpotato/static/style/_mixins.scss</span>
+      <span>bassings/CouchPotatoServer</span>
+    </footer>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  scrollTo(id){
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView ? window.scrollTo({ top: el.offsetTop, behavior:'smooth' }) : null;
+  }
+  renderVals(){
+    const jump = (id) => (e) => {
+      e.preventDefault();
+      const el = document.getElementById(id);
+      if (el) el.scrollIntoView({ behavior:'smooth', block:'start' });
+    };
+    return {
+      navItems: [
+        { label:'Overview',   href:'#overview',   onClick: jump('overview') },
+        { label:'Colour',     href:'#color',      onClick: jump('color') },
+        { label:'Type',       href:'#type',       onClick: jump('type') },
+        { label:'Spacing',    href:'#space',      onClick: jump('space') },
+        { label:'Components', href:'#components',  onClick: jump('components') },
+        { label:'Dark',       href:'#dark',       onClick: jump('dark') },
+      ],
+      heroStats: [
+        { value:'6',   label:'theme vars' },
+        { value:'2',   label:'themes' },
+        { value:'2',   label:'typefaces' },
+        { value:'3px', label:'radius' },
+      ],
+      themes: [
+        { name:'Light', css:'$theme_light', dot:'#ac0000', swatches:[
+          { name:'primary',  role:'accent · buttons, badges', hex:'#ac0000' },
+          { name:'background', role:'content surface', hex:'#ffffff' },
+          { name:'off',      role:'inputs, dividers', hex:'#ebebeb' },
+          { name:'text',     role:'body copy', hex:'#000000' },
+          { name:'menu',     role:'sidebar', hex:'#111111' },
+          { name:'menu_off', role:'sidebar hover', hex:'#2e2e2e' },
+        ]},
+        { name:'Dark', css:'$theme_dark', dot:'#f85c22', swatches:[
+          { name:'primary',  role:'accent · buttons, badges', hex:'#f85c22' },
+          { name:'background', role:'content surface', hex:'#2d2d2d' },
+          { name:'off',      role:'inputs, dividers', hex:'#343434' },
+          { name:'text',     role:'body copy', hex:'#ffffff' },
+          { name:'menu',     role:'sidebar', hex:'#111111' },
+          { name:'menu_off', role:'sidebar hover', hex:'#2e2e2e' },
+        ]},
+      ],
+      typeSamples: [
+        { meta:'h1 · 54 / 300',     size:'40px', weight:'300', style:'normal', text:'Now downloading' },
+        { meta:'h2 · 24 / 300',     size:'24px', weight:'300', style:'normal', text:'Wanted movies' },
+        { meta:'body · 14 / 300',   size:'15px', weight:'300', style:'normal', text:'CouchPotato automatically finds and downloads the best quality release for the movies on your list.' },
+        { meta:'bold · 14 / 700',   size:'15px', weight:'700', style:'normal', text:'42 releases found' },
+        { meta:'italic · 14 / 400', size:'15px', weight:'400', style:'italic', text:'No notifications (yet)' },
+      ],
+      metrics: [
+        { value:'20px', label:'$padding base',  barH:'20px', barW:'20px', barR:'0' },
+        { value:'10px', label:'½ · gutters',    barH:'10px', barW:'10px', barR:'0' },
+        { value:'6.6px',label:'⅓ · field pad',  barH:'7px',  barW:'7px',  barR:'0' },
+        { value:'5px',  label:'¼ · button pad',  barH:'5px',  barW:'5px',  barR:'0' },
+        { value:'3px',  label:'$border_radius', barH:'30px', barW:'46px', barR:'3px' },
+        { value:'132px',label:'header width',   barH:'12px', barW:'66px', barR:'0' },
+      ],
+      menuItems: ['Mark as done','Refresh info','Change quality','Delete'],
+      releases: [
+        { name:'Arrival.2016.1080p.BluRay.x264', source:'Torrent', size:'8.4 GB', seeds:'214', seedColor:'#1a8a3a' },
+        { name:'Arrival.2016.720p.WEB-DL.DD5.1', source:'Usenet',  size:'4.1 GB', seeds:'—',   seedColor:'#999' },
+        { name:'Arrival.2016.2160p.UHD.HDR.x265', source:'Torrent', size:'22 GB',  seeds:'37',  seedColor:'#1a8a3a' },
+        { name:'Arrival.2016.1080p.WEBRip.x264', source:'Torrent', size:'2.0 GB', seeds:'6',   seedColor:'#ac0000' },
+      ],
+      darkNav: ['Movies','Wanted','Settings'],
+    };
+  }
+}
+</script>
+</body>
+</html>
