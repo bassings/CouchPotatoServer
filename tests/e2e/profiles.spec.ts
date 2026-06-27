@@ -191,4 +191,64 @@ test.describe('Quality Profiles', () => {
     const panel = await openProfilesTab(page);
     await expect(panel.locator('h2').first()).toBeVisible();
   });
+
+  test('delete profile via confirm removes it from the list', async ({ page }) => {
+    const panel = await openProfilesTab(page);
+
+    // Create the profile we will delete.
+    await panel.getByRole('button', { name: /new profile/i }).click();
+    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
+    await modal.locator('select').first().selectOption({ index: 1 });
+    await modal.getByRole('button', { name: /^add$/i }).click();
+    await modal.getByRole('button', { name: /create profile/i }).click();
+    await expect(modal).not.toBeVisible();
+
+    // Delete it via the confirm dialog (exercises the success path + list refresh).
+    const delBtn = panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') });
+    await expect(delBtn).toBeVisible();
+    await delBtn.click();
+
+    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
+    await expect(confirmDialog).toBeVisible();
+    await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
+    await expect(confirmDialog).not.toBeVisible();
+
+    const toast = page.locator('#profiles-panel [role="status"][aria-live="polite"]').last();
+    await expect(toast).toContainText(/deleted/i);
+    await expect(panel.getByText(TEST_PROFILE_NAME)).not.toBeVisible();
+  });
+
+  test('reordering a profile persists across reload (save_order round-trips)', async ({ page }) => {
+    const panel = await openProfilesTab(page);
+
+    // Read the profile order from the edit buttons' accessible names.
+    const orderNames = (p = panel) =>
+      p.getByRole('button', { name: /^Edit profile:/i }).evaluateAll(
+        els => els.map(e => e.getAttribute('aria-label') || ''),
+      );
+
+    const before = await orderNames();
+    if (before.length < 2) { test.skip(); return; }
+    const firstLabel = before[0].replace(/^Edit profile:\s*/i, '');
+
+    // Move the first profile down. With the ids[]/hidden[] repeated-key bug the
+    // save_order POST returns success:false and the optimistic swap is rolled
+    // back, so the post-request order would still equal `before` — this guards it.
+    await panel.getByRole('button', { name: new RegExp('Move ' + firstLabel + ' down in order', 'i') }).click();
+    await expect.poll(() => orderNames()).not.toEqual(before);
+    const after = await orderNames();
+    expect(after[0]).toBe(before[1]);
+    expect(after[1]).toBe(before[0]);
+
+    // Re-open the tab → list is re-fetched from the server; order must persist.
+    const panel2 = await openProfilesTab(page);
+    const persisted = await orderNames(panel2);
+    expect(persisted[0]).toBe(before[1]);
+    expect(persisted[1]).toBe(before[0]);
+
+    // Restore the original order so the suite stays idempotent.
+    await panel2.getByRole('button', { name: new RegExp('Move ' + firstLabel + ' up in order', 'i') }).click();
+    await expect.poll(() => orderNames(panel2)).toEqual(before);
+  });
 });

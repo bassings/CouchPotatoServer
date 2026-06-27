@@ -51,14 +51,20 @@ export function profileToForm(profile, qualities) {
  * Returns an object ready to be serialised (JSON or URLSearchParams).
  *
  * @param {Object} formState  As returned / mutated from profileToForm
- * @returns {Object}  { id?, label, minimum_score, wait_for, stop_after, types[] }
+ * @param {number} currentProfileCount  Number of existing profiles; used to
+ *   assign `order` for NEW profiles so they append at the end instead of all
+ *   landing at the backend's default order=999 and sorting non-deterministically.
+ * @returns {Object}  { id?|order, label, minimum_score, wait_for, stop_after, types[] }
  */
-export function formToPayload(formState) {
+export function formToPayload(formState, currentProfileCount = 0) {
+  // Coalesce null/undefined AND NaN (x-model.number yields NaN for a cleared
+  // input) to the default, so the server never receives the string "NaN".
+  const toNum = (v, dflt) => (v != null && Number.isFinite(Number(v)) ? Number(v) : dflt);
   const payload = {
     label:         formState.label,
-    minimum_score: formState.minimumScore != null ? Number(formState.minimumScore) : 1,
-    wait_for:      formState.waitFor  != null ? Number(formState.waitFor)  : 0,
-    stop_after:    formState.stopAfter != null ? Number(formState.stopAfter) : 0,
+    minimum_score: toNum(formState.minimumScore, 1),
+    wait_for:      toNum(formState.waitFor, 0),
+    stop_after:    toNum(formState.stopAfter, 0),
     types:         (formState.types || []).map(t => ({
       quality: t.qualityId,
       finish:  t.finish ? 1 : 0,
@@ -68,6 +74,8 @@ export function formToPayload(formState) {
 
   if (formState.id) {
     payload.id = formState.id;
+  } else {
+    payload.order = currentProfileCount;
   }
 
   return payload;
@@ -147,6 +155,12 @@ export function moveQuality(types, index, direction) {
     (direction === 'down' && index  === 0) ? target :
     -1;
 
+  // KNOWN LIMITATION: an item leaving position 0 always has its finish flag
+  // cleared, on the assumption that finish=true there was position-forced. If a
+  // user explicitly set finish=true on an item at another position and it later
+  // passes through position 0, moving it away will silently clear that flag.
+  // Distinguishing position-forced from user-set finish would require tracking
+  // intent in form state; accepted as a minor edge case for now.
   return result.map((t, i) => {
     if (i === 0)                return { ...t, finish: true };
     if (i === displacedFromFirst) return { ...t, finish: false };
@@ -169,7 +183,7 @@ export function validateProfile(formState) {
   }
 
   const types = (formState && formState.types) ? formState.types : [];
-  if (!types || types.length === 0) {
+  if (types.length === 0) {
     errors.push('At least one quality is required.');
   }
 

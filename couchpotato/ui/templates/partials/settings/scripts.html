@@ -89,6 +89,10 @@ function logsPanel() {
 function settingsPanel() {
   return {
     activeTab: 'general',
+    // Tabs that render their own x-data panel (instead of the generic group
+    // list). Add new custom-panel tabs here; the generic-panel x-show in
+    // settings.html keys off this Set so it never needs another && condition.
+    customPanelTabs: ['logs', 'profiles'],
     loading: true,
     saving: false,
     showAdvanced: false,
@@ -839,7 +843,9 @@ function profileEditor() {
       const v = CP.ui.validateProfile(this.formState);
       if (!v.valid) { this.validationErrors = v.errors; return; }
 
-      const payload = CP.ui.formToPayload(this.formState);
+      // Pass the current count so a NEW profile gets order = count (appended)
+      // instead of the backend default order=999.
+      const payload = CP.ui.formToPayload(this.formState, this.profiles.length);
       const isEdit = !!payload.id; // snapshot before any await
       this.saving = true;
 
@@ -915,9 +921,12 @@ function profileEditor() {
         this.toast('Delete failed: ' + e.message, 'error');
       }
       this.deleting = false;
-      this.cancelDelete();
 
+      // On failure, leave the confirm dialog open so the user can retry without
+      // re-opening it; only close it on success. delId/delLabel are snapshotted
+      // above, so leaving profileToDelete set carries no null-deref risk.
       if (!deleted) return;
+      this.cancelDelete();
       this.toast('"' + delLabel + '" deleted.', 'success');
 
       try {
@@ -945,9 +954,14 @@ function profileEditor() {
 
       try {
         const params = new URLSearchParams();
-        list.forEach((p) => {
-          params.append('ids[]', p._id);
-          params.append('hidden[]', p.hide ? '1' : '0');
+        // Indexed bracket keys (ids[0], ids[1], …), NOT repeated ids[]: the
+        // dispatcher does dict(await request.form()), which collapses repeated
+        // keys to the last value. getParams() then expands the indexed keys
+        // back into ordered lists. Repeated keys would send a single id and
+        // silently break every reorder.
+        list.forEach((p, i) => {
+          params.append(`ids[${i}]`, p._id);
+          params.append(`hidden[${i}]`, p.hide ? '1' : '0');
         });
         const resp = await fetch(CP.apiBase + '/profile.save_order/', { method: 'POST', body: params });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);

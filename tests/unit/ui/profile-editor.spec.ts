@@ -137,6 +137,33 @@ describe('formToPayload', () => {
     expect(payload.types[0]['3d']).toBe(1);
     expect(payload.types[1]['3d']).toBe(0);
   });
+
+  it('assigns order = current profile count for a NEW profile (not backend default 999)', () => {
+    const form = { ...profileToForm(PROFILE_DOC, QUALITIES), id: '' };
+    const payload = formToPayload(form, 7);
+    expect(payload.order).toBe(7);
+  });
+
+  it('does NOT set order when editing an existing profile (backend preserves stored order)', () => {
+    const form = profileToForm(PROFILE_DOC, QUALITIES); // has id
+    const payload = formToPayload(form, 7);
+    expect(payload.order).toBeUndefined();
+  });
+
+  it('defaults order to 0 for a new profile when count is omitted', () => {
+    const form = { ...profileToForm(PROFILE_DOC, QUALITIES), id: '' };
+    const payload = formToPayload(form);
+    expect(payload.order).toBe(0);
+  });
+
+  it('coalesces NaN numeric fields (cleared x-model.number) to defaults, never "NaN"', () => {
+    const form = { ...profileToForm(PROFILE_DOC, QUALITIES), waitFor: NaN, stopAfter: NaN, minimumScore: NaN };
+    const payload = formToPayload(form);
+    expect(payload.wait_for).toBe(0);
+    expect(payload.stop_after).toBe(0);
+    expect(payload.minimum_score).toBe(1);
+    expect(Number.isNaN(payload.wait_for)).toBe(false);
+  });
 });
 
 // ─── addQuality ───────────────────────────────────────────────────────────────
@@ -149,6 +176,15 @@ describe('addQuality', () => {
     expect(result[1].qualityId).toBe('1080p');
     expect(result[1].finish).toBe(false);
     expect(result[1].is3d).toBe(false);
+  });
+
+  // Documents a deliberate coupling: addQuality stores the raw identifier as the
+  // label; scripts.html's addQualityToForm overwrites it with the human-readable
+  // label from quality metadata. Asserting it here makes the coupling visible so
+  // it isn't silently broken (a direct caller must patch qualityLabel itself).
+  it('stores qualityLabel as the raw identifier (caller patches to human label)', () => {
+    const result = addQuality([], 'brrip');
+    expect(result[0].qualityLabel).toBe('brrip');
   });
 
   it('does not add a duplicate quality', () => {
