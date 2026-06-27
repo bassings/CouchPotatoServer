@@ -310,6 +310,32 @@ test.describe('Category management', () => {
     await expect(panel.getByText(TEST_CATEGORY_NAME)).not.toBeVisible();
   });
 
+  test('delete failure keeps the confirm dialog open and shows an error toast', async ({ page }) => {
+    const panel = await createTestCategory(page);
+    await panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') }).click();
+    const dialog = page.getByTestId('category-delete-dialog');
+    await expect(dialog).toBeVisible();
+
+    // Force the delete to soft-fail; doDelete must leave the dialog open to retry.
+    await page.route('**/category.delete/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, message: 'DB locked' }) }),
+    );
+
+    await dialog.getByRole('button', { name: /^delete$/i }).click();
+
+    // (a) dialog stays open, (b) error toast surfaces, (c) the row remains.
+    // Assert the row via its Delete button (the name also appears in the open
+    // dialog, so getByText would be ambiguous).
+    await expect(dialog).toBeVisible();
+    const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
+    await expect(toast).toContainText(/delete failed/i);
+    await expect(panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') })).toBeVisible();
+
+    // Stop intercepting so the inline cleanup + afterEach can actually delete it.
+    await page.unroute('**/category.delete/**');
+    await dialog.getByRole('button', { name: /^cancel$/i }).click();
+  });
+
   test('validation — cannot save category with empty name', async ({ page }) => {
     const panel = await openCategoriesTab(page);
 
@@ -465,8 +491,8 @@ test.describe('Category management', () => {
     // reload() still ran, so the persisted category shows up in the list...
     await expect(panel.getByText(TEST_CATEGORY_NAME)).toBeVisible();
     // ...but no success toast fired (the user already dismissed). Target the
-    // toast element specifically — the loading region also uses role="status".
-    await expect(page.locator('#categories-panel .fixed.bottom-4')).toBeHidden();
+    // toast by testid — the loading region also uses role="status".
+    await expect(page.locator('#categories-panel [data-testid="categories-toast"]')).toBeHidden();
     // afterEach removes TEST_CATEGORY_NAME (it persisted server-side).
   });
 

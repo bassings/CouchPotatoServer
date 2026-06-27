@@ -346,6 +346,7 @@
 
   {# ── Toast ── #}
   <div x-show="toastMessage"
+       data-testid="categories-toast"
        x-transition
        class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-[60] px-4 py-2 rounded-lg text-xs font-medium"
        :class="toastType === 'success' ? 'bg-cp-success/90 text-black' : 'bg-cp-danger/90 text-white'"

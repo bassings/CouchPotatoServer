@@ -84,6 +84,12 @@ describe('categoryToForm', () => {
     expect(form.id).toBe('');
   });
 
+  it('preserves a falsy-but-present numeric _id=0 (?? not ||)', () => {
+    // So categoryFormToPayload's id guard can route _id=0 as an edit, not a new.
+    const form = categoryToForm({ _id: 0, label: 'Test' });
+    expect(form.id).toBe(0);
+  });
+
   it('defaults order to 999 when order is missing', () => {
     const doc = { _id: 'x', label: 'Test' };
     const form = categoryToForm(doc);

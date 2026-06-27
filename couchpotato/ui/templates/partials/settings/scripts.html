@@ -1069,7 +1069,7 @@ function categoryEditor() {
         if (!data.success) throw new Error('API returned failure');
         this.categories = this.sortCategories(data.categories || []);
       } catch (e) {
-        this.loadError = 'Failed to load categories. Check the server logs.';
+        this.loadError = 'Failed to load categories: ' + e.message;
         this.loaded = false; // allow a retry on next tab activation
       }
       this.loading = false;

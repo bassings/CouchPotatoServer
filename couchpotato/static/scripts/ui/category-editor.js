@@ -27,7 +27,7 @@ export function categoryOrder(category) {
 export function categoryToForm(category) {
   const c = category || {};
   return {
-    id:          c._id          || '',
+    id:          c._id          ?? '', // ?? not ||: preserve a hypothetical numeric _id=0 so categoryFormToPayload's guard can route it as an edit
     label:       c.label        || '',
     ignored:     c.ignored      || '',
     preferred:   c.preferred    || '',
