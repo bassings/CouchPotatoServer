@@ -1151,8 +1151,9 @@ function categoryEditor() {
         saved = true;
       } catch (e) {
         this.toast('Save failed: ' + e.message, 'error');
+      } finally {
+        this.saving = false; // finally so a throwing catch can't latch the spinner
       }
-      this.saving = false;
 
       if (!saved) return;
 
@@ -1210,8 +1211,9 @@ function categoryEditor() {
         deleted = true;
       } catch (e) {
         this.toast('Delete failed: ' + e.message, 'error');
+      } finally {
+        this.deleting = false; // finally so a throwing catch can't latch the button
       }
-      this.deleting = false;
 
       // On failure, leave the confirm dialog open so the user can retry;
       // only close it on success.

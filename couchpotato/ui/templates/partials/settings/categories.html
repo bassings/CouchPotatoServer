@@ -74,7 +74,7 @@
             <div class="flex items-center gap-2 min-w-0">
               {# Move up button #}
               <button @click="moveCategory(ci, 'up')"
-                      :disabled="ci === 0 || isReordering"
+                      :disabled="ci === 0 || isReordering || saving"
                       class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
                       :aria-label="'Move ' + category.label + ' up in order'">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
@@ -83,7 +83,7 @@
               </button>
               {# Move down button #}
               <button @click="moveCategory(ci, 'down')"
-                      :disabled="ci === categories.length - 1 || isReordering"
+                      :disabled="ci === categories.length - 1 || isReordering || saving"
                       class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
                       :aria-label="'Move ' + category.label + ' down in order'">
                 <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
