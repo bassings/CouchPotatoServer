@@ -811,11 +811,9 @@ function profileEditor() {
       if (!this.selectedQualityToAdd) return;
       const qId = this.selectedQualityToAdd;
       const qMeta = this.qualities.find(q => q.identifier === qId) || {};
-      const newTypes = CP.ui.addQuality(this.formState.types, qId);
-      if (newTypes.length > this.formState.types.length) {
-        const lastIdx = newTypes.length - 1;
-        newTypes[lastIdx] = { ...newTypes[lastIdx], qualityLabel: qMeta.label || qId, allow3d: !!qMeta.allow_3d };
-      }
+      // addQuality is pure and self-contained: it derives label/allow3d from the
+      // passed metadata, so no post-patch is needed.
+      const newTypes = CP.ui.addQuality(this.formState.types, qId, qMeta);
       this.formState = { ...this.formState, types: newTypes };
       this.selectedQualityToAdd = '';
     },

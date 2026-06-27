@@ -61,7 +61,9 @@ export function formToPayload(formState, currentProfileCount = 0) {
   // input) to the default, so the server never receives the string "NaN".
   const toNum = (v, dflt) => (v != null && Number.isFinite(Number(v)) ? Number(v) : dflt);
   const payload = {
-    label:         formState.label,
+    // Trim at the wire boundary so a label that passed validation (which trims)
+    // isn't stored/displayed with surrounding whitespace.
+    label:         (formState.label ?? '').trim(),
     minimum_score: toNum(formState.minimumScore, 1),
     wait_for:      toNum(formState.waitFor, 0),
     stop_after:    toNum(formState.stopAfter, 0),
@@ -89,7 +91,7 @@ export function formToPayload(formState, currentProfileCount = 0) {
  * @param {string} qualityId  Quality identifier to add
  * @returns {Array}
  */
-export function addQuality(types, qualityId) {
+export function addQuality(types, qualityId, qualityMeta = {}) {
   if (!qualityId) return types.slice();
   const existing = types.slice();
   const alreadyPresent = existing.some(t => t.qualityId === qualityId);
@@ -98,8 +100,8 @@ export function addQuality(types, qualityId) {
   const isFirst = existing.length === 0;
   existing.push({
     qualityId,
-    qualityLabel: qualityId,
-    allow3d: false,
+    qualityLabel: qualityMeta.label || qualityId,
+    allow3d: !!qualityMeta.allow_3d,
     finish:  isFirst,
     is3d:    false,
   });

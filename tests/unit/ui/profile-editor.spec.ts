@@ -156,6 +156,12 @@ describe('formToPayload', () => {
     expect(payload.order).toBe(0);
   });
 
+  it('trims leading/trailing whitespace from the label at the wire boundary', () => {
+    const form = { ...profileToForm(PROFILE_DOC, QUALITIES), label: '  HD  ' };
+    const payload = formToPayload(form);
+    expect(payload.label).toBe('HD');
+  });
+
   it('coalesces NaN numeric fields (cleared x-model.number) to defaults, never "NaN"', () => {
     const form = { ...profileToForm(PROFILE_DOC, QUALITIES), waitFor: NaN, stopAfter: NaN, minimumScore: NaN };
     const payload = formToPayload(form);
@@ -178,13 +184,16 @@ describe('addQuality', () => {
     expect(result[1].is3d).toBe(false);
   });
 
-  // Documents a deliberate coupling: addQuality stores the raw identifier as the
-  // label; scripts.html's addQualityToForm overwrites it with the human-readable
-  // label from quality metadata. Asserting it here makes the coupling visible so
-  // it isn't silently broken (a direct caller must patch qualityLabel itself).
-  it('stores qualityLabel as the raw identifier (caller patches to human label)', () => {
+  it('falls back to the raw identifier for label and allow3d=false when no meta is given', () => {
     const result = addQuality([], 'brrip');
     expect(result[0].qualityLabel).toBe('brrip');
+    expect(result[0].allow3d).toBe(false);
+  });
+
+  it('derives qualityLabel and allow3d from the passed quality metadata (pure, no caller patch)', () => {
+    const result = addQuality([], 'brrip', { label: 'Blu-Ray Rip', allow_3d: true });
+    expect(result[0].qualityLabel).toBe('Blu-Ray Rip');
+    expect(result[0].allow3d).toBe(true);
   });
 
   it('does not add a duplicate quality', () => {
@@ -325,6 +334,24 @@ describe('moveQuality', () => {
     expect(result[0].finish).toBe(true);
     expect(result[1].qualityId).toBe('2160p'); // displaced old-first
     expect(result[1].finish).toBe(false);
+  });
+
+  it('KNOWN LIMITATION: a user-set finish=true is cleared once the item leaves position 0', () => {
+    // Start: A(forced finish), B(user-set finish), C. Moving A down promotes B
+    // to position 0 (finish stays true — now position-forced). Moving B back
+    // down then clears its finish, even though the user had set it. Documented
+    // and accepted; this test guards the behaviour so a refactor must be explicit.
+    const withUserFinish = [
+      { qualityId: 'A', finish: true,  is3d: false },
+      { qualityId: 'B', finish: true,  is3d: false },
+      { qualityId: 'C', finish: false, is3d: false },
+    ];
+    const step1 = moveQuality(withUserFinish, 0, 'down'); // [B, A, C]
+    expect(step1[0].qualityId).toBe('B');
+    expect(step1[0].finish).toBe(true);  // position-forced at index 0
+    const step2 = moveQuality(step1, 0, 'down'); // [A, B, C]
+    expect(step2[1].qualityId).toBe('B');
+    expect(step2[1].finish).toBe(false); // user-set finish silently cleared
   });
 });
 
