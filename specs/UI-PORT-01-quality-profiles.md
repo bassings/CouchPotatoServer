@@ -83,6 +83,14 @@ The backend iterates `kwargs.get("types", [])`, reading `.quality`, `.finish`, `
 `wait_for` and `stop_after` are top-level params (single values applied to all entries).
 `finish` and `3d` are per-type. The first type always gets `finish=True` regardless of submitted value.
 
+> **Known limitation (per-quality wait/stop):** the backend *stores* `wait_for`
+> and `stop_after` as per-quality arrays, but `profile.save` only accepts a
+> single scalar that it stamps into every slot — this has always been true of
+> both the legacy and new UIs. The editor reads slot `[0]` and writes one
+> scalar, so a profile that somehow held non-uniform per-quality values (not
+> producible via this API) would be flattened on save. Surfacing/editing
+> per-quality wait/stop would require a backend change and is out of scope.
+
 Response: `{ "success": true, "profile": { ...saved doc... } }`
 
 ### `POST /api/<key>/profile.save_order/`

@@ -254,7 +254,7 @@ function settingsPanel() {
         for (const t of tabSet) {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
-        if (!this.hiddenTabs.has('profiles')) this.tabOrder.push('profiles');
+        if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
         this.tabOrder.push('logs');
 
         this.computeOpenGroups();
