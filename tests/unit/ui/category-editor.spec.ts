@@ -149,6 +149,21 @@ describe('categoryFormToPayload', () => {
     expect(payload.id).toBeUndefined();
   });
 
+  it('omits id when form id is undefined (new category)', () => {
+    const form = { ...categoryToForm(CATEGORY_DOC), id: undefined };
+    const payload = categoryFormToPayload(form);
+    expect(payload.id).toBeUndefined();
+    expect(payload.order).toBeDefined();
+  });
+
+  it('treats a non-empty id (incl. numeric 0) as an edit, not a new category', () => {
+    // Guards the "edit vs new" invariant: not a bare truthy check, so a
+    // hypothetical numeric id=0 routes as an edit (id sent, no order).
+    const payload = categoryFormToPayload({ ...categoryToForm(CATEGORY_DOC), id: 0 });
+    expect(payload.id).toBe(0);
+    expect(payload.order).toBeUndefined();
+  });
+
   it('assigns order = currentCount for a NEW category (not backend default 999)', () => {
     const form = { ...categoryToForm(CATEGORY_DOC), id: '' };
     const payload = categoryFormToPayload(form, 5);

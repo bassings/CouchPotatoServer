@@ -50,7 +50,11 @@ export function categoryFormToPayload(formState, currentCategoryCount = 0) {
     destination: trim(formState && formState.destination),
   };
 
-  if (formState && formState.id) {
+  // Explicit "edit vs new" invariant: a non-empty id means edit; '', null and
+  // undefined all mean new. (Not a bare truthy check — that's only safe while ids
+  // are strings; this also keeps a hypothetical numeric id=0 from misrouting as
+  // new. Not `id !== ''` either — that would treat null/undefined as an edit.)
+  if (formState && formState.id != null && formState.id !== '') {
     payload.id = formState.id;
   } else {
     // New category: send explicit order so it appends at the end instead of
