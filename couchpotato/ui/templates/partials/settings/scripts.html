@@ -92,7 +92,7 @@ function settingsPanel() {
     // Tabs that render their own x-data panel (instead of the generic group
     // list). Add new custom-panel tabs here; the generic-panel x-show in
     // settings.html keys off this Set so it never needs another && condition.
-    customPanelTabs: ['logs', 'profiles'],
+    customPanelTabs: ['logs', 'profiles', 'categories'],
     loading: true,
     saving: false,
     showAdvanced: false,
@@ -136,6 +136,7 @@ function settingsPanel() {
     tabLabels: {
       general: 'General',
       profiles: 'Profiles',
+      categories: 'Categories',
       downloaders: 'Downloaders',
       searcher: 'Searchers',
       renamer: 'Renamer',
@@ -255,6 +256,7 @@ function settingsPanel() {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
         if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
+        if (!this.hiddenTabs.has('categories') && !this.tabOrder.includes('categories')) this.tabOrder.push('categories');
         if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
 
         this.computeOpenGroups();
@@ -1005,6 +1007,247 @@ function profileEditor() {
       const first = focusable[0], last = focusable[focusable.length - 1];
       // Recapture focus if it has escaped the dialog entirely (programmatic
       // focus, extension, etc.), not just at the first/last boundary.
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+
+    trapDeleteFocus(event) {
+      if (!this.deleteConfirmOpen) return;
+      const el = this.$refs.deleteEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+  };
+}
+
+/* ── Category editor (Settings → Categories tab) ── */
+/* Pure logic (categoryToForm, formToPayload, validateCategory) lives in the
+   tested CP.ui.* module so this classic script can delegate to it. */
+function categoryEditor() {
+  return {
+    // ── State ──
+    loaded: false,
+    loading: true,
+    loadError: '',
+    categories: [],
+    modalOpen: false,
+    deleteConfirmOpen: false,
+    categoryToDelete: null,
+    saving: false,
+    deleting: false,
+    isReordering: false,
+    _toastTimer: null,
+    toastMessage: '',
+    toastType: 'success',
+    validationErrors: [],
+    formState: {},
+    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
+    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
+
+    // ── Lazy load (named load(), NOT init(): Alpine auto-calls a method named
+    //    init() on mount, which would fetch eagerly on every settings page load.
+    //    Fired by the $watch on activeTab when the Categories tab is first opened. ──
+    async load() {
+      this.loaded = true;
+      this.loading = true;
+      this.loadError = '';
+      try {
+        const resp = await fetch(CP.apiBase + '/category.list/');
+        if (!resp.ok) throw new Error('category.list HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error('API returned failure');
+        this.categories = this.sortCategories(data.categories || []);
+      } catch (e) {
+        this.loadError = 'Failed to load categories. Check the server logs.';
+        this.loaded = false; // allow a retry on next tab activation
+      }
+      this.loading = false;
+    },
+
+    // ── Helpers ──
+    sortCategories(list) {
+      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+    },
+
+    toast(msg, type = 'success', duration = 3000) {
+      // Cancel any pending clear timer so a stale one can't wipe a newer toast
+      // early (e.g. a success toast immediately followed by a reload-error toast).
+      clearTimeout(this._toastTimer);
+      this.toastMessage = msg;
+      this.toastType = type;
+      this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, duration);
+    },
+
+    // ── Modal open/close ──
+    openNew() {
+      this.validationErrors = [];
+      this.formState = { id: '', label: '', ignored: '', preferred: '', required: '', destination: '' };
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
+    },
+
+    openEdit(category) {
+      this.validationErrors = [];
+      this.formState = CP.ui.categoryToForm(category);
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
+    },
+
+    closeModal() { this.modalOpen = false; },
+
+    // ── Save category (save and post-save refresh have SEPARATE error paths) ──
+    async saveCategory() {
+      this.validationErrors = [];
+      const v = CP.ui.validateCategory(this.formState);
+      if (!v.valid) { this.validationErrors = v.errors; return; }
+
+      const payload = CP.ui.categoryFormToPayload(this.formState, this.categories.length);
+      const isEdit = !!payload.id; // snapshot before any await
+      this.saving = true;
+
+      let saved = false;
+      try {
+        const params = new URLSearchParams();
+        if (payload.id) params.append('id', payload.id);
+        params.append('label', payload.label);
+        params.append('destination', payload.destination);
+        params.append('ignored', payload.ignored);
+        params.append('preferred', payload.preferred);
+        params.append('required', payload.required);
+        // New categories carry an explicit order so they append at the end
+        // instead of landing at the backend default order=999.
+        if (!payload.id && payload.order !== undefined) params.append('order', String(payload.order));
+
+        const resp = await fetch(CP.apiBase + '/category.save/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Save failed');
+        saved = true;
+      } catch (e) {
+        this.toast('Save failed: ' + e.message, 'error');
+      }
+      this.saving = false;
+
+      if (!saved) return;
+
+      // Save succeeded — close + confirm BEFORE the refresh so a refresh
+      // error can never masquerade as a save error.
+      this.closeModal();
+      this.toast(isEdit ? 'Category updated.' : 'Category created.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Saved, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Delete category ──
+    confirmDelete(category) {
+      if (this.modalOpen) return; // never open the delete dialog over an open edit modal
+      this.categoryToDelete = category;
+      this.deleteConfirmOpen = true;
+      this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
+    },
+
+    cancelDelete() {
+      this.deleteConfirmOpen = false;
+      this.categoryToDelete = null;
+    },
+
+    async doDelete() {
+      if (!this.categoryToDelete) return;
+      const delId = this.categoryToDelete._id;     // snapshot before await —
+      const delLabel = this.categoryToDelete.label; // dialog may be torn down mid-flight
+      this.deleting = true;
+
+      let deleted = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('id', delId);
+        const resp = await fetch(CP.apiBase + '/category.delete/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Delete failed');
+        deleted = true;
+      } catch (e) {
+        this.toast('Delete failed: ' + e.message, 'error');
+      }
+      this.deleting = false;
+
+      // On failure, leave the confirm dialog open so the user can retry;
+      // only close it on success.
+      if (!deleted) return;
+      this.cancelDelete();
+      this.toast('"' + delLabel + '" deleted.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Deleted, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Reorder categories (optimistic with rollback on failure) ──
+    async moveCategory(index, direction) {
+      // Guard against overlapping reorders: serialise by disabling moves while in-flight.
+      if (this.isReordering) return;
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= this.categories.length) return;
+
+      const snapshot = this.categories.slice(); // restore point
+      const list = this.categories.slice();
+      [list[target], list[index]] = [list[index], list[target]];
+      this.categories = list;
+      this.isReordering = true;
+
+      try {
+        const params = new URLSearchParams();
+        // Indexed bracket keys (ids[0], ids[1], …), NOT repeated ids[]: the
+        // dispatcher does dict(await request.form()), which collapses repeated
+        // keys to the last value. getParams() then expands the indexed keys
+        // back into ordered lists. Repeated keys would silently send a single id
+        // and break every reorder.
+        list.forEach((c, i) => {
+          params.append(`ids[${i}]`, c._id);
+        });
+        const resp = await fetch(CP.apiBase + '/category.save_order/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Reorder failed');
+      } catch (e) {
+        this.categories = snapshot; // roll back the optimistic move
+        this.toast('Failed to save order.', 'error');
+      } finally {
+        this.isReordering = false;
+      }
+    },
+
+    // ── Reload from API (throws on failure so callers can react) ──
+    async reload() {
+      const resp = await fetch(CP.apiBase + '/category.list/');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      if (!data.success) throw new Error('API returned failure');
+      this.categories = this.sortCategories(data.categories || []);
+    },
+
+    // ── Focus traps ──
+    trapFocus(event) {
+      if (!this.modalOpen) return;
+      const el = this.$refs.modalEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
       if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }

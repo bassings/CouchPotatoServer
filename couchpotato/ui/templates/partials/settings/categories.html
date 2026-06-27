@@ -1,0 +1,351 @@
+{# Category Management Settings Partial #}
+{# Alpine.js component: categoryEditor() — defined in partials/settings/scripts.html (classic script) #}
+{# API used: category.list, category.save, category.save_order, category.delete #}
+{# Visibility/init mirror the profiles tab: x-show + x-data on the panel, lazy load via $watch. #}
+
+<div x-show="activeTab === 'categories'"
+     role="tabpanel"
+     id="categories-panel"
+     aria-labelledby="tab-categories"
+     x-data="categoryEditor()"
+     x-init="$watch('activeTab', v => { if(v === 'categories' && !loaded) load(); })">
+
+  {# ── Loading state ── #}
+  <div x-show="loading" class="flex items-center justify-center py-16" role="status" aria-live="polite">
+    <div class="flex items-center gap-3 text-cp-muted text-sm">
+      <svg aria-hidden="true" class="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+      </svg>
+      <span>Loading categories…</span>
+    </div>
+  </div>
+
+  {# ── Error state ── #}
+  <div x-show="!loading && loadError"
+       class="flex items-center gap-3 py-8 text-cp-danger"
+       role="alert">
+    <svg aria-hidden="true" class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
+    </svg>
+    <span class="text-sm" x-text="loadError"></span>
+  </div>
+
+  <div x-show="!loading && !loadError" x-cloak>
+
+    {# ── Section header + New Category button ── #}
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-sm font-semibold">Categories</h2>
+        <p class="text-[11px] text-cp-muted mt-0.5">
+          Create categories to organise movies with custom filters and destinations.
+        </p>
+      </div>
+      {# No aria-label: the visible "New Category" text IS the accessible name (WCAG 2.5.3 Label in Name); the icon is aria-hidden. #}
+      <button @click="openNew()"
+              class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">
+        <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15"/>
+        </svg>
+        New Category
+      </button>
+    </div>
+
+    {# ── Empty state ── #}
+    <div x-show="categories.length === 0"
+         class="py-12 text-center text-cp-muted">
+      <svg aria-hidden="true" class="w-10 h-10 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.568 3H5.25A2.25 2.25 0 003 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 005.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 009.568 3z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" d="M6 6h.008v.008H6V6z"/>
+      </svg>
+      <p class="text-sm">No categories yet.</p>
+      <p class="text-[11px] mt-1">Click "New Category" to create one.</p>
+    </div>
+
+    {# ── Category list ── #}
+    <div class="space-y-2" role="list" aria-label="Categories">
+      <template x-for="(category, ci) in categories" :key="category._id">
+        <div class="bg-cp-card border border-white/[0.05] rounded-lg px-4 py-3"
+             role="listitem">
+          <div class="flex items-center justify-between gap-3">
+
+            {# Category name + reorder buttons #}
+            <div class="flex items-center gap-2 min-w-0">
+              {# Move up button #}
+              <button @click="moveCategory(ci, 'up')"
+                      :disabled="ci === 0 || isReordering"
+                      class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
+                      :aria-label="'Move ' + category.label + ' up in order'">
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 15.75l7.5-7.5 7.5 7.5"/>
+                </svg>
+              </button>
+              {# Move down button #}
+              <button @click="moveCategory(ci, 'down')"
+                      :disabled="ci === categories.length - 1 || isReordering"
+                      class="text-cp-muted hover:text-cp-text disabled:opacity-20 transition-colors shrink-0"
+                      :aria-label="'Move ' + category.label + ' down in order'">
+                <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5"/>
+                </svg>
+              </button>
+
+              <div class="min-w-0">
+                <span class="text-sm font-medium truncate" x-text="category.label"></span>
+                {# Summary chips for non-empty filter fields #}
+                <div class="flex flex-wrap gap-1 mt-1">
+                  <template x-if="category.preferred">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success">
+                      <span class="mr-0.5 opacity-70">preferred:</span>
+                      <span x-text="category.preferred"></span>
+                    </span>
+                  </template>
+                  <template x-if="category.required">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-accent/10 text-cp-accent">
+                      <span class="mr-0.5 opacity-70">required:</span>
+                      <span x-text="category.required"></span>
+                    </span>
+                  </template>
+                  <template x-if="category.ignored">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/[0.06] text-cp-muted">
+                      <span class="mr-0.5 opacity-70">ignored:</span>
+                      <span x-text="category.ignored"></span>
+                    </span>
+                  </template>
+                  <template x-if="category.destination">
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/[0.04] text-cp-muted font-mono" x-text="category.destination"></span>
+                  </template>
+                </div>
+              </div>
+            </div>
+
+            {# Action buttons #}
+            <div class="flex items-center gap-1 shrink-0">
+              <button @click="openEdit(category)"
+                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors"
+                      :aria-label="'Edit category: ' + category.label">
+                Edit
+              </button>
+              <button @click="confirmDelete(category)"
+                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors"
+                      :aria-label="'Delete category: ' + category.label">
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      </template>
+    </div>
+
+  </div>
+
+  {# ═══════════════════════════════════════════════════════════
+     EDIT / CREATE MODAL
+     ═══════════════════════════════════════════════════════════ #}
+  <div x-show="modalOpen"
+       x-transition
+       data-testid="category-edit-modal"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+       role="dialog"
+       aria-modal="true"
+       :aria-labelledby="'cat-modal-title-' + _uid"
+       @keydown.escape.window="if(modalOpen) closeModal()"
+       @keydown.tab.window="trapFocus($event)">
+
+    <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 flex flex-col max-h-[90vh]"
+         x-ref="modalEl">
+
+      {# Modal header #}
+      <div class="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between shrink-0">
+        <h3 :id="'cat-modal-title-' + _uid" class="text-sm font-semibold"
+            x-text="formState.id ? 'Edit Category' : 'New Category'"></h3>
+        <button @click="closeModal()"
+                class="text-cp-muted hover:text-cp-text transition-colors"
+                aria-label="Close modal">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      {# Modal body (scrollable) #}
+      <div class="px-5 py-4 overflow-y-auto flex-1 space-y-4">
+
+        {# Validation errors #}
+        <template x-if="validationErrors.length > 0">
+          <div class="px-3 py-2 rounded-lg bg-cp-danger/10 border border-cp-danger/20" role="alert">
+            <ul class="list-disc list-inside space-y-0.5">
+              <template x-for="err in validationErrors" :key="err">
+                <li class="text-xs text-cp-danger" x-text="err"></li>
+              </template>
+            </ul>
+          </div>
+        </template>
+
+        {# Category name (required) #}
+        <div>
+          <label :for="'cat-label-' + _uid"
+                 class="block text-[11px] font-medium text-cp-muted mb-1.5">
+            Name <span class="text-cp-danger" aria-hidden="true">*</span>
+          </label>
+          <input :id="'cat-label-' + _uid"
+                 type="text"
+                 x-model="formState.label"
+                 placeholder="e.g. Horror, Kids, Documentary"
+                 autocomplete="off"
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"
+                 x-ref="labelInput"
+                 aria-required="true"
+                 :aria-invalid="validationErrors.some(e => e.toLowerCase().includes('name') || e.toLowerCase().includes('label'))">
+        </div>
+
+        {# Preferred — releases that match score higher #}
+        <div>
+          <label :for="'cat-preferred-' + _uid"
+                 class="block text-[11px] font-medium text-cp-muted mb-1.5">
+            Preferred
+          </label>
+          <input :id="'cat-preferred-' + _uid"
+                 type="text"
+                 x-model="formState.preferred"
+                 placeholder="e.g. Blu-ray, DTS"
+                 autocomplete="off"
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+          <p class="text-[10px] text-cp-muted mt-1">Comma-separated terms. Releases containing these score higher.</p>
+        </div>
+
+        {# Required — releases must contain one of these #}
+        <div>
+          <label :for="'cat-required-' + _uid"
+                 class="block text-[11px] font-medium text-cp-muted mb-1.5">
+            Required
+          </label>
+          <input :id="'cat-required-' + _uid"
+                 type="text"
+                 x-model="formState.required"
+                 placeholder="e.g. DTS, AC3 &amp; English"
+                 autocomplete="off"
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+          <p class="text-[10px] text-cp-muted mt-1">Use &amp; for AND, comma for OR. Releases not matching are skipped.</p>
+        </div>
+
+        {# Ignored — releases containing these are excluded #}
+        <div>
+          <label :for="'cat-ignored-' + _uid"
+                 class="block text-[11px] font-medium text-cp-muted mb-1.5">
+            Ignored
+          </label>
+          <input :id="'cat-ignored-' + _uid"
+                 type="text"
+                 x-model="formState.ignored"
+                 placeholder="e.g. dubbed, swesub, french"
+                 autocomplete="off"
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
+          <p class="text-[10px] text-cp-muted mt-1">Comma-separated terms. Releases containing these are skipped.</p>
+        </div>
+
+        {# Destination — override the global renamer destination for this category #}
+        <div>
+          <label :for="'cat-destination-' + _uid"
+                 class="block text-[11px] font-medium text-cp-muted mb-1.5">
+            Destination folder
+          </label>
+          <input :id="'cat-destination-' + _uid"
+                 type="text"
+                 x-model="formState.destination"
+                 placeholder="e.g. /media/movies/horror"
+                 autocomplete="off"
+                 class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs font-mono focus:outline-none focus:border-cp-accent/30">
+          <p class="text-[10px] text-cp-muted mt-1">Optional. Overrides the global renamer destination for movies in this category.</p>
+        </div>
+
+      </div>
+
+      {# Modal footer #}
+      <div class="px-5 py-3 border-t border-white/[0.04] flex justify-end gap-2 shrink-0">
+        <button @click="closeModal()"
+                class="px-4 py-2 rounded-lg text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors">
+          Cancel
+        </button>
+        <button @click="saveCategory()"
+                :disabled="saving"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold bg-cp-accent text-black hover:bg-cp-accentHover transition-colors disabled:opacity-60">
+          <template x-if="saving">
+            <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </template>
+          <span x-text="saving ? 'Saving…' : (formState.id ? 'Save Changes' : 'Create Category')"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ═══════════════════════════════════════════════════════════
+     DELETE CONFIRM DIALOG
+     ═══════════════════════════════════════════════════════════ #}
+  <div x-show="deleteConfirmOpen"
+       x-transition
+       data-testid="category-delete-dialog"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
+       role="dialog"
+       aria-modal="true"
+       :aria-labelledby="'cat-delete-title-' + _uid"
+       @keydown.escape.window="if(deleteConfirmOpen) cancelDelete()"
+       @keydown.tab.window="trapDeleteFocus($event)">
+
+    <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-sm mx-4"
+         x-ref="deleteEl">
+
+      <div class="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between">
+        <h3 :id="'cat-delete-title-' + _uid" class="text-sm font-semibold text-cp-danger">Delete Category</h3>
+        <button @click="cancelDelete()"
+                class="text-cp-muted hover:text-cp-text transition-colors"
+                aria-label="Cancel delete">
+          <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div class="px-5 py-4">
+        <p class="text-sm text-cp-text">
+          Delete <strong x-text="categoryToDelete && categoryToDelete.label"></strong>?
+        </p>
+        <p class="text-[11px] text-cp-muted mt-2">
+          Movies using this category will be reassigned to no category.
+        </p>
+      </div>
+
+      <div class="px-5 py-3 border-t border-white/[0.04] flex justify-end gap-2">
+        <button @click="cancelDelete()"
+                x-ref="deleteCancelBtn"
+                class="px-4 py-2 rounded-lg text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors">
+          Cancel
+        </button>
+        <button @click="doDelete()"
+                :disabled="deleting"
+                class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors disabled:opacity-60">
+          <template x-if="deleting">
+            <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+          </template>
+          <span x-text="deleting ? 'Deleting…' : 'Delete'"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  {# ── Toast ── #}
+  <div x-show="toastMessage"
+       x-transition
+       class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-[60] px-4 py-2 rounded-lg text-xs font-medium"
+       :class="toastType === 'success' ? 'bg-cp-success/90 text-black' : 'bg-cp-danger/90 text-white'"
+       x-text="toastMessage"
+       role="status"
+       aria-live="polite"></div>
+
+</div>

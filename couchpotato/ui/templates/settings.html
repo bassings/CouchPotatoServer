@@ -37,6 +37,9 @@
     {# ==================== PROFILES TAB ==================== #}
     {% include "partials/settings/profiles.html" %}
 
+    {# ==================== CATEGORIES TAB ==================== #}
+    {% include "partials/settings/categories.html" %}
+
     {# ==================== SETTINGS TABS ==================== #}
     <div x-show="!customPanelTabs.includes(activeTab)" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
