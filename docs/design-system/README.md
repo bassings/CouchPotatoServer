@@ -111,7 +111,7 @@ The legacy UI's 30-glyph icon font maps to these Heroicons. When porting old scr
 | `icon-filter` | funnel |
 | `icon-star` / `star-empty` / `star-half` | star (outline; fill with accent; half via 50% linear-gradient fill) |
 | `icon-emo-cry` | face-frown (empty states) |
-| `icon-emo-sunglasses` | face-smile, or a custom sunglasses glyph in the same line style |
+| `icon-emo-sunglasses` | custom sunglasses glyph in the same line style (no exact Heroicon; `face-smile` only as a rough placeholder) |
 | `icon-emo-coffee` | custom coffee-cup glyph in the same line style |
 
 The two glyphs with no Heroicon (`sunglasses`, `coffee`) should be drawn fresh as 24×24 / stroke-1.5 paths to match. Exact path data for every icon is in the reference file's `iconGroups` array.
@@ -189,4 +189,4 @@ Built-in, with a Playwright + axe suite. Rules every component follows:
 - `couchpotato/ui/templates/base.html` — Tailwind config, CSS variables, sidebar/chrome, toasts, theme toggle, a11y scaffolding.
 - `couchpotato/ui/templates/partials/settings/field_types.html` — the 10 form field types.
 - `couchpotato/ui/templates/partials/settings/modals.html` — dialog, restart banner, directory browser.
-- `couchpotato/ui/templates/partials/movie_cards.html` · `search_results.html` — poster cards & states.
+- `couchpotato/ui/templates/partials/movie_cards.html` · `couchpotato/ui/templates/partials/search_results.html` — poster cards & states.
