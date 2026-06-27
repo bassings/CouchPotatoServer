@@ -72,9 +72,9 @@ make setup → code → make verify → open PR → Claude review + remediate �
 - **Note:** GitHub only runs `claude-review` with its token once the workflow
   exists on `master`; the PR that introduces/edits it is a no-op (expected).
 - **Mutation testing** runs nightly + on-demand (*Mutation Testing* workflow),
-  informational only: `make mutation-py` (mutmut) / `make mutation-js` (Stryker,
-  pending Alpine component extraction). See `[tool.mutmut]` in `pyproject.toml`
-  and `stryker.conf.json`.
+  informational only: `make mutation-py` (mutmut) / `make mutation-js` (Stryker
+  over the extracted UI logic in `couchpotato/static/scripts/ui/`, ~96% score).
+  See `[tool.mutmut]` in `pyproject.toml` and `stryker.conf.json`.
 
 ### 1a. E2E Tests — Check for UI Changes
 

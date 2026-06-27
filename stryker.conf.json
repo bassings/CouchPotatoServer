@@ -1,6 +1,6 @@
 {
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-  "_comment": "JS mutation testing (Stryker). Run with: make mutation-js (or npx stryker run). NOTE: meaningful only once Alpine/htmx component logic is extracted from inline templates into importable modules under couchpotato/static/scripts/ui/ that the vitest tests import. Until then this finds no covered mutants. 'break' is null so it never fails CI — the nightly job is informational. Legacy mootools scripts (the deprecated /old UI) are intentionally out of scope.",
+  "_comment": "JS mutation testing (Stryker). Run with: make mutation-js (or npx stryker run). Mutates the extracted UI logic under couchpotato/static/scripts/ui/, which the inline Alpine components delegate to and the vitest tests import (~96% mutation score). 'break' is null so it never fails CI — the nightly job is informational. Legacy mootools scripts (the deprecated /old UI) are intentionally out of scope.",
   "packageManager": "npm",
   "testRunner": "vitest",
   "reporters": ["html", "clear-text", "progress"],
