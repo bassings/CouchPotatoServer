@@ -1,8 +1,14 @@
 {# Quality Profiles Settings Partial #}
-{# Alpine.js component: profileEditor() #}
+{# Alpine.js component: profileEditor() — defined in partials/settings/scripts.html (classic script) #}
 {# API used: profile.list, quality.list, profile.save, profile.save_order, profile.delete #}
+{# Visibility/init mirror the logs tab: x-show + x-data on the panel, lazy init via $watch. #}
 
-<div x-data="profileEditor()" x-init="init()" id="profiles-panel">
+<div x-show="activeTab === 'profiles'"
+     role="tabpanel"
+     id="profiles-panel"
+     aria-labelledby="tab-profiles"
+     x-data="profileEditor()"
+     x-init="$watch('$root.activeTab', v => { if(v === 'profiles' && !loaded) init(); })">
 
   {# ── Loading state ── #}
   <div x-show="loading" class="flex items-center justify-center py-16" role="status" aria-live="polite">
@@ -358,7 +364,7 @@
        class="fixed inset-0 z-50 flex items-center justify-center bg-black/60"
        role="dialog"
        aria-modal="true"
-       aria-labelledby="delete-confirm-title"
+       :aria-labelledby="'delete-confirm-title-' + _uid"
        @keydown.escape.window="if(deleteConfirmOpen) cancelDelete()"
        @keydown.tab.window="trapDeleteFocus($event)">
 
@@ -366,7 +372,7 @@
          x-ref="deleteEl">
 
       <div class="px-5 py-4 border-b border-white/[0.04] flex items-center justify-between">
-        <h3 id="delete-confirm-title" class="text-sm font-semibold text-cp-danger">Delete Profile</h3>
+        <h3 :id="'delete-confirm-title-' + _uid" class="text-sm font-semibold text-cp-danger">Delete Profile</h3>
         <button @click="cancelDelete()"
                 class="text-cp-muted hover:text-cp-text transition-colors"
                 aria-label="Cancel delete">
@@ -387,13 +393,12 @@
 
       <div class="px-5 py-3 border-t border-white/[0.04] flex justify-end gap-2">
         <button @click="cancelDelete()"
-                id="delete-cancel-btn"
+                x-ref="deleteCancelBtn"
                 class="px-4 py-2 rounded-lg text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors">
           Cancel
         </button>
         <button @click="doDelete()"
                 :disabled="deleting"
-                id="delete-confirm-btn"
                 class="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors disabled:opacity-60">
           <template x-if="deleting">
             <svg aria-hidden="true" class="w-3 h-3 animate-spin" viewBox="0 0 24 24" fill="none">
@@ -417,276 +422,3 @@
        aria-live="polite"></div>
 
 </div>
-
-<script type="module">
-import { profileToForm, formToPayload, addQuality, removeQuality, moveQuality, validateProfile }
-  from '{{ web_base }}static/scripts/ui/profile-editor.js';
-
-function profileEditor() {
-  return {
-    // ── State ──────────────────────────────────────────────
-    loading: true,
-    loadError: '',
-    profiles: [],
-    qualities: [],
-    modalOpen: false,
-    deleteConfirmOpen: false,
-    profileToDelete: null,
-    saving: false,
-    deleting: false,
-    toastMessage: '',
-    toastType: 'success',
-    validationErrors: [],
-    selectedQualityToAdd: '',
-    formState: {},
-    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
-    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
-
-    // ── Init ───────────────────────────────────────────────
-    async init() {
-      try {
-        const [pResp, qResp] = await Promise.all([
-          fetch(CP.apiBase + '/profile.list/'),
-          fetch(CP.apiBase + '/quality.list/'),
-        ]);
-        const pData = await pResp.json();
-        const qData = await qResp.json();
-        if (!pData.success || !qData.success) throw new Error('API error');
-        this.profiles = (pData.list || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
-        this.qualities = qData.list || [];
-      } catch (e) {
-        this.loadError = 'Failed to load profiles. Check the server logs.';
-      }
-      this.loading = false;
-    },
-
-    // ── Helpers ────────────────────────────────────────────
-    qualityLabel(identifier) {
-      const q = this.qualities.find(x => x.identifier === identifier);
-      return q ? q.label : identifier;
-    },
-
-    get availableQualities() {
-      const used = new Set((this.formState.types || []).map(t => t.qualityId));
-      return this.qualities.filter(q => !used.has(q.identifier));
-    },
-
-    toast(msg, type = 'success', duration = 3000) {
-      this.toastMessage = msg;
-      this.toastType = type;
-      setTimeout(() => { this.toastMessage = ''; }, duration);
-    },
-
-    // ── Modal ──────────────────────────────────────────────
-    openNew() {
-      this.validationErrors = [];
-      this.selectedQualityToAdd = '';
-      this.formState = {
-        id: '', label: '', minimumScore: 1, waitFor: 0, stopAfter: 0, types: [],
-      };
-      this.modalOpen = true;
-      this.$nextTick(() => {
-        const inp = this.$refs.nameInput;
-        if (inp) inp.focus();
-      });
-    },
-
-    openEdit(profile) {
-      this.validationErrors = [];
-      this.selectedQualityToAdd = '';
-      this.formState = profileToForm(profile, this.qualities);
-      this.modalOpen = true;
-      this.$nextTick(() => {
-        const inp = this.$refs.nameInput;
-        if (inp) inp.focus();
-      });
-    },
-
-    closeModal() {
-      this.modalOpen = false;
-    },
-
-    // ── Quality management within form ────────────────────
-    addQualityToForm() {
-      if (!this.selectedQualityToAdd) return;
-      const qId = this.selectedQualityToAdd;
-      const qMeta = this.qualities.find(q => q.identifier === qId) || {};
-      const newTypes = addQuality(this.formState.types, qId);
-      // Enrich the new entry with metadata
-      if (newTypes.length > this.formState.types.length) {
-        const lastIdx = newTypes.length - 1;
-        newTypes[lastIdx] = {
-          ...newTypes[lastIdx],
-          qualityLabel: qMeta.label || qId,
-          allow3d:      !!qMeta.allow_3d,
-        };
-      }
-      this.formState = { ...this.formState, types: newTypes };
-      this.selectedQualityToAdd = '';
-    },
-
-    removeQualityAt(index) {
-      this.formState = { ...this.formState, types: removeQuality(this.formState.types, index) };
-    },
-
-    moveQualityAt(index, direction) {
-      this.formState = { ...this.formState, types: moveQuality(this.formState.types, index, direction) };
-    },
-
-    setFinish(index, value) {
-      if (index === 0) return; // first is always true
-      const types = this.formState.types.slice();
-      types[index] = { ...types[index], finish: value };
-      this.formState = { ...this.formState, types };
-    },
-
-    set3d(index, value) {
-      const types = this.formState.types.slice();
-      types[index] = { ...types[index], is3d: value };
-      this.formState = { ...this.formState, types };
-    },
-
-    // ── Save profile ──────────────────────────────────────
-    async saveProfile() {
-      this.validationErrors = [];
-      const v = validateProfile(this.formState);
-      if (!v.valid) {
-        this.validationErrors = v.errors;
-        return;
-      }
-
-      this.saving = true;
-      try {
-        const payload = formToPayload(this.formState);
-        const params = new URLSearchParams();
-        if (payload.id) params.append('id', payload.id);
-        params.append('label', payload.label);
-        params.append('minimum_score', String(payload.minimum_score));
-        params.append('wait_for', String(payload.wait_for));
-        params.append('stop_after', String(payload.stop_after));
-        // types as JSON — the backend receives it via kwargs
-        params.append('types', JSON.stringify(payload.types));
-
-        const resp = await fetch(CP.apiBase + '/profile.save/', {
-          method: 'POST',
-          body: params,
-        });
-        const data = await resp.json();
-        if (!data.success) throw new Error(data.message || 'Save failed');
-
-        // Refresh list
-        await this.reload();
-        this.closeModal();
-        this.toast(payload.id ? 'Profile updated.' : 'Profile created.', 'success');
-      } catch (e) {
-        this.toast('Save failed: ' + e.message, 'error');
-      }
-      this.saving = false;
-    },
-
-    // ── Delete profile ────────────────────────────────────
-    confirmDelete(profile) {
-      this.profileToDelete = profile;
-      this.deleteConfirmOpen = true;
-      this.$nextTick(() => {
-        const btn = document.getElementById('delete-cancel-btn');
-        if (btn) btn.focus();
-      });
-    },
-
-    cancelDelete() {
-      this.deleteConfirmOpen = false;
-      this.profileToDelete = null;
-    },
-
-    async doDelete() {
-      if (!this.profileToDelete) return;
-      this.deleting = true;
-      try {
-        const params = new URLSearchParams();
-        params.append('id', this.profileToDelete._id);
-        const resp = await fetch(CP.apiBase + '/profile.delete/', {
-          method: 'POST',
-          body: params,
-        });
-        const data = await resp.json();
-        if (!data.success) throw new Error(data.message || 'Delete failed');
-
-        await this.reload();
-        const label = this.profileToDelete.label;
-        this.cancelDelete();
-        this.toast('"'  + label + '" deleted.', 'success');
-      } catch (e) {
-        this.toast('Delete failed: ' + e.message, 'error');
-        this.cancelDelete();
-      }
-      this.deleting = false;
-    },
-
-    // ── Reorder profiles ──────────────────────────────────
-    async moveProfile(index, direction) {
-      const list = this.profiles.slice();
-      const target = direction === 'up' ? index - 1 : index + 1;
-      if (target < 0 || target >= list.length) return;
-      [list[target], list[index]] = [list[index], list[target]];
-      this.profiles = list;
-
-      // Persist new order
-      try {
-        const params = new URLSearchParams();
-        list.forEach((p, i) => {
-          params.append('ids[]', p._id);
-          params.append('hidden[]', p.hide ? '1' : '0');
-        });
-        await fetch(CP.apiBase + '/profile.save_order/', { method: 'POST', body: params });
-      } catch (e) {
-        this.toast('Failed to save order.', 'error');
-      }
-    },
-
-    // ── Reload from API ───────────────────────────────────
-    async reload() {
-      const resp = await fetch(CP.apiBase + '/profile.list/');
-      const data = await resp.json();
-      if (data.success) {
-        this.profiles = (data.list || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0));
-      }
-    },
-
-    // ── Focus trap for modal ──────────────────────────────
-    trapFocus(event) {
-      if (!this.modalOpen) return;
-      const el = this.$refs.modalEl;
-      if (!el) return;
-      const focusable = Array.from(el.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
-      ));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last  = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault(); last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault(); first.focus();
-      }
-    },
-
-    trapDeleteFocus(event) {
-      if (!this.deleteConfirmOpen) return;
-      const el = this.$refs.deleteEl;
-      if (!el) return;
-      const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
-      if (!focusable.length) return;
-      const first = focusable[0];
-      const last  = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault(); last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault(); first.focus();
-      }
-    },
-  };
-}
-
-window.profileEditor = profileEditor;
-</script>

@@ -10,10 +10,17 @@ per the migration backlog in `specs/UI-MIGRATION.md`.
 - Add a **Profiles** tab to the Settings page (`settings.html`).
 - All profile CRUD is client-side via `fetch()` to the existing API endpoints (no backend changes).
 - Pure logic extracted into `couchpotato/static/scripts/ui/profile-editor.js` (ES module, tested
-  with vitest + Stryker).
-- Alpine.js component `profileEditor()` drives the UI in
-  `couchpotato/ui/templates/partials/settings/profiles.html`.
-- Playwright e2e spec covers the full create → edit → reorder → delete flow.
+  with vitest + Stryker) and exported via the `couchpotato/static/scripts/ui/index.js` barrel onto
+  the global `CP.ui` namespace.
+- Alpine.js component `profileEditor()` is defined as a **classic** `<script>` in
+  `partials/settings/scripts.html` (same loading pattern as `settingsPanel()`/`logsPanel()`, so it
+  is synchronously available when Alpine scans `x-data` — a deferred `type="module"` script would
+  race Alpine init and leave the panel uninitialised). The markup lives in
+  `partials/settings/profiles.html`, whose panel mirrors the **logs tab** visibility mechanism:
+  `x-show="activeTab === 'profiles'"` + `x-data` on the same element, lazy `init()` via
+  `$watch('$root.activeTab', …)`.
+- Playwright e2e spec covers the full create → edit → reorder → delete flow with condition-based
+  waits and self-cleanup.
 
 ## API Contract (discovered from `couchpotato/core/plugins/profile/main.py` and `quality/main.py`)
 
@@ -107,8 +114,10 @@ Response: `{ "success": true, "message": "" }`
 ## Files Changed
 - `specs/UI-PORT-01-quality-profiles.md` — this file
 - `couchpotato/static/scripts/ui/profile-editor.js` — pure logic module
+- `couchpotato/static/scripts/ui/index.js` — barrel re-export (exposes logic on `CP.ui`)
 - `tests/unit/ui/profile-editor.spec.ts` — vitest unit tests (TDD: written first)
-- `couchpotato/ui/templates/partials/settings/profiles.html` — Alpine component
-- `couchpotato/ui/templates/settings.html` — Profiles tab wired in
+- `couchpotato/ui/templates/partials/settings/profiles.html` — profiles markup (template only)
+- `couchpotato/ui/templates/partials/settings/scripts.html` — `profileEditor()` classic component + guarded tab registration
+- `couchpotato/ui/templates/settings.html` — Profiles tab wired in (panel owns its own `x-show`)
 - `couchpotato/ui/__init__.py` — `/partial/settings/profiles` route
 - `tests/e2e/profiles.spec.ts` — Playwright e2e

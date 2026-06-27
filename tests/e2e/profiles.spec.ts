@@ -1,163 +1,142 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 /**
  * E2E tests for Quality Profile management (Settings → Profiles tab).
  * Covers: list loads, create profile, edit profile, reorder quality, delete with confirm.
+ *
+ * Uses condition-based waits (web-first assertions that auto-retry) rather than
+ * fixed timeouts, and cleans up any profile it creates so the suite is idempotent.
  */
 
+const TEST_PROFILE_NAME = 'E2E Test Profile';
+
+/** Open the Profiles tab and wait for its content to finish loading. */
+async function openProfilesTab(page: Page) {
+  await page.goto('/settings/');
+  await expect(page.locator('h1')).toContainText('Settings');
+
+  const profilesTab = page.getByRole('tab', { name: /profiles/i });
+  await expect(profilesTab).toBeVisible();
+  await profilesTab.click();
+
+  const panel = page.locator('#profiles-panel');
+  await expect(panel).toBeVisible();
+
+  // Wait for either the loaded UI (New Profile button) or an explicit error —
+  // both are deterministic end-states, no magic delay needed.
+  await expect(
+    panel.getByRole('button', { name: /new profile/i }).or(panel.locator('[role="alert"]'))
+  ).toBeVisible();
+
+  return panel;
+}
+
+/** Remove the test profile via the UI if it exists (idempotent cleanup). */
+async function deleteTestProfile(page: Page) {
+  try {
+    const panel = await openProfilesTab(page);
+    const delBtn = panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') });
+    if (await delBtn.count() === 0) return;
+    await delBtn.first().click();
+
+    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
+    await expect(confirmDialog).toBeVisible();
+    await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
+    await expect(confirmDialog).not.toBeVisible();
+  } catch {
+    // best-effort cleanup; never fail the suite on teardown
+  }
+}
+
 test.describe('Quality Profiles', () => {
-  test.beforeEach(async ({ page }) => {
-    await page.goto('/settings/');
-    // Wait for settings to load
-    await expect(page.locator('h1')).toContainText('Settings');
-    // Click the Profiles tab
-    const profilesTab = page.getByRole('tab', { name: /profiles/i });
-    await expect(profilesTab).toBeVisible({ timeout: 5000 });
-    await profilesTab.click();
+  test.afterEach(async ({ page }) => {
+    await deleteTestProfile(page);
   });
 
   test('profiles tab loads and shows profile list', async ({ page }) => {
-    // Should show the profiles panel after loading
-    const panel = page.locator('#profiles-panel');
-    await expect(panel).toBeVisible({ timeout: 5000 });
+    const panel = await openProfilesTab(page);
 
-    // Should not show load error
+    // Should not be in an error state
     const errEl = panel.locator('[role="alert"]');
-    // If error is visible, fail with message
     if (await errEl.isVisible()) {
-      const errText = await errEl.textContent();
-      throw new Error('Profiles panel showed error: ' + errText);
+      throw new Error('Profiles panel showed error: ' + (await errEl.textContent()));
     }
 
-    // Should show "New Profile" button
-    const newBtn = panel.getByRole('button', { name: /new profile/i });
-    await expect(newBtn).toBeVisible({ timeout: 5000 });
+    await expect(panel.getByRole('button', { name: /new profile/i })).toBeVisible();
   });
 
   test('create a new profile', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500); // wait for profiles to load
+    const panel = await openProfilesTab(page);
 
-    // Click New Profile
-    const newBtn = panel.getByRole('button', { name: /new profile/i });
-    await newBtn.click();
+    await panel.getByRole('button', { name: /new profile/i }).click();
 
-    // Modal should open
     const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
-    await expect(modal).toBeVisible({ timeout: 3000 });
+    await expect(modal).toBeVisible();
 
-    // Fill in name
-    const nameInput = modal.locator('input[type="text"]').first();
-    await nameInput.fill('E2E Test Profile');
+    await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
 
-    // Select a quality and add it
-    const qualitySelect = modal.locator('select').first();
-    await qualitySelect.selectOption({ index: 1 }); // pick first quality
-    const addBtn = modal.getByRole('button', { name: /^add$/i });
-    await addBtn.click();
+    // Pick a quality and add it
+    await modal.locator('select').first().selectOption({ index: 1 });
+    await modal.getByRole('button', { name: /^add$/i }).click();
 
-    // Should see a quality chip appear in the list
     const qualityList = modal.locator('[role="list"][aria-label="Qualities in this profile"]');
-    await expect(qualityList.locator('[role="listitem"]').first()).toBeVisible({ timeout: 2000 });
+    await expect(qualityList.locator('[role="listitem"]').first()).toBeVisible();
 
-    // Save
-    const saveBtn = modal.getByRole('button', { name: /create profile/i });
-    await saveBtn.click();
+    await modal.getByRole('button', { name: /create profile/i }).click();
 
-    // Modal should close
-    await expect(modal).not.toBeVisible({ timeout: 5000 });
-
-    // Toast should show success
+    // Modal closes, success toast appears, profile shows in list
+    await expect(modal).not.toBeVisible();
     const toast = page.locator('[role="status"][aria-live="polite"]').last();
-    await expect(toast).toContainText(/created/i, { timeout: 5000 });
-
-    // The new profile should appear in the list
-    await expect(panel.getByText('E2E Test Profile')).toBeVisible({ timeout: 5000 });
+    await expect(toast).toContainText(/created/i);
+    await expect(panel.getByText(TEST_PROFILE_NAME)).toBeVisible();
   });
 
   test('edit an existing profile', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
+    const panel = await openProfilesTab(page);
 
-    // Find the first edit button
     const editBtns = panel.getByRole('button', { name: /edit profile/i });
-    const count = await editBtns.count();
-    if (count === 0) {
-      test.skip(); // no profiles exist to edit
-      return;
-    }
-    const firstEditBtn = editBtns.first();
-    const profileName = await firstEditBtn.getAttribute('aria-label');
-    await firstEditBtn.click();
-
-    // Modal should open
-    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
-    await expect(modal).toBeVisible({ timeout: 3000 });
-
-    // Should show "Save Changes" button (existing profile)
-    await expect(modal.getByRole('button', { name: /save changes/i })).toBeVisible();
-
-    // Close with Escape
-    await page.keyboard.press('Escape');
-    await expect(modal).not.toBeVisible({ timeout: 3000 });
-  });
-
-  test('reorder qualities within a profile', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
-
-    // Open the first profile that has multiple qualities to edit
-    const editBtns = panel.getByRole('button', { name: /edit profile/i });
-    const count = await editBtns.count();
-    if (count === 0) { test.skip(); return; }
+    if (await editBtns.count() === 0) { test.skip(); return; }
 
     await editBtns.first().click();
 
     const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
-    await expect(modal).toBeVisible({ timeout: 3000 });
+    await expect(modal).toBeVisible();
+    await expect(modal.getByRole('button', { name: /save changes/i })).toBeVisible();
+
+    await page.keyboard.press('Escape');
+    await expect(modal).not.toBeVisible();
+  });
+
+  test('reorder qualities within a profile', async ({ page }) => {
+    const panel = await openProfilesTab(page);
+
+    const editBtns = panel.getByRole('button', { name: /edit profile/i });
+    if (await editBtns.count() === 0) { test.skip(); return; }
+
+    await editBtns.first().click();
+
+    const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
+    await expect(modal).toBeVisible();
 
     const qualityItems = modal.locator('[role="listitem"]');
-    const qCount = await qualityItems.count();
+    await expect(qualityItems.first()).toBeVisible();
 
-    if (qCount >= 2) {
-      // Click the "move down" button on the first quality (it should be enabled if there's a 2nd)
+    if (await qualityItems.count() >= 2) {
+      const firstLabel = await qualityItems.first().locator('span.flex-1').textContent();
       const moveDownBtns = modal.getByRole('button', { name: /quality down/i });
       if (await moveDownBtns.count() > 0) {
         await moveDownBtns.first().click();
-        // Items should have reordered (no assertion on exact names, just that it didn't crash)
-        await expect(qualityItems.first()).toBeVisible();
+        // The previously-first quality should no longer be first.
+        await expect(qualityItems.first().locator('span.flex-1')).not.toHaveText(firstLabel || '');
       }
     }
 
-    // Close modal
     await page.keyboard.press('Escape');
-    await expect(modal).not.toBeVisible({ timeout: 3000 });
+    await expect(modal).not.toBeVisible();
   });
 
-  test('delete profile shows confirm dialog', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
-
-    const deleteBtns = panel.getByRole('button', { name: /delete profile/i });
-    const count = await deleteBtns.count();
-    if (count === 0) { test.skip(); return; }
-
-    await deleteBtns.first().click();
-
-    // Confirm dialog should appear
-    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
-    await expect(confirmDialog).toBeVisible({ timeout: 3000 });
-    await expect(confirmDialog.locator('#delete-confirm-title')).toContainText('Delete Profile');
-
-    // Cancel button should close dialog
-    const cancelBtn = confirmDialog.getByRole('button', { name: /^cancel$/i });
-    await cancelBtn.click();
-    await expect(confirmDialog).not.toBeVisible({ timeout: 3000 });
-  });
-
-  test('delete confirm dialog closes on Escape', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
+  test('delete profile shows confirm dialog and cancels', async ({ page }) => {
+    const panel = await openProfilesTab(page);
 
     const deleteBtns = panel.getByRole('button', { name: /delete profile/i });
     if (await deleteBtns.count() === 0) { test.skip(); return; }
@@ -165,40 +144,48 @@ test.describe('Quality Profiles', () => {
     await deleteBtns.first().click();
 
     const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
-    await expect(confirmDialog).toBeVisible({ timeout: 3000 });
+    await expect(confirmDialog).toBeVisible();
+    await expect(confirmDialog.getByText('Delete Profile')).toBeVisible();
+
+    await confirmDialog.getByRole('button', { name: /^cancel$/i }).click();
+    await expect(confirmDialog).not.toBeVisible();
+  });
+
+  test('delete confirm dialog closes on Escape', async ({ page }) => {
+    const panel = await openProfilesTab(page);
+
+    const deleteBtns = panel.getByRole('button', { name: /delete profile/i });
+    if (await deleteBtns.count() === 0) { test.skip(); return; }
+
+    await deleteBtns.first().click();
+
+    const confirmDialog = page.locator('[role="dialog"][aria-modal="true"]').last();
+    await expect(confirmDialog).toBeVisible();
 
     await page.keyboard.press('Escape');
-    await expect(confirmDialog).not.toBeVisible({ timeout: 3000 });
+    await expect(confirmDialog).not.toBeVisible();
   });
 
   test('validation — cannot save profile with empty name', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
+    const panel = await openProfilesTab(page);
 
     await panel.getByRole('button', { name: /new profile/i }).click();
 
     const modal = page.locator('[role="dialog"][aria-modal="true"]').first();
-    await expect(modal).toBeVisible({ timeout: 3000 });
-
-    // Click Create without filling in a name
-    await modal.getByRole('button', { name: /create profile/i }).click();
-
-    // Validation error should appear in the modal
-    const errorRegion = modal.locator('[role="alert"]');
-    await expect(errorRegion).toBeVisible({ timeout: 2000 });
-    await expect(errorRegion).toContainText(/name/i);
-
-    // Modal should still be open
     await expect(modal).toBeVisible();
 
-    // Close with Escape
+    await modal.getByRole('button', { name: /create profile/i }).click();
+
+    const errorRegion = modal.locator('[role="alert"]');
+    await expect(errorRegion).toBeVisible();
+    await expect(errorRegion).toContainText(/name/i);
+    await expect(modal).toBeVisible(); // still open
+
     await page.keyboard.press('Escape');
   });
 
-  test('Profiles tab is accessible (no a11y violations)', async ({ page }) => {
-    const panel = page.locator('#profiles-panel');
-    await page.waitForTimeout(1500);
-    // Basic presence of landmark and heading
-    await expect(panel.locator('h2').first()).toBeVisible({ timeout: 5000 });
+  test('Profiles tab renders its heading (basic a11y landmark)', async ({ page }) => {
+    const panel = await openProfilesTab(page);
+    await expect(panel.locator('h2').first()).toBeVisible();
   });
 });

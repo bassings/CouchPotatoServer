@@ -250,7 +250,7 @@ function settingsPanel() {
         for (const t of tabSet) {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
-        this.tabOrder.push('profiles');
+        if (!this.hiddenTabs.has('profiles')) this.tabOrder.push('profiles');
         this.tabOrder.push('logs');
 
         this.computeOpenGroups();
@@ -707,4 +707,278 @@ function directoriesField(section, opt) {
     getLearnMore() { const panel = this.getPanel(); return panel ? panel.getLearnMore(this.section, this.opt.name) : ''; },
   };
 }
+
+/* ── Quality Profiles editor (Settings → Profiles tab) ── */
+/* Pure logic (profileToForm, formToPayload, addQuality, removeQuality,
+   moveQuality, validateProfile) lives in the tested CP.ui.* module so this
+   classic script can delegate to it — same pattern as the other components. */
+function profileEditor() {
+  return {
+    // ── State ──
+    loaded: false,
+    loading: true,
+    loadError: '',
+    profiles: [],
+    qualities: [],
+    modalOpen: false,
+    deleteConfirmOpen: false,
+    profileToDelete: null,
+    saving: false,
+    deleting: false,
+    toastMessage: '',
+    toastType: 'success',
+    validationErrors: [],
+    selectedQualityToAdd: '',
+    formState: {},
+    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
+    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
+
+    // ── Init (lazy — fired by $watch when the tab is first opened) ──
+    async init() {
+      this.loaded = true;
+      this.loading = true;
+      this.loadError = '';
+      try {
+        const [pResp, qResp] = await Promise.all([
+          fetch(CP.apiBase + '/profile.list/'),
+          fetch(CP.apiBase + '/quality.list/'),
+        ]);
+        if (!pResp.ok) throw new Error('profile.list HTTP ' + pResp.status);
+        if (!qResp.ok) throw new Error('quality.list HTTP ' + qResp.status);
+        const pData = await pResp.json();
+        const qData = await qResp.json();
+        if (!pData.success || !qData.success) throw new Error('API returned failure');
+        this.profiles = this.sortProfiles(pData.list || []);
+        this.qualities = qData.list || [];
+      } catch (e) {
+        this.loadError = 'Failed to load profiles. Check the server logs.';
+        this.loaded = false; // allow a retry on next tab activation
+      }
+      this.loading = false;
+    },
+
+    // ── Helpers ──
+    sortProfiles(list) {
+      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+    },
+
+    qualityLabel(identifier) {
+      const q = this.qualities.find(x => x.identifier === identifier);
+      return q ? q.label : identifier;
+    },
+
+    get availableQualities() {
+      const used = new Set((this.formState.types || []).map(t => t.qualityId));
+      return this.qualities.filter(q => !used.has(q.identifier));
+    },
+
+    toast(msg, type = 'success', duration = 3000) {
+      this.toastMessage = msg;
+      this.toastType = type;
+      setTimeout(() => { this.toastMessage = ''; }, duration);
+    },
+
+    // ── Modal open/close ──
+    openNew() {
+      this.validationErrors = [];
+      this.selectedQualityToAdd = '';
+      this.formState = { id: '', label: '', minimumScore: 1, waitFor: 0, stopAfter: 0, types: [] };
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.nameInput) this.$refs.nameInput.focus(); });
+    },
+
+    openEdit(profile) {
+      this.validationErrors = [];
+      this.selectedQualityToAdd = '';
+      this.formState = CP.ui.profileToForm(profile, this.qualities);
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.nameInput) this.$refs.nameInput.focus(); });
+    },
+
+    closeModal() { this.modalOpen = false; },
+
+    // ── Quality management within the form ──
+    addQualityToForm() {
+      if (!this.selectedQualityToAdd) return;
+      const qId = this.selectedQualityToAdd;
+      const qMeta = this.qualities.find(q => q.identifier === qId) || {};
+      const newTypes = CP.ui.addQuality(this.formState.types, qId);
+      if (newTypes.length > this.formState.types.length) {
+        const lastIdx = newTypes.length - 1;
+        newTypes[lastIdx] = { ...newTypes[lastIdx], qualityLabel: qMeta.label || qId, allow3d: !!qMeta.allow_3d };
+      }
+      this.formState = { ...this.formState, types: newTypes };
+      this.selectedQualityToAdd = '';
+    },
+
+    removeQualityAt(index) {
+      this.formState = { ...this.formState, types: CP.ui.removeQuality(this.formState.types, index) };
+    },
+
+    moveQualityAt(index, direction) {
+      this.formState = { ...this.formState, types: CP.ui.moveQuality(this.formState.types, index, direction) };
+    },
+
+    setFinish(index, value) {
+      if (index === 0) return; // first quality always finishes
+      const types = this.formState.types.slice();
+      types[index] = { ...types[index], finish: value };
+      this.formState = { ...this.formState, types };
+    },
+
+    set3d(index, value) {
+      const types = this.formState.types.slice();
+      types[index] = { ...types[index], is3d: value };
+      this.formState = { ...this.formState, types };
+    },
+
+    // ── Save profile (save and post-save refresh have SEPARATE error paths) ──
+    async saveProfile() {
+      this.validationErrors = [];
+      const v = CP.ui.validateProfile(this.formState);
+      if (!v.valid) { this.validationErrors = v.errors; return; }
+
+      const payload = CP.ui.formToPayload(this.formState);
+      const isEdit = !!payload.id; // snapshot before any await
+      this.saving = true;
+
+      let saved = false;
+      try {
+        const params = new URLSearchParams();
+        if (payload.id) params.append('id', payload.id);
+        params.append('label', payload.label);
+        params.append('minimum_score', String(payload.minimum_score));
+        params.append('wait_for', String(payload.wait_for));
+        params.append('stop_after', String(payload.stop_after));
+        params.append('types', JSON.stringify(payload.types));
+
+        const resp = await fetch(CP.apiBase + '/profile.save/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Save failed');
+        saved = true;
+      } catch (e) {
+        this.toast('Save failed: ' + e.message, 'error');
+      }
+      this.saving = false;
+
+      if (!saved) return;
+
+      // Save succeeded — close + confirm BEFORE the refresh so a refresh
+      // error can never masquerade as a save error.
+      this.closeModal();
+      this.toast(isEdit ? 'Profile updated.' : 'Profile created.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Saved, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Delete profile ──
+    confirmDelete(profile) {
+      this.profileToDelete = profile;
+      this.deleteConfirmOpen = true;
+      this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
+    },
+
+    cancelDelete() {
+      this.deleteConfirmOpen = false;
+      this.profileToDelete = null;
+    },
+
+    async doDelete() {
+      if (!this.profileToDelete) return;
+      const delId = this.profileToDelete._id;     // snapshot before await —
+      const delLabel = this.profileToDelete.label; // dialog may be torn down mid-flight
+      this.deleting = true;
+
+      let deleted = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('id', delId);
+        const resp = await fetch(CP.apiBase + '/profile.delete/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Delete failed');
+        deleted = true;
+      } catch (e) {
+        this.toast('Delete failed: ' + e.message, 'error');
+      }
+      this.deleting = false;
+      this.cancelDelete();
+
+      if (!deleted) return;
+      this.toast('"' + delLabel + '" deleted.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Deleted, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Reorder profiles (optimistic with rollback on failure) ──
+    async moveProfile(index, direction) {
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= this.profiles.length) return;
+
+      const snapshot = this.profiles.slice(); // restore point
+      const list = this.profiles.slice();
+      [list[target], list[index]] = [list[index], list[target]];
+      this.profiles = list;
+
+      try {
+        const params = new URLSearchParams();
+        list.forEach((p) => {
+          params.append('ids[]', p._id);
+          params.append('hidden[]', p.hide ? '1' : '0');
+        });
+        const resp = await fetch(CP.apiBase + '/profile.save_order/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Reorder failed');
+      } catch (e) {
+        this.profiles = snapshot; // roll back the optimistic move
+        this.toast('Failed to save order.', 'error');
+      }
+    },
+
+    // ── Reload from API (throws on failure so callers can react) ──
+    async reload() {
+      const resp = await fetch(CP.apiBase + '/profile.list/');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      if (!data.success) throw new Error('API returned failure');
+      this.profiles = this.sortProfiles(data.list || []);
+    },
+
+    // ── Focus traps ──
+    trapFocus(event) {
+      if (!this.modalOpen) return;
+      const el = this.$refs.modalEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+
+    trapDeleteFocus(event) {
+      if (!this.deleteConfirmOpen) return;
+      const el = this.$refs.deleteEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+  };
+}
+
 </script>

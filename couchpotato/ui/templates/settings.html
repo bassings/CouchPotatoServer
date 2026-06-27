@@ -35,9 +35,7 @@
     {% include "partials/settings/logs_tab.html" %}
 
     {# ==================== PROFILES TAB ==================== #}
-    <div x-show="activeTab === 'profiles'">
-      {% include "partials/settings/profiles.html" %}
-    </div>
+    {% include "partials/settings/profiles.html" %}
 
     {# ==================== SETTINGS TABS ==================== #}
     <div x-show="activeTab !== 'logs' && activeTab !== 'profiles'" class="space-y-4">

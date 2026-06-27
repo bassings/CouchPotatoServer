@@ -280,6 +280,16 @@ describe('moveQuality', () => {
     expect(result[0].finish).toBe(true);
     expect(result[1].finish).toBe(false);
   });
+
+  it('moving index 0 DOWN resets the displaced first item finish=false and promotes the new first', () => {
+    // down-path of displacedFromFirst: old index-0 item lands at index 1 and
+    // must lose its position-forced finish=true; new first item gets finish=true.
+    const result = moveQuality(types, 0, 'down');
+    expect(result[0].qualityId).toBe('1080p'); // new first
+    expect(result[0].finish).toBe(true);
+    expect(result[1].qualityId).toBe('2160p'); // displaced old-first
+    expect(result[1].finish).toBe(false);
+  });
 });
 
 // ─── validateProfile ─────────────────────────────────────────────────────────
