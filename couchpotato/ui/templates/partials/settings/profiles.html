@@ -439,7 +439,8 @@ function profileEditor() {
     validationErrors: [],
     selectedQualityToAdd: '',
     formState: {},
-    _uid: Math.random().toString(36).slice(2, 8),
+    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
+    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
 
     // ── Init ───────────────────────────────────────────────
     async init() {
