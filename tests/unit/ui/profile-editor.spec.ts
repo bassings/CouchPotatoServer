@@ -435,3 +435,268 @@ describe('validateProfile', () => {
     expect(r.errors.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// ─── Mutation hardening: defaulting & boundary branches ────────────────────────
+// These tests pin the nullish/positional/coalescing branches that the happy-path
+// suite leaves unexercised, so Stryker mutants on them are killed rather than
+// silently surviving. Mirrors the boundary tests that took category-editor.js to
+// 100% mutation.
+
+describe('profileToForm — defaulting branches (mutation hardening)', () => {
+  it('defaults types to empty when profile.qualities is missing', () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc.qualities;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.types).toHaveLength(0);
+  });
+
+  it('defaults finish positionally (first=true, rest=false) when finish array is missing', () => {
+    const doc = { ...PROFILE_DOC, qualities: ['720p', '1080p'], finish: [] };
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.types[0].finish).toBe(true);
+    expect(form.types[1].finish).toBe(false);
+  });
+
+  it('honours explicit finish flags over the positional default', () => {
+    // First quality finish=false, second finish=true — the inverse of the
+    // positional default — so a mutant that ignores the array (or flips the
+    // i===0 default) produces a visibly different result.
+    const doc = { ...PROFILE_DOC, qualities: ['720p', '1080p'], finish: [false, true] };
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.types[0].finish).toBe(false);
+    expect(form.types[1].finish).toBe(true);
+  });
+
+  it("defaults id to '' when _id is missing", () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc._id;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.id).toBe('');
+  });
+
+  it("defaults label to '' when label is missing", () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc.label;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.label).toBe('');
+  });
+
+  it('defaults waitFor to 0 (never NaN) when wait_for is missing', () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc.wait_for;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.waitFor).toBe(0);
+    expect(Number.isNaN(form.waitFor)).toBe(false);
+  });
+
+  it('defaults stopAfter to 0 (never NaN) when stop_after is missing', () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc.stop_after;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.stopAfter).toBe(0);
+    expect(Number.isNaN(form.stopAfter)).toBe(false);
+  });
+
+  it('defaults minimumScore to 1 when minimum_score is missing', () => {
+    const doc = { ...PROFILE_DOC };
+    delete doc.minimum_score;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.minimumScore).toBe(1);
+  });
+
+  it('defaults minimumScore to 1 when minimum_score is null', () => {
+    const doc = { ...PROFILE_DOC, minimum_score: null };
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.minimumScore).toBe(1);
+  });
+
+  it('preserves a minimum_score of exactly 0 (not coerced to the default 1)', () => {
+    const doc = { ...PROFILE_DOC, minimum_score: 0 };
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.minimumScore).toBe(0);
+  });
+
+  it('reads an explicit, non-default minimum_score', () => {
+    const doc = { ...PROFILE_DOC, minimum_score: 50 };
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.minimumScore).toBe(50);
+  });
+
+  it('tolerates a null quality-list argument (labels fall back to the identifier)', () => {
+    // Exercises the `qualities || []` guard with a falsy quality list: the
+    // metadata map is empty, so every type label falls back to its identifier.
+    const form = profileToForm(PROFILE_DOC, null);
+    expect(form.types).toHaveLength(2);
+    expect(form.types[0].qualityLabel).toBe('720p');
+    expect(form.types[0].allow3d).toBe(false);
+  });
+
+  it('treats an entirely absent finish field like an empty one (positional default)', () => {
+    // Exercises the `profile.finish || []` guard when the field is undefined,
+    // not merely an empty array.
+    const doc = { ...PROFILE_DOC, qualities: ['720p', '1080p'] };
+    delete doc.finish;
+    const form = profileToForm(doc, QUALITIES);
+    expect(form.types[0].finish).toBe(true);
+    expect(form.types[1].finish).toBe(false);
+  });
+});
+
+describe('formToPayload — toNum & defaulting branches (mutation hardening)', () => {
+  const baseForm = () => profileToForm(PROFILE_DOC, QUALITIES);
+
+  it('passes through valid, non-default numeric fields unchanged', () => {
+    const form = { ...baseForm(), minimumScore: 8, waitFor: 5, stopAfter: 10 };
+    const payload = formToPayload(form);
+    expect(payload.minimum_score).toBe(8);
+    expect(payload.wait_for).toBe(5);
+    expect(payload.stop_after).toBe(10);
+  });
+
+  it('coalesces null numeric fields to their defaults (1 / 0 / 0)', () => {
+    const form = { ...baseForm(), minimumScore: null, waitFor: null, stopAfter: null };
+    const payload = formToPayload(form);
+    expect(payload.minimum_score).toBe(1);
+    expect(payload.wait_for).toBe(0);
+    expect(payload.stop_after).toBe(0);
+  });
+
+  it('coalesces undefined numeric fields to their defaults (1 / 0 / 0)', () => {
+    const form = { ...baseForm(), minimumScore: undefined, waitFor: undefined, stopAfter: undefined };
+    const payload = formToPayload(form);
+    expect(payload.minimum_score).toBe(1);
+    expect(payload.wait_for).toBe(0);
+    expect(payload.stop_after).toBe(0);
+  });
+
+  it("coalesces a null label to '' at the wire boundary", () => {
+    const form = { ...baseForm(), label: null };
+    const payload = formToPayload(form);
+    expect(payload.label).toBe('');
+  });
+
+  it("coalesces an undefined label to '' at the wire boundary", () => {
+    const form = { ...baseForm(), label: undefined };
+    const payload = formToPayload(form);
+    expect(payload.label).toBe('');
+  });
+
+  it('defaults types to an empty array when formState.types is missing', () => {
+    const form = { ...baseForm(), types: undefined };
+    const payload = formToPayload(form);
+    expect(payload.types).toHaveLength(0);
+  });
+});
+
+describe('addQuality — fresh-array no-op (mutation hardening)', () => {
+  it('returns a NEW array (copy), not the same reference, for an empty qualityId', () => {
+    const types = [{ qualityId: '720p', finish: true, is3d: false }];
+    const result = addQuality(types, '');
+    expect(result).not.toBe(types);
+    expect(result).toEqual(types);
+  });
+
+  it('returns a NEW array (copy), not the same reference, for a null qualityId', () => {
+    const types = [{ qualityId: '720p', finish: true, is3d: false }];
+    const result = addQuality(types, null);
+    expect(result).not.toBe(types);
+  });
+});
+
+describe('removeQuality — boundary & promotion branches (mutation hardening)', () => {
+  const types = [
+    { qualityId: '720p',  finish: true,  is3d: false },
+    { qualityId: '1080p', finish: false, is3d: false },
+    { qualityId: 'dvdrip',finish: false, is3d: false },
+  ];
+
+  it('returns a NEW array (copy) for an out-of-range index, not the same reference', () => {
+    const result = removeQuality(types, 99);
+    expect(result).not.toBe(types);
+    expect(result).toEqual(types);
+  });
+
+  it('returns a NEW array (copy) for a negative index, not the same reference', () => {
+    const result = removeQuality(types, -1);
+    expect(result).not.toBe(types);
+  });
+
+  it('does NOT promote finish when removing a non-first item', () => {
+    // The promotion is gated on index===0. Removing index 1 must leave the
+    // (already-false) first item's finish untouched, killing a mutant that
+    // promotes unconditionally.
+    const t = [
+      { qualityId: 'a', finish: false, is3d: false },
+      { qualityId: 'b', finish: false, is3d: false },
+    ];
+    const result = removeQuality(t, 1);
+    expect(result[0].finish).toBe(false);
+  });
+});
+
+describe('moveQuality — finish-reset branches (mutation hardening)', () => {
+  const allFinish = () => [
+    { qualityId: 'A', finish: true, is3d: false },
+    { qualityId: 'B', finish: true, is3d: false },
+    { qualityId: 'C', finish: true, is3d: false },
+    { qualityId: 'D', finish: true, is3d: false },
+  ];
+
+  it('moving a middle item UP (not to/through position 0) leaves every finish flag untouched', () => {
+    // displacedFromFirst must be -1 here: no item leaves position 0, so a mutant
+    // that mis-computes it wrongly clears a finish flag and is caught.
+    const result = moveQuality(allFinish(), 2, 'up'); // [A, C, B, D]
+    expect(result.map(t => t.qualityId)).toEqual(['A', 'C', 'B', 'D']);
+    expect(result.every(t => t.finish === true)).toBe(true);
+  });
+
+  it('moving a middle item DOWN (not from position 0) leaves every finish flag untouched', () => {
+    const result = moveQuality(allFinish(), 1, 'down'); // [A, C, B, D]
+    expect(result.map(t => t.qualityId)).toEqual(['A', 'C', 'B', 'D']);
+    expect(result.every(t => t.finish === true)).toBe(true);
+  });
+});
+
+describe('validateProfile — numeric-bound branches (mutation hardening)', () => {
+  const validForm = {
+    label: 'Best',
+    types: [{ qualityId: '720p', finish: true, is3d: false }],
+  };
+
+  it('accepts a minimumScore well above the minimum (the guard is AND-ed, not OR-ed)', () => {
+    const r = validateProfile({ ...validForm, minimumScore: 50 });
+    expect(r.valid).toBe(true);
+    expect(r.errors.some(e => e.includes('Minimum score'))).toBe(false);
+  });
+
+  it('does not flag minimum score when minimumScore is null (guard short-circuits)', () => {
+    const r = validateProfile({ ...validForm, minimumScore: null });
+    expect(r.valid).toBe(true);
+    expect(r.errors.some(e => e.includes('Minimum score'))).toBe(false);
+  });
+
+  it('accepts waitFor and stopAfter of exactly 0 (boundary: 0 is not negative)', () => {
+    const r = validateProfile({ ...validForm, waitFor: 0, stopAfter: 0 });
+    expect(r.valid).toBe(true);
+    expect(r.errors.some(e => e.includes('cannot be negative'))).toBe(false);
+  });
+
+  it('accepts positive waitFor and stopAfter', () => {
+    const r = validateProfile({ ...validForm, waitFor: 7, stopAfter: 30 });
+    expect(r.valid).toBe(true);
+  });
+
+  it('ignores non-finite numeric bounds (e.g. -Infinity) rather than flagging them', () => {
+    // The Number.isFinite guard means a non-finite value is simply not validated;
+    // a mutant that drops the guard would (wrongly) flag -Infinity as negative.
+    const r = validateProfile({ ...validForm, waitFor: -Infinity, stopAfter: -Infinity });
+    expect(r.valid).toBe(true);
+    expect(r.errors.some(e => e.includes('cannot be negative'))).toBe(false);
+  });
+
+  it('the negative-bound error names the offending field AND the reason', () => {
+    const r = validateProfile({ ...validForm, waitFor: -5, stopAfter: -2 });
+    expect(r.errors.some(e => e.includes('Wait (days) cannot be negative.'))).toBe(true);
+    expect(r.errors.some(e => e.includes('Keep searching (days) cannot be negative.'))).toBe(true);
+  });
+});
