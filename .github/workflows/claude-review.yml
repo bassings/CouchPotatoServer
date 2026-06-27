@@ -38,11 +38,21 @@ jobs:
           # Keep one updating summary comment per PR (visible verdict even when
           # the review is clean — otherwise a clean review looks like a no-op).
           use_sticky_comment: true
+          # The GitHub comment MCP tools are NOT in agent mode's default allow
+          # list, so without this the agent's posting attempts are denied
+          # (permission_denials) and it silently posts nothing. Allow the inline
+          # + sticky comment tools, plus gh as a fallback for the summary.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,mcp__github_comment__update_claude_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
           prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+
             Review the changes in this pull request as a principal engineer for
             CouchPotatoServer (Python 3.10+ FastAPI media server; see CLAUDE.md
             and AGENTS.md for project rules). Post specific findings as inline PR
-            review comments, grouped by severity.
+            review comments (mcp__github_inline_comment__create_inline_comment),
+            grouped by severity.
 
             Focus on:
             - Correctness and edge cases, especially around the SQLite adapter
