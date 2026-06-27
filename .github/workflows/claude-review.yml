@@ -35,10 +35,13 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Keep one updating summary comment per PR (visible verdict even when
+          # the review is clean — otherwise a clean review looks like a no-op).
+          use_sticky_comment: true
           prompt: |
             Review the changes in this pull request as a principal engineer for
             CouchPotatoServer (Python 3.10+ FastAPI media server; see CLAUDE.md
-            and AGENTS.md for project rules). Post your findings as inline PR
+            and AGENTS.md for project rules). Post specific findings as inline PR
             review comments, grouped by severity.
 
             Focus on:
@@ -51,5 +54,8 @@ jobs:
             - Adherence to project rules: ruff-clean, conventional commits, no
               committed secrets/test data, E2E specs updated for UI changes.
 
-            Be specific and actionable. If the change looks safe and complete,
-            say so plainly rather than inventing nits.
+            ALWAYS post a brief summary comment with an explicit overall verdict —
+            start it with `✅ LGTM` or `⚠️ Changes requested` — even when there
+            are no issues, so the review is clearly visible. Be specific and
+            actionable; if the change is safe and complete, say so plainly rather
+            than inventing nits.
