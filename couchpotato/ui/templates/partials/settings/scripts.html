@@ -769,7 +769,7 @@ function profileEditor() {
 
     // ── Helpers ──
     sortProfiles(list) {
-      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     },
 
     qualityLabel(identifier) {
@@ -1027,7 +1027,7 @@ function profileEditor() {
 }
 
 /* ── Category editor (Settings → Categories tab) ── */
-/* Pure logic (categoryToForm, formToPayload, validateCategory) lives in the
+/* Pure logic (categoryToForm, categoryFormToPayload, validateCategory) lives in the
    tested CP.ui.* module so this classic script can delegate to it. */
 function categoryEditor() {
   return {
@@ -1072,7 +1072,7 @@ function categoryEditor() {
 
     // ── Helpers ──
     sortCategories(list) {
-      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+      return list.slice().sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     },
 
     toast(msg, type = 'success', duration = 3000) {
