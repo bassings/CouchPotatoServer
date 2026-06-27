@@ -257,5 +257,6 @@ describe('validateCategory', () => {
   it('accumulates multiple errors (future-proof: only label required now, but returns array)', () => {
     const r = validateCategory({ label: '' });
     expect(Array.isArray(r.errors)).toBe(true);
+    expect(r.errors.length).toBeGreaterThan(0); // at minimum the label error must be present
   });
 });

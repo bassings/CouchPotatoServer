@@ -1156,15 +1156,18 @@ function categoryEditor() {
 
       if (!saved) return;
 
-      // Save succeeded — close + confirm BEFORE the refresh so a refresh
-      // error can never masquerade as a save error.
+      // If the user dismissed the modal via Escape during the in-flight POST,
+      // suppress the toasts (they already moved on) but still reload so the list
+      // reflects the persisted save. Close + confirm BEFORE the refresh so a
+      // refresh error can never masquerade as a save error.
+      const dismissed = !this.modalOpen;
       this.closeModal();
-      this.toast(isEdit ? 'Category updated.' : 'Category created.', 'success');
+      if (!dismissed) this.toast(isEdit ? 'Category updated.' : 'Category created.', 'success');
 
       try {
         await this.reload();
       } catch (e) {
-        this.toast('Saved, but the list failed to refresh.', 'error');
+        if (!dismissed) this.toast('Saved, but the list failed to refresh.', 'error');
       }
     },
 
