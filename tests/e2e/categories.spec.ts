@@ -428,6 +428,10 @@ test.describe('Category management', () => {
     const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
     await expect(toast).toContainText(/failed to refresh/i);
 
+    // The row must be dropped optimistically — no ghost row with live buttons
+    // even though reload() failed.
+    await expect(panel.getByText(TEST_CATEGORY_NAME)).not.toBeVisible();
+
     await page.unroute('**/category.delete/**');
     await page.unroute('**/category.list/**');
     // The category was deleted server-side; afterEach's per-entry guard no-ops.

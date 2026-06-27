@@ -1219,6 +1219,9 @@ function categoryEditor() {
       // on the always-present New Category button instead of dropping it to <body>.
       this.$nextTick(() => { if (this.$refs.newCategoryBtn) this.$refs.newCategoryBtn.focus(); });
 
+      // Drop the row optimistically so a failed reload() can't leave a ghost row
+      // with live Edit/Delete buttons pointing at a server-side-deleted id.
+      this.categories = this.categories.filter(c => c._id !== delId);
       try {
         await this.reload();
       } catch (e) {
@@ -1288,7 +1291,7 @@ function categoryEditor() {
       const el = this.$refs[refKey];
       if (!el) return;
       const focusable = Array.from(el.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
       ));
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
