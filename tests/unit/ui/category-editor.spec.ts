@@ -175,6 +175,20 @@ describe('categoryFormToPayload', () => {
     expect(payload.required).toBe('');
     expect(payload.destination).toBe('');
   });
+
+  it('returns a safe empty payload for null formState', () => {
+    const payload = categoryFormToPayload(null, 0);
+    expect(payload.label).toBe('');
+    expect(payload.id).toBeUndefined();
+    expect(payload.order).toBe(0);
+  });
+
+  it('returns a safe empty payload for undefined formState', () => {
+    const payload = categoryFormToPayload(undefined, 3);
+    expect(payload.label).toBe('');
+    expect(payload.id).toBeUndefined();
+    expect(payload.order).toBe(3);
+  });
 });
 
 // ─── validateCategory ─────────────────────────────────────────────────────────

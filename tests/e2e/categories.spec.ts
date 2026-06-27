@@ -86,7 +86,14 @@ async function deleteTestCategory(page: Page) {
     // Exact-name match, not regex: TEST_CATEGORY_NAME would otherwise also match
     // any "… Renamed" leftover, but exact names keep cleanup unambiguous.
     for (const name of [TEST_CATEGORY_NAME, TEST_CATEGORY_NAME + ' Renamed', TEST_CATEGORY_NAME_2]) {
-      await deleteCategoryNamed(page, panel, name);
+      // Per-entry guard: a stalled delete must not abandon the remaining
+      // entries, or a leftover (e.g. TEST_CATEGORY_NAME_2) corrupts the next
+      // run's relative-order assertion in the reorder test.
+      try {
+        await deleteCategoryNamed(page, panel, name);
+      } catch {
+        // best-effort: skip this entry, continue cleaning the rest
+      }
     }
   } catch {
     // best-effort cleanup; never fail the suite on teardown

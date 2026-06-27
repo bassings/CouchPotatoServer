@@ -1122,8 +1122,8 @@ function categoryEditor() {
         // field. All values are scalars, so plain append is correct — the bracket
         // -key wire format only applies to the list params in moveCategory().
         const params = new URLSearchParams();
-        for (const [k, v] of Object.entries(payload)) {
-          params.append(k, String(v));
+        for (const [k, paramVal] of Object.entries(payload)) {
+          params.append(k, String(paramVal));
         }
 
         const resp = await fetch(CP.apiBase + '/category.save/', { method: 'POST', body: params });
@@ -1256,7 +1256,7 @@ function categoryEditor() {
       const el = this.$refs.modalEl;
       if (!el) return;
       const focusable = Array.from(el.querySelectorAll(
-        'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
       ));
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
