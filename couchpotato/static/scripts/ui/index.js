@@ -1,3 +1,4 @@
+// (Mutation-tested via Stryker; see stryker.conf.json.)
 // Barrel for the extracted UI logic modules. Loaded once in base.html as a
 // module script that attaches these helpers to the global `CP.ui` namespace,
 // so the inline Alpine components (classic scripts) can delegate to them.
