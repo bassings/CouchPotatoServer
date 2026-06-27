@@ -1049,7 +1049,9 @@ function categoryEditor() {
     toastMessage: '',
     toastType: 'success',
     validationErrors: [],
-    formState: {},
+    // Explicit blank shape (not {}) so the template's formState reads are defined
+    // before openNew()/openEdit() rather than relying on Alpine's undefined->'' coercion.
+    formState: { id: '', label: '', ignored: '', preferred: '', required: '', destination: '', order: 999 },
     // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
     _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
 
