@@ -1177,12 +1177,14 @@ function categoryEditor() {
       this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
     },
 
-    cancelDelete() {
+    cancelDelete(skipFocusReturn = false) {
       this.deleteConfirmOpen = false;
       this.categoryToDelete = null;
-      // Return focus to the Delete button that opened the dialog. After a
-      // successful doDelete() that button's row is gone (isConnected false) and
-      // this is a harmless no-op.
+      // Return focus to the Delete button that opened the dialog (cancel/escape
+      // path). On a confirmed delete, doDelete() passes skipFocusReturn=true and
+      // takes ownership of focus (→ New Category) — otherwise this would briefly
+      // focus the about-to-be-removed row before doDelete's $nextTick overrides it.
+      if (skipFocusReturn) { this._deleteTrigger = null; return; }
       const t = this._deleteTrigger;
       this._deleteTrigger = null;
       this.$nextTick(() => { if (t && t.isConnected) t.focus(); });
@@ -1211,11 +1213,10 @@ function categoryEditor() {
       // On failure, leave the confirm dialog open so the user can retry;
       // only close it on success.
       if (!deleted) return;
-      this.cancelDelete();
+      this.cancelDelete(true); // skip the dialog's own focus-return; we own it here
       this.toast('"' + delLabel + '" deleted.', 'success');
-      // WCAG 2.4.3: the trigger row is gone, so cancelDelete's refocus is a
-      // no-op. Land focus on the always-present New Category button instead of
-      // dropping it to <body>.
+      // WCAG 2.4.3: the trigger row is about to be removed by reload(); land focus
+      // on the always-present New Category button instead of dropping it to <body>.
       this.$nextTick(() => { if (this.$refs.newCategoryBtn) this.$refs.newCategoryBtn.focus(); });
 
       try {
