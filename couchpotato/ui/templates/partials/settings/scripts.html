@@ -899,6 +899,7 @@ function profileEditor() {
 
     // ── Delete profile ──
     confirmDelete(profile) {
+      if (profile.core) return; // built-in profiles aren't deletable (button is also disabled)
       this.profileToDelete = profile;
       this.deleteConfirmOpen = true;
       this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });

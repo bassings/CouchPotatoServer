@@ -32,6 +32,25 @@ async function openProfilesTab(page: Page) {
   return panel;
 }
 
+/**
+ * Create a fresh, NON-core test profile and return the panel. Needed because
+ * every built-in profile is `core` and its Delete button is disabled, so any
+ * test exercising the delete flow must operate on a user-created profile.
+ */
+async function createTestProfile(page: Page) {
+  const panel = await openProfilesTab(page);
+  await panel.getByRole('button', { name: /new profile/i }).click();
+  const modal = page.getByTestId('edit-modal');
+  await expect(modal).toBeVisible();
+  await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
+  await modal.locator('select').first().selectOption({ index: 1 });
+  await modal.getByRole('button', { name: /^add$/i }).click();
+  await modal.getByRole('button', { name: /create profile/i }).click();
+  await expect(modal).not.toBeVisible();
+  await expect(panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') })).toBeVisible();
+  return panel;
+}
+
 /** Remove the test profile via the UI if it exists (idempotent cleanup). */
 async function deleteTestProfile(page: Page) {
   try {
@@ -152,12 +171,10 @@ test.describe('Quality Profiles', () => {
   });
 
   test('delete profile shows confirm dialog and cancels', async ({ page }) => {
-    const panel = await openProfilesTab(page);
+    // Core profiles' Delete buttons are disabled, so operate on a created one.
+    const panel = await createTestProfile(page);
 
-    const deleteBtns = panel.getByRole('button', { name: /delete profile/i });
-    if (await deleteBtns.count() === 0) { test.skip(); return; }
-
-    await deleteBtns.first().click();
+    await panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') }).click();
 
     const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
@@ -168,12 +185,9 @@ test.describe('Quality Profiles', () => {
   });
 
   test('delete confirm dialog closes on Escape', async ({ page }) => {
-    const panel = await openProfilesTab(page);
+    const panel = await createTestProfile(page);
 
-    const deleteBtns = panel.getByRole('button', { name: /delete profile/i });
-    if (await deleteBtns.count() === 0) { test.skip(); return; }
-
-    await deleteBtns.first().click();
+    await panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') }).click();
 
     const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
@@ -205,17 +219,17 @@ test.describe('Quality Profiles', () => {
     await expect(panel.locator('h2').first()).toBeVisible();
   });
 
-  test('delete profile via confirm removes it from the list', async ({ page }) => {
+  test('core (built-in) profiles cannot be deleted', async ({ page }) => {
     const panel = await openProfilesTab(page);
+    // Built-in profiles carry the "built-in" badge; their Delete buttons must be
+    // disabled so the user never hits the backend's rejection as a cryptic toast.
+    const builtInRow = panel.locator('[role="listitem"]', { hasText: 'built-in' }).first();
+    if (await builtInRow.count() === 0) { test.skip(); return; }
+    await expect(builtInRow.getByRole('button', { name: /delete profile/i })).toBeDisabled();
+  });
 
-    // Create the profile we will delete.
-    await panel.getByRole('button', { name: /new profile/i }).click();
-    const modal = page.getByTestId('edit-modal');
-    await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
-    await modal.locator('select').first().selectOption({ index: 1 });
-    await modal.getByRole('button', { name: /^add$/i }).click();
-    await modal.getByRole('button', { name: /create profile/i }).click();
-    await expect(modal).not.toBeVisible();
+  test('delete profile via confirm removes it from the list', async ({ page }) => {
+    const panel = await createTestProfile(page);
 
     // Delete it via the confirm dialog (exercises the success path + list refresh).
     const delBtn = panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') });

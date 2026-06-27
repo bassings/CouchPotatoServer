@@ -368,6 +368,29 @@ describe('validateProfile', () => {
     expect(r.valid).toBe(true);
   });
 
+  it('rejects minimumScore below 1', () => {
+    const r = validateProfile({ ...validForm, minimumScore: 0 });
+    expect(r.valid).toBe(false);
+    expect(r.errors.some(e => e.includes('Minimum score'))).toBe(true);
+  });
+
+  it('accepts minimumScore of exactly 1', () => {
+    const r = validateProfile({ ...validForm, minimumScore: 1 });
+    expect(r.valid).toBe(true);
+  });
+
+  it('rejects negative waitFor and stopAfter', () => {
+    const r = validateProfile({ ...validForm, waitFor: -5, stopAfter: -1 });
+    expect(r.valid).toBe(false);
+    expect(r.errors.some(e => e.includes('Wait'))).toBe(true);
+    expect(r.errors.some(e => e.includes('Keep searching'))).toBe(true);
+  });
+
+  it('ignores numeric bounds when fields are absent (backwards compatible)', () => {
+    const r = validateProfile(validForm); // no numeric fields
+    expect(r.valid).toBe(true);
+  });
+
   it('accumulates multiple errors', () => {
     const r = validateProfile({ label: '', types: [] });
     expect(r.errors.length).toBeGreaterThanOrEqual(2);

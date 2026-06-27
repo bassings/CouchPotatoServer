@@ -125,8 +125,10 @@
                       :aria-label="'Edit profile: ' + profile.label">
                 Edit
               </button>
+              {# Core (built-in) profiles can't be deleted; the backend rejects it, so disable rather than surface a cryptic error. #}
               <button @click="confirmDelete(profile)"
-                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors"
+                      :disabled="profile.core"
+                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       :aria-label="'Delete profile: ' + profile.label">
                 Delete
               </button>
