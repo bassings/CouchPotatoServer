@@ -1077,11 +1077,10 @@ function categoryEditor() {
 
     // ── Helpers ──
     sortCategories(list) {
-      // Coerce exactly like categoryToForm: order may arrive as a string from the
-      // API, and an absent order falls back to 999 (the backend default) so
-      // unknown-order categories sort to the END — matching both the edit form
-      // and the server, rather than floating to the top.
-      const ord = (c) => (c.order != null ? Number(c.order) : 999);
+      // Single source of truth shared with categoryToForm (see categoryOrder):
+      // string orders coerce to numbers and absent order falls back to 999 so
+      // unknown-order categories sort to the END, matching the form and server.
+      const ord = CP.ui.categoryOrder;
       return list.slice().sort((a, b) => ord(a) - ord(b));
     },
 
@@ -1129,7 +1128,9 @@ function categoryEditor() {
       if (!v.valid) { this.validationErrors = v.errors; return; }
 
       const payload = CP.ui.categoryFormToPayload(this.formState, this.categories.length);
-      const isEdit = !!payload.id; // snapshot before any await
+      // Mirror categoryFormToPayload's id guard (not a bare !!, which would call
+      // a numeric id=0 a "create"); snapshot before any await.
+      const isEdit = payload.id != null && payload.id !== '';
       this.saving = true;
 
       let saved = false;

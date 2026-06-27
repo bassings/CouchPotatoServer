@@ -5,6 +5,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
+  categoryOrder,
   categoryToForm,
   categoryFormToPayload,
   validateCategory,
@@ -22,6 +23,33 @@ const CATEGORY_DOC = {
   required: 'DTS',
   destination: '/media/horror',
 };
+
+// ─── categoryOrder ────────────────────────────────────────────────────────────
+
+describe('categoryOrder', () => {
+  it('returns the numeric order when present', () => {
+    expect(categoryOrder({ order: 3 })).toBe(3);
+  });
+
+  it('coerces a string order to a number', () => {
+    expect(categoryOrder({ order: '5' })).toBe(5);
+  });
+
+  it('preserves an explicit order=0', () => {
+    expect(categoryOrder({ order: 0 })).toBe(0);
+  });
+
+  it('falls back to 999 for missing / null / undefined order', () => {
+    expect(categoryOrder({})).toBe(999);
+    expect(categoryOrder({ order: null })).toBe(999);
+    expect(categoryOrder({ order: undefined })).toBe(999);
+  });
+
+  it('tolerates a null/undefined input', () => {
+    expect(categoryOrder(null)).toBe(999);
+    expect(categoryOrder(undefined)).toBe(999);
+  });
+});
 
 // ─── categoryToForm ───────────────────────────────────────────────────────────
 

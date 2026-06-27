@@ -3,6 +3,20 @@
 // Imported by categories.html and tested by tests/unit/ui/category-editor.spec.ts.
 
 /**
+ * Coerce a category's order for display/sort. Single source of truth shared by
+ * categoryToForm (form init) and the component's sortCategories (list order):
+ * order may arrive as a string from the API; an absent order falls back to 999
+ * (the backend default) so unknown-order categories sort to the end.
+ *
+ * @param {Object} category  Raw category doc (or form state) with an `order` field
+ * @returns {number}
+ */
+export function categoryOrder(category) {
+  const o = (category || {}).order;
+  return o != null ? Number(o) : 999;
+}
+
+/**
  * Map a category API document into a reactive form state object.
  *
  * @param {Object} category  Raw category doc from category.list API
@@ -19,7 +33,7 @@ export function categoryToForm(category) {
     preferred:   c.preferred    || '',
     required:    c.required     || '',
     destination: c.destination  || '',
-    order:       c.order != null ? Number(c.order) : 999,
+    order:       categoryOrder(c),
   };
 }
 
