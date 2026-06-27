@@ -382,6 +382,57 @@ test.describe('Category management', () => {
     await page.unroute('**/category.list/**');
   });
 
+  test('save succeeds but reload fails — warning toast, save persists', async ({ page }) => {
+    const panel = await openCategoriesTab(page); // initial list load succeeds (no route yet)
+
+    // Fail category.list ONLY after the save POST has gone through, so the
+    // save itself succeeds and only the post-save reload() throws.
+    let saved = false;
+    await page.route('**/category.save/**', async route => { saved = true; await route.continue(); });
+    await page.route('**/category.list/**', async route => {
+      if (saved) await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ success: false }) });
+      else await route.continue();
+    });
+
+    await panel.getByRole('button', { name: /new category/i }).click();
+    const modal = page.getByTestId('category-edit-modal');
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
+    await modal.getByRole('button', { name: /create category/i }).click();
+
+    // Save succeeded → modal closed; the distinct refresh-warning toast appears.
+    await expect(modal).not.toBeVisible();
+    const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
+    await expect(toast).toContainText(/failed to refresh/i);
+
+    await page.unroute('**/category.save/**');
+    await page.unroute('**/category.list/**');
+    // The save persisted server-side; afterEach removes TEST_CATEGORY_NAME.
+  });
+
+  test('delete succeeds but reload fails — warning toast', async ({ page }) => {
+    const panel = await createTestCategory(page); // list loads fine here
+
+    // Fail category.list ONLY after the delete POST completes.
+    let deleted = false;
+    await page.route('**/category.delete/**', async route => { deleted = true; await route.continue(); });
+    await page.route('**/category.list/**', async route => {
+      if (deleted) await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ success: false }) });
+      else await route.continue();
+    });
+
+    await panel.getByRole('button', { name: new RegExp('Delete category: ' + TEST_CATEGORY_NAME, 'i') }).click();
+    const dialog = page.getByTestId('category-delete-dialog');
+    await dialog.getByRole('button', { name: /^delete$/i }).click();
+
+    await expect(dialog).not.toBeVisible();
+    const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
+    await expect(toast).toContainText(/failed to refresh/i);
+
+    await page.unroute('**/category.delete/**');
+    await page.unroute('**/category.list/**');
+    // The category was deleted server-side; afterEach's per-entry guard no-ops.
+  });
+
   test('new-category modal closes on Escape', async ({ page }) => {
     const panel = await openCategoriesTab(page);
 

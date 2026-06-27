@@ -1280,9 +1280,11 @@ function categoryEditor() {
     },
 
     // ── Focus traps ──
-    trapFocus(event) {
-      if (!this.modalOpen) return;
-      const el = this.$refs.modalEl;
+    // Shared cyclic focus trap for both the edit modal and the delete dialog;
+    // they differ only by their open-flag and $refs key.
+    _trapFocusIn(open, refKey, event) {
+      if (!open) return;
+      const el = this.$refs[refKey];
       if (!el) return;
       const focusable = Array.from(el.querySelectorAll(
         'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
@@ -1294,17 +1296,8 @@ function categoryEditor() {
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
     },
 
-    trapDeleteFocus(event) {
-      if (!this.deleteConfirmOpen) return;
-      const el = this.$refs.deleteEl;
-      if (!el) return;
-      const focusable = Array.from(el.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
-      if (!focusable.length) return;
-      const first = focusable[0], last = focusable[focusable.length - 1];
-      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
-      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
-      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
-    },
+    trapFocus(event)       { this._trapFocusIn(this.modalOpen, 'modalEl', event); },
+    trapDeleteFocus(event) { this._trapFocusIn(this.deleteConfirmOpen, 'deleteEl', event); },
   };
 }
 

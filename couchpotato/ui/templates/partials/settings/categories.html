@@ -122,13 +122,17 @@
 
             {# Action buttons #}
             <div class="flex items-center gap-1 shrink-0">
+              {# Disabled during an in-flight reorder so an Edit+reload() can't repaint
+                 the list in the pre-reorder order while save_order is still settling. #}
               <button @click="openEdit(category)"
-                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors"
+                      :disabled="isReordering"
+                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-border text-cp-text hover:bg-white/[0.03] transition-colors disabled:opacity-40 disabled:pointer-events-none"
                       :aria-label="'Edit category: ' + category.label">
                 Edit
               </button>
               <button @click="confirmDelete(category)"
-                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors"
+                      :disabled="isReordering"
+                      class="px-2.5 py-1.5 rounded-md text-xs font-medium border border-cp-danger/30 text-cp-danger hover:bg-cp-danger/10 transition-colors disabled:opacity-40 disabled:pointer-events-none"
                       :aria-label="'Delete category: ' + category.label">
                 Delete
               </button>
