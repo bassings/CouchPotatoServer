@@ -1270,7 +1270,7 @@ function categoryEditor() {
         if (this._reloadGen === gen) {
           this.categories = snapshot; // roll back the optimistic move
         }
-        this.toast('Failed to save order.', 'error');
+        this.toast('Failed to save order: ' + e.message, 'error');
       } finally {
         this.isReordering = false;
       }

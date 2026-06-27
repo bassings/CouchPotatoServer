@@ -437,6 +437,39 @@ test.describe('Category management', () => {
     // The category was deleted server-side; afterEach's per-entry guard no-ops.
   });
 
+  test('Escape during in-flight save suppresses the toast but still reloads', async ({ page }) => {
+    const panel = await openCategoriesTab(page);
+
+    // Hold the save response (shared promise, resolved once) so we can dismiss
+    // via Escape before the POST resolves.
+    let releaseSave: () => void = () => {};
+    const held = new Promise<void>(r => { releaseSave = r; });
+    await page.route('**/category.save/**', async route => {
+      await held;
+      await route.continue();
+    });
+
+    await panel.getByRole('button', { name: /new category/i }).click();
+    const modal = page.getByTestId('category-edit-modal');
+    await modal.getByPlaceholder(NAME_PLACEHOLDER).fill(TEST_CATEGORY_NAME);
+    await modal.getByRole('button', { name: /create category/i }).click();
+
+    // In-flight: the save button shows the Saving… state; dismiss via Escape.
+    await expect(modal.getByRole('button', { name: /saving/i })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(modal).not.toBeVisible();
+
+    // Let the (already-persisted) save resolve and reload() run.
+    releaseSave();
+
+    // reload() still ran, so the persisted category shows up in the list...
+    await expect(panel.getByText(TEST_CATEGORY_NAME)).toBeVisible();
+    // ...but no success toast fired (the user already dismissed). Target the
+    // toast element specifically — the loading region also uses role="status".
+    await expect(page.locator('#categories-panel .fixed.bottom-4')).toBeHidden();
+    // afterEach removes TEST_CATEGORY_NAME (it persisted server-side).
+  });
+
   test('new-category modal closes on Escape', async ({ page }) => {
     const panel = await openCategoriesTab(page);
 
