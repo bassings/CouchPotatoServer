@@ -10,7 +10,7 @@ The `*.dc.html` files in this bundle are **static design-canvas exports** — ra
 
 ### Precedence when sources disagree
 Where a `.dc.html` export diverges from this README or the live `couchpotato/ui/templates/base.html`, **base.html + this README win.** Known divergences in the exports:
-- **Poster-card hover glow:** production is `rgba(53,197,244,0.06)` → `0.15` (see `base.html`), *not* the brighter `.10`/`.25` shown in the export.
+- **Poster-card hover:** production (dark) is `border-color: rgba(53,197,244,0.15)` + `box-shadow: …rgba(53,197,244,0.06)` (see Surfaces below and `base.html`), *not* the brighter values shown in the export.
 - **Ghost button:** transparent by default (`hover:bg-white/[0.03]`, per Components below), *not* the opaque `bg-cp-surface` fill an export caption may show.
 
 Your target environment already exists: **Jinja2 templates + htmx 2 + Alpine 3 + Tailwind (CDN) + Inter**. Recreate anything from these references using that stack and the conventions already in `couchpotato/ui/templates/` — Tailwind utility classes, Alpine `x-data` components, htmx attributes, and the `cp.*` colour tokens. Do not introduce a new framework, CSS-in-JS, or a component library.
@@ -64,11 +64,16 @@ Dark is the default; `<html class="light">` switches the theme. Persist the choi
 
 ### Spacing & radius
 - **Spacing:** Tailwind 4px scale. Common: `gap-2`(8) `gap-3`(12) `p-2.5`(10) `p-4`(16) `px-3 py-2` for controls.
-- **Radius:** `rounded`(4px) for nav items, `rounded-md`(6px) inputs/buttons, `rounded-lg`(8px) toasts, `rounded-xl`(12px) modals/cards.
+- **Radius:** `rounded`(4px) nav items · `rounded-md`(6px) inputs · `rounded-lg`(8px) **buttons** and toasts · `rounded-xl`(12px) modals/cards. (Buttons are `rounded-lg`, per Components below.)
 - **Layout:** sidebar `w-56` (224px), collapses to `w-16` (64px); mobile top bar `h-12`, bottom nav.
 
 ### Surfaces & elevation
-Depth = three near-black layers (`bg` → `surface` → `card`) + translucent borders. Floating chrome (sidebar, top bar) uses `bg-black/80 backdrop-blur-xl` (light: `bg-white/85`). Cards sit flat; only the poster card gets an accent glow on hover (`box-shadow: 0 0 20px rgba(53,197,244,0.06)`).
+Depth = three near-black layers (`bg` → `surface` → `card`) + translucent borders. Floating chrome (sidebar, top bar) uses `bg-black/80 backdrop-blur-xl` (light: `bg-white/85`). Cards sit flat; only the poster card gets an accent border + glow on hover (transition `0.2s`). Exact values (from `base.html`):
+
+| | `border-color` | `box-shadow` glow |
+|---|---|---|
+| **Dark** (`.poster-card:hover`) | `rgba(53,197,244,0.15)` | `0 0 20px rgba(53,197,244,0.06)` |
+| **Light** (`:root.light .poster-card:hover`) | `rgba(53,197,244,0.3)` | `0 0 20px rgba(53,197,244,0.1)` |
 
 ---
 
