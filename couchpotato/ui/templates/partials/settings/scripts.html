@@ -255,7 +255,7 @@ function settingsPanel() {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
         if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
-        this.tabOrder.push('logs');
+        if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
 
         this.computeOpenGroups();
         this.updateCurrentGroups();

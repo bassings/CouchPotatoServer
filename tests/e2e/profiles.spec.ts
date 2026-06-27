@@ -83,6 +83,11 @@ test.describe('Quality Profiles', () => {
     }
 
     await expect(panel.getByRole('button', { name: /new profile/i })).toBeVisible();
+
+    // The settings-level header chrome (Advanced toggle, auto-save indicator) is
+    // driven by settingsPanel state and must NOT render on a custom-panel tab —
+    // profiles has its own save flow. Guards the header.html customPanelTabs fix.
+    await expect(page.getByText('Advanced', { exact: true })).toBeHidden();
   });
 
   test('create a new profile', async ({ page }) => {

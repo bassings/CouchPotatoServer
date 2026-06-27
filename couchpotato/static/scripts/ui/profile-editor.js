@@ -195,10 +195,10 @@ export function validateProfile(formState) {
   if (score != null && Number.isFinite(Number(score)) && Number(score) < 1) {
     errors.push('Minimum score must be at least 1.');
   }
-  for (const [key, label] of [['waitFor', 'Wait (days)'], ['stopAfter', 'Keep searching (days)']]) {
+  for (const [key, fieldLabel] of [['waitFor', 'Wait (days)'], ['stopAfter', 'Keep searching (days)']]) {
     const v = formState && formState[key];
     if (v != null && Number.isFinite(Number(v)) && Number(v) < 0) {
-      errors.push(label + ' cannot be negative.');
+      errors.push(fieldLabel + ' cannot be negative.');
     }
   }
 
