@@ -40,7 +40,7 @@ async function deleteTestProfile(page: Page) {
     if (await delBtn.count() === 0) return;
     await delBtn.first().click();
 
-    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
     await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
     await expect(confirmDialog).not.toBeVisible();
@@ -71,7 +71,7 @@ test.describe('Quality Profiles', () => {
 
     await panel.getByRole('button', { name: /new profile/i }).click();
 
-    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
 
     await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
@@ -92,6 +92,19 @@ test.describe('Quality Profiles', () => {
     const toast = page.locator('#profiles-panel [role="status"][aria-live="polite"]').last();
     await expect(toast).toContainText(/created/i);
     await expect(panel.getByText(TEST_PROFILE_NAME)).toBeVisible();
+
+    // Guard the order-serialisation bug directly: the created profile must have
+    // a real index order (= count at create time), NOT the backend default 999
+    // that results when saveProfile() forgets to send the order param. Checking
+    // "appears last" is insufficient — order=999 also sorts last.
+    const createdOrder = await page.evaluate(async (name) => {
+      const r = await fetch(window.CP.apiBase + '/profile.list/');
+      const d = await r.json();
+      const p = (d.list || []).find((x) => x.label === name);
+      return p ? p.order : null;
+    }, TEST_PROFILE_NAME);
+    expect(createdOrder).not.toBeNull();
+    expect(createdOrder).toBeLessThan(999);
   });
 
   test('edit an existing profile', async ({ page }) => {
@@ -102,7 +115,7 @@ test.describe('Quality Profiles', () => {
 
     await editBtns.first().click();
 
-    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
     await expect(modal.getByRole('button', { name: /save changes/i })).toBeVisible();
 
@@ -118,7 +131,7 @@ test.describe('Quality Profiles', () => {
 
     await editBtns.first().click();
 
-    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
 
     const qualityItems = modal.locator('[role="listitem"]');
@@ -146,7 +159,7 @@ test.describe('Quality Profiles', () => {
 
     await deleteBtns.first().click();
 
-    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
     await expect(confirmDialog.getByText('Delete Profile')).toBeVisible();
 
@@ -162,7 +175,7 @@ test.describe('Quality Profiles', () => {
 
     await deleteBtns.first().click();
 
-    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
 
     await page.keyboard.press('Escape');
@@ -174,7 +187,7 @@ test.describe('Quality Profiles', () => {
 
     await panel.getByRole('button', { name: /new profile/i }).click();
 
-    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
 
     await modal.getByRole('button', { name: /create profile/i }).click();
@@ -197,7 +210,7 @@ test.describe('Quality Profiles', () => {
 
     // Create the profile we will delete.
     await panel.getByRole('button', { name: /new profile/i }).click();
-    const modal = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').first();
+    const modal = page.getByTestId('edit-modal');
     await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
     await modal.locator('select').first().selectOption({ index: 1 });
     await modal.getByRole('button', { name: /^add$/i }).click();
@@ -209,7 +222,7 @@ test.describe('Quality Profiles', () => {
     await expect(delBtn).toBeVisible();
     await delBtn.click();
 
-    const confirmDialog = page.locator('#profiles-panel [role="dialog"][aria-modal="true"]').last();
+    const confirmDialog = page.getByTestId('delete-confirm-dialog');
     await expect(confirmDialog).toBeVisible();
     await confirmDialog.getByRole('button', { name: /^delete$/i }).click();
     await expect(confirmDialog).not.toBeVisible();

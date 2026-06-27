@@ -861,6 +861,9 @@ function profileEditor() {
         params.append('minimum_score', String(payload.minimum_score));
         params.append('wait_for', String(payload.wait_for));
         params.append('stop_after', String(payload.stop_after));
+        // New profiles carry an explicit order (= current count) so they append
+        // at the end instead of landing at the backend default order=999.
+        if (!payload.id && payload.order !== undefined) params.append('order', String(payload.order));
         // The API's getParams() expands bracket-notation form keys into a list
         // of dicts (types[0][quality]=…). A JSON string would be iterated
         // character-by-character server-side, so send discrete bracket keys.
