@@ -131,6 +131,7 @@ function settingsPanel() {
 
     tabLabels: {
       general: 'General',
+      profiles: 'Profiles',
       downloaders: 'Downloaders',
       searcher: 'Searchers',
       renamer: 'Renamer',
@@ -249,6 +250,7 @@ function settingsPanel() {
         for (const t of tabSet) {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
+        this.tabOrder.push('profiles');
         this.tabOrder.push('logs');
 
         this.computeOpenGroups();

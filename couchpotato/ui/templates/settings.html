@@ -34,8 +34,13 @@
     {# ==================== LOGS TAB ==================== #}
     {% include "partials/settings/logs_tab.html" %}
 
+    {# ==================== PROFILES TAB ==================== #}
+    <div x-show="activeTab === 'profiles'">
+      {% include "partials/settings/profiles.html" %}
+    </div>
+
     {# ==================== SETTINGS TABS ==================== #}
-    <div x-show="activeTab !== 'logs'" class="space-y-4">
+    <div x-show="activeTab !== 'logs' && activeTab !== 'profiles'" class="space-y-4">
       <template x-for="(group, groupIdx) in currentGroups" :key="groupIdx">
         <div x-show="!group.advanced || showAdvanced">
           
