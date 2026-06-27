@@ -84,6 +84,20 @@ describe('categoryToForm', () => {
     expect(form.destination).toBe('');
     expect(form.order).toBe(999);
   });
+
+  it('handles null input gracefully', () => {
+    const form = categoryToForm(null);
+    expect(form.id).toBe('');
+    expect(form.label).toBe('');
+    expect(form.order).toBe(999);
+  });
+
+  it('handles undefined input gracefully', () => {
+    const form = categoryToForm(undefined);
+    expect(form.id).toBe('');
+    expect(form.label).toBe('');
+    expect(form.order).toBe(999);
+  });
 });
 
 // ─── formToPayload ────────────────────────────────────────────────────────────

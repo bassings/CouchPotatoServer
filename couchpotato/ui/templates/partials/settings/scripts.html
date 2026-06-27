@@ -1088,7 +1088,9 @@ function categoryEditor() {
     // ── Modal open/close ──
     openNew() {
       this.validationErrors = [];
-      this.formState = { id: '', label: '', ignored: '', preferred: '', required: '', destination: '' };
+      // Delegate to the tested helper so openNew/openEdit stay in sync as the
+      // category model evolves (a new field is picked up by both for free).
+      this.formState = CP.ui.categoryToForm({});
       this.modalOpen = true;
       this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
     },
@@ -1114,16 +1116,15 @@ function categoryEditor() {
 
       let saved = false;
       try {
+        // categoryFormToPayload owns which keys are present: always the scalar
+        // fields, plus id (edits) XOR order (new categories append at the end).
+        // Iterating it keeps this builder from drifting when the model gains a
+        // field. All values are scalars, so plain append is correct — the bracket
+        // -key wire format only applies to the list params in moveCategory().
         const params = new URLSearchParams();
-        if (payload.id) params.append('id', payload.id);
-        params.append('label', payload.label);
-        params.append('destination', payload.destination);
-        params.append('ignored', payload.ignored);
-        params.append('preferred', payload.preferred);
-        params.append('required', payload.required);
-        // New categories carry an explicit order so they append at the end
-        // instead of landing at the backend default order=999.
-        if (!payload.id && payload.order !== undefined) params.append('order', String(payload.order));
+        for (const [k, v] of Object.entries(payload)) {
+          params.append(k, String(v));
+        }
 
         const resp = await fetch(CP.apiBase + '/category.save/', { method: 'POST', body: params });
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
