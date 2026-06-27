@@ -356,6 +356,32 @@ test.describe('Category management', () => {
     // Nothing was persisted (save was intercepted), so afterEach has nothing extra to clean.
   });
 
+  test('load failure shows the error state', async ({ page }) => {
+    // Force category.list to soft-fail BEFORE the tab loads, so load() takes its
+    // error branch (loadError set, loaded reset to allow retry).
+    await page.route('**/category.list/**', route =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false }) }),
+    );
+
+    await page.goto('/settings/');
+    await expect(page.locator('h1')).toContainText('Settings');
+    await page.getByRole('tab', { name: /categories/i }).click();
+
+    const panel = page.locator('#categories-panel');
+    await expect(panel).toBeVisible();
+
+    // The error block (x-show="!loading && loadError", role="alert") is the only
+    // alert in the accessibility tree while the modal is closed.
+    const alert = panel.getByRole('alert').filter({ hasText: /failed to load/i });
+    await expect(alert).toBeVisible();
+
+    // The New Category button lives in the success-only block and must stay hidden.
+    await expect(panel.getByRole('button', { name: /new category/i })).toBeHidden();
+
+    // Unroute so the afterEach cleanup can open the tab normally.
+    await page.unroute('**/category.list/**');
+  });
+
   test('new-category modal closes on Escape', async ({ page }) => {
     const panel = await openCategoriesTab(page);
 

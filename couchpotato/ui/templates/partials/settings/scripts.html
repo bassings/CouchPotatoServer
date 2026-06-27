@@ -1043,6 +1043,8 @@ function categoryEditor() {
     deleting: false,
     isReordering: false,
     _reloadGen: 0, // bumped whenever reload() replaces the categories array
+    _modalTrigger: null, // element to refocus when the edit modal closes (WCAG 2.4.3)
+    _deleteTrigger: null, // element to refocus when the delete dialog closes
     _toastTimer: null,
     toastMessage: '',
     toastType: 'success',
@@ -1087,6 +1089,7 @@ function categoryEditor() {
 
     // ── Modal open/close ──
     openNew() {
+      this._modalTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
       this.validationErrors = [];
       // Delegate to the tested helper so openNew/openEdit stay in sync as the
       // category model evolves (a new field is picked up by both for free).
@@ -1096,13 +1099,21 @@ function categoryEditor() {
     },
 
     openEdit(category) {
+      this._modalTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
       this.validationErrors = [];
       this.formState = CP.ui.categoryToForm(category);
       this.modalOpen = true;
       this.$nextTick(() => { if (this.$refs.labelInput) this.$refs.labelInput.focus(); });
     },
 
-    closeModal() { this.modalOpen = false; },
+    closeModal() {
+      this.modalOpen = false;
+      // Return keyboard focus to the trigger so SR/keyboard users aren't stranded
+      // on <body>. Skip if the trigger was removed from the DOM (e.g. its row).
+      const t = this._modalTrigger;
+      this._modalTrigger = null;
+      this.$nextTick(() => { if (t && t.isConnected) t.focus(); });
+    },
 
     // ── Save category (save and post-save refresh have SEPARATE error paths) ──
     async saveCategory() {
@@ -1153,6 +1164,7 @@ function categoryEditor() {
     // ── Delete category ──
     confirmDelete(category) {
       if (this.modalOpen) return; // never open the delete dialog over an open edit modal
+      this._deleteTrigger = document.activeElement; // refocus on close (WCAG 2.4.3)
       this.categoryToDelete = category;
       this.deleteConfirmOpen = true;
       this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
@@ -1161,6 +1173,12 @@ function categoryEditor() {
     cancelDelete() {
       this.deleteConfirmOpen = false;
       this.categoryToDelete = null;
+      // Return focus to the Delete button that opened the dialog. After a
+      // successful doDelete() that button's row is gone (isConnected false) and
+      // this is a harmless no-op.
+      const t = this._deleteTrigger;
+      this._deleteTrigger = null;
+      this.$nextTick(() => { if (t && t.isConnected) t.focus(); });
     },
 
     async doDelete() {
@@ -1269,7 +1287,7 @@ function categoryEditor() {
       if (!this.deleteConfirmOpen) return;
       const el = this.$refs.deleteEl;
       if (!el) return;
-      const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
+      const focusable = Array.from(el.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'));
       if (!focusable.length) return;
       const first = focusable[0], last = focusable[focusable.length - 1];
       if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
