@@ -233,6 +233,12 @@ def create_router(require_auth) -> APIRouter:
         tmpl = _jinja.get_template('partials/movie_collections.html')
         return HTMLResponse(tmpl.render(collections=collections, movie_id=movie_id, **_ctx()))
 
+    @router.get('/partial/settings/profiles')
+    async def partial_settings_profiles(request: Request, user=Depends(require_auth)):
+        """Return quality profiles management partial for the Settings Profiles tab."""
+        tmpl = _jinja.get_template('partials/settings/profiles.html')
+        return HTMLResponse(tmpl.render(**_ctx()))
+
     @router.get('/partial/settings/{section}')
     async def partial_settings_section(section: str, request: Request, user=Depends(require_auth)):
         """Return settings section as HTML partial (placeholder)."""

@@ -89,6 +89,10 @@ function logsPanel() {
 function settingsPanel() {
   return {
     activeTab: 'general',
+    // Tabs that render their own x-data panel (instead of the generic group
+    // list). Add new custom-panel tabs here; the generic-panel x-show in
+    // settings.html keys off this Set so it never needs another && condition.
+    customPanelTabs: ['logs', 'profiles'],
     loading: true,
     saving: false,
     showAdvanced: false,
@@ -131,6 +135,7 @@ function settingsPanel() {
 
     tabLabels: {
       general: 'General',
+      profiles: 'Profiles',
       downloaders: 'Downloaders',
       searcher: 'Searchers',
       renamer: 'Renamer',
@@ -249,7 +254,8 @@ function settingsPanel() {
         for (const t of tabSet) {
           if (!this.tabOrder.includes(t) && !this.hiddenTabs.has(t)) this.tabOrder.push(t);
         }
-        this.tabOrder.push('logs');
+        if (!this.hiddenTabs.has('profiles') && !this.tabOrder.includes('profiles')) this.tabOrder.push('profiles');
+        if (!this.hiddenTabs.has('logs') && !this.tabOrder.includes('logs')) this.tabOrder.push('logs');
 
         this.computeOpenGroups();
         this.updateCurrentGroups();
@@ -705,4 +711,317 @@ function directoriesField(section, opt) {
     getLearnMore() { const panel = this.getPanel(); return panel ? panel.getLearnMore(this.section, this.opt.name) : ''; },
   };
 }
+
+/* ── Quality Profiles editor (Settings → Profiles tab) ── */
+/* Pure logic (profileToForm, formToPayload, addQuality, removeQuality,
+   moveQuality, validateProfile) lives in the tested CP.ui.* module so this
+   classic script can delegate to it — same pattern as the other components. */
+function profileEditor() {
+  return {
+    // ── State ──
+    loaded: false,
+    loading: true,
+    loadError: '',
+    profiles: [],
+    qualities: [],
+    modalOpen: false,
+    deleteConfirmOpen: false,
+    profileToDelete: null,
+    saving: false,
+    deleting: false,
+    isReordering: false,
+    _toastTimer: null,
+    toastMessage: '',
+    toastType: 'success',
+    validationErrors: [],
+    selectedQualityToAdd: '',
+    formState: {},
+    // crypto.getRandomValues (not Math.random) silences CodeQL js/insecure-randomness; this is a non-security DOM id prefix
+    _uid: Array.from(crypto.getRandomValues(new Uint8Array(4)), b => b.toString(16).padStart(2, '0')).join(''),
+
+    // ── Lazy load (named load(), NOT init(): Alpine auto-calls a method named
+    //    init() on mount, which would fetch eagerly on every settings page load.
+    //    Fired by the $watch on activeTab when the Profiles tab is first opened. ──
+    async load() {
+      this.loaded = true;
+      this.loading = true;
+      this.loadError = '';
+      try {
+        const [pResp, qResp] = await Promise.all([
+          fetch(CP.apiBase + '/profile.list/'),
+          fetch(CP.apiBase + '/quality.list/'),
+        ]);
+        if (!pResp.ok) throw new Error('profile.list HTTP ' + pResp.status);
+        if (!qResp.ok) throw new Error('quality.list HTTP ' + qResp.status);
+        const pData = await pResp.json();
+        const qData = await qResp.json();
+        if (!pData.success || !qData.success) throw new Error('API returned failure');
+        this.profiles = this.sortProfiles(pData.list || []);
+        this.qualities = qData.list || [];
+      } catch (e) {
+        this.loadError = 'Failed to load profiles. Check the server logs.';
+        this.loaded = false; // allow a retry on next tab activation
+      }
+      this.loading = false;
+    },
+
+    // ── Helpers ──
+    sortProfiles(list) {
+      return list.slice().sort((a, b) => (a.order || 0) - (b.order || 0));
+    },
+
+    qualityLabel(identifier) {
+      const q = this.qualities.find(x => x.identifier === identifier);
+      return q ? q.label : identifier;
+    },
+
+    get availableQualities() {
+      const used = new Set((this.formState.types || []).map(t => t.qualityId));
+      return this.qualities.filter(q => !used.has(q.identifier));
+    },
+
+    toast(msg, type = 'success', duration = 3000) {
+      // Cancel any pending clear timer so a stale one can't wipe a newer toast
+      // early (e.g. a success toast immediately followed by a reload-error toast).
+      clearTimeout(this._toastTimer);
+      this.toastMessage = msg;
+      this.toastType = type;
+      this._toastTimer = setTimeout(() => { this.toastMessage = ''; }, duration);
+    },
+
+    // ── Modal open/close ──
+    openNew() {
+      this.validationErrors = [];
+      this.selectedQualityToAdd = '';
+      this.formState = { id: '', label: '', minimumScore: 1, waitFor: 0, stopAfter: 0, types: [] };
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.nameInput) this.$refs.nameInput.focus(); });
+    },
+
+    openEdit(profile) {
+      this.validationErrors = [];
+      this.selectedQualityToAdd = '';
+      this.formState = CP.ui.profileToForm(profile, this.qualities);
+      this.modalOpen = true;
+      this.$nextTick(() => { if (this.$refs.nameInput) this.$refs.nameInput.focus(); });
+    },
+
+    closeModal() { this.modalOpen = false; },
+
+    // ── Quality management within the form ──
+    addQualityToForm() {
+      if (!this.selectedQualityToAdd) return;
+      const qId = this.selectedQualityToAdd;
+      const qMeta = this.qualities.find(q => q.identifier === qId) || {};
+      // addQuality is pure and self-contained: it derives label/allow3d from the
+      // passed metadata, so no post-patch is needed.
+      const newTypes = CP.ui.addQuality(this.formState.types, qId, qMeta);
+      this.formState = { ...this.formState, types: newTypes };
+      this.selectedQualityToAdd = '';
+    },
+
+    removeQualityAt(index) {
+      this.formState = { ...this.formState, types: CP.ui.removeQuality(this.formState.types, index) };
+    },
+
+    moveQualityAt(index, direction) {
+      this.formState = { ...this.formState, types: CP.ui.moveQuality(this.formState.types, index, direction) };
+    },
+
+    setFinish(index, value) {
+      if (index === 0) return; // first quality always finishes
+      const types = this.formState.types.slice();
+      types[index] = { ...types[index], finish: value };
+      this.formState = { ...this.formState, types };
+    },
+
+    set3d(index, value) {
+      const types = this.formState.types.slice();
+      types[index] = { ...types[index], is3d: value };
+      this.formState = { ...this.formState, types };
+    },
+
+    // ── Save profile (save and post-save refresh have SEPARATE error paths) ──
+    async saveProfile() {
+      this.validationErrors = [];
+      const v = CP.ui.validateProfile(this.formState);
+      if (!v.valid) { this.validationErrors = v.errors; return; }
+
+      // Pass the current count so a NEW profile gets order = count (appended)
+      // instead of the backend default order=999.
+      const payload = CP.ui.formToPayload(this.formState, this.profiles.length);
+      const isEdit = !!payload.id; // snapshot before any await
+      this.saving = true;
+
+      let saved = false;
+      try {
+        const params = new URLSearchParams();
+        if (payload.id) params.append('id', payload.id);
+        params.append('label', payload.label);
+        params.append('minimum_score', String(payload.minimum_score));
+        params.append('wait_for', String(payload.wait_for));
+        params.append('stop_after', String(payload.stop_after));
+        // New profiles carry an explicit order (= current count) so they append
+        // at the end instead of landing at the backend default order=999.
+        if (!payload.id && payload.order !== undefined) params.append('order', String(payload.order));
+        // The API's getParams() expands bracket-notation form keys into a list
+        // of dicts (types[0][quality]=…). A JSON string would be iterated
+        // character-by-character server-side, so send discrete bracket keys.
+        payload.types.forEach((t, i) => {
+          params.append(`types[${i}][quality]`, t.quality);
+          params.append(`types[${i}][finish]`, String(t.finish));
+          params.append(`types[${i}][3d]`, String(t['3d']));
+        });
+
+        const resp = await fetch(CP.apiBase + '/profile.save/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Save failed');
+        saved = true;
+      } catch (e) {
+        this.toast('Save failed: ' + e.message, 'error');
+      }
+      this.saving = false;
+
+      if (!saved) return;
+
+      // Save succeeded — close + confirm BEFORE the refresh so a refresh
+      // error can never masquerade as a save error.
+      this.closeModal();
+      this.toast(isEdit ? 'Profile updated.' : 'Profile created.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Saved, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Delete profile ──
+    confirmDelete(profile) {
+      if (profile.core) return; // built-in profiles aren't deletable (button is also disabled)
+      if (this.modalOpen) return; // never open the delete dialog over an open edit modal (keeps the two window-scoped Escape handlers mutually exclusive)
+      this.profileToDelete = profile;
+      this.deleteConfirmOpen = true;
+      this.$nextTick(() => { if (this.$refs.deleteCancelBtn) this.$refs.deleteCancelBtn.focus(); });
+    },
+
+    cancelDelete() {
+      this.deleteConfirmOpen = false;
+      this.profileToDelete = null;
+    },
+
+    async doDelete() {
+      if (!this.profileToDelete) return;
+      const delId = this.profileToDelete._id;     // snapshot before await —
+      const delLabel = this.profileToDelete.label; // dialog may be torn down mid-flight
+      this.deleting = true;
+
+      let deleted = false;
+      try {
+        const params = new URLSearchParams();
+        params.append('id', delId);
+        const resp = await fetch(CP.apiBase + '/profile.delete/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Delete failed');
+        deleted = true;
+      } catch (e) {
+        this.toast('Delete failed: ' + e.message, 'error');
+      }
+      this.deleting = false;
+
+      // On failure, leave the confirm dialog open so the user can retry without
+      // re-opening it; only close it on success. delId/delLabel are snapshotted
+      // above, so leaving profileToDelete set carries no null-deref risk.
+      if (!deleted) return;
+      this.cancelDelete();
+      this.toast('"' + delLabel + '" deleted.', 'success');
+
+      try {
+        await this.reload();
+      } catch (e) {
+        this.toast('Deleted, but the list failed to refresh.', 'error');
+      }
+    },
+
+    // ── Reorder profiles (optimistic with rollback on failure) ──
+    async moveProfile(index, direction) {
+      // Guard against overlapping reorders: if a second move starts before the
+      // first save_order resolves, a failed-then-succeeded pair can leave the
+      // client rolled back to a stale snapshot while the server holds a newer
+      // order (silent split-brain). Serialise by disabling moves while in-flight.
+      if (this.isReordering) return;
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= this.profiles.length) return;
+
+      const snapshot = this.profiles.slice(); // restore point
+      const list = this.profiles.slice();
+      [list[target], list[index]] = [list[index], list[target]];
+      this.profiles = list;
+      this.isReordering = true;
+
+      try {
+        const params = new URLSearchParams();
+        // Indexed bracket keys (ids[0], ids[1], …), NOT repeated ids[]: the
+        // dispatcher does dict(await request.form()), which collapses repeated
+        // keys to the last value. getParams() then expands the indexed keys
+        // back into ordered lists. Repeated keys would send a single id and
+        // silently break every reorder.
+        list.forEach((p, i) => {
+          params.append(`ids[${i}]`, p._id);
+          params.append(`hidden[${i}]`, p.hide ? '1' : '0');
+        });
+        const resp = await fetch(CP.apiBase + '/profile.save_order/', { method: 'POST', body: params });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        if (!data.success) throw new Error(data.message || 'Reorder failed');
+      } catch (e) {
+        this.profiles = snapshot; // roll back the optimistic move
+        this.toast('Failed to save order.', 'error');
+      } finally {
+        this.isReordering = false;
+      }
+    },
+
+    // ── Reload from API (throws on failure so callers can react) ──
+    async reload() {
+      const resp = await fetch(CP.apiBase + '/profile.list/');
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      const data = await resp.json();
+      if (!data.success) throw new Error('API returned failure');
+      this.profiles = this.sortProfiles(data.list || []);
+    },
+
+    // ── Focus traps ──
+    trapFocus(event) {
+      if (!this.modalOpen) return;
+      const el = this.$refs.modalEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'
+      ));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      // Recapture focus if it has escaped the dialog entirely (programmatic
+      // focus, extension, etc.), not just at the first/last boundary.
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+
+    trapDeleteFocus(event) {
+      if (!this.deleteConfirmOpen) return;
+      const el = this.$refs.deleteEl;
+      if (!el) return;
+      const focusable = Array.from(el.querySelectorAll('button:not([disabled])'));
+      if (!focusable.length) return;
+      const first = focusable[0], last = focusable[focusable.length - 1];
+      if (!el.contains(document.activeElement)) { event.preventDefault(); first.focus(); return; }
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    },
+  };
+}
+
 </script>
