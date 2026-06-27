@@ -380,14 +380,17 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         response.delete_cookie('user', path='/')
         return response
 
-    # Legacy /old/* catch-all — permanently redirect to the new UI root.
+    # Legacy /old/* catch-all — redirect to the new UI root.
     # The views dict and view functions are retained as a porting reference and
     # will be removed in a later cleanup PR (see specs/UI-MIGRATION.md).
     @app.get(web_base + 'old/{route:path}')
     @app.get(web_base + 'old/')
     @app.get(web_base + 'old')
     async def web_handler(route: str = ''):
-        return RedirectResponse(url=web_base, status_code=301)
+        # 302 (temporary) during the in-progress UI migration to avoid
+        # permanently-cached redirects; switch to 301 or remove in the final
+        # legacy-cleanup PR.
+        return RedirectResponse(url=web_base, status_code=302)
 
     return app
 

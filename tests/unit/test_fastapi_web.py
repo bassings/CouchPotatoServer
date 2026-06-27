@@ -301,7 +301,7 @@ class TestStaticFiles:
     def test_manifest_returns_cache_manifest(self, client):
         """/old/couchpotato.appcache redirects to / (legacy stack retired)."""
         resp = client.get('/old/couchpotato.appcache', follow_redirects=False)
-        assert resp.status_code == 301
+        assert resp.status_code == 302
         assert resp.headers.get('location') == '/'
 
 
@@ -385,7 +385,7 @@ class TestTemplateRendering:
     def test_docs_view_renders(self, client):
         """/old/docs redirects to / (legacy stack retired; docs moved to new UI)."""
         resp = client.get('/old/docs', follow_redirects=False)
-        assert resp.status_code == 301
+        assert resp.status_code == 302
         assert resp.headers.get('location') == '/'
 
     def test_new_partial_movies_with_releases_uses_has_releases_filter(self, client):
