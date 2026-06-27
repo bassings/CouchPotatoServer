@@ -256,8 +256,8 @@ test.describe('Category management', () => {
     // (a) Order reverts to the original (A before B) after the failed save.
     await expect.poll(async () => (await indexOf(TEST_CATEGORY_NAME)) < (await indexOf(TEST_CATEGORY_NAME_2))).toBe(true);
 
-    // (b) An error toast surfaces the failure.
-    const toast = page.locator('#categories-panel [role="status"][aria-live="polite"]').last();
+    // (b) An error toast surfaces the failure (error toasts are alert/assertive).
+    const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
     await expect(toast).toContainText(/order/i);
 
     // Stop intercepting before cleanup so the inline delete + afterEach work.
@@ -346,7 +346,7 @@ test.describe('Category management', () => {
 
     await modal.getByRole('button', { name: /create category/i }).click();
 
-    const toast = page.locator('#categories-panel [role="status"][aria-live="polite"]').last();
+    const toast = page.locator('#categories-panel [role="alert"][aria-live="assertive"]').last();
     await expect(toast).toContainText(/save failed/i);
     await expect(modal).toBeVisible(); // not closed on failure
 

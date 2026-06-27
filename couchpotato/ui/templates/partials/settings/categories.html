@@ -346,7 +346,8 @@
        class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-[60] px-4 py-2 rounded-lg text-xs font-medium"
        :class="toastType === 'success' ? 'bg-cp-success/90 text-black' : 'bg-cp-danger/90 text-white'"
        x-text="toastMessage"
-       role="status"
-       aria-live="polite"></div>
+       {# Error toasts interrupt the SR (alert/assertive); success queues politely. #}
+       :role="toastType === 'error' ? 'alert' : 'status'"
+       :aria-live="toastType === 'error' ? 'assertive' : 'polite'"></div>
 
 </div>

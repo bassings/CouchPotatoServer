@@ -1075,10 +1075,11 @@ function categoryEditor() {
 
     // ── Helpers ──
     sortCategories(list) {
-      // Coerce like categoryToForm (order may arrive as a string from the API);
-      // `!= null ? Number() : 0` keeps an explicit order=0 distinct from absent
-      // and coerces undefined/NaN safely to 0.
-      const ord = (c) => (c.order != null ? Number(c.order) : 0);
+      // Coerce exactly like categoryToForm: order may arrive as a string from the
+      // API, and an absent order falls back to 999 (the backend default) so
+      // unknown-order categories sort to the END — matching both the edit form
+      // and the server, rather than floating to the top.
+      const ord = (c) => (c.order != null ? Number(c.order) : 999);
       return list.slice().sort((a, b) => ord(a) - ord(b));
     },
 
