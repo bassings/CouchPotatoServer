@@ -237,7 +237,7 @@ def create_router(require_auth) -> APIRouter:
     async def partial_settings_section(section: str, request: Request, user=Depends(require_auth)):
         """Return settings section as HTML partial (placeholder)."""
         safe_section = html.escape(section)
-        return HTMLResponse('<p class="text-xs text-cp-muted">Settings for %s will be loaded here. Use the Classic UI for full configuration.</p>' % safe_section)
+        return HTMLResponse('<p class="text-xs text-cp-muted">Settings for %s will be loaded here.</p>' % safe_section)
 
     @router.get('/partial/profiles')
     async def partial_profiles(request: Request, user=Depends(require_auth)):

@@ -3,8 +3,8 @@
 Every request to /old or /old/<anything> must return a permanent redirect (301)
 to the web UI root — no content is served from the legacy stack.
 
-Write-order: this test was written BEFORE the implementation so it fails on the
-current handler (which serves views or self-redirects to /old/#…).
+Write-order: these tests were written BEFORE the implementation so they fail on
+the original handler (which served views or self-redirected to /old/#…).
 """
 import os
 
@@ -20,6 +20,8 @@ from couchpotato.api import (
 )
 from couchpotato.environment import Env
 
+_UNSET = object()
+
 
 # ---------------------------------------------------------------------------
 # Fixtures — mirrors the setup in test_fastapi_web.py
@@ -27,13 +29,15 @@ from couchpotato.environment import Env
 
 
 @pytest.fixture(autouse=True)
-def setup_env(tmp_path):
-    """Minimal Env for testing."""
+def setup_env():
+    """Minimal Env for testing, with full state restored on teardown."""
     old_api = dict(api)
     old_locks = dict(api_locks)
     old_nonblock = dict(api_nonblock)
     old_docs = dict(api_docs)
     old_missing = list(api_docs_missing)
+    # Preserve web_base so per-test mutation (custom base) is parallel-safe.
+    old_web_base = getattr(Env, '_web_base', _UNSET)
 
     Env.set("web_base", "/")
     Env.set("api_base", "/api/testkey123/")
@@ -65,6 +69,11 @@ def setup_env(tmp_path):
     yield settings_data
 
     Env.setting = original_setting
+    if old_web_base is _UNSET:
+        if hasattr(Env, '_web_base'):
+            delattr(Env, '_web_base')
+    else:
+        Env.set("web_base", old_web_base)
     api.clear()
     api.update(old_api)
     api_locks.clear()
@@ -103,6 +112,12 @@ class TestLegacyOldRedirect:
         assert resp.status_code == 301
         assert resp.headers.get("location") == "/"
 
+    def test_old_trailing_slash_redirects_in_one_hop(self, client):
+        """/old/ returns a single 301 to / (no 307→301 double hop)."""
+        resp = client.get("/old/", follow_redirects=False)
+        assert resp.status_code == 301
+        assert resp.headers.get("location") == "/"
+
     def test_old_deep_path_redirects_to_web_base(self, client):
         """/old/some/deep/path returns a 301 permanent redirect to /."""
         resp = client.get("/old/some/deep/path", follow_redirects=False)
@@ -137,10 +152,12 @@ class TestLegacyOldRedirect:
         assert resp2.status_code == 301
         assert resp2.headers.get("location") == "/cp/"
 
-    def test_old_unauthenticated_still_redirects_to_new_ui(self, setup_env):
-        """Unauthenticated requests to /old still get a 301 to / (not to login).
+    def test_old_redirect_does_not_require_auth(self, setup_env):
+        """An unauthenticated visitor still gets a 301 from /old (no login gate).
 
-        Auth is the new UI's responsibility once the visitor arrives at /.
+        The redirect handler intentionally carries no auth dependency — auth is
+        enforced once the visitor reaches the new UI root (see the companion
+        new-UI gate test below).
         """
         from couchpotato import create_app
 
@@ -148,7 +165,26 @@ class TestLegacyOldRedirect:
         setup_env["password"] = "secret"
         app = create_app("testkey123", "/")
         c = TestClient(app)
-        # No auth cookie set
+        # No auth cookie set.
         resp = c.get("/old/some/page", follow_redirects=False)
         assert resp.status_code == 301
         assert resp.headers.get("location") == "/"
+
+    def test_new_ui_root_gates_unauthenticated_visitor(self, setup_env):
+        """The destination (/) enforces auth: an unauthenticated GET / redirects
+        to /login/.
+
+        This proves the /old redirect doesn't open an auth bypass — the visitor
+        lands on the new UI, which still requires a session when credentials are
+        configured.
+        """
+        from couchpotato import create_app
+
+        setup_env["username"] = "admin"
+        setup_env["password"] = "secret"
+        app = create_app("testkey123", "/")
+        c = TestClient(app)
+        # No auth cookie set.
+        resp = c.get("/", follow_redirects=False)
+        assert resp.status_code in (302, 307)
+        assert "login" in resp.headers.get("location", "")

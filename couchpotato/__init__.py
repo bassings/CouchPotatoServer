@@ -384,6 +384,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     # The views dict and view functions are retained as a porting reference and
     # will be removed in a later cleanup PR (see specs/UI-MIGRATION.md).
     @app.get(web_base + 'old/{route:path}')
+    @app.get(web_base + 'old/')
     @app.get(web_base + 'old')
     async def web_handler(route: str = ''):
         return RedirectResponse(url=web_base, status_code=301)
