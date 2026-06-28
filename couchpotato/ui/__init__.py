@@ -190,7 +190,10 @@ def create_router(require_auth) -> APIRouter:
             # state (htmx:response-error). A genuinely empty (success) result
             # still renders normally with 200.
             if not isinstance(result, dict) or result.get('success') is False:
-                log.error('Failed to fetch suggestions: %r', result)
+                # WARNING, not ERROR: a provider returning success=False is an
+                # expected/recoverable third-party degradation that can recur per
+                # page-load; logging it at ERROR would drown genuine app errors.
+                log.warning('Suggestions unavailable (provider failure): %r', result)
                 return HTMLResponse('Failed to load suggestions', status_code=500)
             movies = result.get('movies', [])
         except Exception:
@@ -212,7 +215,10 @@ def create_router(require_auth) -> APIRouter:
             # state (htmx:response-error). A genuinely empty (success) result
             # still renders normally with 200.
             if not isinstance(result, dict) or result.get('success') is False:
-                log.error('Failed to fetch charts: %r', result)
+                # WARNING, not ERROR: a chart source returning success=False is an
+                # expected/recoverable third-party degradation that can recur per
+                # page-load; logging it at ERROR would drown genuine app errors.
+                log.warning('Charts unavailable (provider failure): %r', result)
                 return HTMLResponse('Failed to load charts', status_code=500)
             charts = result.get('charts', [])
         except Exception:

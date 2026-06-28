@@ -66,6 +66,7 @@
          before-request (not x-init) so elapsed counts from request dispatch,
          symmetric with the For You tab. cp:retry is fired by "Try again". -->
     <div hx-get="{{ new_base }}partial/charts"
+         x-ref="fetchTarget"
          hx-trigger="load, cp:retry"
          hx-swap="innerHTML"
          x-show="loaded"
@@ -97,6 +98,7 @@
          on it (chicken-and-egg). htmx.trigger issues the request regardless of
          visibility. cp:retry re-runs it from the error state. -->
     <div hx-get="{{ new_base }}partial/suggestions"
+         x-ref="fetchTarget"
          hx-trigger="cp:load, cp:retry"
          hx-swap="innerHTML"
          x-show="loaded"
@@ -133,7 +135,10 @@ function cpSuggestionLoader() {
     // open()/_opened are inert.
     open() {
       if (this._opened || this.loaded) return;
-      const target = this.$root.querySelector('[hx-get]');
+      // $refs.fetchTarget resolves to THIS component's hx-get div (Alpine refs are
+      // component-scoped), so it can't be fooled by some other [hx-get] the
+      // included partial might gain later.
+      const target = this.$refs.fetchTarget;
       // Latch _opened only once the request actually fires, so a transient
       // missing htmx can't wedge the tab in a permanent loading state.
       if (target && window.htmx) {
@@ -167,12 +172,11 @@ function cpSuggestionLoader() {
       this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
     },
 
-    // Re-run the fetch from the error state. The hx-get target is a sibling of
-    // this loader's root (not an ancestor of the button), so reach it via $root
-    // and fire the explicit cp:retry trigger — works for both Charts (load) and
+    // Re-run the fetch from the error state via this component's $refs.fetchTarget
+    // and the explicit cp:retry trigger — works for both Charts (load) and
     // For You (cp:load), whose native triggers can't be replayed on demand.
     retry() {
-      const target = this.$root.querySelector('[hx-get]');
+      const target = this.$refs.fetchTarget;
       // Bail before mutating state if we can't actually re-fire — otherwise the
       // panel would reset to a ticking loader with no error and no way out
       // (symmetric with open()'s guard).
