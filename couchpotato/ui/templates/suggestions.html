@@ -146,6 +146,11 @@ function cpSuggestionLoader() {
     // and fire the explicit cp:retry trigger — works for both Charts (load) and
     // For You (cp:load), whose native triggers can't be replayed on demand.
     retry() {
+      const target = this.$root.querySelector('[hx-get]');
+      // Bail before mutating state if we can't actually re-fire — otherwise the
+      // panel would reset to a ticking loader with no error and no way out
+      // (symmetric with open()'s guard).
+      if (!target || !window.htmx) return;
       this.failed = false;
       this.loaded = false;
       this.elapsed = 0;
@@ -153,8 +158,7 @@ function cpSuggestionLoader() {
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
       this.start(); // timer starts here; the target's @htmx:before-request also
                     // calls start() but it's a no-op (timer already set).
-      const target = this.$root.querySelector('[hx-get]');
-      if (target && window.htmx) window.htmx.trigger(target, 'cp:retry');
+      window.htmx.trigger(target, 'cp:retry');
     },
 
     // view helpers — pure math delegated to CP.ui

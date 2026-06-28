@@ -170,5 +170,33 @@ test.describe('Suggestions loading redesign', () => {
     await expect(keepWaiting).toBeHidden();
     // Closed loop: panel returns to normal staged copy (elapsed=46 → stage at=42).
     await expect(status).toContainText('Ranking your matches');
+
+    // keepWaiting pushed _stallAt to elapsed+30 (=76); advancing past it re-stalls.
+    await page.clock.runFor(30000);
+    await expect(status).toContainText('Still working');
+    await expect(status.getByRole('button', { name: /keep waiting/i })).toBeVisible();
+  });
+
+  test('For You tab reaches its own stall state when its load hangs', async ({ page }) => {
+    await page.clock.install();
+    await page.route('**/partial/charts', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML }),
+    );
+    // The deferred For You load never resolves → its own loader stalls.
+    await page.route('**/partial/suggestions', () => {
+      /* intentionally left pending */
+    });
+
+    await page.goto('/suggestions');
+    await page.getByRole('tab', { name: /for you/i }).click();
+
+    const status = page.locator('#suggestions-grid [role="status"]');
+    await expect(status).toBeVisible();
+
+    await page.clock.runFor(46000);
+    await expect(status).toContainText('Still working');
+    // For You gets its own (library-specific) stall sub-copy, not the Charts one.
+    await expect(status).toContainText('Personalized picks are taking longer than usual');
+    await expect(status.getByRole('button', { name: /keep waiting/i })).toBeVisible();
   });
 });
