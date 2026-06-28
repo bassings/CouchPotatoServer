@@ -160,8 +160,9 @@ function cpSuggestionLoader() {
       this.elapsed = 0;
       this.stalled = false;
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
-      this.start(); // timer starts here; the target's @htmx:before-request also
-                    // calls start() but it's a no-op (timer already set).
+      // The timer (re)starts from the target's @htmx:before-request once the
+      // request fires — not here — so a throw in trigger() can't leave a ghost
+      // interval running with no recovery path (symmetric with open()).
       window.htmx.trigger(target, 'cp:retry');
     },
 
