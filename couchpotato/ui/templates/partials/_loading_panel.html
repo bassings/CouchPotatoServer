@@ -24,7 +24,7 @@
          quote-breakage / injection in the Alpine expression entirely. #}
       <p class="text-xs text-cp-muted mt-0.5">
         <span x-show="stalled" x-cloak>{{ stall_sub|default('Taking longer than usual') }}</span>
-        <span x-show="!stalled" x-text="stage.sub"></span>
+        <span x-show="!stalled" x-cloak x-text="stage.sub"></span>
       </p>
     </div>
     {# elapsed/pct mutate every second; aria-hidden keeps them out of the

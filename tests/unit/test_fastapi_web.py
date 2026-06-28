@@ -4,6 +4,7 @@ Tests API endpoints, authentication, static files, SSE/long-poll,
 and template rendering via FastAPI's TestClient.
 """
 import os
+import sys
 import json
 import pytest
 from types import SimpleNamespace
@@ -509,3 +510,39 @@ class TestAppCreation:
         assert sw_resp.status_code == 200
         assert "SCOPE_PATH.endsWith('/static/')" in sw_resp.text
         assert "url.pathname.startsWith(withBase('static/'))" in sw_resp.text
+
+
+class TestPartialErrorHandling:
+    """The Suggestions partials must signal backend failure with a non-2xx so
+    the client loader shows its error / Try-again state, while a genuinely
+    empty (but successful) result still renders normally with 200.
+
+    The handlers do `from couchpotato.api import callApiHandler` at call time,
+    so patching the module attribute (via sys.modules) reaches them.
+    """
+
+    @staticmethod
+    def _patch_api(monkeypatch, impl):
+        monkeypatch.setattr(sys.modules['couchpotato.api'], 'callApiHandler', impl)
+
+    def test_partial_charts_returns_502_on_backend_error(self, client, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError('charts backend down')
+
+        self._patch_api(monkeypatch, boom)
+        assert client.get('/partial/charts').status_code == 502
+
+    def test_partial_suggestions_returns_502_on_backend_error(self, client, monkeypatch):
+        def boom(*args, **kwargs):
+            raise RuntimeError('suggestions backend down')
+
+        self._patch_api(monkeypatch, boom)
+        assert client.get('/partial/suggestions').status_code == 502
+
+    def test_partial_charts_returns_200_on_empty_success(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: {'charts': []})
+        assert client.get('/partial/charts').status_code == 200
+
+    def test_partial_suggestions_returns_200_on_empty_success(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: {'movies': []})
+        assert client.get('/partial/suggestions').status_code == 200

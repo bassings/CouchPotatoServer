@@ -63,7 +63,8 @@
          @htmx:before-request="start()"
          @htmx:after-swap="done()"
          @htmx:response-error="fail()"
-         @htmx:send-error="fail()"></div>
+         @htmx:send-error="fail()"
+         @htmx:xhr:abort="fail()"></div>
   </div>
 
   {# ---- For You: heavy call — DEFERRED until the tab is opened ------------ #}
@@ -92,7 +93,8 @@
          @htmx:before-request="start()"
          @htmx:after-swap="done()"
          @htmx:response-error="fail()"
-         @htmx:send-error="fail()"></div>
+         @htmx:send-error="fail()"
+         @htmx:xhr:abort="fail()"></div>
   </div>
 </div>
 
@@ -122,8 +124,8 @@ function cpSuggestionLoader() {
       // Latch _opened only once the request actually fires, so a transient
       // missing htmx can't wedge the tab in a permanent loading state.
       if (target && window.htmx) {
-        this._opened = true;
         window.htmx.trigger(target, 'cp:load');
+        this._opened = true;
       }
     },
 

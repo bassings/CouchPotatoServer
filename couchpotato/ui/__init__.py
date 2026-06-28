@@ -181,13 +181,15 @@ def create_router(require_auth) -> APIRouter:
     async def partial_suggestions(request: Request, user=Depends(require_auth)):
         """Return movie suggestions as HTML partial."""
         from couchpotato.api import callApiHandler
-        movies = []
         try:
             result = callApiHandler('suggestion.view')
-            if isinstance(result, dict):
-                movies = result.get('movies', [])
+            movies = result.get('movies', []) if isinstance(result, dict) else []
         except Exception:
+            # Non-2xx so the loader surfaces its error / Try-again state
+            # (htmx:response-error) instead of an empty grid that reads as
+            # "no suggestions". A genuinely empty result still returns 200.
             log.error('Failed to fetch suggestions')
+            return HTMLResponse('Failed to load suggestions', status_code=502)
         tmpl = _jinja.get_template('partials/suggestions.html')
         return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
 
@@ -195,13 +197,15 @@ def create_router(require_auth) -> APIRouter:
     async def partial_charts(request: Request, user=Depends(require_auth)):
         """Return chart lists (IMDB, Blu-ray, etc.) as HTML partial."""
         from couchpotato.api import callApiHandler
-        charts = []
         try:
             result = callApiHandler('charts.view')
-            if isinstance(result, dict):
-                charts = result.get('charts', [])
+            charts = result.get('charts', []) if isinstance(result, dict) else []
         except Exception:
+            # Non-2xx so the loader surfaces its error / Try-again state
+            # (htmx:response-error) instead of an empty grid that reads as
+            # "no charts". A genuinely empty result still returns 200.
             log.error('Failed to fetch charts')
+            return HTMLResponse('Failed to load charts', status_code=502)
         tmpl = _jinja.get_template('partials/charts.html')
         return HTMLResponse(tmpl.render(charts=charts, **_ctx()))
 
