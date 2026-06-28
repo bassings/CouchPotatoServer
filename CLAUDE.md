@@ -61,15 +61,18 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
 - **Local agent review gate (MANDATORY for code changes, before every push to the
   cloud review; docs-only changes may skip it and push directly):**
   *"Docs-only"* means the diff touches **only** documentation prose — `*.md`
-  **outside** `specs/**`, or files under `docs/**` — and nothing else. A change
-  touching any code, template, test, config, or workflow file, **or any
+  **outside** `specs/**`, or files under `docs/**` — and nothing else, **except
+  the policy docs `CLAUDE.md` and `AGENTS.md`**, which define how we work and so
+  are treated as code-changes (run the gate) even though they are markdown. A
+  change touching any code, template, test, config, or workflow file, **or any
   `specs/**` file (including a `specs/*.md` spec, which accompanies code)** —
   even alongside docs — is a **code change** and the gate applies. When in
   doubt, run the gate.
   Run a clean-agent review on the full branch diff (vs `master`) and make it pass
-  *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
-  parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
-  AGENTS.md rubric. Give them the **currently-verified facts** so they don't
+  *before* pushing to the `claude-review` gate. Spawn ≥2 independent review
+  subagents (`general-purpose`, which can both read and reason about the diff —
+  not `Explore`, which is search-only) in parallel (e.g. one frontend/a11y, one
+  backend/tests) against the diff with the AGENTS.md rubric. Give them the **currently-verified facts** so they don't
   re-litigate things already confirmed *for the code as it stands* — but
   **re-verify each fact against the tree before relying on it**; these are
   point-in-time, not eternal, and a dependency bump or refactor can invalidate
@@ -82,7 +85,12 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   false alarm — never suppress on the say-so of this list alone. Fix everything
   real they surface, re-verify locally, and re-review until clean. **If the cloud
   review later raises anything, fix it and run the local review again until it
-  passes — then push.** Rationale: cloud `claude-review` is stateless per push,
+  passes — then push.** **Exit condition (avoid an infinite loop):** if the cloud
+  review keeps flagging a point the local review clears, investigate it once
+  more; if it's a verified false alarm (or a marginal/subjective nit on a
+  low-risk change), reject it with evidence in the PR thread, resolve the thread,
+  and **stop** — do not keep pushing. A stateless reviewer will always find "one
+  more" angle; converge on substance, not on silencing every comment. Rationale: cloud `claude-review` is stateless per push,
   so each push re-discovers the same already-cleared points and dribbles out
   genuine findings one at a time; the local loop front-loads that discovery and
   collapses many serial ~15-min cloud rounds into one. This gate is
