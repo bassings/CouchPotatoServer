@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   SUGGESTION_STAGES,
+  SUGGESTION_STAGES_CHARTS,
   SUGGESTION_STALL_AFTER,
   SUGGESTION_KEEP_WAITING_EXTENSION,
   suggestionStage,
@@ -34,9 +35,38 @@ describe('SUGGESTION_STAGES / SUGGESTION_STALL_AFTER', () => {
   });
 
   it('every stage has a label and a sub', () => {
-    for (const stage of SUGGESTION_STAGES) {
+    for (const stage of [...SUGGESTION_STAGES, ...SUGGESTION_STAGES_CHARTS]) {
       expect(stage.label.length).toBeGreaterThan(0);
       expect(stage.sub.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('the Charts stage set shares the For You thresholds (so the stall invariant holds for both)', () => {
+    expect(SUGGESTION_STAGES_CHARTS).toHaveLength(SUGGESTION_STAGES.length);
+    expect(SUGGESTION_STAGES_CHARTS.map((s) => s.at)).toEqual(SUGGESTION_STAGES.map((s) => s.at));
+  });
+
+  it('the Charts stage set carries no For-You-specific (library/personalisation) copy', () => {
+    const text = SUGGESTION_STAGES_CHARTS.map((s) => `${s.label} ${s.sub}`)
+      .join(' ')
+      .toLowerCase();
+    expect(text).not.toContain('your library');
+    expect(text).not.toContain('what you like');
+    expect(text).not.toContain('your matches');
+  });
+
+  // The named chart providers must match the backend reality: only TMDB, IMDb and
+  // Blu-ray implement getChartList (charts.view). Rotten Tomatoes is a userscript
+  // bookmarklet and Trakt is a watchlist provider — neither feeds the charts panel,
+  // so naming them in either stage set is factually wrong.
+  it('names only real chart providers in both stage sets', () => {
+    for (const stages of [SUGGESTION_STAGES, SUGGESTION_STAGES_CHARTS]) {
+      const text = stages
+        .map((s) => s.sub)
+        .join(' ')
+        .toLowerCase();
+      expect(text).not.toContain('rotten tomatoes');
+      expect(text).not.toContain('trakt');
     }
   });
 
@@ -47,9 +77,10 @@ describe('SUGGESTION_STAGES / SUGGESTION_STALL_AFTER', () => {
   // Regression guard for the stall/stage contradiction: if the stall fired
   // before the final stage threshold, the "Still working" heading would clash
   // with a later checklist row lighting up. Keep stall >= the last stage `at`.
-  it('does not stall before the staged narrative finishes', () => {
-    const lastStageAt = SUGGESTION_STAGES[SUGGESTION_STAGES.length - 1].at;
-    expect(SUGGESTION_STALL_AFTER).toBeGreaterThanOrEqual(lastStageAt);
+  it('does not stall before the staged narrative finishes (either tab)', () => {
+    for (const stages of [SUGGESTION_STAGES, SUGGESTION_STAGES_CHARTS]) {
+      expect(SUGGESTION_STALL_AFTER).toBeGreaterThanOrEqual(stages[stages.length - 1].at);
+    }
   });
 
   it('extends the stall grace period by 30 seconds on keep-waiting', () => {

@@ -7,13 +7,29 @@
 // mutation-tested like the other CP.ui modules (category-editor, profile-editor).
 
 // Staged status messages, keyed by the elapsed-second threshold at which each
-// becomes the active stage. Ordered, ascending `at`.
+// becomes the active stage. Ordered, ascending `at`. There is one set per tab so
+// the copy is accurate: the For You call personalises from your library AND pulls
+// chart sources, whereas the Charts call only pulls external chart providers —
+// showing "Analysing your library" on the Charts tab would be factually wrong.
+// Both sets MUST share the same thresholds so the stall invariant (below) holds
+// for either tab.
+
+// For You (personal): library personalisation + chart sources.
 export const SUGGESTION_STAGES = [
   { at: 0, label: 'Connecting to sources', sub: 'Reaching TheMovieDB and chart providers' },
   { at: 12, label: 'Analysing your library', sub: 'Learning what you like' },
-  { at: 26, label: 'Fetching chart sources', sub: 'IMDb · Blu-ray · Rotten Tomatoes · Trakt' },
+  { at: 26, label: 'Fetching chart sources', sub: 'TheMovieDB · IMDb · Blu-ray'},
   { at: 42, label: 'Ranking your matches', sub: 'Scoring candidates' },
   { at: 54, label: 'Almost ready', sub: 'Assembling your suggestions' },
+];
+
+// Charts: external chart providers only — no library/personalisation copy.
+export const SUGGESTION_STAGES_CHARTS = [
+  { at: 0, label: 'Connecting to sources', sub: 'Reaching the chart providers' },
+  { at: 12, label: 'Fetching charts', sub: 'TheMovieDB · IMDb · Blu-ray'},
+  { at: 26, label: 'Collecting titles', sub: 'Gathering ranked entries' },
+  { at: 42, label: 'Building the list', sub: 'Sorting by popularity' },
+  { at: 54, label: 'Almost ready', sub: 'Assembling the charts' },
 ];
 
 // Default seconds before the loader switches to the "still working" state.

@@ -114,8 +114,11 @@ test.describe('Suggestions loading redesign', () => {
     const chartsGrid = page.locator('#charts-grid');
     // Charts tab → tab-accurate error title (the partial is parameterised).
     await expect(chartsGrid.getByText(/Couldn.t load charts/)).toBeVisible();
-    // The error panel is an assertive live region so AT users hear the failure.
-    await expect(chartsGrid.locator('[role="alert"]')).toBeVisible();
+    // The error panel is an assertive live region so AT users hear the failure…
+    const alert = chartsGrid.locator('[role="alert"]');
+    await expect(alert).toBeVisible();
+    // …and fail() moves focus into it (announce + land on Try again, WCAG 2.4.3).
+    await expect(alert).toBeFocused();
 
     await chartsGrid.getByRole('button', { name: /try again/i }).click();
 

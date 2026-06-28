@@ -71,7 +71,7 @@
   {# tabindex=0 makes the panel focusable when tabbing out of the active tab; no
      focus:outline-none here so base.html's :focus-visible ring stays visible (WCAG 2.4.7). #}
   <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts" tabindex="0"
-       x-data="cpSuggestionLoader()">
+       x-data="cpSuggestionLoader('charts')">
 
     {# Charts pulls live external chart providers — name them in the stall/error copy. #}
     {% with progress_label='Loading charts', stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title="Couldn’t load charts" %}
@@ -98,7 +98,7 @@
   {# $watch scope-walks to the parent's activeTab (this panel has its own x-data),
      mirroring the categories/profiles lazy-load pattern; open() is idempotent. #}
   <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal" tabindex="0"
-       x-data="cpSuggestionLoader()"
+       x-data="cpSuggestionLoader('personal')"
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
 
     {# For You builds personalized picks from your library — not chart providers. #}
@@ -133,7 +133,7 @@
    the unit/mutation-tested CP.ui.* module (static/scripts/ui/suggestion-loader.js);
    only the timer, htmx retrigger and the loaded/failed/stalled flags live here.
    No dependencies beyond Alpine + htmx already on the page. */
-function cpSuggestionLoader() {
+function cpSuggestionLoader(variant = 'personal') {
   return {
     elapsed: 0,
     loaded: false,
@@ -142,7 +142,9 @@ function cpSuggestionLoader() {
     _timer: null,
     _opened: false,
     _stallAt: CP.ui.SUGGESTION_STALL_AFTER,   // seconds before "still working"
-    stages: CP.ui.SUGGESTION_STAGES,
+    // Per-tab staged copy: Charts shows chart-provider stages, For You shows the
+    // library-personalisation stages (see suggestion-loader.js for why).
+    stages: variant === 'charts' ? CP.ui.SUGGESTION_STAGES_CHARTS : CP.ui.SUGGESTION_STAGES,
 
     // Fire the deferred fetch the first time this tab is opened (see the For You
     // panel's $watch). Idempotent: re-activating the tab never refetches. The
@@ -179,7 +181,12 @@ function cpSuggestionLoader() {
     // a failure (retry that lands) must clear the error panel, and a failure after
     // a stale success must clear the grid — otherwise both panels could show.
     done()  { this.loaded = true;  this.failed = false; this.stalled = false; this._stop(); },
-    fail()  { this.failed = true;  this.loaded = false; this.stalled = false; this._stop(); },
+    fail()  {
+      this.failed = true; this.loaded = false; this.stalled = false; this._stop();
+      // Move focus into the (now visible) assertive alert: reliably announces the
+      // failure to AT and lands the user on the Try again action (WCAG 2.4.3).
+      this.$nextTick(() => this.$refs.errorPanel && this.$refs.errorPanel.focus());
+    },
     // Returning focus to the loading panel keeps the user oriented after the
     // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
     keepWaiting() {
