@@ -46,8 +46,8 @@
   <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts"
        x-data="cpSuggestionLoader()" x-init="start()">
 
-    {# Charts pulls live external chart providers — name them in the stall copy. #}
-    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.' %}
+    {# Charts pulls live external chart providers — name them in the stall/error copy. #}
+    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title='Couldn’t load charts' %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
@@ -70,7 +70,7 @@
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); })">
 
     {# For You builds personalized picks from your library — not chart providers. #}
-    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='This is taking longer than usual.' %}
+    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='This is taking longer than usual.', error_title='Couldn’t load your suggestions' %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 

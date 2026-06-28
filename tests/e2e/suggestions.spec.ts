@@ -56,7 +56,9 @@ test.describe('Suggestions loading redesign', () => {
 
     const status = page.locator('#charts-grid [role="status"]');
     await expect(status).toBeVisible();
-    await expect(status).toHaveAttribute('aria-live', 'polite');
+    // role="status" is an implicit polite live region; the per-second elapsed
+    // and percentage counters carry aria-hidden so they don't announce a ticker.
+    await expect(status.locator('span[aria-hidden="true"]')).toHaveCount(2);
     // Staged status + the "one-time wait" reassurance copy.
     await expect(status).toContainText('Connecting to sources');
     await expect(status).toContainText(/Usually 30.+60s on first load/);
@@ -102,7 +104,8 @@ test.describe('Suggestions loading redesign', () => {
     await page.goto('/suggestions');
 
     const chartsGrid = page.locator('#charts-grid');
-    await expect(chartsGrid.getByText(/Couldn.t load suggestions/)).toBeVisible();
+    // Charts tab → tab-accurate error title (the partial is parameterised).
+    await expect(chartsGrid.getByText(/Couldn.t load charts/)).toBeVisible();
     // The error panel is an assertive live region so AT users hear the failure.
     await expect(chartsGrid.locator('[role="alert"]')).toBeVisible();
 

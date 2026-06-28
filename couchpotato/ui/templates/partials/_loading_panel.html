@@ -10,7 +10,7 @@
 <!-- LOADING / STALLED -->
 <div x-show="!loaded && !failed" x-cloak
      class="rounded-xl border border-cp-border bg-cp-card p-5 max-w-2xl"
-     role="status" aria-live="polite">
+     role="status">
 
   <div class="flex items-start gap-4">
     <svg class="animate-spin w-10 h-10 text-cp-accent shrink-0" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -19,9 +19,11 @@
     </svg>
     <div class="flex-1 min-w-0">
       <p class="text-[15px] font-semibold" x-text="stalled ? 'Still working' : stage.label"></p>
-      <p class="text-xs text-cp-muted mt-0.5" x-text="stalled ? '{{ stall_sub|default('Taking longer than usual') }}' : stage.sub"></p>
+      <p class="text-xs text-cp-muted mt-0.5" x-text="stalled ? {{ stall_sub|default('Taking longer than usual')|tojson }} : stage.sub"></p>
     </div>
-    <span class="text-xs text-cp-muted font-mono whitespace-nowrap" x-text="elapsed + 's'"></span>
+    {# elapsed/pct mutate every second; aria-hidden keeps them out of the
+       role=status live region so AT users don't hear a per-second ticker. #}
+    <span class="text-xs text-cp-muted font-mono whitespace-nowrap" aria-hidden="true" x-text="elapsed + 's'"></span>
   </div>
 
   <!-- progress -->
@@ -31,7 +33,7 @@
   <div class="flex justify-between mt-2">
     <span class="text-[11px] text-cp-muted"
           x-text="stalled ? 'Usually done by now' : 'Usually 30–60s on first load · instant afterwards'"></span>
-    <span class="text-[11px] text-cp-muted font-mono" x-text="pct + '%'"></span>
+    <span class="text-[11px] text-cp-muted font-mono" aria-hidden="true" x-text="pct + '%'"></span>
   </div>
 
   <!-- staged checklist -->
@@ -67,6 +69,6 @@
   <svg class="w-9 h-9 mx-auto mb-3 text-cp-danger" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.2" aria-hidden="true">
     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"></path>
   </svg>
-  <p class="text-sm text-cp-text">Couldn’t load suggestions</p>
+  <p class="text-sm text-cp-text">{{ error_title|default('Couldn’t load suggestions') }}</p>
   <p class="text-xs text-cp-muted mt-1">A source didn’t respond. <button @click="retry()" class="text-cp-accent underline-offset-2 hover:underline">Try again</button></p>
 </div>
