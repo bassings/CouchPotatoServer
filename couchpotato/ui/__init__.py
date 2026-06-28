@@ -189,7 +189,7 @@ def create_router(require_auth) -> APIRouter:
             # (htmx:response-error) instead of an empty grid that reads as
             # "no suggestions". A genuinely empty result still returns 200.
             log.error('Failed to fetch suggestions', exc_info=True)
-            return HTMLResponse('Failed to load suggestions', status_code=502)
+            return HTMLResponse('Failed to load suggestions', status_code=500)
         tmpl = _jinja.get_template('partials/suggestions.html')
         return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
 
@@ -205,7 +205,7 @@ def create_router(require_auth) -> APIRouter:
             # (htmx:response-error) instead of an empty grid that reads as
             # "no charts". A genuinely empty result still returns 200.
             log.error('Failed to fetch charts', exc_info=True)
-            return HTMLResponse('Failed to load charts', status_code=502)
+            return HTMLResponse('Failed to load charts', status_code=500)
         tmpl = _jinja.get_template('partials/charts.html')
         return HTMLResponse(tmpl.render(charts=charts, **_ctx()))
 

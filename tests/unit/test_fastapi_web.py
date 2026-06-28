@@ -530,14 +530,14 @@ class TestPartialErrorHandling:
             raise RuntimeError('charts backend down')
 
         self._patch_api(monkeypatch, boom)
-        assert client.get('/partial/charts').status_code == 502
+        assert client.get('/partial/charts').status_code == 500
 
     def test_partial_suggestions_returns_502_on_backend_error(self, client, monkeypatch):
         def boom(*args, **kwargs):
             raise RuntimeError('suggestions backend down')
 
         self._patch_api(monkeypatch, boom)
-        assert client.get('/partial/suggestions').status_code == 502
+        assert client.get('/partial/suggestions').status_code == 500
 
     def test_partial_charts_returns_200_on_empty_success(self, client, monkeypatch):
         self._patch_api(monkeypatch, lambda *a, **k: {'charts': []})

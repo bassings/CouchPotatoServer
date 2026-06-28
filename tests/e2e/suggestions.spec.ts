@@ -49,7 +49,16 @@ test.describe('Suggestions loading redesign', () => {
   });
 
   test('shows the communicative loading panel while a partial is in flight', async ({ page }) => {
-    await mockPartials(page, { chartsDelayMs: 1500 });
+    // Hold the Charts response open with a gate the test releases explicitly, so
+    // the "in flight" assertions are deterministic (no real-time delay race on CI).
+    let releaseCharts!: () => void;
+    const chartsGate = new Promise<void>((resolve) => {
+      releaseCharts = resolve;
+    });
+    await page.route('**/partial/charts', async (route) => {
+      await chartsGate;
+      await route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML });
+    });
     await page.goto('/suggestions');
 
     const status = page.locator('#charts-grid [role="status"]');
@@ -62,6 +71,7 @@ test.describe('Suggestions loading redesign', () => {
     await expect(status).toContainText(/Usually 30.+60s on first load/);
 
     // …and it resolves to real content once the partial returns.
+    releaseCharts();
     await expect(page.getByTestId('charts-content')).toBeVisible();
     await expect(status).toBeHidden();
   });
