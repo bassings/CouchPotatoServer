@@ -19,7 +19,13 @@
     </svg>
     <div class="flex-1 min-w-0">
       <p class="text-[15px] font-semibold" x-text="stalled ? 'Still working' : stage.label"></p>
-      <p class="text-xs text-cp-muted mt-0.5" x-text="stalled ? {{ stall_sub|default('Taking longer than usual')|tojson }} : stage.sub"></p>
+      {# Render the server-provided stall copy as plain (autoescaped) text in its
+         own span rather than interpolating it into a JS string — avoids any
+         quote-breakage / injection in the Alpine expression entirely. #}
+      <p class="text-xs text-cp-muted mt-0.5">
+        <span x-show="stalled" x-cloak>{{ stall_sub|default('Taking longer than usual') }}</span>
+        <span x-show="!stalled" x-text="stage.sub"></span>
+      </p>
     </div>
     {# elapsed/pct mutate every second; aria-hidden keeps them out of the
        role=status live region so AT users don't hear a per-second ticker. #}

@@ -44,19 +44,21 @@
 
   {# ---- Charts: fast, default tab — loads immediately --------------------- #}
   <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts"
-       x-data="cpSuggestionLoader()" x-init="start()">
+       x-data="cpSuggestionLoader()">
 
     {# Charts pulls live external chart providers — name them in the stall/error copy. #}
     {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title='Couldn’t load charts' %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
-    <!-- htmx target: swapped in when the partial returns.
-         cp:retry is an explicit trigger the error panel's "Try again" fires. -->
+    <!-- htmx target: swapped in when the partial returns. start() is on
+         before-request (not x-init) so elapsed counts from request dispatch,
+         symmetric with the For You tab. cp:retry is fired by "Try again". -->
     <div hx-get="{{ new_base }}partial/charts"
          hx-trigger="load, cp:retry"
          hx-swap="innerHTML"
          x-show="loaded"
+         @htmx:before-request="start()"
          @htmx:after-swap="done()"
          @htmx:response-error="fail()"
          @htmx:send-error="fail()"></div>
@@ -114,9 +116,13 @@ function cpSuggestionLoader() {
     // target's @htmx:before-request starts the timer, so we only trigger here.
     open() {
       if (this._opened || this.loaded) return;
-      this._opened = true;
       const target = this.$root.querySelector('[hx-get]');
-      if (target && window.htmx) window.htmx.trigger(target, 'cp:load');
+      // Latch _opened only once the request actually fires, so a transient
+      // missing htmx can't wedge the tab in a permanent loading state.
+      if (target && window.htmx) {
+        this._opened = true;
+        window.htmx.trigger(target, 'cp:load');
+      }
     },
 
     start() {

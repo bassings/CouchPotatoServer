@@ -158,6 +158,8 @@ test.describe('Suggestions loading redesign', () => {
     // fastForward) fires the 1s setInterval on every tick so elapsed reaches 46.
     await page.clock.runFor(46000);
     await expect(status).toContainText('Still working');
+    // Server-provided stall sub-copy (Charts tab) renders in the stalled state.
+    await expect(status).toContainText('Chart sources are taking longer than usual');
     const keepWaiting = status.getByRole('button', { name: /keep waiting/i });
     await expect(keepWaiting).toBeVisible();
     await expect(status.getByRole('link', { name: /skip to library/i })).toBeVisible();
