@@ -8,8 +8,10 @@
    =========================================================================== #}
 
 <!-- LOADING / STALLED -->
-<div x-show="!loaded && !failed" x-cloak
-     class="rounded-xl border border-cp-border bg-cp-card p-5 max-w-2xl"
+{# tabindex=-1 + x-ref so retry()/keepWaiting() can move focus here when they
+   hide the control that had focus (WCAG 2.4.3). #}
+<div x-show="!loaded && !failed" x-cloak x-ref="loadingPanel" tabindex="-1"
+     class="rounded-xl border border-cp-border bg-cp-card p-5 max-w-2xl focus:outline-none"
      role="status">
 
   <div class="flex items-start gap-4">
@@ -32,10 +34,12 @@
     <span class="text-xs text-cp-muted font-mono whitespace-nowrap" aria-hidden="true" x-text="elapsed + 's'"></span>
   </div>
 
-  <!-- progress: role/values on the track (outer) div so AT can identify it -->
+  {# Indeterminate progressbar: AT can identify it as progress, but we omit
+     aria-valuenow — pct is a synthetic time-based easing curve (not real
+     completion), and a per-second value inside role=status would re-create the
+     screen-reader ticker the aria-hidden counters above avoid. #}
   <div class="mt-4 h-1.5 rounded-full bg-white/[0.06] overflow-hidden"
-       role="progressbar" aria-label="Loading progress"
-       aria-valuemin="0" aria-valuemax="100" :aria-valuenow="pct">
+       role="progressbar" aria-label="{{ progress_label|default('Loading') }}">
     <div class="h-full rounded-full bg-cp-accent transition-[width] duration-300" :style="`width:${pct}%`"></div>
   </div>
   <div class="flex justify-between mt-2">
@@ -56,7 +60,7 @@
           </svg>
         </span>
         <span class="text-xs"
-              :class="stageDone(i) ? 'text-cp-muted' : (stageCurrent(i) ? 'text-cp-text' : 'text-cp-muted/60')"
+              :class="stageDone(i) ? 'text-cp-muted' : (stageCurrent(i) ? 'text-cp-text' : 'text-cp-muted')"
               x-text="s.label"></span>
       </li>
     </template>
@@ -78,5 +82,9 @@
     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"></path>
   </svg>
   <p class="text-sm text-cp-text">{{ error_title|default("Couldn’t load suggestions") }}</p>
-  <p class="text-xs text-cp-muted mt-1">A source didn’t respond. <button type="button" @click="retry()" class="text-cp-accent underline-offset-2 hover:underline">Try again</button></p>
+  <p class="text-xs text-cp-muted mt-1">A source didn’t respond.</p>
+  {# Real padded button (≥44px tap target, WCAG 2.5.8) — this is the only
+     error-recovery control and is most likely tapped on a phone. #}
+  <button type="button" @click="retry()"
+          class="mt-3 inline-flex items-center justify-center min-h-[44px] px-4 py-2 rounded-lg text-xs font-semibold bg-cp-accent text-black hover:bg-cp-accentHover transition-colors">Try again</button>
 </div>

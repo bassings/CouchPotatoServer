@@ -525,24 +525,48 @@ class TestPartialErrorHandling:
     def _patch_api(monkeypatch, impl):
         monkeypatch.setattr(sys.modules['couchpotato.api'], 'callApiHandler', impl)
 
-    def test_partial_charts_returns_502_on_backend_error(self, client, monkeypatch):
+    # --- Realistic failure: callApiHandler converts handler exceptions into a
+    #     {'success': False, ...} RETURN (it never re-raises), so this — not a
+    #     thrown exception — is the production failure path the loader must see.
+    def test_partial_charts_returns_500_on_error_result(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: {'success': False, 'error': 'Failed returning results'})
+        resp = client.get('/partial/charts')
+        assert resp.status_code == 500
+        assert 'Failed to load charts' in resp.text
+
+    def test_partial_suggestions_returns_500_on_error_result(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: {'success': False, 'error': 'Failed returning results'})
+        resp = client.get('/partial/suggestions')
+        assert resp.status_code == 500
+        assert 'Failed to load suggestions' in resp.text
+
+    # --- A non-dict result (programming error) is also a failure, not "empty".
+    def test_partial_charts_returns_500_on_non_dict_result(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: None)
+        assert client.get('/partial/charts').status_code == 500
+
+    # --- Backstop: a handler that genuinely raises before callApiHandler can
+    #     wrap it (e.g. import/dispatch failure) still becomes a 500.
+    def test_partial_charts_returns_500_on_raised_exception(self, client, monkeypatch):
         def boom(*args, **kwargs):
             raise RuntimeError('charts backend down')
 
         self._patch_api(monkeypatch, boom)
         assert client.get('/partial/charts').status_code == 500
 
-    def test_partial_suggestions_returns_502_on_backend_error(self, client, monkeypatch):
+    def test_partial_suggestions_returns_500_on_raised_exception(self, client, monkeypatch):
         def boom(*args, **kwargs):
             raise RuntimeError('suggestions backend down')
 
         self._patch_api(monkeypatch, boom)
         assert client.get('/partial/suggestions').status_code == 500
 
+    # --- A genuinely empty (but successful) result renders normally with 200;
+    #     the success fixtures include success=True to mirror real responses.
     def test_partial_charts_returns_200_on_empty_success(self, client, monkeypatch):
-        self._patch_api(monkeypatch, lambda *a, **k: {'charts': []})
+        self._patch_api(monkeypatch, lambda *a, **k: {'success': True, 'charts': []})
         assert client.get('/partial/charts').status_code == 200
 
     def test_partial_suggestions_returns_200_on_empty_success(self, client, monkeypatch):
-        self._patch_api(monkeypatch, lambda *a, **k: {'movies': []})
+        self._patch_api(monkeypatch, lambda *a, **k: {'success': True, 'movies': []})
         assert client.get('/partial/suggestions').status_code == 200

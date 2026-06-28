@@ -183,11 +183,17 @@ def create_router(require_auth) -> APIRouter:
         from couchpotato.api import callApiHandler
         try:
             result = callApiHandler('suggestion.view')
-            movies = result.get('movies', []) if isinstance(result, dict) else []
+            # callApiHandler swallows handler exceptions and returns
+            # {'success': False, ...} rather than raising, so an error-shaped
+            # result — not just a thrown exception — is the real failure signal.
+            # Surface it as a non-2xx so the loader shows its error / Try-again
+            # state (htmx:response-error). A genuinely empty (success) result
+            # still renders normally with 200.
+            if not isinstance(result, dict) or result.get('success') is False:
+                log.error('Failed to fetch suggestions: %r', result)
+                return HTMLResponse('Failed to load suggestions', status_code=500)
+            movies = result.get('movies', [])
         except Exception:
-            # Non-2xx so the loader surfaces its error / Try-again state
-            # (htmx:response-error) instead of an empty grid that reads as
-            # "no suggestions". A genuinely empty result still returns 200.
             log.error('Failed to fetch suggestions', exc_info=True)
             return HTMLResponse('Failed to load suggestions', status_code=500)
         tmpl = _jinja.get_template('partials/suggestions.html')
@@ -199,11 +205,17 @@ def create_router(require_auth) -> APIRouter:
         from couchpotato.api import callApiHandler
         try:
             result = callApiHandler('charts.view')
-            charts = result.get('charts', []) if isinstance(result, dict) else []
+            # callApiHandler swallows handler exceptions and returns
+            # {'success': False, ...} rather than raising, so an error-shaped
+            # result — not just a thrown exception — is the real failure signal.
+            # Surface it as a non-2xx so the loader shows its error / Try-again
+            # state (htmx:response-error). A genuinely empty (success) result
+            # still renders normally with 200.
+            if not isinstance(result, dict) or result.get('success') is False:
+                log.error('Failed to fetch charts: %r', result)
+                return HTMLResponse('Failed to load charts', status_code=500)
+            charts = result.get('charts', [])
         except Exception:
-            # Non-2xx so the loader surfaces its error / Try-again state
-            # (htmx:response-error) instead of an empty grid that reads as
-            # "no charts". A genuinely empty result still returns 200.
             log.error('Failed to fetch charts', exc_info=True)
             return HTMLResponse('Failed to load charts', status_code=500)
         tmpl = _jinja.get_template('partials/charts.html')

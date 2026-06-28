@@ -32,24 +32,33 @@
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1">Discover new movies from your library suggestions and chart sources.</p>
     </div>
-    <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories">
-      <button @click="activeTab = 'charts'" role="tab" id="tab-charts"
-              :aria-selected="activeTab === 'charts'" aria-controls="charts-grid"
+    {# APG tab pattern: roving tabindex + Arrow/Home/End move focus and selection. #}
+    <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories"
+         @keydown.arrow-right.prevent="activeTab = 'personal'; $refs.tabPersonal.focus()"
+         @keydown.arrow-left.prevent="activeTab = 'charts'; $refs.tabCharts.focus()"
+         @keydown.home.prevent="activeTab = 'charts'; $refs.tabCharts.focus()"
+         @keydown.end.prevent="activeTab = 'personal'; $refs.tabPersonal.focus()">
+      <button @click="activeTab = 'charts'" role="tab" id="tab-charts" x-ref="tabCharts"
+              :aria-selected="activeTab === 'charts'" :tabindex="activeTab === 'charts' ? 0 : -1"
+              aria-controls="charts-grid"
               :class="activeTab === 'charts' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">Charts</button>
-      <button @click="activeTab = 'personal'" role="tab" id="tab-personal"
-              :aria-selected="activeTab === 'personal'" aria-controls="suggestions-grid"
+      <button @click="activeTab = 'personal'" role="tab" id="tab-personal" x-ref="tabPersonal"
+              :aria-selected="activeTab === 'personal'" :tabindex="activeTab === 'personal' ? 0 : -1"
+              aria-controls="suggestions-grid"
               :class="activeTab === 'personal' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">For You</button>
     </div>
   </div>
 
   {# ---- Charts: fast, default tab — loads immediately --------------------- #}
-  <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts"
+  {# tabindex=0 makes the panel focusable when tabbing out of the active tab; no
+     focus:outline-none here so base.html's :focus-visible ring stays visible (WCAG 2.4.7). #}
+  <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts" tabindex="0"
        x-data="cpSuggestionLoader()">
 
     {# Charts pulls live external chart providers — name them in the stall/error copy. #}
-    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title="Couldn’t load charts" %}
+    {% with progress_label='Loading charts', stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title="Couldn’t load charts" %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
@@ -71,12 +80,12 @@
   {# ---- For You: heavy call — DEFERRED until the tab is opened ------------ #}
   {# $watch scope-walks to the parent's activeTab (this panel has its own x-data),
      mirroring the categories/profiles lazy-load pattern; open() is idempotent. #}
-  <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal"
+  <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal" tabindex="0"
        x-data="cpSuggestionLoader()"
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
 
     {# For You builds personalized picks from your library — not chart providers. #}
-    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title="Couldn’t load your suggestions" %}
+    {% with progress_label='Loading your suggestions', stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title="Couldn’t load your suggestions" %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
@@ -145,9 +154,18 @@ function cpSuggestionLoader() {
     // page swap mid-load); without it the interval keeps ticking on a detached
     // scope for the rest of the session.
     destroy() { this._stop(); },
-    done()  { this.loaded = true;  this.stalled = false; this._stop(); },
-    fail()  { this.failed = true;  this.stalled = false; this._stop(); },
-    keepWaiting() { this.stalled = false; this._stallAt = this.elapsed + 30; },
+    // done()/fail() are mutually exclusive terminal states: a late success after
+    // a failure (retry that lands) must clear the error panel, and a failure after
+    // a stale success must clear the grid — otherwise both panels could show.
+    done()  { this.loaded = true;  this.failed = false; this.stalled = false; this._stop(); },
+    fail()  { this.failed = true;  this.loaded = false; this.stalled = false; this._stop(); },
+    // Returning focus to the loading panel keeps the user oriented after the
+    // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
+    keepWaiting() {
+      this.stalled = false;
+      this._stallAt = this.elapsed + 30;
+      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
+    },
 
     // Re-run the fetch from the error state. The hx-get target is a sibling of
     // this loader's root (not an ancestor of the button), so reach it via $root
@@ -169,6 +187,9 @@ function cpSuggestionLoader() {
       this.elapsed = 0;
       this.stalled = false;
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
+      // The Try again button is now hidden (failed=false); move focus to the
+      // loading panel so it doesn't drop to <body> (WCAG 2.4.3).
+      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
     },
 
     // view helpers — pure math delegated to CP.ui
