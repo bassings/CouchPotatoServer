@@ -231,4 +231,19 @@ test.describe('Suggestions loading redesign', () => {
     await expect(page.getByTestId('suggestions-content')).toBeVisible();
     expect(suggestionsCalls).toBe(1);
   });
+
+  test('Charts completes in the background while on For You, then renders on return', async ({ page }) => {
+    await mockPartials(page, { chartsDelayMs: 1000 });
+    await page.goto('/suggestions');
+
+    // Switch to For You while the Charts request is still in flight — its target
+    // is now display:none (tab hidden + x-show="loaded"), so this guards that the
+    // innerHTML swap still lands on a hidden element and done() fires.
+    await page.getByRole('tab', { name: /for you/i }).click();
+    await expect(page.getByTestId('suggestions-content')).toBeVisible();
+
+    // Charts finished in the background; returning shows the swapped content.
+    await page.getByRole('tab', { name: /charts/i }).click();
+    await expect(page.getByTestId('charts-content')).toBeVisible();
+  });
 });

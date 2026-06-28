@@ -32,8 +32,10 @@
     <span class="text-xs text-cp-muted font-mono whitespace-nowrap" aria-hidden="true" x-text="elapsed + 's'"></span>
   </div>
 
-  <!-- progress -->
-  <div class="mt-4 h-1.5 rounded-full bg-white/[0.06] overflow-hidden">
+  <!-- progress: role/values on the track (outer) div so AT can identify it -->
+  <div class="mt-4 h-1.5 rounded-full bg-white/[0.06] overflow-hidden"
+       role="progressbar" aria-label="Loading progress"
+       aria-valuemin="0" aria-valuemax="100" :aria-valuenow="pct">
     <div class="h-full rounded-full bg-cp-accent transition-[width] duration-300" :style="`width:${pct}%`"></div>
   </div>
   <div class="flex justify-between mt-2">
