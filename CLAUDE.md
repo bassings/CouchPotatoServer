@@ -52,7 +52,8 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
 ```
 
-- **Local agent review gate (MANDATORY, before every push to the cloud review):**
+- **Local agent review gate (MANDATORY for code changes, before every push to the
+  cloud review; docs-only changes may skip it and push directly):**
   Run a clean-agent review on the full branch diff (vs `master`) and make it pass
   *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
   parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
