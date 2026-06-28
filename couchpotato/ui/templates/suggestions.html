@@ -49,7 +49,7 @@
        x-data="cpSuggestionLoader()">
 
     {# Charts pulls live external chart providers — name them in the stall/error copy. #}
-    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title='Couldn’t load charts' %}
+    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title="Couldn’t load charts" %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
@@ -75,7 +75,7 @@
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
 
     {# For You builds personalized picks from your library — not chart providers. #}
-    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title='Couldn’t load your suggestions' %}
+    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title="Couldn’t load your suggestions" %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 
@@ -118,6 +118,8 @@ function cpSuggestionLoader() {
     // Fire the deferred fetch the first time this tab is opened (see the For You
     // panel's $watch). Idempotent: re-activating the tab never refetches. The
     // target's @htmx:before-request starts the timer, so we only trigger here.
+    // Only the For You instance wires this up; on Charts (hx-trigger="load")
+    // open()/_opened are inert.
     open() {
       if (this._opened || this.loaded) return;
       const target = this.$root.querySelector('[hx-get]');
@@ -155,15 +157,16 @@ function cpSuggestionLoader() {
       // panel would reset to a ticking loader with no error and no way out
       // (symmetric with open()'s guard).
       if (!target || !window.htmx) return;
+      // Fire the request FIRST, then reset to the loading state. If trigger()
+      // throws, nothing was mutated so the error panel + Try again stay in
+      // place. The timer (re)starts from the target's @htmx:before-request, so a
+      // throw also can't leave a ghost interval (symmetric with open()).
+      window.htmx.trigger(target, 'cp:retry');
       this.failed = false;
       this.loaded = false;
       this.elapsed = 0;
       this.stalled = false;
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
-      // The timer (re)starts from the target's @htmx:before-request once the
-      // request fires — not here — so a throw in trigger() can't leave a ghost
-      // interval running with no recovery path (symmetric with open()).
-      window.htmx.trigger(target, 'cp:retry');
     },
 
     // view helpers — pure math delegated to CP.ui
