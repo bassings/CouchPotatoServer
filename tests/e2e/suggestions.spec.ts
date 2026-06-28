@@ -269,6 +269,15 @@ test.describe('Suggestions loading redesign', () => {
     await expect(chartsTab).toBeFocused();
     await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
 
+    // Wrap-around (APG): ArrowLeft on the first tab wraps to the last…
+    await chartsTab.press('ArrowLeft');
+    await expect(forYouTab).toBeFocused();
+    await expect(forYouTab).toHaveAttribute('aria-selected', 'true');
+    // …and ArrowRight on the last tab wraps back to the first.
+    await forYouTab.press('ArrowRight');
+    await expect(chartsTab).toBeFocused();
+    await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
+
     // End → last tab, Home → first tab.
     await chartsTab.press('End');
     await expect(forYouTab).toBeFocused();

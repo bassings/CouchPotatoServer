@@ -24,7 +24,22 @@
 {% extends "base.html" %}
 {% block title %}Suggestions — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'charts' }">
+{# moveTab() implements the APG roving-tabindex arrow keys WITH wrap-around: the
+   modulo cycles past either end so a keyboard user always gets movement (and the
+   roving focus) instead of a dead no-op at the edge. _refFor maps the tab id to
+   its x-ref so focus follows selection. #}
+<div class="p-4 lg:p-8 fade-in"
+     x-data="{
+       activeTab: 'charts',
+       tabs: ['charts', 'personal'],
+       _refFor(t) { return t === 'charts' ? this.$refs.tabCharts : this.$refs.tabPersonal; },
+       moveTab(delta) {
+         const i = this.tabs.indexOf(this.activeTab);
+         this.activeTab = this.tabs[(i + delta + this.tabs.length) % this.tabs.length];
+         this._refFor(this.activeTab).focus();
+       },
+       focusTab(t) { this.activeTab = t; this._refFor(t).focus(); },
+     }">
 
   <!-- Header + tabs -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
@@ -32,12 +47,13 @@
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1">Discover new movies from your library suggestions and chart sources.</p>
     </div>
-    {# APG tab pattern: roving tabindex + Arrow/Home/End move focus and selection. #}
+    {# APG tab pattern: roving tabindex + Arrow/Home/End move focus and selection.
+       Arrows wrap at both ends (moveTab); Home/End jump to the first/last tab. #}
     <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories"
-         @keydown.arrow-right.prevent="activeTab = 'personal'; $refs.tabPersonal.focus()"
-         @keydown.arrow-left.prevent="activeTab = 'charts'; $refs.tabCharts.focus()"
-         @keydown.home.prevent="activeTab = 'charts'; $refs.tabCharts.focus()"
-         @keydown.end.prevent="activeTab = 'personal'; $refs.tabPersonal.focus()">
+         @keydown.arrow-right.prevent="moveTab(1)"
+         @keydown.arrow-left.prevent="moveTab(-1)"
+         @keydown.home.prevent="focusTab(tabs[0])"
+         @keydown.end.prevent="focusTab(tabs[tabs.length - 1])">
       <button @click="activeTab = 'charts'" role="tab" id="tab-charts" x-ref="tabCharts"
               :aria-selected="activeTab === 'charts'" :tabindex="activeTab === 'charts' ? 0 : -1"
               aria-controls="charts-grid"
