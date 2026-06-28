@@ -357,4 +357,34 @@ test.describe('Suggestions loading redesign', () => {
     await page.getByRole('tab', { name: /charts/i }).click();
     await expect(page.getByTestId('charts-content')).toBeVisible();
   });
+
+  test('movie-skipped listener binds once across both tabs (no per-swap accumulation)', async ({ page }) => {
+    // The real partials register the listener behind a one-time window flag, and
+    // htmx re-executes the inline <script> on every swap. Mock both partials with
+    // the SAME guarded shape, but have the bind branch bump a counter so the test
+    // can observe how many times it actually ran. (Counting in-script rather than
+    // wrapping window.addEventListener — wrapping it breaks htmx/Alpine wiring.)
+    const guardedListener =
+      '<script>if(!window.__cpMovieSkippedBound){window.__cpMovieSkippedBound=true;' +
+      'window.__skipBindCount=(window.__skipBindCount||0)+1;' +
+      'window.addEventListener("movie-skipped",function(){});}<\/script>';
+    // Non-empty bodies so the swapped content has layout size (Playwright treats
+    // a zero-size element as not visible).
+    await page.route('**/partial/charts', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML + guardedListener }),
+    );
+    await page.route('**/partial/suggestions', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: SUGGESTIONS_HTML + guardedListener }),
+    );
+
+    await page.goto('/suggestions');
+    await expect(page.getByTestId('charts-content')).toBeVisible(); // charts script ran (swap 1)
+    await page.getByRole('tab', { name: /for you/i }).click();
+    await expect(page.getByTestId('suggestions-content')).toBeVisible(); // suggestions script ran (swap 2)
+
+    // Both inline scripts executed (proving htmx re-runs them on each swap), but the
+    // one-time flag means the bind branch ran exactly once — without the guard each
+    // swap would re-register, giving 2 here and growing by one on every cp:retry.
+    expect(await page.evaluate(() => (window as unknown as { __skipBindCount?: number }).__skipBindCount)).toBe(1);
+  });
 });

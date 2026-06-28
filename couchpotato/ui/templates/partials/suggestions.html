@@ -52,9 +52,15 @@ function openMovieModal(imdb, triggerEl, skipType) {
   }));
 }
 
-// Listen for skip events to remove cards
-window.addEventListener('movie-skipped', (e) => {
-  const card = document.querySelector(`.poster-card[data-imdb="${e.detail.imdb}"]`);
-  if (card) card.remove();
-});
+// Listen for skip events to remove cards. htmx re-runs this <script> on every
+// swap (incl. cp:retry), so guard with a one-time flag — otherwise each retry
+// would add another permanent window listener. One listener covers both the
+// charts and suggestions grids (both use .poster-card[data-imdb]).
+if (!window.__cpMovieSkippedBound) {
+  window.__cpMovieSkippedBound = true;
+  window.addEventListener('movie-skipped', (e) => {
+    const card = document.querySelector(`.poster-card[data-imdb="${e.detail.imdb}"]`);
+    if (card) card.remove();
+  });
+}
 </script>

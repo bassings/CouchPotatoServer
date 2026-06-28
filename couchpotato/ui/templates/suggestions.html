@@ -169,7 +169,9 @@ function cpSuggestionLoader(variant = 'personal') {
       if (this._timer || this.loaded) return;
       this._timer = setInterval(() => {
         this.elapsed += 1;
-        if (!this.loaded && this.elapsed >= this._stallAt) this.stalled = true;
+        // !this.stalled so the reactive assignment runs once at the threshold,
+        // not every tick for the rest of the stall (avoids needless Alpine churn).
+        if (!this.loaded && !this.stalled && this.elapsed >= this._stallAt) this.stalled = true;
       }, 1000);
     },
     _stop() { clearInterval(this._timer); this._timer = null; },
