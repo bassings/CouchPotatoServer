@@ -67,7 +67,7 @@
      mirroring the categories/profiles lazy-load pattern; open() is idempotent. #}
   <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal"
        x-data="cpSuggestionLoader()"
-       x-init="$watch('activeTab', v => { if (v === 'personal') open(); })">
+       x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
 
     {# For You builds personalized picks from your library — not chart providers. #}
     {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='This is taking longer than usual.', error_title='Couldn’t load your suggestions' %}

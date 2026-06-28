@@ -114,4 +114,57 @@ test.describe('Suggestions loading redesign', () => {
     await expect(page.getByTestId('charts-content')).toBeVisible();
     expect(calls).toBeGreaterThanOrEqual(2);
   });
+
+  test('For You error path shows tab-specific copy and retries', async ({ page }) => {
+    let calls = 0;
+    await page.route('**/partial/charts', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML }),
+    );
+    await page.route('**/partial/suggestions', async (route) => {
+      calls += 1;
+      if (calls === 1) {
+        await route.fulfill({ status: 500, contentType: 'text/html', body: 'boom' });
+        return;
+      }
+      await route.fulfill({ status: 200, contentType: 'text/html', body: SUGGESTIONS_HTML });
+    });
+
+    await page.goto('/suggestions');
+    await page.getByRole('tab', { name: /for you/i }).click();
+
+    const personalGrid = page.locator('#suggestions-grid');
+    // For You uses its own error title + the cp:retry trigger (vs Charts' load).
+    await expect(personalGrid.getByText(/Couldn.t load your suggestions/)).toBeVisible();
+    await expect(personalGrid.locator('[role="alert"]')).toBeVisible();
+
+    await personalGrid.getByRole('button', { name: /try again/i }).click();
+    await expect(page.getByTestId('suggestions-content')).toBeVisible();
+    expect(calls).toBeGreaterThanOrEqual(2);
+  });
+
+  test('stall recovery appears after 45s and Keep waiting dismisses it', async ({ page }) => {
+    await page.clock.install();
+    // Charts never resolves, so the loader runs on into the stall state.
+    await page.route('**/partial/charts', () => {
+      /* intentionally left pending */
+    });
+
+    await page.goto('/suggestions');
+    const status = page.locator('#charts-grid [role="status"]');
+    await expect(status).toBeVisible();
+    await expect(status).toContainText('Connecting to sources');
+
+    // Advance past the 45s stall threshold (controller's _stallAt). runFor (not
+    // fastForward) fires the 1s setInterval on every tick so elapsed reaches 46.
+    await page.clock.runFor(46000);
+    await expect(status).toContainText('Still working');
+    const keepWaiting = status.getByRole('button', { name: /keep waiting/i });
+    await expect(keepWaiting).toBeVisible();
+    await expect(status.getByRole('link', { name: /skip to library/i })).toBeVisible();
+
+    // Keep waiting clears the stall and returns to the staged status copy.
+    await keepWaiting.click();
+    await expect(status).not.toContainText('Still working');
+    await expect(keepWaiting).toBeHidden();
+  });
 });
