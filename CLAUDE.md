@@ -220,7 +220,11 @@ Run through core flows before any release: add movie, view detail, filter/search
 codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer
 ```
 
-- Codex handles: file edits, test validation, commit, push, Docker rebuild
+- Codex handles: file edits, test validation, commit, and Docker rebuild
+- **Local-review gate still applies (see Path to Production):** Codex must NOT
+  push autonomously for code changes. It stops after committing locally; the
+  orchestrator runs the clean-agent local review and only pushes once it passes.
+  (Docs-only changes may skip the local review and push directly.)
 - **Hallucination risk:** Codex may invent package versions — always verify with `pip index versions <pkg>`
 - **Docker timing:** Docker Desktop takes 1-2 min to fully start — start it early
 
