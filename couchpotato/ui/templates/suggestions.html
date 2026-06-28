@@ -46,7 +46,10 @@
   <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts"
        x-data="cpSuggestionLoader()" x-init="start()">
 
+    {# Charts pulls live external chart providers — name them in the stall copy. #}
+    {% with stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.' %}
     {% include 'partials/_loading_panel.html' with context %}
+    {% endwith %}
 
     <!-- htmx target: swapped in when the partial returns.
          cp:retry is an explicit trigger the error panel's "Try again" fires. -->
@@ -66,7 +69,10 @@
        x-data="cpSuggestionLoader()"
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); })">
 
+    {# For You builds personalized picks from your library — not chart providers. #}
+    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='This is taking longer than usual.' %}
     {% include 'partials/_loading_panel.html' with context %}
+    {% endwith %}
 
     <!-- Deferred fetch: open() fires the explicit cp:load trigger the first time
          this tab is activated (see the panel's $watch above), so the slow call
@@ -121,6 +127,10 @@ function cpSuggestionLoader() {
       }, 1000);
     },
     _stop() { clearInterval(this._timer); this._timer = null; },
+    // Alpine 3 calls destroy() when the element is removed (e.g. an hx-boost
+    // page swap mid-load); without it the interval keeps ticking on a detached
+    // scope for the rest of the session.
+    destroy() { this._stop(); },
     done()  { this.loaded = true;  this.stalled = false; this._stop(); },
     fail()  { this.failed = true;  this.stalled = false; this._stop(); },
     keepWaiting() { this.stalled = false; this._stallAt = this.elapsed + 30; },

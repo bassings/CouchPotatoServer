@@ -103,6 +103,8 @@ test.describe('Suggestions loading redesign', () => {
 
     const chartsGrid = page.locator('#charts-grid');
     await expect(chartsGrid.getByText(/Couldn.t load suggestions/)).toBeVisible();
+    // The error panel is an assertive live region so AT users hear the failure.
+    await expect(chartsGrid.locator('[role="alert"]')).toBeVisible();
 
     await chartsGrid.getByRole('button', { name: /try again/i }).click();
 
