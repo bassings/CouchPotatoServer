@@ -48,9 +48,25 @@ Emergency hook bypass: `git push --no-verify` (use sparingly).
 ### Path to Production (full flow)
 
 ```
-make setup → code → make verify → open PR → Claude review + remediate → approve → merge → release → deploy
+make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →
+  cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
 ```
 
+- **Local agent review gate (MANDATORY, before every push to the cloud review):**
+  Run a clean-agent review on the full branch diff (vs `master`) and make it pass
+  *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
+  parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
+  AGENTS.md rubric; feed them the settled facts (htmx 2.0.4 dual-dispatches
+  camelCase+kebab so `@htmx:*` kebab handlers fire; `callApiHandler` returns
+  `{'success': False}` instead of raising; `CPLog` has no `.exception()`;
+  CP.ui-before-Alpine ordering is intentional) so they don't re-raise disproved
+  findings. Fix everything real they surface, re-verify locally, and re-review
+  until clean. **If the cloud review later raises anything, fix it and run the
+  local review again until it passes — then push.** Rationale: cloud
+  `claude-review` is stateless per push, so each push re-discovers the same false
+  alarms and dribbles out genuine findings one at a time; the local loop
+  front-loads that discovery and collapses many serial ~15-min cloud rounds into
+  one. (See Openclaw memory `local-review-before-cloud`.)
 - **PR gate:** every PR is auto-reviewed by Claude
   (`.github/workflows/claude-review.yml`, authenticated via the
   `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
