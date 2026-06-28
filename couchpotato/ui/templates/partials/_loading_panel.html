@@ -4,6 +4,8 @@
    Expects an x-data="cpSuggestionLoader()" scope on an ancestor element
    (provides: loaded, failed, stalled, elapsed, stage, pct, stages,
    stageDone(i), stageCurrent(i), start(), keepWaiting()).
+   Jinja2 context: new_base (used by the Skip-to-Library link) and the optional
+   progress_label / stall_sub / stall_hint / error_title copy overrides.
    Honours prefers-reduced-motion via theme.css (.cp-spin/.animate-spin freeze).
    =========================================================================== #}
 

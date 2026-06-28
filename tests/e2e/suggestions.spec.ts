@@ -242,6 +242,42 @@ test.describe('Suggestions loading redesign', () => {
     expect(suggestionsCalls).toBe(1);
   });
 
+  test('tablist arrow/Home/End keys switch tabs and move focus (APG roving tabindex)', async ({ page }) => {
+    await mockPartials(page);
+    await page.goto('/suggestions');
+
+    const chartsTab = page.getByRole('tab', { name: /charts/i });
+    const forYouTab = page.getByRole('tab', { name: /for you/i });
+
+    // Charts is the default selected tab and the only one in the tab sequence.
+    await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
+    await expect(chartsTab).toHaveAttribute('tabindex', '0');
+    await expect(forYouTab).toHaveAttribute('tabindex', '-1');
+    await chartsTab.focus();
+
+    // ArrowRight → For You is selected, focused, and roving tabindex moves to it;
+    // selecting it also fires the deferred For You load.
+    await chartsTab.press('ArrowRight');
+    await expect(forYouTab).toBeFocused();
+    await expect(forYouTab).toHaveAttribute('aria-selected', 'true');
+    await expect(forYouTab).toHaveAttribute('tabindex', '0');
+    await expect(chartsTab).toHaveAttribute('tabindex', '-1');
+    await expect(page.getByTestId('suggestions-content')).toBeVisible();
+
+    // ArrowLeft → back to Charts.
+    await forYouTab.press('ArrowLeft');
+    await expect(chartsTab).toBeFocused();
+    await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
+
+    // End → last tab, Home → first tab.
+    await chartsTab.press('End');
+    await expect(forYouTab).toBeFocused();
+    await expect(forYouTab).toHaveAttribute('aria-selected', 'true');
+    await forYouTab.press('Home');
+    await expect(chartsTab).toBeFocused();
+    await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
+  });
+
   test('Charts completes in the background while on For You, then renders on return', async ({ page }) => {
     await mockPartials(page, { chartsDelayMs: 1000 });
     await page.goto('/suggestions');
