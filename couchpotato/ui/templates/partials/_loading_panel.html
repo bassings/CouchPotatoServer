@@ -63,7 +63,7 @@
   <!-- stall recovery -->
   <div x-show="stalled" x-cloak class="mt-5 flex items-center gap-2.5 flex-wrap">
     <span class="text-xs text-cp-warning">{{ stall_hint|default('This is taking longer than usual.') }}</span>
-    <button @click="keepWaiting()"
+    <button type="button" @click="keepWaiting()"
             class="px-3 py-1.5 rounded-lg text-[11px] font-semibold bg-cp-accent text-black">Keep waiting</button>
     <a href="{{ new_base }}library"
        class="px-3 py-1.5 rounded-lg text-[11px] font-medium bg-white/[0.06] text-cp-text hover:bg-white/[0.10] transition-colors">Skip to Library</a>
@@ -76,5 +76,5 @@
     <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z"></path>
   </svg>
   <p class="text-sm text-cp-text">{{ error_title|default('Couldn’t load suggestions') }}</p>
-  <p class="text-xs text-cp-muted mt-1">A source didn’t respond. <button @click="retry()" class="text-cp-accent underline-offset-2 hover:underline">Try again</button></p>
+  <p class="text-xs text-cp-muted mt-1">A source didn’t respond. <button type="button" @click="retry()" class="text-cp-accent underline-offset-2 hover:underline">Try again</button></p>
 </div>

@@ -151,7 +151,8 @@ function cpSuggestionLoader() {
       this.elapsed = 0;
       this.stalled = false;
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
-      this.start();
+      this.start(); // timer starts here; the target's @htmx:before-request also
+                    // calls start() but it's a no-op (timer already set).
       const target = this.$root.querySelector('[hx-get]');
       if (target && window.htmx) window.htmx.trigger(target, 'cp:retry');
     },

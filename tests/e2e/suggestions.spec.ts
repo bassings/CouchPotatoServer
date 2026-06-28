@@ -168,5 +168,7 @@ test.describe('Suggestions loading redesign', () => {
     await keepWaiting.click();
     await expect(status).not.toContainText('Still working');
     await expect(keepWaiting).toBeHidden();
+    // Closed loop: panel returns to normal staged copy (elapsed=46 → stage at=42).
+    await expect(status).toContainText('Ranking your matches');
   });
 });
