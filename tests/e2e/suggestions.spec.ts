@@ -20,35 +20,23 @@ const CHARTS_HTML =
 const SUGGESTIONS_HTML =
   '<div data-testid="suggestions-content" class="grid"><div class="poster-card">For You Movie</div></div>';
 
+// Delays only — the error tests need stateful 500-then-200 handlers (for retry)
+// that a fixed status option can't express, so this helper just covers the
+// happy path (optionally delayed) and the error tests roll their own page.route.
 interface MockOpts {
   chartsDelayMs?: number;
-  chartsStatus?: number;
   suggestionsDelayMs?: number;
-  suggestionsStatus?: number;
 }
 
-/** Mock both partial endpoints. Charts/suggestions HTML is deterministic. */
+/** Mock both partial endpoints with deterministic 200 HTML (optionally delayed). */
 async function mockPartials(page: Page, opts: MockOpts = {}) {
-  const {
-    chartsDelayMs = 0,
-    chartsStatus = 200,
-    suggestionsDelayMs = 0,
-    suggestionsStatus = 200,
-  } = opts;
+  const { chartsDelayMs = 0, suggestionsDelayMs = 0 } = opts;
   await page.route('**/partial/charts', async (route) => {
     if (chartsDelayMs) await new Promise((r) => setTimeout(r, chartsDelayMs));
-    if (chartsStatus !== 200) {
-      await route.fulfill({ status: chartsStatus, contentType: 'text/html', body: 'error' });
-      return;
-    }
     await route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML });
   });
   await page.route('**/partial/suggestions', async (route) => {
     if (suggestionsDelayMs) await new Promise((r) => setTimeout(r, suggestionsDelayMs));
-    if (suggestionsStatus !== 200) {
-      await route.fulfill({ status: suggestionsStatus, contentType: 'text/html', body: 'error' });
-      return;
-    }
     await route.fulfill({ status: 200, contentType: 'text/html', body: SUGGESTIONS_HTML });
   });
 }

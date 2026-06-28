@@ -64,7 +64,8 @@
          @htmx:after-swap="done()"
          @htmx:response-error="fail()"
          @htmx:send-error="fail()"
-         @htmx:xhr:abort="fail()"></div>
+         @htmx:xhr:abort="fail()"
+         @htmx:timeout="fail()"></div>
   </div>
 
   {# ---- For You: heavy call — DEFERRED until the tab is opened ------------ #}
@@ -94,7 +95,8 @@
          @htmx:after-swap="done()"
          @htmx:response-error="fail()"
          @htmx:send-error="fail()"
-         @htmx:xhr:abort="fail()"></div>
+         @htmx:xhr:abort="fail()"
+         @htmx:timeout="fail()"></div>
   </div>
 </div>
 
