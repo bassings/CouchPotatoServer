@@ -39,8 +39,16 @@ describe('SUGGESTION_STAGES / SUGGESTION_STALL_AFTER', () => {
     }
   });
 
-  it('stalls after 45 seconds by default', () => {
-    expect(SUGGESTION_STALL_AFTER).toBe(45);
+  it('stalls after 60 seconds by default', () => {
+    expect(SUGGESTION_STALL_AFTER).toBe(60);
+  });
+
+  // Regression guard for the stall/stage contradiction: if the stall fired
+  // before the final stage threshold, the "Still working" heading would clash
+  // with a later checklist row lighting up. Keep stall >= the last stage `at`.
+  it('does not stall before the staged narrative finishes', () => {
+    const lastStageAt = SUGGESTION_STAGES[SUGGESTION_STAGES.length - 1].at;
+    expect(SUGGESTION_STALL_AFTER).toBeGreaterThanOrEqual(lastStageAt);
   });
 });
 

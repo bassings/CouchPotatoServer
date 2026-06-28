@@ -150,7 +150,7 @@ test.describe('Suggestions loading redesign', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
-  test('stall recovery appears after 45s and Keep waiting dismisses it', async ({ page }) => {
+  test('stall recovery appears after 60s and Keep waiting dismisses it', async ({ page }) => {
     await page.clock.install();
     // Charts never resolves, so the loader runs on into the stall state.
     await page.route('**/partial/charts', () => {
@@ -162,9 +162,11 @@ test.describe('Suggestions loading redesign', () => {
     await expect(status).toBeVisible();
     await expect(status).toContainText('Connecting to sources');
 
-    // Advance past the 45s stall threshold (controller's _stallAt). runFor (not
-    // fastForward) fires the 1s setInterval on every tick so elapsed reaches 46.
-    await page.clock.runFor(46000);
+    // Advance past the 60s stall threshold (controller's _stallAt). runFor (not
+    // fastForward) fires the 1s setInterval on every tick so elapsed reaches 61.
+    // 60 sits at/after the last stage (at=54) so the staged narrative finishes
+    // before "Still working" appears — no heading/checklist contradiction.
+    await page.clock.runFor(61000);
     await expect(status).toContainText('Still working');
     // Server-provided stall sub-copy (Charts tab) renders in the stalled state.
     await expect(status).toContainText('Chart sources are taking longer than usual');
@@ -176,10 +178,10 @@ test.describe('Suggestions loading redesign', () => {
     await keepWaiting.click();
     await expect(status).not.toContainText('Still working');
     await expect(keepWaiting).toBeHidden();
-    // Closed loop: panel returns to normal staged copy (elapsed=46 → stage at=42).
-    await expect(status).toContainText('Ranking your matches');
+    // Closed loop: panel returns to normal staged copy (elapsed=61 → stage at=54).
+    await expect(status).toContainText('Almost ready');
 
-    // keepWaiting pushed _stallAt to elapsed+30 (=76); advancing past it re-stalls.
+    // keepWaiting pushed _stallAt to elapsed+30 (=91); advancing past it re-stalls.
     await page.clock.runFor(30000);
     await expect(status).toContainText('Still working');
     await expect(status.getByRole('button', { name: /keep waiting/i })).toBeVisible();
@@ -201,7 +203,7 @@ test.describe('Suggestions loading redesign', () => {
     const status = page.locator('#suggestions-grid [role="status"]');
     await expect(status).toBeVisible();
 
-    await page.clock.runFor(46000);
+    await page.clock.runFor(61000);
     await expect(status).toContainText('Still working');
     // For You gets its own (library-specific) stall sub-copy, not the Charts one.
     await expect(status).toContainText('Personalized picks are taking longer than usual');

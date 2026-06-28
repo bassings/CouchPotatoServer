@@ -17,7 +17,14 @@ export const SUGGESTION_STAGES = [
 ];
 
 // Default seconds before the loader switches to the "still working" state.
-export const SUGGESTION_STALL_AFTER = 45;
+// INVARIANT: this must be >= the last stage's `at` (currently 54) so the whole
+// staged narrative plays out before "Still working" takes over the heading.
+// If it fired earlier, the stalled heading ("Still working") and the checklist
+// (which keeps advancing with elapsed) would contradict each other once a later
+// stage lit up. 60 also matches the "Usually 30–60s" reassurance copy: we only
+// offer the Skip-to-Library recovery once you're at the edge of the usual window.
+// (Guarded by a unit test in suggestion-loader.spec.ts.)
+export const SUGGESTION_STALL_AFTER = 60;
 
 // The active stage for a given elapsed time: the last stage whose `at` threshold
 // has been reached. Always returns a stage (defaults to the first).
