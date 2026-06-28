@@ -10,8 +10,10 @@
 
    Fix (three moves, no backend change required):
      1. SPLIT THE LOAD. Charts (fast, default tab) keeps hx-trigger="load" and
-        fills immediately. "For You" switches to hx-trigger="revealed" so it only
-        fetches when you open that tab — one slow source never blocks the page.
+        fills immediately. "For You" is deferred — its fetch fires (once) only
+        when you open that tab, via $watch + an explicit cp:load trigger (see the
+        For You panel below for why revealed/intersect can't be used here) — so
+        one slow source never blocks the page.
      2. COMMUNICATE. The static skeleton is replaced by an Alpine loader that
         cycles staged status messages, shows a moving progress bar, and counts
         elapsed seconds — so it reads as "working", never "hung".
@@ -72,7 +74,7 @@
        x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
 
     {# For You builds personalized picks from your library — not chart providers. #}
-    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='This is taking longer than usual.', error_title='Couldn’t load your suggestions' %}
+    {% with stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title='Couldn’t load your suggestions' %}
     {% include 'partials/_loading_panel.html' with context %}
     {% endwith %}
 

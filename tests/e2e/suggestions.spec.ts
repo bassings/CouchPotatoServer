@@ -197,6 +197,38 @@ test.describe('Suggestions loading redesign', () => {
     await expect(status).toContainText('Still working');
     // For You gets its own (library-specific) stall sub-copy, not the Charts one.
     await expect(status).toContainText('Personalized picks are taking longer than usual');
-    await expect(status.getByRole('button', { name: /keep waiting/i })).toBeVisible();
+    const keepWaiting = status.getByRole('button', { name: /keep waiting/i });
+    await expect(keepWaiting).toBeVisible();
+
+    // keepWaiting on the For You instance clears the stall, and advancing past
+    // its own _stallAt (=elapsed+30) re-stalls — proving per-instance state.
+    await keepWaiting.click();
+    await expect(status).not.toContainText('Still working');
+    await page.clock.runFor(30000);
+    await expect(status).toContainText('Still working');
+  });
+
+  test('reopening the For You tab does not refetch (open() is idempotent)', async ({ page }) => {
+    let suggestionsCalls = 0;
+    page.on('request', (req) => {
+      if (req.url().includes('partial/suggestions')) suggestionsCalls += 1;
+    });
+    await mockPartials(page);
+    await page.goto('/suggestions');
+    await expect(page.getByTestId('charts-content')).toBeVisible();
+
+    const forYou = page.getByRole('tab', { name: /for you/i });
+    const charts = page.getByRole('tab', { name: /charts/i });
+
+    await forYou.click();
+    await expect(page.getByTestId('suggestions-content')).toBeVisible();
+
+    // Switch away and back twice — the _opened latch must prevent a refetch.
+    await charts.click();
+    await forYou.click();
+    await charts.click();
+    await forYou.click();
+    await expect(page.getByTestId('suggestions-content')).toBeVisible();
+    expect(suggestionsCalls).toBe(1);
   });
 });
