@@ -24,7 +24,9 @@
 1. Write a clear spec in `specs/` (problem, fix, acceptance criteria, files)
 2. Spawn Codex: `codex exec --full-auto "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest. When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
 3. Report start to user, then stop monitoring
-4. Wait for completion, check result with one poll, review and commit
+4. Wait for completion, check result with one poll, review and commit; for code
+   changes, run the local-agent review and push only once it passes (see Path to
+   Production)
 
 **DO NOT** poll logs repeatedly, read output incrementally, or narrate each Codex step.
 
