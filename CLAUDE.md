@@ -56,17 +56,23 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   Run a clean-agent review on the full branch diff (vs `master`) and make it pass
   *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
   parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
-  AGENTS.md rubric; feed them the settled facts (htmx 2.0.4 dual-dispatches
-  camelCase+kebab so `@htmx:*` kebab handlers fire; `callApiHandler` returns
-  `{'success': False}` instead of raising; `CPLog` has no `.exception()`;
-  CP.ui-before-Alpine ordering is intentional) so they don't re-raise disproved
-  findings. Fix everything real they surface, re-verify locally, and re-review
-  until clean. **If the cloud review later raises anything, fix it and run the
-  local review again until it passes — then push.** Rationale: cloud
-  `claude-review` is stateless per push, so each push re-discovers the same false
-  alarms and dribbles out genuine findings one at a time; the local loop
-  front-loads that discovery and collapses many serial ~15-min cloud rounds into
-  one. (See Openclaw memory `local-review-before-cloud`.)
+  AGENTS.md rubric. Give them the **currently-verified facts** so they don't
+  re-litigate things already confirmed *for the code as it stands* — but
+  **re-verify each fact against the tree before relying on it**; these are
+  point-in-time, not eternal, and a dependency bump or refactor can invalidate
+  any of them. As of 2026-06 (verify before reuse): htmx 2.0.4 dual-dispatches
+  camelCase+kebab so `@htmx:*` kebab handlers fire (check the bundled
+  `htmx-*.min.js` if the version changes); `callApiHandler` returns
+  `{'success': False}` instead of raising (check `couchpotato/api.py`); `CPLog`
+  has no `.exception()` (check `couchpotato/core/logger.py`); CP.ui loads before
+  Alpine in `base.html`. A fact that no longer holds is a real finding, not a
+  false alarm — never suppress on the say-so of this list alone. Fix everything
+  real they surface, re-verify locally, and re-review until clean. **If the cloud
+  review later raises anything, fix it and run the local review again until it
+  passes — then push.** Rationale: cloud `claude-review` is stateless per push,
+  so each push re-discovers the same already-cleared points and dribbles out
+  genuine findings one at a time; the local loop front-loads that discovery and
+  collapses many serial ~15-min cloud rounds into one.
 - **PR gate:** every PR is auto-reviewed by Claude
   (`.github/workflows/claude-review.yml`, authenticated via the
   `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
