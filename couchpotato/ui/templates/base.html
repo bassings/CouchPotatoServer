@@ -18,14 +18,18 @@
 
 <script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
 <script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.4.min.js"></script>
-<script defer src="{{ web_base }}static/scripts/vendor/new-ui/alpine-3.x.min.js"></script>
-<!-- Extracted, unit-tested UI logic. Module scripts are deferred, so CP.ui is
-     populated before Alpine initialises on DOMContentLoaded. -->
+<!-- Extracted, unit-tested UI logic. This module script MUST precede the Alpine
+     script: deferred scripts (classic defer + modules) run in document order,
+     each finishing before the next, so loading it first guarantees CP.ui is
+     populated before Alpine initialises and evaluates any x-data. Components that
+     read CP.ui at construction/render time (e.g. cpSuggestionLoader) depend on
+     this ordering — not just CP.ui usage inside later event handlers. -->
 <script type="module">
   import * as ui from '{{ web_base }}static/scripts/ui/index.js';
   window.CP = window.CP || {};
   window.CP.ui = ui;
 </script>
+<script defer src="{{ web_base }}static/scripts/vendor/new-ui/alpine-3.x.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <script>

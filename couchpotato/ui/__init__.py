@@ -181,13 +181,24 @@ def create_router(require_auth) -> APIRouter:
     async def partial_suggestions(request: Request, user=Depends(require_auth)):
         """Return movie suggestions as HTML partial."""
         from couchpotato.api import callApiHandler
-        movies = []
         try:
             result = callApiHandler('suggestion.view')
-            if isinstance(result, dict):
-                movies = result.get('movies', [])
+            # callApiHandler swallows handler exceptions and returns
+            # {'success': False, ...} rather than raising, so an error-shaped
+            # result — not just a thrown exception — is the real failure signal.
+            # Surface it as a non-2xx so the loader shows its error / Try-again
+            # state (htmx:response-error). A genuinely empty (success) result
+            # still renders normally with 200.
+            if not isinstance(result, dict) or result.get('success') is False:
+                # WARNING, not ERROR: a provider returning success=False is an
+                # expected/recoverable third-party degradation that can recur per
+                # page-load; logging it at ERROR would drown genuine app errors.
+                log.warning('Suggestions unavailable (provider failure): %r', result)
+                return HTMLResponse('Failed to load suggestions', status_code=500)
+            movies = result.get('movies', [])
         except Exception:
-            log.error('Failed to fetch suggestions')
+            log.error('Failed to fetch suggestions', exc_info=True)
+            return HTMLResponse('Failed to load suggestions', status_code=500)
         tmpl = _jinja.get_template('partials/suggestions.html')
         return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
 
@@ -195,13 +206,24 @@ def create_router(require_auth) -> APIRouter:
     async def partial_charts(request: Request, user=Depends(require_auth)):
         """Return chart lists (IMDB, Blu-ray, etc.) as HTML partial."""
         from couchpotato.api import callApiHandler
-        charts = []
         try:
             result = callApiHandler('charts.view')
-            if isinstance(result, dict):
-                charts = result.get('charts', [])
+            # callApiHandler swallows handler exceptions and returns
+            # {'success': False, ...} rather than raising, so an error-shaped
+            # result — not just a thrown exception — is the real failure signal.
+            # Surface it as a non-2xx so the loader shows its error / Try-again
+            # state (htmx:response-error). A genuinely empty (success) result
+            # still renders normally with 200.
+            if not isinstance(result, dict) or result.get('success') is False:
+                # WARNING, not ERROR: a chart source returning success=False is an
+                # expected/recoverable third-party degradation that can recur per
+                # page-load; logging it at ERROR would drown genuine app errors.
+                log.warning('Charts unavailable (provider failure): %r', result)
+                return HTMLResponse('Failed to load charts', status_code=500)
+            charts = result.get('charts', [])
         except Exception:
-            log.error('Failed to fetch charts')
+            log.error('Failed to fetch charts', exc_info=True)
+            return HTMLResponse('Failed to load charts', status_code=500)
         tmpl = _jinja.get_template('partials/charts.html')
         return HTMLResponse(tmpl.render(charts=charts, **_ctx()))
 

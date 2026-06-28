@@ -1,81 +1,232 @@
+{# ===========================================================================
+   suggestions.html  —  drop-in replacement
+   CouchPotato · couchpotato/ui/templates/suggestions.html
+
+   WHAT CHANGED vs the original
+   ---------------------------------------------------------------------------
+   Problem: cold load blocked ~60s on a SILENT skeleton. The personal ("For You")
+   call builds picks from your library AND pulls live chart sources, so it is the
+   slow one — yet it fired on page load at the same time as Charts.
+
+   Fix (three moves, no backend change required):
+     1. SPLIT THE LOAD. Charts (fast, default tab) keeps hx-trigger="load" and
+        fills immediately. "For You" is deferred — its fetch fires (once) only
+        when you open that tab, via $watch + an explicit cp:load trigger (see the
+        For You panel below for why revealed/intersect can't be used here) — so
+        one slow source never blocks the page.
+     2. COMMUNICATE. The static skeleton is replaced by an Alpine loader that
+        cycles staged status messages, shows a moving progress bar, and counts
+        elapsed seconds — so it reads as "working", never "hung".
+     3. RECOVER. At 60s it switches to a "still working" state with
+        Keep waiting / Skip to Library actions.
+   Result is cached server-side, so the wait is one-time — and we say so.
+   =========================================================================== #}
 {% extends "base.html" %}
 {% block title %}Suggestions — CouchPotato{% endblock %}
 {% block content %}
-<div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'charts' }">
+{# moveTab() implements the APG roving-tabindex arrow keys WITH wrap-around: the
+   modulo cycles past either end so a keyboard user always gets movement (and the
+   roving focus) instead of a dead no-op at the edge. _refFor maps the tab id to
+   its x-ref so focus follows selection. #}
+<div class="p-4 lg:p-8 fade-in"
+     x-data="{
+       activeTab: 'charts',
+       tabs: ['charts', 'personal'],
+       _refFor(t) { return t === 'charts' ? this.$refs.tabCharts : this.$refs.tabPersonal; },
+       moveTab(delta) {
+         const i = this.tabs.indexOf(this.activeTab);
+         this.activeTab = this.tabs[(i + delta + this.tabs.length) % this.tabs.length];
+         this._refFor(this.activeTab).focus();
+       },
+       focusTab(t) { this.activeTab = t; this._refFor(t).focus(); },
+     }">
+
+  <!-- Header + tabs -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1">Discover new movies from your library suggestions and chart sources.</p>
     </div>
-    <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories">
-      <button @click="activeTab = 'charts'" 
-              role="tab"
-              :aria-selected="activeTab === 'charts'"
+    {# APG tab pattern: roving tabindex + Arrow/Home/End move focus and selection.
+       Arrows wrap at both ends (moveTab); Home/End jump to the first/last tab. #}
+    <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories"
+         @keydown.arrow-right.prevent="moveTab(1)"
+         @keydown.arrow-left.prevent="moveTab(-1)"
+         @keydown.home.prevent="focusTab(tabs[0])"
+         @keydown.end.prevent="focusTab(tabs[tabs.length - 1])">
+      <button @click="activeTab = 'charts'" role="tab" id="tab-charts" x-ref="tabCharts"
+              :aria-selected="activeTab === 'charts'" :tabindex="activeTab === 'charts' ? 0 : -1"
               aria-controls="charts-grid"
-              id="tab-charts"
-              :class="activeTab === 'charts' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+              :class="activeTab === 'charts' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">Charts</button>
-      <button @click="activeTab = 'personal'" 
-              role="tab"
-              :aria-selected="activeTab === 'personal'"
+      <button @click="activeTab = 'personal'" role="tab" id="tab-personal" x-ref="tabPersonal"
+              :aria-selected="activeTab === 'personal'" :tabindex="activeTab === 'personal' ? 0 : -1"
               aria-controls="suggestions-grid"
-              id="tab-personal"
-              :class="activeTab === 'personal' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+              :class="activeTab === 'personal' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">For You</button>
     </div>
   </div>
 
-  <!-- Personal suggestions -->
-  <div x-show="activeTab === 'personal'" 
-       id="suggestions-grid"
-       role="tabpanel"
-       aria-labelledby="tab-personal"
-       hx-get="{{ new_base }}partial/suggestions"
-       hx-trigger="load"
-       hx-indicator="#suggestions-loading"
-       hx-swap="innerHTML">
-    <!-- Loading skeleton -->
-    <div id="suggestions-loading" class="htmx-indicator">
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-        {% for i in range(12) %}
-        <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
-          <div class="aspect-[2/3] bg-cp-surface"></div>
-          <div class="p-2.5">
-            <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
-            <div class="h-2 bg-cp-surface rounded w-1/3"></div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
+  {# ---- Charts: fast, default tab — loads immediately --------------------- #}
+  {# tabindex=0 makes the panel focusable when tabbing out of the active tab; no
+     focus:outline-none here so base.html's :focus-visible ring stays visible (WCAG 2.4.7). #}
+  <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts" tabindex="0"
+       x-data="cpSuggestionLoader('charts')">
+
+    {# Charts pulls live external chart providers — name them in the stall/error copy. #}
+    {% with progress_label='Loading charts', stall_sub='Chart sources are taking longer than usual', stall_hint='Chart sources are slow today.', error_title="Couldn’t load charts" %}
+    {% include 'partials/_loading_panel.html' with context %}
+    {% endwith %}
+
+    <!-- htmx target: swapped in when the partial returns. start() is on
+         before-request (not x-init) so elapsed counts from request dispatch,
+         symmetric with the For You tab. cp:retry is fired by "Try again". -->
+    <div hx-get="{{ new_base }}partial/charts"
+         x-ref="fetchTarget"
+         hx-trigger="load, cp:retry"
+         hx-swap="innerHTML"
+         x-show="loaded"
+         @htmx:before-request="start()"
+         @htmx:after-swap="done()"
+         @htmx:response-error="fail()"
+         @htmx:send-error="fail()"
+         @htmx:xhr:abort="fail()"
+         @htmx:timeout="fail()"></div>
   </div>
 
-  <!-- Charts (IMDB, Blu-ray, etc.) -->
-  <div x-show="activeTab === 'charts'" 
-       id="charts-grid"
-       role="tabpanel"
-       aria-labelledby="tab-charts"
-       hx-get="{{ new_base }}partial/charts"
-       hx-trigger="load"
-       hx-indicator="#charts-loading"
-       hx-swap="innerHTML">
-    <!-- Loading skeleton -->
-    <div id="charts-loading" class="htmx-indicator">
-      <div class="mb-8">
-        <div class="h-4 bg-cp-surface rounded w-32 mb-3 animate-pulse"></div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          {% for i in range(12) %}
-          <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
-            <div class="aspect-[2/3] bg-cp-surface"></div>
-            <div class="p-2.5">
-              <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
-              <div class="h-2 bg-cp-surface rounded w-1/3"></div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
+  {# ---- For You: heavy call — DEFERRED until the tab is opened ------------ #}
+  {# $watch scope-walks to the parent's activeTab (this panel has its own x-data),
+     mirroring the categories/profiles lazy-load pattern; open() is idempotent. #}
+  <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal" tabindex="0"
+       x-data="cpSuggestionLoader('personal')"
+       x-init="$watch('activeTab', v => { if (v === 'personal') open(); }); if (activeTab === 'personal') open();">
+
+    {# For You builds personalized picks from your library — not chart providers. #}
+    {% with progress_label='Loading your suggestions', stall_sub='Personalized picks are taking longer than usual', stall_hint='Personalized picks are slow today.', error_title="Couldn’t load your suggestions" %}
+    {% include 'partials/_loading_panel.html' with context %}
+    {% endwith %}
+
+    <!-- Deferred fetch: open() fires the explicit cp:load trigger the first time
+         this tab is activated (see the panel's $watch above), so the slow call
+         never competes with (or blocks) the Charts load. cp:load is used instead
+         of intersect/revealed because this target carries x-show="loaded" and is
+         display:none until it loads — a visibility-based trigger could never fire
+         on it (chicken-and-egg). htmx.trigger issues the request regardless of
+         visibility. cp:retry re-runs it from the error state. -->
+    <div hx-get="{{ new_base }}partial/suggestions"
+         x-ref="fetchTarget"
+         hx-trigger="cp:load, cp:retry"
+         hx-swap="innerHTML"
+         x-show="loaded"
+         @htmx:before-request="start()"
+         @htmx:after-swap="done()"
+         @htmx:response-error="fail()"
+         @htmx:send-error="fail()"
+         @htmx:xhr:abort="fail()"
+         @htmx:timeout="fail()"></div>
   </div>
 </div>
+
+<script>
+/* Stateful communicative-loading controller (Alpine), used by both tabs. The
+   pure view-math (stage selection, progress %, checklist state) is delegated to
+   the unit/mutation-tested CP.ui.* module (static/scripts/ui/suggestion-loader.js);
+   only the timer, htmx retrigger and the loaded/failed/stalled flags live here.
+   No dependencies beyond Alpine + htmx already on the page. */
+function cpSuggestionLoader(variant = 'personal') {
+  return {
+    elapsed: 0,
+    loaded: false,
+    failed: false,
+    stalled: false,
+    _timer: null,
+    _opened: false,
+    _stallAt: CP.ui.SUGGESTION_STALL_AFTER,   // seconds before "still working"
+    // Per-tab staged copy: Charts shows chart-provider stages, For You shows the
+    // library-personalisation stages (see suggestion-loader.js for why).
+    stages: variant === 'charts' ? CP.ui.SUGGESTION_STAGES_CHARTS : CP.ui.SUGGESTION_STAGES,
+
+    // Fire the deferred fetch the first time this tab is opened (see the For You
+    // panel's $watch). Idempotent: re-activating the tab never refetches. The
+    // target's @htmx:before-request starts the timer, so we only trigger here.
+    // Only the For You instance wires this up; on Charts (hx-trigger="load")
+    // open()/_opened are inert.
+    open() {
+      if (this._opened || this.loaded) return;
+      // $refs.fetchTarget resolves to THIS component's hx-get div (Alpine refs are
+      // component-scoped), so it can't be fooled by some other [hx-get] the
+      // included partial might gain later.
+      const target = this.$refs.fetchTarget;
+      // Latch _opened only once the request actually fires, so a transient
+      // missing htmx can't wedge the tab in a permanent loading state.
+      if (target && window.htmx) {
+        window.htmx.trigger(target, 'cp:load');
+        this._opened = true;
+      }
+    },
+
+    start() {
+      if (this._timer || this.loaded) return;
+      this._timer = setInterval(() => {
+        this.elapsed += 1;
+        // !this.stalled so the reactive assignment runs once at the threshold,
+        // not every tick for the rest of the stall (avoids needless Alpine churn).
+        if (!this.loaded && !this.stalled && this.elapsed >= this._stallAt) this.stalled = true;
+      }, 1000);
+    },
+    _stop() { clearInterval(this._timer); this._timer = null; },
+    // Alpine 3 calls destroy() when the element is removed (e.g. an hx-boost
+    // page swap mid-load); without it the interval keeps ticking on a detached
+    // scope for the rest of the session.
+    destroy() { this._stop(); },
+    // done()/fail() are mutually exclusive terminal states: a late success after
+    // a failure (retry that lands) must clear the error panel, and a failure after
+    // a stale success must clear the grid — otherwise both panels could show.
+    done()  { this.loaded = true;  this.failed = false; this.stalled = false; this._stop(); },
+    fail()  {
+      this.failed = true; this.loaded = false; this.stalled = false; this._stop();
+      // Move focus into the (now visible) assertive alert: reliably announces the
+      // failure to AT and lands the user on the Try again action (WCAG 2.4.3).
+      this.$nextTick(() => this.$refs.errorPanel && this.$refs.errorPanel.focus());
+    },
+    // Returning focus to the loading panel keeps the user oriented after the
+    // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
+    keepWaiting() {
+      this.stalled = false;
+      this._stallAt = this.elapsed + CP.ui.SUGGESTION_KEEP_WAITING_EXTENSION;
+      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
+    },
+
+    // Re-run the fetch from the error state via this component's $refs.fetchTarget
+    // and the explicit cp:retry trigger — works for both Charts (load) and
+    // For You (cp:load), whose native triggers can't be replayed on demand.
+    retry() {
+      const target = this.$refs.fetchTarget;
+      // Bail before mutating state if we can't actually re-fire — otherwise the
+      // panel would reset to a ticking loader with no error and no way out
+      // (symmetric with open()'s guard).
+      if (!target || !window.htmx) return;
+      // Fire the request FIRST, then reset to the loading state. If trigger()
+      // throws, nothing was mutated so the error panel + Try again stay in
+      // place. The timer (re)starts from the target's @htmx:before-request, so a
+      // throw also can't leave a ghost interval (symmetric with open()).
+      window.htmx.trigger(target, 'cp:retry');
+      this.failed = false;
+      this.loaded = false;
+      this.elapsed = 0;
+      this.stalled = false;
+      this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
+      // The Try again button is now hidden (failed=false); move focus to the
+      // loading panel so it doesn't drop to <body> (WCAG 2.4.3).
+      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
+    },
+
+    // view helpers — pure math delegated to CP.ui
+    get stage() { return CP.ui.suggestionStage(this.elapsed, this.stages); },
+    get pct()   { return CP.ui.suggestionPct(this.elapsed, this.loaded); },
+    stageDone(i)    { return CP.ui.suggestionStageDone(i, this.elapsed, this.loaded, this.stages); },
+    stageCurrent(i) { return CP.ui.suggestionStageCurrent(i, this.elapsed, this.loaded, this.stages); },
+  };
+}
+</script>
 {% endblock %}

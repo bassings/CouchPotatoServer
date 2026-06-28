@@ -52,8 +52,12 @@ async function waitForSuggestionsReady(page: any) {
   await expect(page.getByRole('tablist', { name: 'Suggestion categories' })).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Charts' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#charts-grid')).toBeVisible();
-  await expect(page.locator('#charts-grid')).not.toHaveClass(/htmx-request/);
-  await expect(page.locator('#charts-grid > .text-center, #charts-grid .poster-card').first()).toBeVisible();
+  // The mocked Charts partial swaps in a poster-card once loaded. Waiting on it
+  // (rather than the #charts-grid htmx-request class, which htmx puts on the
+  // inner [hx-get] child, not the grid) is the real readiness signal. The
+  // redesigned panel also has an always-present hidden error div with
+  // `text-center`, so the old `> .text-center` alternative would match that.
+  await expect(page.locator('#charts-grid .poster-card').first()).toBeVisible();
 }
 
 async function mockSuggestionsCharts(page: any) {
