@@ -450,7 +450,7 @@ describe('profileToForm — defaulting branches (mutation hardening)', () => {
     expect(form.types).toHaveLength(0);
   });
 
-  it('defaults finish positionally (first=true, rest=false) when finish array is missing', () => {
+  it('defaults finish positionally (first=true, rest=false) when finish array is empty', () => {
     const doc = { ...PROFILE_DOC, qualities: ['720p', '1080p'], finish: [] };
     const form = profileToForm(doc, QUALITIES);
     expect(form.types[0].finish).toBe(true);
