@@ -278,17 +278,70 @@ test.describe('Suggestions loading redesign', () => {
     await expect(chartsTab).toHaveAttribute('aria-selected', 'true');
   });
 
+  test('error after Keep waiting still renders the error panel (stalled → keepWaiting → fail)', async ({ page }) => {
+    await page.clock.install();
+    // Hold the Charts request open with a gate so we can stall first, dismiss the
+    // stall, and only THEN make it fail — exercising keepWaiting() (stalled=false,
+    // _stallAt bumped) immediately followed by fail().
+    let failCharts!: () => void;
+    const chartsGate = new Promise<void>((resolve) => {
+      failCharts = resolve;
+    });
+    await page.route('**/partial/charts', async (route) => {
+      await chartsGate;
+      await route.fulfill({ status: 500, contentType: 'text/html', body: 'boom' });
+    });
+
+    await page.goto('/suggestions');
+    const status = page.locator('#charts-grid [role="status"]');
+    await expect(status).toBeVisible();
+
+    // Stall, then dismiss it with Keep waiting (stalled=false again).
+    await page.clock.runFor(61000);
+    await expect(status).toContainText('Still working');
+    await status.getByRole('button', { name: /keep waiting/i }).click();
+    await expect(status).not.toContainText('Still working');
+
+    // Now let the request fail. fail() must render the error panel cleanly even
+    // though stalled is already false and _stallAt was inflated by keepWaiting.
+    failCharts();
+    const chartsGrid = page.locator('#charts-grid');
+    await expect(chartsGrid.locator('[role="alert"]')).toBeVisible();
+    await expect(chartsGrid.getByText(/Couldn.t load charts/)).toBeVisible();
+    // …and the loading/stall panel is gone (failed=true hides !loaded && !failed).
+    await expect(status).toBeHidden();
+  });
+
   test('Charts completes in the background while on For You, then renders on return', async ({ page }) => {
-    await mockPartials(page, { chartsDelayMs: 1000 });
+    // Gate Charts so it is PROVABLY still in flight when we switch tabs — no
+    // reliance on a wall-clock delay a slow CI runner could outrun, which would
+    // silently downgrade this to a "show already-loaded content" assertion.
+    let releaseCharts!: () => void;
+    const chartsGate = new Promise<void>((resolve) => {
+      releaseCharts = resolve;
+    });
+    await page.route('**/partial/charts', async (route) => {
+      await chartsGate;
+      await route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML });
+    });
+    await page.route('**/partial/suggestions', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: SUGGESTIONS_HTML }),
+    );
     await page.goto('/suggestions');
 
-    // Switch to For You while the Charts request is still in flight — its target
-    // is now display:none (tab hidden + x-show="loaded"), so this guards that the
-    // innerHTML swap still lands on a hidden element and done() fires.
+    // Charts is still in flight (gate held): its loading panel is up, no content.
+    await expect(page.locator('#charts-grid [role="status"]')).toBeVisible();
+
+    // Switch to For You while Charts is in flight — its target is now display:none
+    // (tab hidden + x-show="loaded"), so this guards that the innerHTML swap still
+    // lands on a hidden element and done() fires.
     await page.getByRole('tab', { name: /for you/i }).click();
     await expect(page.getByTestId('suggestions-content')).toBeVisible();
 
-    // Charts finished in the background; returning shows the swapped content.
+    // Release Charts now: it completes in the background against the hidden target.
+    releaseCharts();
+
+    // Returning shows the content swapped in while the tab was hidden.
     await page.getByRole('tab', { name: /charts/i }).click();
     await expect(page.getByTestId('charts-content')).toBeVisible();
   });

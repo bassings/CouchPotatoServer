@@ -541,13 +541,24 @@ class TestPartialErrorHandling:
         assert 'Failed to load suggestions' in resp.text
 
     # --- A non-dict result (programming error) is also a failure, not "empty".
-    #     Tested for both endpoints since they share the isinstance guard.
+    #     Tested for both endpoints since they share the isinstance guard, and
+    #     with both None AND a list: a bare None can't tell isinstance(_, dict)
+    #     apart from isinstance(_, list) (both False for None), so the list
+    #     fixture pins the "only a dict is a valid result" contract explicitly.
     def test_partial_charts_returns_500_on_non_dict_result(self, client, monkeypatch):
         self._patch_api(monkeypatch, lambda *a, **k: None)
         assert client.get('/partial/charts').status_code == 500
 
     def test_partial_suggestions_returns_500_on_non_dict_result(self, client, monkeypatch):
         self._patch_api(monkeypatch, lambda *a, **k: None)
+        assert client.get('/partial/suggestions').status_code == 500
+
+    def test_partial_charts_returns_500_on_list_result(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: ['not', 'a', 'dict'])
+        assert client.get('/partial/charts').status_code == 500
+
+    def test_partial_suggestions_returns_500_on_list_result(self, client, monkeypatch):
+        self._patch_api(monkeypatch, lambda *a, **k: ['not', 'a', 'dict'])
         assert client.get('/partial/suggestions').status_code == 500
 
     # --- Backstop: a handler that genuinely raises before callApiHandler can
