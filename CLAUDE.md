@@ -30,10 +30,12 @@
 
 ### 1. Test Locally Before Every Push
 
-**The gate is `make verify`** — it mirrors CI exactly (ruff → Python unit →
-UI unit → E2E with auto-started server) and is the single source of truth for
-"is this safe to PR". `make setup` (run once) installs a **pre-push hook** that
-runs it automatically and blocks the push on failure.
+**`make verify`** mirrors CI exactly (ruff → Python unit → UI unit → E2E with
+auto-started server) and is the single source of truth for *"do the tests/lint
+pass"*. It is **not** the only pre-push gate: for code changes a clean-agent
+local review must also pass first (see Path to Production). `make setup` (run
+once) installs a **pre-push hook** that runs `make verify` automatically and
+blocks the push on failure.
 
 ```bash
 make setup          # once: installs git hooks + JS deps
@@ -54,6 +56,10 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
 
 - **Local agent review gate (MANDATORY for code changes, before every push to the
   cloud review; docs-only changes may skip it and push directly):**
+  *"Docs-only"* means the diff touches **only** prose/documentation files
+  (`*.md`, `docs/**`) and nothing else. If it touches any code, template, test,
+  config, workflow, or `specs/**` file — even alongside docs — it is a **code
+  change** and the gate applies. When in doubt, run the gate.
   Run a clean-agent review on the full branch diff (vs `master`) and make it pass
   *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
   parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
