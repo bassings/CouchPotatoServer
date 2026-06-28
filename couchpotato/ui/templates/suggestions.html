@@ -1,81 +1,151 @@
+{# ===========================================================================
+   suggestions.html  —  drop-in replacement
+   CouchPotato · couchpotato/ui/templates/suggestions.html
+
+   WHAT CHANGED vs the original
+   ---------------------------------------------------------------------------
+   Problem: cold load blocked ~60s on a SILENT skeleton. The personal ("For You")
+   call builds picks from your library AND pulls live chart sources, so it is the
+   slow one — yet it fired on page load at the same time as Charts.
+
+   Fix (three moves, no backend change required):
+     1. SPLIT THE LOAD. Charts (fast, default tab) keeps hx-trigger="load" and
+        fills immediately. "For You" switches to hx-trigger="revealed" so it only
+        fetches when you open that tab — one slow source never blocks the page.
+     2. COMMUNICATE. The static skeleton is replaced by an Alpine loader that
+        cycles staged status messages, shows a moving progress bar, and counts
+        elapsed seconds — so it reads as "working", never "hung".
+     3. RECOVER. At 45s it switches to a "still working" state with
+        Keep waiting / Skip to Library actions.
+   Result is cached server-side, so the wait is one-time — and we say so.
+   =========================================================================== #}
 {% extends "base.html" %}
 {% block title %}Suggestions — CouchPotato{% endblock %}
 {% block content %}
 <div class="p-4 lg:p-8 fade-in" x-data="{ activeTab: 'charts' }">
+
+  <!-- Header + tabs -->
   <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
     <div>
       <h1 class="text-xl font-semibold tracking-tight">Suggestions</h1>
       <p class="text-cp-muted text-xs mt-1">Discover new movies from your library suggestions and chart sources.</p>
     </div>
     <div class="flex gap-1 text-sm font-medium" role="tablist" aria-label="Suggestion categories">
-      <button @click="activeTab = 'charts'" 
-              role="tab"
-              :aria-selected="activeTab === 'charts'"
-              aria-controls="charts-grid"
-              id="tab-charts"
-              :class="activeTab === 'charts' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+      <button @click="activeTab = 'charts'" role="tab" id="tab-charts"
+              :aria-selected="activeTab === 'charts'" aria-controls="charts-grid"
+              :class="activeTab === 'charts' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">Charts</button>
-      <button @click="activeTab = 'personal'" 
-              role="tab"
-              :aria-selected="activeTab === 'personal'"
-              aria-controls="suggestions-grid"
-              id="tab-personal"
-              :class="activeTab === 'personal' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'" 
+      <button @click="activeTab = 'personal'" role="tab" id="tab-personal"
+              :aria-selected="activeTab === 'personal'" aria-controls="suggestions-grid"
+              :class="activeTab === 'personal' ? 'bg-cp-accent text-black shadow-md' : 'bg-white/[0.06] text-cp-muted hover:text-cp-text hover:bg-white/[0.10]'"
               class="px-4 py-2 rounded-lg transition-all">For You</button>
     </div>
   </div>
 
-  <!-- Personal suggestions -->
-  <div x-show="activeTab === 'personal'" 
-       id="suggestions-grid"
-       role="tabpanel"
-       aria-labelledby="tab-personal"
-       hx-get="{{ new_base }}partial/suggestions"
-       hx-trigger="load"
-       hx-indicator="#suggestions-loading"
-       hx-swap="innerHTML">
-    <!-- Loading skeleton -->
-    <div id="suggestions-loading" class="htmx-indicator">
-      <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-        {% for i in range(12) %}
-        <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
-          <div class="aspect-[2/3] bg-cp-surface"></div>
-          <div class="p-2.5">
-            <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
-            <div class="h-2 bg-cp-surface rounded w-1/3"></div>
-          </div>
-        </div>
-        {% endfor %}
-      </div>
-    </div>
+  {# ---- Charts: fast, default tab — loads immediately --------------------- #}
+  <div x-show="activeTab === 'charts'" id="charts-grid" role="tabpanel" aria-labelledby="tab-charts"
+       x-data="cpSuggestionLoader()" x-init="start()">
+
+    {% include 'partials/_loading_panel.html' with context %}
+
+    <!-- htmx target: swapped in when the partial returns.
+         cp:retry is an explicit trigger the error panel's "Try again" fires. -->
+    <div hx-get="{{ new_base }}partial/charts"
+         hx-trigger="load, cp:retry"
+         hx-swap="innerHTML"
+         x-show="loaded"
+         @htmx:after-swap="done()"
+         @htmx:response-error="fail()"
+         @htmx:send-error="fail()"></div>
   </div>
 
-  <!-- Charts (IMDB, Blu-ray, etc.) -->
-  <div x-show="activeTab === 'charts'" 
-       id="charts-grid"
-       role="tabpanel"
-       aria-labelledby="tab-charts"
-       hx-get="{{ new_base }}partial/charts"
-       hx-trigger="load"
-       hx-indicator="#charts-loading"
-       hx-swap="innerHTML">
-    <!-- Loading skeleton -->
-    <div id="charts-loading" class="htmx-indicator">
-      <div class="mb-8">
-        <div class="h-4 bg-cp-surface rounded w-32 mb-3 animate-pulse"></div>
-        <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-          {% for i in range(12) %}
-          <div class="rounded-md overflow-hidden bg-cp-card border border-white/[0.05] animate-pulse">
-            <div class="aspect-[2/3] bg-cp-surface"></div>
-            <div class="p-2.5">
-              <div class="h-3 bg-cp-surface rounded w-3/4 mb-2"></div>
-              <div class="h-2 bg-cp-surface rounded w-1/3"></div>
-            </div>
-          </div>
-          {% endfor %}
-        </div>
-      </div>
-    </div>
+  {# ---- For You: heavy call — DEFERRED until the tab is opened ------------ #}
+  {# $watch scope-walks to the parent's activeTab (this panel has its own x-data),
+     mirroring the categories/profiles lazy-load pattern; open() is idempotent. #}
+  <div x-show="activeTab === 'personal'" id="suggestions-grid" role="tabpanel" aria-labelledby="tab-personal"
+       x-data="cpSuggestionLoader()"
+       x-init="$watch('activeTab', v => { if (v === 'personal') open(); })">
+
+    {% include 'partials/_loading_panel.html' with context %}
+
+    <!-- Deferred fetch: open() fires the explicit cp:load trigger the first time
+         this tab is activated (see the panel's $watch above), so the slow call
+         never competes with (or blocks) the Charts load. cp:load is used instead
+         of intersect/revealed because this target carries x-show="loaded" and is
+         display:none until it loads — a visibility-based trigger could never fire
+         on it (chicken-and-egg). htmx.trigger issues the request regardless of
+         visibility. cp:retry re-runs it from the error state. -->
+    <div hx-get="{{ new_base }}partial/suggestions"
+         hx-trigger="cp:load, cp:retry"
+         hx-swap="innerHTML"
+         x-show="loaded"
+         @htmx:before-request="start()"
+         @htmx:after-swap="done()"
+         @htmx:response-error="fail()"
+         @htmx:send-error="fail()"></div>
   </div>
 </div>
+
+<script>
+/* Stateful communicative-loading controller (Alpine), used by both tabs. The
+   pure view-math (stage selection, progress %, checklist state) is delegated to
+   the unit/mutation-tested CP.ui.* module (static/scripts/ui/suggestion-loader.js);
+   only the timer, htmx retrigger and the loaded/failed/stalled flags live here.
+   No dependencies beyond Alpine + htmx already on the page. */
+function cpSuggestionLoader() {
+  return {
+    elapsed: 0,
+    loaded: false,
+    failed: false,
+    stalled: false,
+    _timer: null,
+    _opened: false,
+    _stallAt: CP.ui.SUGGESTION_STALL_AFTER,   // seconds before "still working"
+    stages: CP.ui.SUGGESTION_STAGES,
+
+    // Fire the deferred fetch the first time this tab is opened (see the For You
+    // panel's $watch). Idempotent: re-activating the tab never refetches. The
+    // target's @htmx:before-request starts the timer, so we only trigger here.
+    open() {
+      if (this._opened || this.loaded) return;
+      this._opened = true;
+      const target = this.$root.querySelector('[hx-get]');
+      if (target && window.htmx) window.htmx.trigger(target, 'cp:load');
+    },
+
+    start() {
+      if (this._timer || this.loaded) return;
+      this._timer = setInterval(() => {
+        this.elapsed += 1;
+        if (!this.loaded && this.elapsed >= this._stallAt) this.stalled = true;
+      }, 1000);
+    },
+    _stop() { clearInterval(this._timer); this._timer = null; },
+    done()  { this.loaded = true;  this.stalled = false; this._stop(); },
+    fail()  { this.failed = true;  this.stalled = false; this._stop(); },
+    keepWaiting() { this.stalled = false; this._stallAt = this.elapsed + 30; },
+
+    // Re-run the fetch from the error state. The hx-get target is a sibling of
+    // this loader's root (not an ancestor of the button), so reach it via $root
+    // and fire the explicit cp:retry trigger — works for both Charts (load) and
+    // For You (cp:load), whose native triggers can't be replayed on demand.
+    retry() {
+      this.failed = false;
+      this.loaded = false;
+      this.elapsed = 0;
+      this.stalled = false;
+      this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
+      this.start();
+      const target = this.$root.querySelector('[hx-get]');
+      if (target && window.htmx) window.htmx.trigger(target, 'cp:retry');
+    },
+
+    // view helpers — pure math delegated to CP.ui
+    get stage() { return CP.ui.suggestionStage(this.elapsed, this.stages); },
+    get pct()   { return CP.ui.suggestionPct(this.elapsed, this.loaded); },
+    stageDone(i)    { return CP.ui.suggestionStageDone(i, this.elapsed, this.loaded, this.stages); },
+    stageCurrent(i) { return CP.ui.suggestionStageCurrent(i, this.elapsed, this.loaded, this.stages); },
+  };
+}
+</script>
 {% endblock %}

@@ -53,7 +53,11 @@ async function waitForSuggestionsReady(page: any) {
   await expect(page.getByRole('tab', { name: 'Charts' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('#charts-grid')).toBeVisible();
   await expect(page.locator('#charts-grid')).not.toHaveClass(/htmx-request/);
-  await expect(page.locator('#charts-grid > .text-center, #charts-grid .poster-card').first()).toBeVisible();
+  // The mocked Charts partial swaps in a poster-card once loaded. Match it
+  // directly: the redesigned panel also contains an always-present but hidden
+  // error div with `text-center`, so the old `> .text-center` alternative would
+  // resolve to that hidden node first.
+  await expect(page.locator('#charts-grid .poster-card').first()).toBeVisible();
 }
 
 async function mockSuggestionsCharts(page: any) {
