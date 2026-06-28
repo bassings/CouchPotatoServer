@@ -26,6 +26,12 @@ export const SUGGESTION_STAGES = [
 // (Guarded by a unit test in suggestion-loader.spec.ts.)
 export const SUGGESTION_STALL_AFTER = 60;
 
+// Seconds the stall timer is pushed back when the user clicks "Keep waiting" —
+// the grace period before the loader stalls again. A peer of SUGGESTION_STALL_AFTER;
+// kept here (named + unit-tested) so all loader timing lives in one tuneable place
+// instead of as a bare literal in the Alpine controller.
+export const SUGGESTION_KEEP_WAITING_EXTENSION = 30;
+
 // The active stage for a given elapsed time: the last stage whose `at` threshold
 // has been reached. Always returns a stage (defaults to the first).
 export function suggestionStage(elapsed, stages = SUGGESTION_STAGES) {

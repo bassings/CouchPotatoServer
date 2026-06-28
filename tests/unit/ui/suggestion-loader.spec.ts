@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import {
   SUGGESTION_STAGES,
   SUGGESTION_STALL_AFTER,
+  SUGGESTION_KEEP_WAITING_EXTENSION,
   suggestionStage,
   suggestionPct,
   suggestionStageDone,
@@ -49,6 +50,10 @@ describe('SUGGESTION_STAGES / SUGGESTION_STALL_AFTER', () => {
   it('does not stall before the staged narrative finishes', () => {
     const lastStageAt = SUGGESTION_STAGES[SUGGESTION_STAGES.length - 1].at;
     expect(SUGGESTION_STALL_AFTER).toBeGreaterThanOrEqual(lastStageAt);
+  });
+
+  it('extends the stall grace period by 30 seconds on keep-waiting', () => {
+    expect(SUGGESTION_KEEP_WAITING_EXTENSION).toBe(30);
   });
 });
 

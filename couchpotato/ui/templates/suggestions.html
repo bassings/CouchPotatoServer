@@ -184,7 +184,7 @@ function cpSuggestionLoader() {
     // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
     keepWaiting() {
       this.stalled = false;
-      this._stallAt = this.elapsed + 30;
+      this._stallAt = this.elapsed + CP.ui.SUGGESTION_KEEP_WAITING_EXTENSION;
       this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
     },
 
