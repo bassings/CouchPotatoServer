@@ -58,10 +58,12 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
 
 - **Local agent review gate (MANDATORY for code changes, before every push to the
   cloud review; docs-only changes may skip it and push directly):**
-  *"Docs-only"* means the diff touches **only** prose/documentation files
-  (`*.md`, `docs/**`) and nothing else. If it touches any code, template, test,
-  config, workflow, or `specs/**` file — even alongside docs — it is a **code
-  change** and the gate applies. When in doubt, run the gate.
+  *"Docs-only"* means the diff touches **only** documentation prose — `*.md`
+  **outside** `specs/**`, or files under `docs/**` — and nothing else. A change
+  touching any code, template, test, config, or workflow file, **or any
+  `specs/**` file (including a `specs/*.md` spec, which accompanies code)** —
+  even alongside docs — is a **code change** and the gate applies. When in
+  doubt, run the gate.
   Run a clean-agent review on the full branch diff (vs `master`) and make it pass
   *before* pushing to the `claude-review` gate. Spawn ≥2 `Explore` subagents in
   parallel (e.g. one frontend/a11y, one backend/tests) against the diff with the
@@ -110,7 +112,11 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
 ### 1a. E2E Tests — Check for UI Changes
 
 - E2E tests live in `tests/e2e/*.spec.ts` (Playwright)
-- **No local E2E runner** — CI catches failures
+- **E2E run locally** — `make verify` runs them with an auto-started server, or
+  run directly against a booted app:
+  `.venv/bin/python CouchPotato.py --data_dir=.e2e-data --console_log` then
+  `CP_TEST_URL=http://localhost:5050 npx playwright test tests/e2e/<spec> --project=chromium --workers=1`.
+  CI also runs the full suite. (This matches AGENTS.md's local-verification step.)
 - For any UI change, check these files and update them:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`
