@@ -22,18 +22,24 @@
 
 **Workflow:**
 1. Write a clear spec in `specs/` (problem, fix, acceptance criteria, files)
-2. Spawn Codex: `codex exec --full-auto "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest. When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
+2. Spawn Codex (do **not** use `--full-auto`, which would let it push autonomously
+   and bypass the local-review gate — see the safe invocation under Codex
+   Delegation): `codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest, then STOP (do not push). When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
 3. Report start to user, then stop monitoring
-4. Wait for completion, check result with one poll, review and commit
+4. Wait for completion, check result with one poll, review and commit; for code
+   changes, run the local-agent review and push only once it passes (see Path to
+   Production)
 
 **DO NOT** poll logs repeatedly, read output incrementally, or narrate each Codex step.
 
 ### 1. Test Locally Before Every Push
 
-**The gate is `make verify`** — it mirrors CI exactly (ruff → Python unit →
-UI unit → E2E with auto-started server) and is the single source of truth for
-"is this safe to PR". `make setup` (run once) installs a **pre-push hook** that
-runs it automatically and blocks the push on failure.
+**`make verify`** mirrors CI exactly (ruff → Python unit → UI unit → E2E with
+auto-started server) and is the single source of truth for *"do the tests/lint
+pass"*. It is **not** the only pre-push gate: for code changes a clean-agent
+local review must also pass first (see Path to Production). `make setup` (run
+once) installs a **pre-push hook** that runs `make verify` automatically and
+blocks the push on failure.
 
 ```bash
 make setup          # once: installs git hooks + JS deps
@@ -48,9 +54,49 @@ Emergency hook bypass: `git push --no-verify` (use sparingly).
 ### Path to Production (full flow)
 
 ```
-make setup → code → make verify → open PR → Claude review + remediate → approve → merge → release → deploy
+make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →
+  cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
 ```
 
+- **Local agent review gate (MANDATORY for code changes, before every push to the
+  cloud review; docs-only changes may skip it and push directly):**
+  *"Docs-only"* means the diff touches **only** documentation prose — `*.md`
+  **outside** `specs/**`, or files under `docs/**` — and nothing else, **except
+  the policy docs `CLAUDE.md` and `AGENTS.md`**, which define how we work and so
+  are treated as code-changes (run the gate) even though they are markdown. A
+  change touching any code, template, test, config, or workflow file, **or any
+  `specs/**` file (including a `specs/*.md` spec, which accompanies code)** —
+  even alongside docs — is a **code change** and the gate applies. When in
+  doubt, run the gate.
+  Run a clean-agent review on the full branch diff (vs `master`) and make it pass
+  *before* pushing to the `claude-review` gate. Spawn ≥2 independent review
+  subagents (`general-purpose`, which can both read and reason about the diff —
+  not `Explore`, which is search-only) in parallel (e.g. one frontend/a11y, one
+  backend/tests) against the diff with the AGENTS.md rubric. Give them the **currently-verified facts** so they don't
+  re-litigate things already confirmed *for the code as it stands* — but
+  **re-verify each fact against the tree before relying on it**; these are
+  point-in-time, not eternal, and a dependency bump or refactor can invalidate
+  any of them. As of 2026-06 (verify before reuse): htmx 2.0.4 dual-dispatches
+  camelCase+kebab so `@htmx:*` kebab handlers fire (check the bundled
+  `htmx-*.min.js` if the version changes); `callApiHandler` returns
+  `{'success': False}` instead of raising (check `couchpotato/api.py`); `CPLog`
+  has no `.exception()` (check `couchpotato/core/logger.py`); CP.ui loads before
+  Alpine in `base.html`. A fact that no longer holds is a real finding, not a
+  false alarm — never suppress on the say-so of this list alone. Fix everything
+  real they surface, re-verify locally, and re-review until clean. **If the cloud
+  review later raises anything, fix it and run the local review again until it
+  passes — then push.** **Exit condition (avoid an infinite loop):** if the cloud
+  review keeps flagging a point the local review clears, investigate it once
+  more; if it's a verified false alarm (or a marginal/subjective nit on a
+  low-risk change), reject it with evidence in the PR thread, resolve the thread,
+  and **stop** — do not keep pushing. A stateless reviewer will always find "one
+  more" angle; converge on substance, not on silencing every comment. Rationale: cloud `claude-review` is stateless per push,
+  so each push re-discovers the same already-cleared points and dribbles out
+  genuine findings one at a time; the local loop front-loads that discovery and
+  collapses many serial ~15-min cloud rounds into one. This gate is
+  **policy/agent-enforced, not hook-enforced**: the `make setup` pre-push hook
+  only runs `make verify` and cannot tell whether the local agent review ran —
+  honour the gate as a rule, don't rely on the hook to block a gate-less push.
 - **PR gate:** every PR is auto-reviewed by Claude
   (`.github/workflows/claude-review.yml`, authenticated via the
   `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
@@ -79,7 +125,12 @@ make setup → code → make verify → open PR → Claude review + remediate �
 ### 1a. E2E Tests — Check for UI Changes
 
 - E2E tests live in `tests/e2e/*.spec.ts` (Playwright)
-- **No local E2E runner** — CI catches failures
+- **E2E run locally** — `make verify` runs them with an auto-started server, or
+  run directly against a booted app:
+  `.venv/bin/python CouchPotato.py --data_dir=.e2e-data --console_log` then
+  `CP_TEST_URL=http://localhost:5050 npx playwright test tests/e2e/<spec> --project=chromium --workers=1`.
+  CI also runs the full suite. (See also AGENTS.md's local-verification step,
+  which runs the whole suite via `npm run test:e2e`.)
 - For any UI change, check these files and update them:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`
@@ -166,7 +217,8 @@ db.get('release_identifier', '{imdb}.{audio}.{quality}', with_doc=True)
 
 - Unit tests: `pytest` + `tmp_path` fixture, no Docker needed locally
 - SQLiteAdapter tests: `adapter.create(str(tmp_path / 'name'))`
-- Skip `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` locally (`httpx` not installed)
+- `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
+  `httpx` is installed in `.venv` (run via `.venv/bin/python -m pytest`)
 - CI matrix: Python 3.10, 3.11, 3.12, 3.13
 
 ---
@@ -198,7 +250,11 @@ Run through core flows before any release: add movie, view detail, filter/search
 codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer
 ```
 
-- Codex handles: file edits, test validation, commit, push, Docker rebuild
+- Codex handles: file edits, test validation, commit, and Docker rebuild
+- **Local-review gate still applies (see Path to Production):** Codex must NOT
+  push autonomously for code changes. It stops after committing locally; the
+  orchestrator runs the clean-agent local review and only pushes once it passes.
+  (Docs-only changes may skip the local review and push directly.)
 - **Hallucination risk:** Codex may invent package versions — always verify with `pip index versions <pkg>`
 - **Docker timing:** Docker Desktop takes 1-2 min to fully start — start it early
 
