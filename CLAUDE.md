@@ -22,7 +22,9 @@
 
 **Workflow:**
 1. Write a clear spec in `specs/` (problem, fix, acceptance criteria, files)
-2. Spawn Codex: `codex exec --full-auto "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest. When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
+2. Spawn Codex (do **not** use `--full-auto`, which would let it push autonomously
+   and bypass the local-review gate — see the safe invocation under Codex
+   Delegation): `codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest, then STOP (do not push). When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
 3. Report start to user, then stop monitoring
 4. Wait for completion, check result with one poll, review and commit; for code
    changes, run the local-agent review and push only once it passes (see Path to
@@ -83,7 +85,10 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   passes — then push.** Rationale: cloud `claude-review` is stateless per push,
   so each push re-discovers the same already-cleared points and dribbles out
   genuine findings one at a time; the local loop front-loads that discovery and
-  collapses many serial ~15-min cloud rounds into one.
+  collapses many serial ~15-min cloud rounds into one. This gate is
+  **policy/agent-enforced, not hook-enforced**: the `make setup` pre-push hook
+  only runs `make verify` and cannot tell whether the local agent review ran —
+  honour the gate as a rule, don't rely on the hook to block a gate-less push.
 - **PR gate:** every PR is auto-reviewed by Claude
   (`.github/workflows/claude-review.yml`, authenticated via the
   `CLAUDE_CODE_OAUTH_TOKEN` subscription secret — no API billing). Resolve every
@@ -116,7 +121,8 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   run directly against a booted app:
   `.venv/bin/python CouchPotato.py --data_dir=.e2e-data --console_log` then
   `CP_TEST_URL=http://localhost:5050 npx playwright test tests/e2e/<spec> --project=chromium --workers=1`.
-  CI also runs the full suite. (This matches AGENTS.md's local-verification step.)
+  CI also runs the full suite. (See also AGENTS.md's local-verification step,
+  which runs the whole suite via `npm run test:e2e`.)
 - For any UI change, check these files and update them:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`
