@@ -203,7 +203,8 @@ db.get('release_identifier', '{imdb}.{audio}.{quality}', with_doc=True)
 
 - Unit tests: `pytest` + `tmp_path` fixture, no Docker needed locally
 - SQLiteAdapter tests: `adapter.create(str(tmp_path / 'name'))`
-- Skip `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` locally (`httpx` not installed)
+- `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
+  `httpx` is installed in `.venv` (run via `.venv/bin/python -m pytest`)
 - CI matrix: Python 3.10, 3.11, 3.12, 3.13
 
 ---
