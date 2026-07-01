@@ -28,6 +28,26 @@ jobs:
     - name: Run ruff
       run: ruff check .
 
+  # Fast static guardrail for the modern UI (couchpotato/ui/templates/**):
+  # off-spec toggle sizing, legacy icon-font classes, raw hex colors. Pure
+  # stdlib, no build/deps, so it's cheap to run as its own gating job. See
+  # scripts/check_conformance.py and specs/UI-CONFORM-02-ci-guardrail.md.
+  conformance:
+    name: conformance
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+
+    - name: Run UI conformance check
+      run: python scripts/check_conformance.py
+
   # Static security lint (ruff's flake8-bandit "S" rules). INFORMATIONAL for now:
   # the legacy codebase has ~169 S findings, so this does not gate merges yet.
   # Triage the annotations and ratchet specific S codes into the blocking `lint`
