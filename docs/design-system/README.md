@@ -132,7 +132,7 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 
 **10 field types** (from `partials/settings/field_types.html`): `string` · `int`/`float` (number) · `password` · `dropdown` (select) · `bool` (checkbox, `text-cp-accent` accent) · `directory` (input + Browse button → folder modal) · `directories` (repeatable rows with remove + "+ Add folder") · `combined` (multi-column rows: a `use` toggle switch + text inputs, headers, "+ Add") · `button` (async action: spinner + inline success/error result).
 
-**Toggle switch:** `w-8 h-4 rounded-full` track (`bg-cp-accent` on / `bg-white/[0.08]` off), `role="switch" :aria-checked`, knob `w-3 h-3 bg-white` translating `translate-x-4` / `translate-x-0.5`.
+**Toggle switch:** `w-8 h-4 rounded-full` track (`bg-cp-accent` on / `bg-white/[0.08]` off), `role="switch" :aria-checked`, knob `w-3 h-3 bg-white` translating `translate-x-4` / `translate-x-0.5`, plus an `aria-label` describing what the toggle controls. This is the **only sanctioned toggle size** — do not introduce a larger/smaller variant. Render it via the shared partial `couchpotato/ui/templates/partials/settings/toggle.html` rather than hand-rolling the markup.
 
 **Settings row layout:** label + hint on the left, control right-aligned; rows divided by `border-white/[0.04]`.
 

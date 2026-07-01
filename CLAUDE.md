@@ -15,22 +15,25 @@
 
 ## Development Rules (MANDATORY — read these first every session)
 
-### 0. Delegate Implementation to Codex
+### 0. Delegate Implementation to Sonnet 5 Agents
 
 - **Scott (Eggbert) plans and reviews** — architecture, specs, QA
-- **Codex does the coding** — spawn sub-agents for implementation tasks
+- **Claude Sonnet 5 sub-agents do the coding** — spawn agents (via the `Agent`
+  tool with `model: "sonnet"`, which resolves to `claude-sonnet-5`) for
+  implementation tasks
 
 **Workflow:**
 1. Write a clear spec in `specs/` (problem, fix, acceptance criteria, files)
-2. Spawn Codex (do **not** use `--full-auto`, which would let it push autonomously
-   and bypass the local-review gate — see the safe invocation under Codex
-   Delegation): `codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer "Read spec at specs/FEAT-XXX.md and implement. TDD: write failing test first, fix, then run ruff + pytest, then STOP (do not push). When done: openclaw system event --text 'FEAT-XXX done' --mode now"`
+2. Spawn one or more Sonnet 5 sub-agents to implement the spec. TDD: write the
+   failing test first, make it pass, then run `ruff` + `pytest`. The agent must
+   **STOP after committing locally — it does not push** (the local-review gate
+   still applies; see Path to Production).
 3. Report start to user, then stop monitoring
-4. Wait for completion, check result with one poll, review and commit; for code
-   changes, run the local-agent review and push only once it passes (see Path to
-   Production)
+4. Wait for completion, review the diff and commit; for code changes, run the
+   local-agent review and push only once it passes (see Path to Production)
 
-**DO NOT** poll logs repeatedly, read output incrementally, or narrate each Codex step.
+**DO NOT** poll the agent transcript repeatedly, read output incrementally, or
+narrate each step.
 
 ### 1. Test Locally Before Every Push
 
@@ -105,7 +108,8 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   required (solo-maintainer setup), so the agent review *is* the review gate.
 - **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`,
   `ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
-  `dependency-review`, `docker`.
+  `dependency-review`, `docker`, `accessibility` (axe), `conformance`
+  (`scripts/check_conformance.py` — design-system drift gate, added in #147).
 - **SAST / security gates:**
   - **CodeQL** (`codeql.yml`) — Python + JS static analysis, per-PR + weekly.
   - **dependency-review** (`dependency-review.yml`) — blocks PRs that add deps
@@ -244,18 +248,18 @@ Run through core flows before any release: add movie, view detail, filter/search
 
 ---
 
-## Codex Delegation
+## Sonnet 5 Agent Delegation
 
-```bash
-codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer
-```
+Spawn implementation sub-agents via the `Agent` tool with `model: "sonnet"` (this
+resolves to `claude-sonnet-5`). Use `general-purpose` agents that can both edit
+and reason about the code.
 
-- Codex handles: file edits, test validation, commit, and Docker rebuild
-- **Local-review gate still applies (see Path to Production):** Codex must NOT
-  push autonomously for code changes. It stops after committing locally; the
+- Agents handle: file edits, test validation, and local commit.
+- **Local-review gate still applies (see Path to Production):** an implementation
+  agent must NOT push for code changes. It stops after committing locally; the
   orchestrator runs the clean-agent local review and only pushes once it passes.
   (Docs-only changes may skip the local review and push directly.)
-- **Hallucination risk:** Codex may invent package versions — always verify with `pip index versions <pkg>`
+- **Hallucination risk:** agents may invent package versions — always verify with `pip index versions <pkg>`
 - **Docker timing:** Docker Desktop takes 1-2 min to fully start — start it early
 
 ---
@@ -265,7 +269,7 @@ codex exec -s danger-full-access -a never -C ~/repos/CouchPotatoServer
 1. Read this file at the START of every session before touching code
 2. Always run `pytest tests/unit/ -q` + `ruff check .` before pushing — don't rely on CI
 3. For UI changes, update `tests/e2e/` or CI will fail
-4. Spawn Codex for implementation; don't do it yourself (rate limits)
+4. Spawn Sonnet 5 sub-agents (`Agent` tool, `model: "sonnet"`) for implementation; don't do it all inline
 5. `diskcache` was replaced with `SQLiteCache` (CVE-2025-69872 — pickle RCE, lib abandoned)
 6. Branch protection check names must match exactly — matrix jobs report as `test (3.10)`, not `test`
 7. Dependabot PRs may need `--admin` merge if they predate CI changes
