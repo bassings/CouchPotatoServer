@@ -108,7 +108,8 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   required (solo-maintainer setup), so the agent review *is* the review gate.
 - **Required CI checks:** `lint`, `test-summary`, `ui-unit-tests`,
   `ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
-  `dependency-review`, `docker`.
+  `dependency-review`, `docker`, `accessibility` (axe), `conformance`
+  (`scripts/check_conformance.py` — design-system drift gate, added in #147).
 - **SAST / security gates:**
   - **CodeQL** (`codeql.yml`) — Python + JS static analysis, per-PR + weekly.
   - **dependency-review** (`dependency-review.yml`) — blocks PRs that add deps
