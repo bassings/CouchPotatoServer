@@ -345,7 +345,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         if user:
             return RedirectResponse(url=web_base)
         tmpl = _jinja_env.get_template('login.html')
-        return HTMLResponse(tmpl.render(sep=os.sep, fireEvent=fireEvent, Env=Env))
+        return HTMLResponse(tmpl.render(Env=Env, web_base=Env.get('web_base') or '/'))
 
     @app.post(web_base + 'login/')
     @app.post(web_base + 'login')

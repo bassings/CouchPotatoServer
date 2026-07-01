@@ -1,36 +1,141 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>CouchPotato</title>
 
-<!doctype html>
-<html class="{{ 'dark' if Env.setting('dark_theme') else '' }}">
-	<head>
-	    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
-		<meta name="apple-mobile-web-app-capable" content="yes">
-		<meta name="mobile-web-app-capable" content="yes">
-		<meta http-equiv="X-UA-Compatible" content="IE=edge" />
-		<meta name="robots" content="noindex, nofollow" />
+<!-- PWA Meta Tags -->
+<meta name="description" content="Download movies automatically, easily and in the best quality as soon as they are available.">
+<meta name="theme-color" content="#35c5f4">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="CouchPotato">
+<meta http-equiv="X-UA-Compatible" content="IE=edge">
+<meta name="robots" content="noindex, nofollow">
+<link rel="manifest" href="{{ web_base }}static/manifest.json">
+<link rel="apple-touch-icon" href="{{ web_base }}static/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="192x192" href="{{ web_base }}static/icons/icon-192.png">
+<link rel="icon" type="image/png" sizes="32x32" href="{{ web_base }}static/icons/icon-96.png">
 
-		{% for url in fireEvent('clientscript.get_styles', single = True) %}
-		<link data-url="{{ url }}" rel="stylesheet" href="{{ Env.get('web_base') }}{{ url }}" type="text/css">{% endfor %}
-		{% for url in fireEvent('clientscript.get_scripts', single = True) %}{% if 'combined.plugins' not in url %}
-		<script type="text/javascript" src="{{ Env.get('web_base') }}{{ url }}"></script>{% endif %}{% endfor %}
+<!-- Login is a plain HTML POST form and works without JavaScript; the
+     Tailwind CDN script below only supplies styling, no interactivity. -->
+<script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script>
+tailwind.config = {
+  darkMode: 'class',
+  theme: {
+    extend: {
+      fontFamily: { sans: ['Inter', 'sans-serif'] },
+      colors: {
+        cp: {
+          bg: 'var(--cp-bg)',
+          card: 'var(--cp-card)',
+          surface: 'var(--cp-surface)',
+          border: 'var(--cp-border)',
+          accent: '#35c5f4',
+          accentHover: '#4dd4ff',
+          text: 'var(--cp-text)',
+          muted: 'var(--cp-muted)',
+          success: '#3ddc84',
+          warning: '#e5a00d',
+          danger: '#f04848',
+          blue: '#35c5f4',
+        }
+      }
+    }
+  }
+}
+</script>
+<style>
+  /* IMP-006: Theme variables (mirrors couchpotato/ui/templates/base.html) */
+  :root {
+    --cp-bg: #0d0d0d;
+    --cp-card: #161618;
+    --cp-surface: #111113;
+    --cp-border: #1e1e22;
+    --cp-text: #e0e0e4;
+    --cp-muted: #9b9ba8;
+  }
+  :root.light {
+    --cp-bg: #f5f5f7;
+    --cp-card: #ffffff;
+    --cp-surface: #fafafa;
+    --cp-border: #e0e0e4;
+    --cp-text: #1a1a1a;
+    --cp-muted: #666666;
+  }
 
-		<link href="{{ Env.get('static_path') }}images/favicon.ico" rel="icon" type="image/x-icon" />
-		<link rel="apple-touch-icon" href="{{ Env.get('static_path') }}images/homescreen.png" />
+  /* A11Y: Focus indicators (A11Y-013) */
+  :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+  :focus:not(:focus-visible) { outline: none; }
 
-		{% if Env.get('dev') %}
-		<script src="//localhost:35729/livereload.js?snipver=1"></script>
-		{% endif %}
+  /* A11Y: Screen reader only utility */
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+</style>
+</head>
+<body class="min-h-screen bg-cp-bg text-cp-text font-sans antialiased flex items-center justify-center px-4 py-12">
+  <div class="w-full max-w-sm">
+    <p class="text-center text-2xl font-semibold tracking-tight text-cp-text mb-6">CouchPotato</p>
 
-		<title>CouchPotato</title>
-	</head>
-	<body class="page login">
-		<form action="" method="post">
-			<h1>CouchPotato</h1>
-			<div class="ctrlHolder"><input class="username" name="username" type="text" placeholder="Username" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" autofocus="autofocus" /></div>
-			<div class="ctrlHolder"><input class="password" name="password" type="password" placeholder="Password" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" /></div>
-			<div class="ctrlHolder">
-				<label class="remember_me" title="for 30 days"><input id="remember_me" name="remember_me" type="checkbox" value="1" checked="checked" /> Remember me</label>
-				<input class="button" name="submit" type="submit" value="Login" />
-			</div>
-		</form>
-	</body>
+    <div class="bg-cp-card border border-cp-border rounded-xl shadow-lg p-6 sm:p-8">
+      <h1 class="text-lg font-medium text-cp-text mb-6">Sign in</h1>
+
+      <form method="post" action="" novalidate>
+        <div class="mb-4">
+          <label for="username" class="block text-sm font-medium text-cp-muted mb-1.5">Username</label>
+          <input
+            id="username"
+            name="username"
+            type="text"
+            autocomplete="username"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            autofocus
+            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:outline-none focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
+          >
+        </div>
+
+        <div class="mb-5">
+          <label for="password" class="block text-sm font-medium text-cp-muted mb-1.5">Password</label>
+          <input
+            id="password"
+            name="password"
+            type="password"
+            autocomplete="current-password"
+            autocorrect="off"
+            autocapitalize="off"
+            spellcheck="false"
+            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:outline-none focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
+          >
+        </div>
+
+        <div class="flex items-center justify-between mb-6">
+          <label for="remember_me" class="flex items-center gap-2 text-sm text-cp-muted cursor-pointer select-none">
+            <input
+              id="remember_me"
+              name="remember_me"
+              type="checkbox"
+              value="1"
+              checked
+              class="w-4 h-4 rounded border-cp-border bg-cp-surface text-cp-accent focus:outline-none focus:ring-2 focus:ring-cp-accent"
+            >
+            <span>Remember me for 30 days</span>
+          </label>
+        </div>
+
+        <button
+          type="submit"
+          class="w-full h-10 min-h-[40px] rounded-lg bg-cp-accent text-cp-bg font-medium hover:bg-cp-accentHover focus:outline-none focus:ring-2 focus:ring-cp-accent focus:ring-offset-2 focus:ring-offset-cp-card transition-colors"
+        >
+          Login
+        </button>
+      </form>
+    </div>
+  </div>
+</body>
 </html>
