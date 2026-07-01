@@ -178,3 +178,71 @@ class TestLoginPageBehaviourUnchanged:
 
         assert resp.status_code == 302
         assert 'user' not in resp.cookies
+
+
+class TestBootAfterLegacyAssetCleanup:
+    """UI-CLEANUP-01 boot/smoke regression.
+
+    UI-CLEANUP-01 retired most of the legacy MooTools/SCSS asset layer, but
+    `couchpotato/core/_base/clientscript.py` (the `ClientScript` plugin) and
+    its three compiled bundles (`combined.vendor.min.js`,
+    `combined.base.min.js`, `combined.plugins.min.js`, `combined.min.css`)
+    were kept: `couchpotato.index()` — and therefore `index.html`, which
+    calls `fireEvent('clientscript.get_styles'/'get_scripts')` — is still
+    called directly by `Userscript.iFrame` (the `userscript` API view), so
+    `clientscript.get_styles`/`get_scripts` remain registered events, unlike
+    the rest of the legacy view machinery. These tests guard the boot path:
+    the app must start with no ClientScript plugin-load failure, login must
+    still render 200, and ClientScript's declared paths must point only at
+    files that actually still exist on disk (not any of the deleted raw
+    MooTools/SCSS sources).
+    """
+
+    def test_app_boots_and_login_still_returns_200(self, client):
+        """The FastAPI app builds successfully and /login/ still renders."""
+        resp = client.get('/login/')
+        assert resp.status_code == 200
+
+    def test_clientscript_module_imports_without_error(self):
+        """Importing the ClientScript plugin module must not raise."""
+        import importlib
+
+        module = importlib.import_module('couchpotato.core._base.clientscript')
+        assert hasattr(module, 'ClientScript')
+
+    def test_clientscript_declared_paths_exist_on_disk(self):
+        """ClientScript.paths must reference only surviving compiled bundles.
+
+        Guards against a future edit deleting `combined.*.min.js`/
+        `combined.min.css` while forgetting `ClientScript` still needs them
+        (its `__init__` calls `os.path.getmtime` on each path and would
+        raise `FileNotFoundError` at plugin-load time).
+        """
+        from couchpotato.core._base.clientscript import ClientScript
+
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        for static_type, rel_paths in ClientScript.paths.items():
+            for rel_path in rel_paths:
+                file_path = os.path.join(app_dir, 'couchpotato', 'static', rel_path)
+                assert os.path.isfile(file_path), (
+                    f'ClientScript.paths[{static_type!r}] references missing file: {rel_path}'
+                )
+
+    def test_clientscript_paths_reference_no_deleted_legacy_assets(self):
+        """None of ClientScript's declared paths point at assets removed by
+        UI-CLEANUP-01 (mootools.js, couchpotato.js, page/block/library
+        sources, raw *.scss, static/fonts, etc.)."""
+        from couchpotato.core._base.clientscript import ClientScript
+
+        banned = (
+            'mootools', 'dynamics.js', 'fastclick.js', 'history.js',
+            'Array.stableSort.js', 'requestAnimationFrame.js',
+            'couchpotato.js', 'api.js', 'page.js', 'block.js',
+            'page/', 'block/', 'library/', '.scss', 'fonts/',
+        )
+        all_paths = [p for paths in ClientScript.paths.values() for p in paths]
+        for rel_path in all_paths:
+            for token in banned:
+                assert token not in rel_path, (
+                    f'ClientScript.paths still references deleted legacy asset: {rel_path}'
+                )

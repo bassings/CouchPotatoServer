@@ -12,7 +12,7 @@ import traceback
 
 from couchpotato.api import api_docs, api_docs_missing, api, api_nonblock, callApiHandler
 from couchpotato.core.event import fireEvent
-from couchpotato.core.helpers.encoding import sp, toUnicode
+from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
@@ -24,8 +24,6 @@ from jinja2 import Environment as JinjaEnv, FileSystemLoader, select_autoescape
 from markupsafe import Markup
 
 log = CPLog(__name__)
-
-views = {}
 
 # Jinja2 template environment
 _template_dir = os.path.join(os.path.dirname(__file__), 'templates')
@@ -48,10 +46,6 @@ _jinja_env = JinjaEnv(
 )
 _jinja_env.filters['tojson'] = _cp_tojson
 _jinja_env.policies['json.dumps_kwargs'] = {'cls': CPJSONEncoder}
-
-
-def addView(route, func):
-    views[route] = func
 
 
 def get_db():
@@ -87,71 +81,21 @@ def require_auth(request: Request):
 
 
 # --- Web Views ---
+#
+# NOTE: the `views`/`addView` registry and most of the legacy MooTools-era
+# view functions (apiDocs(), databaseManage(), manifest(), robots()) were
+# retired in UI-CLEANUP-01 — none of them were read by any live route (the
+# registry itself was never consulted by the router; `/robots.txt`,
+# `/docs`, `/database` and `/couchpotato.appcache` have no FastAPI route
+# handler). `index()` is the one exception: it is still called directly by
+# `couchpotato.core.plugins.userscript.main.Userscript.iFrame` (the
+# `userscript` API view), so it — and the `index.html` template plus the
+# ClientScript plugin/compiled bundle it depends on for rendering — must
+# stay until that call site is ported or removed in a follow-up.
 
 def index(*args):
     tmpl = _jinja_env.get_template('index.html')
     return tmpl.render(sep=os.sep, fireEvent=fireEvent, Env=Env)
-
-addView('', index)
-
-
-def robots(*args):
-    return 'User-agent: * \nDisallow: /'
-
-addView('robots.txt', robots)
-
-
-def manifest(*args):
-    web_base = Env.get('web_base')
-    static_base = Env.get('static_path')
-
-    lines = [
-        'CACHE MANIFEST',
-        '# %s theme' % ('dark' if Env.setting('dark_theme') else 'light'),
-        '',
-        'CACHE:',
-        ''
-    ]
-
-    if not Env.get('dev'):
-        for url in fireEvent('clientscript.get_styles', single=True):
-            lines.append(web_base + url)
-        for url in fireEvent('clientscript.get_scripts', single=True):
-            lines.append(web_base + url)
-        lines.append(static_base + 'images/favicon.ico')
-
-        font_folder = sp(os.path.join(Env.get('app_dir'), 'couchpotato', 'static', 'fonts'))
-        for subfolder, dirs, files in os.walk(font_folder, topdown=False):
-            for file in files:
-                if '.woff' in file:
-                    lines.append(static_base + 'fonts/' + file + ('?%s' % os.path.getmtime(os.path.join(font_folder, file))))
-    else:
-        lines.append('# Not caching anything in dev mode')
-
-    lines.extend(['', 'NETWORK: ', '*'])
-    return '\n'.join(lines)
-
-addView('couchpotato.appcache', manifest)
-
-
-def apiDocs(*args):
-    routes = list(api.keys())
-
-    if api_docs.get(''):
-        del api_docs['']
-        del api_docs_missing['']
-
-    tmpl = _jinja_env.get_template('api.html')
-    return tmpl.render(fireEvent=fireEvent, routes=sorted(routes), api_docs=api_docs, api_docs_missing=sorted(api_docs_missing), Env=Env)
-
-addView('docs', apiDocs)
-
-
-def databaseManage(*args):
-    tmpl = _jinja_env.get_template('database.html')
-    return tmpl.render(fireEvent=fireEvent, Env=Env)
-
-addView('database', databaseManage)
 
 
 # --- FastAPI Route Handlers ---
@@ -380,9 +324,10 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         response.delete_cookie('user', path='/')
         return response
 
-    # Legacy /old/* catch-all — redirect to the new UI root.
-    # The views dict and view functions are retained as a porting reference and
-    # will be removed in a later cleanup PR (see specs/UI-MIGRATION.md).
+    # Legacy /old/* catch-all — redirect to the new UI root. The dead views
+    # dict/addView registry and unreachable view functions were removed in
+    # UI-CLEANUP-01 (see specs/UI-MIGRATION.md); `index()` remains because
+    # Userscript.iFrame still calls it directly (see note above index()).
     @app.get(web_base + 'old/{route:path}')
     @app.get(web_base + 'old/')
     @app.get(web_base + 'old')

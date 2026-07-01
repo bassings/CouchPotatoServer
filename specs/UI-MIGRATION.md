@@ -28,9 +28,31 @@ High: per-movie category · watch toggle · re-add (ignore-previous) · home das
 Medium: quick library scan · manual folder scan · log pagination · notification center · per-movie files view · update-install button · DB-management page.
 
 ## Acceptance criteria
-- [ ] `/old/*` returns a redirect to `/`; no page is served from the legacy stack.
+- [x] `/old/*` returns a redirect to `/`; no page is served from the legacy stack.
 - [ ] All 18 audited features are available in the new UI, each with unit + e2e (+ axe) coverage.
-- [ ] Legacy assets removed: `views`/`addView`, `clientscript.py`, `static/style/*.scss`,
-      non-vendor MooTools `static/scripts/*`, the legacy icon font, old server templates.
+- [x] Legacy assets **mostly** removed (UI-CLEANUP-01, see
+      `specs/UI-CLEANUP-01-retire-legacy-assets.md`): `views`/`addView` and the
+      unreachable view functions (`apiDocs()`, `databaseManage()`, `manifest()`,
+      the legacy `robots()`), the raw SCSS sources (`static/style/*.scss` except
+      the compiled `combined.min.css`), the 9 orphaned plugin
+      `*.scss` files, non-vendor MooTools raw sources
+      (`mootools*.js`, `dynamics.js`, `fastclick.js`, `history.js`,
+      `Array.stableSort.js`, `requestAnimationFrame.js`, `couchpotato.js`,
+      `api.js`, `page.js`, `block.js`, `page/`, `block/`, `library/`), and the
+      dead server templates `api.html`/`database.html` are all deleted.
+      **One live chain found during that cleanup and deliberately kept**
+      (deleting it would regress a live feature): `couchpotato/core/_base/
+      clientscript.py`, its 4 compiled bundles (`combined.min.css`,
+      `combined.vendor.min.js`, `combined.base.min.js`,
+      `combined.plugins.min.js`), the icon font + Open Sans + Lobster binaries
+      under `static/fonts/**` (still `@font-face`-referenced by the served
+      `combined.min.css`), `couchpotato/templates/index.html`, and
+      `couchpotato.index()` are all still live — `Userscript.iFrame`
+      (`couchpotato/core/plugins/userscript/main.py`, the `userscript` API view
+      used by the bookmarklet/add-via-URL embed flow) calls `index()` directly,
+      which renders `index.html`, which in turn depends on
+      `clientscript.get_styles`/`get_scripts`. Retiring this last piece
+      requires porting or removing that iFrame call site first — tracked as the
+      follow-up UI-CLEANUP-02, gated on the userscript add-via-URL port.
 - [ ] New UI passes `docs/design-system/CONFORMANCE.md` (tokens, Heroicons, components, a11y).
 - [ ] No references to `/old` or the legacy stack remain in code or docs.
