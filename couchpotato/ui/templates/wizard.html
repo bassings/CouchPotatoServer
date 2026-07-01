@@ -153,12 +153,11 @@
                 <span class="text-sm font-medium">Newznab Indexers</span>
                 <p class="text-[10px] text-cp-muted mt-0.5">Search usenet indexers like NZBGeek, DrunkenSlug, NZB.su</p>
               </div>
-              <button @click="formData.newznab.enabled = !formData.newznab.enabled"
-                      :class="formData.newznab.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                <span :class="formData.newznab.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-              </button>
+              {% set toggle_click = "formData.newznab.enabled = !formData.newznab.enabled" %}
+              {% set toggle_model = "formData.newznab.enabled" %}
+              {% set toggle_label = "Enable Newznab Indexers" %}
+              {% set toggle_label_expr = "" %}
+              {% include "partials/settings/toggle.html" %}
             </div>
             <div x-show="formData.newznab.enabled" x-transition class="space-y-3">
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
@@ -191,12 +190,11 @@
                 <span class="text-sm font-medium">BinSearch</span>
                 <p class="text-[10px] text-cp-muted mt-0.5">Free usenet search — no account needed, just enable.</p>
               </div>
-              <button @click="formData.binsearch.enabled = !formData.binsearch.enabled"
-                      :class="formData.binsearch.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                <span :class="formData.binsearch.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-              </button>
+              {% set toggle_click = "formData.binsearch.enabled = !formData.binsearch.enabled" %}
+              {% set toggle_model = "formData.binsearch.enabled" %}
+              {% set toggle_label = "Enable BinSearch" %}
+              {% set toggle_label_expr = "" %}
+              {% include "partials/settings/toggle.html" %}
             </div>
           </div>
         </div>
@@ -216,12 +214,11 @@
                   <span class="text-sm font-medium">ThePirateBay</span>
                   <p class="text-[10px] text-cp-muted mt-0.5">Search ThePirateBay for torrents. No account needed — just enable and go.</p>
                 </div>
-                <button @click="formData.thepiratebay.enabled = !formData.thepiratebay.enabled"
-                        :class="formData.thepiratebay.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                  <span :class="formData.thepiratebay.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-                </button>
+                {% set toggle_click = "formData.thepiratebay.enabled = !formData.thepiratebay.enabled" %}
+                {% set toggle_model = "formData.thepiratebay.enabled" %}
+                {% set toggle_label = "Enable ThePirateBay" %}
+                {% set toggle_label_expr = "" %}
+                {% include "partials/settings/toggle.html" %}
               </div>
             </div>
 
@@ -232,12 +229,11 @@
                   <span class="text-sm font-medium">YTS</span>
                   <p class="text-[10px] text-cp-muted mt-0.5">Small, high-quality movie releases. No account needed.</p>
                 </div>
-                <button @click="formData.yts.enabled = !formData.yts.enabled"
-                        :class="formData.yts.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                  <span :class="formData.yts.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-                </button>
+                {% set toggle_click = "formData.yts.enabled = !formData.yts.enabled" %}
+                {% set toggle_model = "formData.yts.enabled" %}
+                {% set toggle_label = "Enable YTS" %}
+                {% set toggle_label_expr = "" %}
+                {% include "partials/settings/toggle.html" %}
               </div>
               <p x-show="formData.yts.enabled" class="text-[10px] text-cp-muted mt-2">
                 ⚠️ YTS releases are highly compressed. Expect 720p at ~500MB, 1080p at ~800MB.
@@ -255,12 +251,11 @@
                   <span class="text-sm font-medium">Jackett / TorrentPotato</span>
                   <p class="text-[10px] text-cp-muted mt-0.5">Jackett acts as a proxy between CouchPotato and dozens of torrent trackers.</p>
                 </div>
-                <button @click="formData.torrentpotato.enabled = !formData.torrentpotato.enabled"
-                        :class="formData.torrentpotato.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                        class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                  <span :class="formData.torrentpotato.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                        class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-                </button>
+                {% set toggle_click = "formData.torrentpotato.enabled = !formData.torrentpotato.enabled" %}
+                {% set toggle_model = "formData.torrentpotato.enabled" %}
+                {% set toggle_label = "Enable Jackett / TorrentPotato" %}
+                {% set toggle_label_expr = "" %}
+                {% include "partials/settings/toggle.html" %}
               </div>
               <div x-show="formData.torrentpotato.enabled" x-transition class="space-y-3">
                 <div>
@@ -306,12 +301,11 @@
                       <span class="text-sm font-medium" x-text="tracker.name"></span>
                       <p class="text-[10px] text-cp-muted mt-0.5" x-text="tracker.description"></p>
                     </div>
-                    <button @click="tracker.enabled = !tracker.enabled"
-                            :class="tracker.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                            class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                      <span :class="tracker.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                            class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-                    </button>
+                    {% set toggle_click = "tracker.enabled = !tracker.enabled" %}
+                    {% set toggle_model = "tracker.enabled" %}
+                    {% set toggle_label = "" %}
+                    {% set toggle_label_expr = "'Enable ' + tracker.name" %}
+                    {% include "partials/settings/toggle.html" %}
                   </div>
                   <div x-show="tracker.enabled" x-transition class="grid grid-cols-2 gap-2 mt-3">
                     <template x-for="field in tracker.fields" :key="field.name">
@@ -399,12 +393,11 @@
                 <span class="text-sm font-medium">Black Hole</span>
                 <p class="text-[10px] text-cp-muted mt-0.5">Save NZB/torrent files to a folder for manual processing or watch folder.</p>
               </div>
-              <button @click="formData.blackholeEnabled = !formData.blackholeEnabled"
-                      :class="formData.blackholeEnabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                      class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-                <span :class="formData.blackholeEnabled ? 'translate-x-5' : 'translate-x-0.5'"
-                      class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-              </button>
+              {% set toggle_click = "formData.blackholeEnabled = !formData.blackholeEnabled" %}
+              {% set toggle_model = "formData.blackholeEnabled" %}
+              {% set toggle_label = "Enable Black Hole" %}
+              {% set toggle_label_expr = "" %}
+              {% include "partials/settings/toggle.html" %}
             </div>
             <div x-show="formData.blackholeEnabled" x-transition class="space-y-3">
               <div>
@@ -674,12 +667,11 @@
               <span class="text-sm font-medium">Enable Automatic Renaming</span>
               <p class="text-[10px] text-cp-muted mt-0.5">Move and rename downloaded movies to your library folder.</p>
             </div>
-            <button @click="formData.renamer.enabled = !formData.renamer.enabled"
-                    :class="formData.renamer.enabled ? 'bg-cp-accent' : 'bg-white/[0.08]'"
-                    class="relative w-10 h-5 rounded-full transition-colors shrink-0">
-              <span :class="formData.renamer.enabled ? 'translate-x-5' : 'translate-x-0.5'"
-                    class="block w-4 h-4 bg-white rounded-full transition-transform absolute top-0.5"></span>
-            </button>
+            {% set toggle_click = "formData.renamer.enabled = !formData.renamer.enabled" %}
+            {% set toggle_model = "formData.renamer.enabled" %}
+            {% set toggle_label = "Enable Automatic Renaming" %}
+            {% set toggle_label_expr = "" %}
+            {% include "partials/settings/toggle.html" %}
           </div>
         </div>
 

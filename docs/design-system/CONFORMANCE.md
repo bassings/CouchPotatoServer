@@ -26,7 +26,11 @@ deliberately does not repeat hex values, so it can't drift out of sync.
 ## Components
 - [ ] **Buttons** — primary / ghost / danger variants with hover + focus states.
 - [ ] **Inputs** — the 10 field types (`string`, `int`/`float`, `password`, `dropdown`, `bool`, `directory`, `directories`, `combined`, `button`) follow the field grammar; helper text + `<details>` learn-more.
-- [ ] **Toggle switch** — `role="switch"` + `:aria-checked`, correct track/knob classes.
+- [ ] **Toggle switch** — track `w-8 h-4`, knob `w-3 h-3`, `translate-x-4` (on) /
+      `translate-x-0.5` (off) — this is the **only sanctioned size**; there is no
+      "large" variant. `role="switch"` + `:aria-checked` + an `aria-label` are
+      required on every instance. Use the shared partial
+      `partials/settings/toggle.html` rather than hand-rolling markup.
 - [ ] **Status & quality badges** — pill classes per status (wanted/done/snatched/quality).
 - [ ] **Toasts** — Alpine `toast(msg,type,duration)` queue, `aria-live="polite"`, auto-dismiss + manual close.
 - [ ] **Poster card** — structure, lazy img + gradient fallback, badges, hover checkbox + refresh, hover glow.

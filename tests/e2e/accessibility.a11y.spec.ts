@@ -47,6 +47,31 @@ async function checkA11y(page: any, pageName: string) {
   return accessibilityScanResults;
 }
 
+// Scoped a11y check for toggle switches specifically: aria-required-attr /
+// aria-allowed-attr / aria-toggle-field-name would all have caught the
+// original wizard bug (role="switch" present with no :aria-checked and no
+// accessible name). Scoped (rather than the full checkA11y page-wide sweep)
+// so pre-existing, unrelated issues elsewhere on a given wizard step (e.g.
+// color-contrast on hint text) don't mask this regression check.
+async function checkToggleA11y(page: any, pageName: string) {
+  const results = await new AxeBuilder({ page })
+    .withRules(['aria-required-attr', 'aria-allowed-attr', 'aria-toggle-field-name', 'button-name', 'aria-valid-attr-value'])
+    .analyze();
+
+  if (results.violations.length > 0) {
+    console.log(`Toggle a11y violations on ${pageName}:`);
+    results.violations.forEach(violation => {
+      console.log(`  - ${violation.id}: ${violation.description}`);
+      violation.nodes.forEach(node => console.log(`    ${node.html}`));
+    });
+  }
+
+  expect(
+    results.violations.length,
+    `Found toggle a11y violations on ${pageName}: ${results.violations.map(v => v.id).join(', ')}`
+  ).toBe(0);
+}
+
 async function waitForSuggestionsReady(page: any) {
   await expect(page.getByRole('heading', { name: 'Suggestions' })).toBeVisible();
   await expect(page.getByRole('tablist', { name: 'Suggestion categories' })).toBeVisible();
@@ -122,8 +147,106 @@ test.describe('Accessibility', () => {
     await page.goto('/settings/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(2000); // Settings takes longer to load
-    
+
     await checkA11y(page, 'Settings');
+  });
+
+  // The wizard's provider/downloader/library toggles only render into the DOM
+  // once their step is reached (each step is `x-show`-gated) and, for the
+  // provider toggles, once a search type is chosen. Walk the real flow so the
+  // toggles this test cares about are actually present and visible.
+  async function navigateWizardToProviders(page: any, searchType: 'Usenet' | 'Torrents' | 'Both' = 'Both') {
+    await page.goto('/wizard/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(500);
+
+    // Step 1: Welcome -> Continue
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(300);
+
+    // Step 2: Security -> Skip (no credentials needed for this check)
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await page.waitForTimeout(300);
+
+    // Step 3: Providers -> choose a search type so the provider toggles render.
+    // Each source button's accessible name is "<Type> <hint>" (e.g. "Both
+    // Maximum coverage"), so match on a name starting with the type.
+    await page.getByRole('button', { name: new RegExp('^' + searchType) }).click();
+    await page.waitForTimeout(300);
+  }
+
+  test('Setup Wizard page should be accessible', async ({ page }) => {
+    await page.goto('/wizard/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1000);
+
+    // Regression guard for UI-CONFORM-01: the wizard used to render its 8
+    // toggle switches at a non-canonical size (w-10 h-5) and without
+    // role="switch"/:aria-checked/aria-label, which axe's aria-required-attr /
+    // aria-allowed-attr rules would catch on any toggle actually in view.
+    await checkA11y(page, 'Setup Wizard');
+  });
+
+  test('Setup Wizard provider toggles are accessible and keyboard-operable', async ({ page }) => {
+    await navigateWizardToProviders(page, 'Both');
+
+    // Newznab, BinSearch, ThePirateBay, YTS and Jackett/TorrentPotato toggles
+    // are all visible now that "Both" search types are selected.
+    await checkToggleA11y(page, 'Setup Wizard — Providers step');
+
+    const toggles = page.locator('button[role="switch"]:visible');
+    const toggleCount = await toggles.count();
+    expect(toggleCount).toBeGreaterThanOrEqual(5);
+
+    for (let i = 0; i < toggleCount; i++) {
+      const toggle = toggles.nth(i);
+      await expect(toggle).toHaveAttribute('aria-checked', /true|false/);
+      const ariaLabel = await toggle.getAttribute('aria-label');
+      expect(ariaLabel, `toggle ${i} should have a non-empty aria-label`).toBeTruthy();
+      const trackClass = await toggle.getAttribute('class');
+      expect(trackClass).toContain('w-8 h-4');
+      expect(trackClass).not.toContain('w-10 h-5');
+    }
+
+    // Keyboard operability: focus + Enter/Space must flip aria-checked, same
+    // as the canonical toggle elsewhere in the app (field_types.html etc.).
+    const firstToggle = toggles.first();
+    const beforeChecked = await firstToggle.getAttribute('aria-checked');
+    await firstToggle.focus();
+    await expect(firstToggle).toBeFocused();
+    await page.keyboard.press('Enter');
+    await expect(firstToggle).toHaveAttribute('aria-checked', beforeChecked === 'true' ? 'false' : 'true');
+  });
+
+  test('Setup Wizard downloader and library toggles are accessible', async ({ page }) => {
+    await navigateWizardToProviders(page, 'Both');
+
+    // Step 3: Providers -> Continue to Downloader (saves the providers step
+    // for real against the local test server).
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(500);
+
+    // Black Hole toggle is always visible on the Downloader step.
+    const blackholeToggle = page.getByRole('switch', { name: 'Enable Black Hole' });
+    await expect(blackholeToggle).toBeVisible();
+    await expect(blackholeToggle).toHaveAttribute('aria-checked', /true|false/);
+    let trackClass = await blackholeToggle.getAttribute('class');
+    expect(trackClass).toContain('w-8 h-4');
+    expect(trackClass).not.toContain('w-10 h-5');
+
+    // Step 4: Downloader -> Continue to Library
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(500);
+
+    // Renamer toggle is always visible on the Library step.
+    const renamerToggle = page.getByRole('switch', { name: 'Enable Automatic Renaming' });
+    await expect(renamerToggle).toBeVisible();
+    await expect(renamerToggle).toHaveAttribute('aria-checked', /true|false/);
+    trackClass = await renamerToggle.getAttribute('class');
+    expect(trackClass).toContain('w-8 h-4');
+    expect(trackClass).not.toContain('w-10 h-5');
+
+    await checkToggleA11y(page, 'Setup Wizard — Library step');
   });
 
   test('Navigation should have proper ARIA landmarks', async ({ page }) => {
