@@ -60,7 +60,7 @@
         movie here.
       </p>
       <p>
-        <a href="javascript:(function(){window.location.href='{{ absolute_base }}add/?url='+encodeURIComponent(location.href)})()"
+        <a href="javascript:(function(){window.location.href={{ absolute_base | tojson }}+'add/?url='+encodeURIComponent(location.href)})()"
            class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors font-medium focus:outline-none focus:ring-2 focus:ring-cp-accent/50"
            title="Drag to your bookmarks bar"
            aria-label="Add to CouchPotato bookmarklet — drag this link to your bookmarks bar">

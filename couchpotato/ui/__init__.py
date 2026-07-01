@@ -3,6 +3,8 @@
 import html
 import json
 import os
+import re
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -60,9 +62,19 @@ def _absolute_base(request: Request) -> str:
     Used for things like the add-by-URL bookmarklet, which must navigate to an
     absolute URL (it runs from an arbitrary third-party page), not a
     site-relative one.
+
+    The scheme/host come from ``request.base_url`` which Starlette derives from
+    the client-supplied ``Host`` header (there is no TrustedHostMiddleware). That
+    value is untrusted, so we hard-sanitize it: force an http(s) scheme and strip
+    the host to the characters legal in a URL authority. This neutralises header
+    injection at the source (belt to the template's ``| tojson`` suspenders) so a
+    ``Host: evil'};alert()//`` can't break out of the bookmarklet's JS string.
     """
     web_base = Env.get('web_base') or '/'
-    return str(request.base_url).rstrip('/') + web_base
+    parts = urlsplit(str(request.base_url))
+    scheme = parts.scheme if parts.scheme in ('http', 'https') else 'http'
+    netloc = re.sub(r'[^A-Za-z0-9.\-:\[\]]', '', parts.netloc)
+    return '%s://%s%s' % (scheme, netloc, web_base)
 
 
 def create_router(require_auth) -> APIRouter:
@@ -216,6 +228,10 @@ def create_router(require_auth) -> APIRouter:
                 else:
                     error = 'Failed getting movie info'
             except Exception:
+                # Defensive/effectively-dead: callApiHandler already catches all
+                # handler exceptions and returns {'success': False, ...}, so this
+                # never fires today (mirrors partial_search). Kept in case that
+                # contract changes.
                 log.error('Failed to resolve movie via url: %s', url)
                 error = 'Failed getting movie info'
         else:

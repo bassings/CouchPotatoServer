@@ -189,6 +189,41 @@ class TestAddPageUrlParam:
         assert resp.status_code == 200
         assert 'javascript:(function(){window.location.href=' in resp.text
         assert "encodeURIComponent(location.href)" in resp.text
-        # Bookmarklet must target the real absolute base, e.g. http://testserver/,
-        # not a bare site-relative path — it runs from an arbitrary third-party page.
-        assert 'http://testserver/add/?url=' in resp.text
+        # Bookmarklet must target the real absolute base — it runs from an
+        # arbitrary third-party page. The value is embedded via | tojson (a
+        # double-quoted, HTML-escaped JS string literal), so the host appears as
+        # &#34;http://testserver/&#34; + 'add/?url=', not a raw single-quoted splice.
+        assert 'testserver' in resp.text
+        assert "+'add/?url='" in resp.text
+        # The old, injectable single-quoted splice must be gone.
+        assert "'http://testserver/add/?url='" not in resp.text
+
+    def test_absolute_base_sanitizes_hostile_host_header(self):
+        """A malicious Host header must not survive into the bookmarklet's JS
+        (reflected-injection defense-in-depth alongside the template's | tojson)."""
+        from couchpotato.ui import _absolute_base
+
+        class _Req:
+            base_url = "http://evil'};alert(document.domain);//"
+
+        out = _absolute_base(_Req())
+        for bad in ("'", ';', '}', '(', ')', ' ', 'alert('):
+            assert bad not in out, f'sanitized base still contains {bad!r}: {out!r}'
+        assert out.startswith('http://')
+
+    def test_absolute_base_forces_http_scheme(self):
+        from couchpotato.ui import _absolute_base
+
+        class _Req:
+            base_url = 'javascript://evil/'
+
+        assert _absolute_base(_Req()).startswith('http://')
+
+    def test_bookmarklet_does_not_break_out_of_js_string(self, client):
+        """Even end-to-end, a hostile Host header can't inject executable JS into
+        the bookmarklet: the rendered value is JSON- and HTML-escaped."""
+        resp = client.get('/add/', headers={'host': "evil'};alert(1)//"})
+        assert resp.status_code == 200
+        # No unescaped breakout sequence in the response.
+        assert "'};alert(1)" not in resp.text
+        assert 'alert(1)' not in resp.text
