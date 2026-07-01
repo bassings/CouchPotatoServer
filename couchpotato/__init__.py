@@ -11,7 +11,6 @@ import time
 import traceback
 
 from couchpotato.api import api_nonblock, callApiHandler
-from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
 from couchpotato.core.logger import CPLog
@@ -83,20 +82,15 @@ def require_auth(request: Request):
 # --- Web Views ---
 #
 # NOTE: the `views`/`addView` registry and most of the legacy MooTools-era
-# view functions (apiDocs(), databaseManage(), manifest(), robots()) were
-# retired in UI-CLEANUP-01 — none of them were read by any live route (the
-# registry itself was never consulted by the router; `/robots.txt`,
-# `/docs`, `/database` and `/couchpotato.appcache` have no FastAPI route
-# handler). `index()` is the one exception: it is still called directly by
-# `couchpotato.core.plugins.userscript.main.Userscript.iFrame` (the
-# `userscript` API view), so it — and the `index.html` template plus the
-# ClientScript plugin/compiled bundle it depends on for rendering — must
-# stay until that call site is ported or removed in a follow-up.
-
-def index(*args):
-    tmpl = _jinja_env.get_template('index.html')
-    return tmpl.render(sep=os.sep, fireEvent=fireEvent, Env=Env)
-
+# view functions (apiDocs(), databaseManage(), manifest(), robots(), index())
+# were retired in UI-CLEANUP-01/UI-CLEANUP-02 — none of them were read by any
+# live route (the registry itself was never consulted by the router;
+# `/robots.txt`, `/docs`, `/database` and `/couchpotato.appcache` have no
+# FastAPI route handler). `index()` was the one exception, called directly by
+# `Userscript.iFrame`; that embed was confirmed already broken/unused and was
+# deleted in UI-CLEANUP-02, along with `index()`, `index.html`, the
+# ClientScript plugin, and the compiled bundles it rendered — see
+# `specs/UI-MIGRATION.md`.
 
 # --- FastAPI Route Handlers ---
 
@@ -326,8 +320,8 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
 
     # Legacy /old/* catch-all — redirect to the new UI root. The dead views
     # dict/addView registry and unreachable view functions were removed in
-    # UI-CLEANUP-01 (see specs/UI-MIGRATION.md); `index()` remains because
-    # Userscript.iFrame still calls it directly (see note above index()).
+    # UI-CLEANUP-01, and the last live chain (`index()`/`index.html`/
+    # ClientScript) was removed in UI-CLEANUP-02 (see specs/UI-MIGRATION.md).
     @app.get(web_base + 'old/{route:path}')
     @app.get(web_base + 'old/')
     @app.get(web_base + 'old')
