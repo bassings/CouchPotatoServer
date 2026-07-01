@@ -107,6 +107,20 @@ class TestDriftIsDetected:
         assert result.returncode != 0
         assert "#abcdef" in result.stdout
 
+    def test_single_quoted_attributes_are_also_checked(self, tmp_path):
+        """Drift in single-quoted class=/style= attributes must not bypass the
+        icon-font / hex-color rules (regression for the review nit that ATTR_RE
+        was double-quote-only)."""
+        path = write_html(
+            tmp_path,
+            "single_quote.html",
+            "<i class='icon-download'></i>\n<div style='color: #ff0000'></div>\n",
+        )
+        result = run_checker(path)
+        assert result.returncode != 0
+        assert "icon-download" in result.stdout
+        assert "#ff0000" in result.stdout
+
     def test_raw_hex_in_inline_style_fails(self, tmp_path):
         path = write_html(
             tmp_path, "hex_style.html", '<div style="color: #ff0000;"></div>\n'

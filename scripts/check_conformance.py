@@ -72,10 +72,12 @@ TOGGLE_RE = re.compile(r"\bw-10 h-5\b|\btranslate-x-5\b")
 # --- Rules 2 & 3: attribute-scoped checks -----------------------------------
 # Matches the *value* of any attribute whose name ends in "class" or "style"
 # — class="...", :class="...", x-bind:class="...", style="...",
-# :style="..." — static or Alpine-bound alike. See the module docstring for
-# why scoping to these attributes is what excludes base.html's legitimate
-# token definitions without needing an explicit exclusion list.
-ATTR_RE = re.compile(r'[:\w.-]*\b(?:class|style)\s*=\s*"([^"]*)"')
+# :style="..." — static or Alpine-bound alike. Accepts either quote style
+# (double or single) so a future single-quoted attribute can't silently bypass
+# the icon-font / hex-color rules; the quote char is group(1), the value is
+# group(2). See the module docstring for why scoping to these attributes is what
+# excludes base.html's legitimate token definitions without an exclusion list.
+ATTR_RE = re.compile(r"""[:\w.-]*\b(?:class|style)\s*=\s*(["'])((?:(?!\1).)*)\1""")
 
 # Legacy icon-font token: a whole class token starting with "icon-".
 ICON_FONT_RE = re.compile(r"(?:^|\s)icon-[\w-]+")
@@ -99,7 +101,7 @@ def check_file(path: Path) -> list[tuple[int, str]]:
         ))
 
     for attr_match in ATTR_RE.finditer(text):
-        value = attr_match.group(1)
+        value = attr_match.group(2)
         line_no = text.count("\n", 0, attr_match.start()) + 1
 
         icon_match = ICON_FONT_RE.search(value)
