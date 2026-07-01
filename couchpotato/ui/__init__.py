@@ -3,6 +3,8 @@
 import html
 import json
 import os
+import re
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -54,6 +56,27 @@ def _ctx(extra=None):
     return ctx
 
 
+def _absolute_base(request: Request) -> str:
+    """Build the app's real, externally-reachable base URL (scheme+host+web_base).
+
+    Used for things like the add-by-URL bookmarklet, which must navigate to an
+    absolute URL (it runs from an arbitrary third-party page), not a
+    site-relative one.
+
+    The scheme/host come from ``request.base_url`` which Starlette derives from
+    the client-supplied ``Host`` header (there is no TrustedHostMiddleware). That
+    value is untrusted, so we hard-sanitize it: force an http(s) scheme and strip
+    the host to the characters legal in a URL authority. This neutralises header
+    injection at the source (belt to the template's ``| tojson`` suspenders) so a
+    ``Host: evil'};alert()//`` can't break out of the bookmarklet's JS string.
+    """
+    web_base = Env.get('web_base') or '/'
+    parts = urlsplit(str(request.base_url))
+    scheme = parts.scheme if parts.scheme in ('http', 'https') else 'http'
+    netloc = re.sub(r'[^A-Za-z0-9.\-:\[\]]', '', parts.netloc)
+    return '%s://%s%s' % (scheme, netloc, web_base)
+
+
 def create_router(require_auth) -> APIRouter:
     """Create the /new/ router. require_auth is the FastAPI dependency."""
     router = APIRouter()
@@ -99,9 +122,14 @@ def create_router(require_auth) -> APIRouter:
 
     @router.get('/add/')
     @router.get('/add')
-    async def add_movie(request: Request, user=Depends(require_auth)):
+    async def add_movie(request: Request, url: str = None, user=Depends(require_auth)):
         tmpl = _jinja.get_template('add.html')
-        return HTMLResponse(tmpl.render(**_ctx({'current_page': 'add'})))
+        ctx = {
+            'current_page': 'add',
+            'url': url or '',
+            'absolute_base': _absolute_base(request),
+        }
+        return HTMLResponse(tmpl.render(**_ctx(ctx)))
 
     @router.get('/settings/')
     @router.get('/settings')
@@ -176,6 +204,44 @@ def create_router(require_auth) -> APIRouter:
                 log.error('Failed to search movies')
         tmpl = _jinja.get_template('partials/search_results.html')
         return HTMLResponse(tmpl.render(movies=movies, **_ctx()))
+
+    @router.get('/partial/add-via-url')
+    async def partial_add_via_url(request: Request, url: str = '', user=Depends(require_auth)):
+        """Resolve a movie page URL (IMDb/TMDB/Trakt/Letterboxd/etc.) via the
+        userscript.add_via_url API view and render it as a movie card.
+
+        userscript.add_via_url (Userscript.getViaUrl) always returns a dict:
+        {'url': url, 'movie': <dict>} on success, or
+        {'url': url, 'movie': <falsy or error string>, 'error': <str>} on failure.
+        """
+        from couchpotato.api import callApiHandler
+        movie = None
+        error = None
+        if url:
+            try:
+                result = callApiHandler('userscript.add_via_url', url=url)
+                candidate = result.get('movie') if isinstance(result, dict) else None
+                # `and candidate` guards the empty-dict case: getViaUrl treats a
+                # truthy-but-empty {} movie as success (no error key), but the
+                # partial renders {} as "no movie" — without this it'd show the
+                # empty state with no explanatory error text.
+                if isinstance(candidate, dict) and candidate:
+                    movie = candidate
+                elif isinstance(result, dict) and result.get('error'):
+                    error = result['error']
+                else:
+                    error = 'Failed getting movie info'
+            except Exception:
+                # Defensive/effectively-dead: callApiHandler already catches all
+                # handler exceptions and returns {'success': False, ...}, so this
+                # never fires today (mirrors partial_search). Kept in case that
+                # contract changes.
+                log.error('Failed to resolve movie via url: %s', url)
+                error = 'Failed getting movie info'
+        else:
+            error = 'No URL provided'
+        tmpl = _jinja.get_template('partials/add_via_url_result.html')
+        return HTMLResponse(tmpl.render(movie=movie, error=error, url=url, **_ctx()))
 
     @router.get('/partial/suggestions')
     async def partial_suggestions(request: Request, user=Depends(require_auth)):

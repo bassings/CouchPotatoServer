@@ -162,11 +162,11 @@ When running, FastAPI provides automatic OpenAPI documentation:
 
 | Endpoint | Description |
 |----------|-------------|
-| `userscript` | Userscript iframe |
-| `userscript.add_via_url` | Add movie via URL |
-| `userscript.includes` | Get userscript includes |
-| `userscript.bookmark` | Bookmark functionality |
-| `userscript.get/<provider>/<script>` | Get a specific userscript |
+| `userscript.add_via_url` | Resolve a movie-site page URL to a movie and return its metadata (used by the new-UI add-by-URL flow / bookmarklet) |
+
+> The legacy iframe/bookmarklet endpoints (`userscript`, `userscript.includes`,
+> `userscript.bookmark`, `userscript.get/<provider>/<script>`) were retired in
+> UI-CLEANUP-02; add-by-URL is now served through the new UI at `/add/?url=`.
 
 ## Authentication
 

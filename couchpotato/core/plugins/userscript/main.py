@@ -1,16 +1,12 @@
-import os
 import traceback
 import time
 from base64 import b64encode, b64decode
 
-from couchpotato import index
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.variable import isDict
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
-from couchpotato.environment import Env
-from fastapi.responses import RedirectResponse
 
 
 log = CPLog(__name__)
@@ -21,57 +17,10 @@ class Userscript(Plugin):
     version = 8
 
     def __init__(self):
-        addApiView('userscript.get/(.*)/(.*)', self.getUserScript, static = True)
-
-        addApiView('userscript', self.iFrame)
         addApiView('userscript.add_via_url', self.getViaUrl)
-        addApiView('userscript.includes', self.getIncludes)
-        addApiView('userscript.bookmark', self.bookmark)
 
         addEvent('userscript.get_version', self.getVersion)
         addEvent('app.test', self.doTest)
-
-    def bookmark(self, host = None, **kwargs):
-
-        params = {
-            'includes': fireEvent('userscript.get_includes', merge = True),
-            'excludes': fireEvent('userscript.get_excludes', merge = True),
-            'host': host,
-        }
-
-        return self.renderTemplate(__file__, 'bookmark.js_tmpl', **params)
-
-    def getIncludes(self, **kwargs):
-
-        return {
-            'includes': fireEvent('userscript.get_includes', merge = True),
-            'excludes': fireEvent('userscript.get_excludes', merge = True),
-        }
-
-    def getUserScript(self, script_route, **kwargs):
-        """Register userscript route on the FastAPI app."""
-        klass = self
-        app = Env.get('app')
-
-        if app is not None:
-            @app.get(Env.get('api_base') + script_route)
-            async def userscript_handler(request):
-                from fastapi import Request as _Req
-                bookmarklet_host = Env.setting('bookmarklet_host')
-                loc = bookmarklet_host if bookmarklet_host else str(request.base_url).rstrip('/')
-
-                params = {
-                    'includes': fireEvent('userscript.get_includes', merge=True),
-                    'excludes': fireEvent('userscript.get_excludes', merge=True),
-                    'version': klass.getVersion(),
-                    'api': '%suserscript/' % Env.get('api_base'),
-                    'host': loc,
-                }
-
-                script = klass.renderTemplate(__file__, 'template.js_tmpl', **params)
-                klass.createFile(os.path.join(Env.get('cache_dir'), 'couchpotato.user.js'), script)
-
-                return RedirectResponse(url=Env.get('api_base') + 'file.cache/couchpotato.user.js')
 
     def getVersion(self):
 
@@ -82,9 +31,6 @@ class Userscript(Plugin):
             version += v
 
         return version
-
-    def iFrame(self, **kwargs):
-        return index()
 
     def getViaUrl(self, url = None, **kwargs):
 

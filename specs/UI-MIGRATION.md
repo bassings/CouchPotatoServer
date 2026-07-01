@@ -30,38 +30,40 @@ Medium: quick library scan · manual folder scan · log pagination · notificati
 ## Acceptance criteria
 - [x] `/old/*` returns a redirect to `/`; no page is served from the legacy stack.
 - [ ] All 18 audited features are available in the new UI, each with unit + e2e (+ axe) coverage.
-- [x] Legacy assets **mostly** removed (UI-CLEANUP-01, see
-      `specs/UI-CLEANUP-01-retire-legacy-assets.md`): `views`/`addView` and the
-      unreachable view functions (`apiDocs()`, `databaseManage()`, `manifest()`,
-      the legacy `robots()`), the raw SCSS sources (`static/style/*.scss` except
-      the compiled `combined.min.css`), the 9 orphaned plugin
-      `*.scss` files, non-vendor MooTools raw sources
+- [x] Legacy assets **fully retired** (Gap 1 closed). UI-CLEANUP-01 (see
+      `specs/UI-CLEANUP-01-retire-legacy-assets.md`) removed `views`/`addView`
+      and the unreachable view functions (`apiDocs()`, `databaseManage()`,
+      `manifest()`, the legacy `robots()`), the raw SCSS sources
+      (`static/style/*.scss` except the then-still-served `combined.min.css`),
+      the 9 orphaned plugin `*.scss` files, non-vendor MooTools raw sources
       (`mootools*.js`, `dynamics.js`, `fastclick.js`, `history.js`,
       `Array.stableSort.js`, `requestAnimationFrame.js`, `couchpotato.js`,
       `api.js`, `page.js`, `block.js`, `page/`, `block/`, `library/`), and the
-      dead server templates `api.html`/`database.html` are all deleted.
-      **One live chain found during that cleanup and deliberately kept**
-      (deleting it would regress a live feature): `couchpotato/core/_base/
-      clientscript.py`, its 4 compiled bundles (`combined.min.css`,
-      `combined.vendor.min.js`, `combined.base.min.js`,
-      `combined.plugins.min.js`), the icon font + Open Sans + Lobster binaries
-      under `static/fonts/**` (still `@font-face`-referenced by the served
-      `combined.min.css`), `couchpotato/templates/index.html`, and
-      `couchpotato.index()` are all still live — `Userscript.iFrame`
-      (`couchpotato/core/plugins/userscript/main.py`, the `userscript` API view
-      used by the bookmarklet/add-via-URL embed flow) calls `index()` directly,
-      which renders `index.html`, which in turn depends on
-      `clientscript.get_styles`/`get_scripts`. Retiring this last piece
-      requires porting or removing that iFrame call site first — tracked as the
-      follow-up UI-CLEANUP-02, gated on the userscript add-via-URL port.
-      **Caveat for UI-CLEANUP-02:** the `userscript` API view returns `index()`'s
-      HTML through the generic API dispatch, which JSON-encodes `str` results —
-      so `GET /api/<key>/userscript` currently responds `application/json` with
-      escaped HTML, i.e. the iframe embed may not actually render today (behaviour
-      pre-dates this cleanup; only the HTTP 200 was verified, not the rendered
-      output). UI-CLEANUP-02 should first establish whether the add-via-URL embed
-      is still used/working: if it is already broken or unused, the whole kept
-      chain can simply be deleted; if it is to be kept, it should be ported to the
-      new UI and served with a real `text/html` response.
+      dead server templates `api.html`/`database.html`. It deliberately kept
+      one live chain: `couchpotato/core/_base/clientscript.py`, its 4 compiled
+      bundles (`combined.min.css`, `combined.vendor.min.js`,
+      `combined.base.min.js`, `combined.plugins.min.js`), the icon font + Open
+      Sans + Lobster binaries under `static/fonts/**`, `couchpotato/templates/
+      index.html`, and `couchpotato.index()` — because `Userscript.iFrame`
+      (`couchpotato/core/plugins/userscript/main.py`) called `index()` directly.
+
+      UI-CLEANUP-02 (see `specs/UI-CLEANUP-02-retire-userscript-embed.md`)
+      investigated that chain and found the embed it served was **already
+      broken and unused**: the `userscript` API view returned `index()`'s HTML
+      through the generic API dispatch, which JSON-encodes `str` results, so
+      `GET /api/<key>/userscript` responded `application/json` with escaped
+      HTML rather than a renderable iframe — the embed never actually worked
+      post-migration. The working resolver (`userscript.add_via_url` /
+      `getViaUrl`) is independent of that chain and is ported into the new UI
+      by UI-PORT-03. UI-CLEANUP-02 therefore deleted the whole kept chain:
+      `Userscript.iFrame`/`getUserScript`/`bookmark`/`getIncludes` and their
+      `addApiView` registrations, `couchpotato.index()`, `couchpotato/
+      templates/index.html`, `couchpotato/core/_base/clientscript.py`, all 4
+      compiled `combined.*` bundles, `static/fonts/**`, and the legacy
+      `userscript.js`/`bookmark.js_tmpl`/`template.js_tmpl` assets those
+      methods rendered. `userscript.add_via_url` remains registered and
+      callable. The legacy asset layer is now fully retired — no
+      `clientscript`/`combined.*`/`index.html`/`static/fonts` references
+      remain in live code.
 - [ ] New UI passes `docs/design-system/CONFORMANCE.md` (tokens, Heroicons, components, a11y).
 - [ ] No references to `/old` or the legacy stack remain in code or docs.

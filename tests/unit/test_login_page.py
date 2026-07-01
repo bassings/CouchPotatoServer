@@ -197,21 +197,21 @@ class TestLoginPageBehaviourUnchanged:
 
 
 class TestBootAfterLegacyAssetCleanup:
-    """UI-CLEANUP-01 boot/smoke regression.
+    """UI-CLEANUP-02 boot/smoke regression.
 
-    UI-CLEANUP-01 retired most of the legacy MooTools/SCSS asset layer, but
-    `couchpotato/core/_base/clientscript.py` (the `ClientScript` plugin) and
-    its three compiled bundles (`combined.vendor.min.js`,
-    `combined.base.min.js`, `combined.plugins.min.js`, `combined.min.css`)
-    were kept: `couchpotato.index()` — and therefore `index.html`, which
-    calls `fireEvent('clientscript.get_styles'/'get_scripts')` — is still
-    called directly by `Userscript.iFrame` (the `userscript` API view), so
-    `clientscript.get_styles`/`get_scripts` remain registered events, unlike
-    the rest of the legacy view machinery. These tests guard the boot path:
-    the app must start with no ClientScript plugin-load failure, login must
-    still render 200, and ClientScript's declared paths must point only at
-    files that actually still exist on disk (not any of the deleted raw
-    MooTools/SCSS sources).
+    UI-CLEANUP-01 kept `couchpotato/core/_base/clientscript.py` (the
+    `ClientScript` plugin), its three compiled bundles
+    (`combined.vendor.min.js`, `combined.base.min.js`,
+    `combined.plugins.min.js`, `combined.min.css`), `couchpotato/templates/
+    index.html`, and `couchpotato.index()` because `Userscript.iFrame` still
+    called `index()` directly. Investigation confirmed that embed was already
+    broken/unused (the API dispatch JSON-encodes the HTML instead of serving
+    `text/html`), so UI-CLEANUP-02 deleted the whole chain: `iFrame`, `index()`,
+    `index.html`, `clientscript.py`, and the four compiled bundles are all
+    gone. These tests guard the boot path post-cleanup: the app must still
+    start with no ClientScript plugin-load failure (there's nothing to fail to
+    load — the plugin module itself is gone), and `/login/` must still render
+    200.
     """
 
     def test_app_boots_and_login_still_returns_200(self, client):
@@ -219,84 +219,83 @@ class TestBootAfterLegacyAssetCleanup:
         resp = client.get('/login/')
         assert resp.status_code == 200
 
-    def test_clientscript_module_imports_without_error(self):
-        """Importing the ClientScript plugin module must not raise."""
+    def test_clientscript_module_no_longer_exists(self):
+        """The ClientScript plugin module was deleted in UI-CLEANUP-02 —
+        importing it must fail, not silently succeed."""
         import importlib
 
-        module = importlib.import_module('couchpotato.core._base.clientscript')
-        assert hasattr(module, 'ClientScript')
+        with pytest.raises(ImportError):
+            importlib.import_module('couchpotato.core._base.clientscript')
 
-    def test_clientscript_declared_paths_exist_on_disk(self):
-        """ClientScript.paths must reference only surviving compiled bundles.
-
-        Guards against a future edit deleting `combined.*.min.js`/
-        `combined.min.css` while forgetting `ClientScript` still needs them
-        (its `__init__` calls `os.path.getmtime` on each path and would
-        raise `FileNotFoundError` at plugin-load time).
-        """
-        from couchpotato.core._base.clientscript import ClientScript
-
+    def test_clientscript_source_file_is_gone(self):
+        """The clientscript.py source file itself must no longer exist on
+        disk (not just fail to import for some unrelated reason)."""
         app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        for static_type, rel_paths in ClientScript.paths.items():
-            for rel_path in rel_paths:
-                file_path = os.path.join(app_dir, 'couchpotato', 'static', rel_path)
-                assert os.path.isfile(file_path), (
-                    f'ClientScript.paths[{static_type!r}] references missing file: {rel_path}'
-                )
+        file_path = os.path.join(app_dir, 'couchpotato', 'core', '_base', 'clientscript.py')
+        assert not os.path.exists(file_path)
 
-    def test_clientscript_paths_reference_no_deleted_legacy_assets(self):
-        """None of ClientScript's declared paths point at assets removed by
-        UI-CLEANUP-01 (mootools.js, couchpotato.js, page/block/library
-        sources, raw *.scss, static/fonts, etc.)."""
-        from couchpotato.core._base.clientscript import ClientScript
-
-        banned = (
-            'mootools', 'dynamics.js', 'fastclick.js', 'history.js',
-            'Array.stableSort.js', 'requestAnimationFrame.js',
-            'couchpotato.js', 'api.js', 'page.js', 'block.js',
-            'page/', 'block/', 'library/', '.scss', 'fonts/',
+    def test_combined_bundles_are_gone(self):
+        """The four compiled legacy bundles ClientScript used to serve must
+        no longer exist on disk."""
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        static_dir = os.path.join(app_dir, 'couchpotato', 'static')
+        deleted = (
+            os.path.join(static_dir, 'style', 'combined.min.css'),
+            os.path.join(static_dir, 'scripts', 'combined.vendor.min.js'),
+            os.path.join(static_dir, 'scripts', 'combined.base.min.js'),
+            os.path.join(static_dir, 'scripts', 'combined.plugins.min.js'),
         )
-        all_paths = [p for paths in ClientScript.paths.values() for p in paths]
-        for rel_path in all_paths:
-            for token in banned:
-                assert token not in rel_path, (
-                    f'ClientScript.paths still references deleted legacy asset: {rel_path}'
-                )
+        for file_path in deleted:
+            assert not os.path.exists(file_path), f'legacy bundle still present: {file_path}'
 
 
 class TestPreservedUserscriptChain:
     """UI-CLEANUP-01 kept clientscript.py + index.html + index() specifically
-    because `Userscript.iFrame` still depends on them. These tests guard that
-    justification so a future 'cleanup' PR can't silently delete `index()` (which
-    would break the userscript import) without a test going red — the deletion
-    the audit *would* have made if the chain hadn't been traced.
+    because `Userscript.iFrame` depended on them. UI-CLEANUP-02 confirmed that
+    embed was already broken/unused and deleted the whole chain, now that
+    `userscript.add_via_url` is ported to the new UI independently (see
+    UI-PORT-03) and no longer needs the iFrame/index() path. These tests guard
+    the *new* state: `index()` is gone, `Userscript` no longer imports or calls
+    it, `index.html` is gone, and the working `add_via_url` resolver is
+    unaffected.
     """
 
-    def test_couchpotato_index_still_exists_and_is_callable(self):
-        """The userscript add-via-URL embed renders through couchpotato.index()."""
+    def test_couchpotato_index_no_longer_exists(self):
+        """The userscript iFrame embed and its couchpotato.index() renderer
+        were both deleted in UI-CLEANUP-02."""
         import couchpotato
 
-        assert callable(getattr(couchpotato, 'index', None)), (
-            'couchpotato.index() was removed, but Userscript.iFrame still calls '
-            'it — see specs/UI-CLEANUP-01 / UI-MIGRATION.md before deleting it.'
+        assert getattr(couchpotato, 'index', None) is None, (
+            'couchpotato.index() should have been removed by UI-CLEANUP-02 — '
+            'see specs/UI-MIGRATION.md.'
         )
 
-    def test_userscript_iframe_imports_and_calls_index(self):
-        """Userscript.iFrame imports index from couchpotato and calls it. If
-        index() is deleted, importing this plugin module raises ImportError —
-        this test surfaces that as a clear failure at the call site."""
+    def test_index_html_template_is_gone(self):
+        """The legacy index.html template must no longer exist on disk."""
+        app_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        file_path = os.path.join(app_dir, 'couchpotato', 'templates', 'index.html')
+        assert not os.path.exists(file_path)
+
+    def test_userscript_no_longer_imports_or_calls_index(self):
+        """Userscript must no longer import `index` from couchpotato or
+        define an `iFrame` method — both were removed in UI-CLEANUP-02."""
         import inspect
 
         from couchpotato.core.plugins.userscript import main as userscript_main
 
         module_src = inspect.getsource(userscript_main)
-        assert 'from couchpotato import index' in module_src, (
-            'Userscript no longer imports index from couchpotato — if the '
-            'add-via-URL embed was ported/removed, update specs/UI-MIGRATION.md '
-            'and UI-CLEANUP-02 may now delete the kept legacy chain.'
+        assert 'from couchpotato import index' not in module_src, (
+            'Userscript still imports index from couchpotato — UI-CLEANUP-02 '
+            'should have removed the legacy iFrame embed entirely.'
         )
-        iframe_src = inspect.getsource(userscript_main.Userscript.iFrame)
-        assert 'index()' in iframe_src, (
-            'Userscript.iFrame no longer calls index() — re-evaluate whether the '
-            'kept clientscript/index.html/combined-bundle chain is still needed.'
+        assert not hasattr(userscript_main.Userscript, 'iFrame'), (
+            'Userscript.iFrame should have been deleted by UI-CLEANUP-02.'
         )
+
+    def test_userscript_add_via_url_still_registered_and_callable(self):
+        """The working `userscript.add_via_url` resolver (getViaUrl) must
+        survive the cleanup — UI-PORT-03 surfaces it in the new UI."""
+        from couchpotato.core.plugins.userscript.main import Userscript
+
+        assert hasattr(Userscript, 'getViaUrl')
+        assert callable(Userscript.getViaUrl)

@@ -57,10 +57,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROOT = REPO_ROOT / "couchpotato" / "ui" / "templates"
 # The ported login page lives in the legacy templates dir but is now a
-# design-system page, so it must be guarded too. We add just this one file, NOT
-# the whole couchpotato/templates/ dir — index.html there is the deliberately
-# kept legacy MooTools page (see specs/UI-CLEANUP-01) and is expected to contain
-# legacy classes/hex.
+# design-system page, so it must be guarded too. We add just this one file
+# explicitly rather than scanning the whole couchpotato/templates/ dir (login.html
+# is currently the only file there — the legacy index.html was retired in
+# UI-CLEANUP-02 — but scoping to the file keeps the intent explicit).
 LOGIN_TEMPLATE = REPO_ROOT / "couchpotato" / "templates" / "login.html"
 DEFAULT_ROOTS = [DEFAULT_ROOT, LOGIN_TEMPLATE]
 
