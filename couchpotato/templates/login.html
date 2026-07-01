@@ -2,7 +2,7 @@
 <html lang="en" class="dark">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>CouchPotato</title>
 
 <!-- PWA Meta Tags -->
@@ -72,10 +72,20 @@ tailwind.config = {
   /* A11Y: Focus indicators (A11Y-013) */
   :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
   :focus:not(:focus-visible) { outline: none; }
-
-  /* A11Y: Screen reader only utility */
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 </style>
+<!-- IMP-006: Honor the light/dark theme the user chose elsewhere in the app
+     (persisted in localStorage as 'cp-theme'), mirroring base.html's runtime
+     theme init. Runs before paint to avoid a flash of the wrong theme. -->
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('cp-theme');
+      if (saved === 'light' || (!saved && window.matchMedia('(prefers-color-scheme: light)').matches)) {
+        document.documentElement.classList.add('light');
+      }
+    } catch (e) { /* localStorage unavailable — fall back to the default dark theme */ }
+  })();
+</script>
 </head>
 <body class="min-h-screen bg-cp-bg text-cp-text font-sans antialiased flex items-center justify-center px-4 py-12">
   <div class="w-full max-w-sm">

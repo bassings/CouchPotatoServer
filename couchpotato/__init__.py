@@ -10,7 +10,7 @@ import re
 import time
 import traceback
 
-from couchpotato.api import api_docs, api_docs_missing, api, api_nonblock, callApiHandler
+from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt

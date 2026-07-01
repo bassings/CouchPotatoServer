@@ -154,6 +154,22 @@ class TestLoginPageRendersDesignSystem:
         resp = client.get('/login/')
         assert '<html lang="en" class="dark">' in resp.text
 
+    def test_login_page_allows_pinch_zoom(self, client):
+        """A11Y (WCAG 1.4.4): the viewport must not disable user scaling — the
+        legacy login page shipped `maximum-scale=1.0, user-scalable=no`, which
+        blocks pinch-zoom for low-vision users. The ported page must match
+        base.html and leave zoom enabled."""
+        resp = client.get('/login/')
+        assert 'user-scalable=no' not in resp.text
+        assert 'maximum-scale' not in resp.text
+
+    def test_login_page_honors_saved_light_theme(self, client):
+        """The page ships the runtime theme-init that applies the user's saved
+        'cp-theme' preference, so a light-theme user doesn't get a dark login."""
+        resp = client.get('/login/')
+        assert "localStorage.getItem('cp-theme')" in resp.text
+        assert "classList.add('light')" in resp.text
+
 
 class TestLoginPageBehaviourUnchanged:
     """login_post must keep authenticating with the same field names."""
@@ -246,3 +262,41 @@ class TestBootAfterLegacyAssetCleanup:
                 assert token not in rel_path, (
                     f'ClientScript.paths still references deleted legacy asset: {rel_path}'
                 )
+
+
+class TestPreservedUserscriptChain:
+    """UI-CLEANUP-01 kept clientscript.py + index.html + index() specifically
+    because `Userscript.iFrame` still depends on them. These tests guard that
+    justification so a future 'cleanup' PR can't silently delete `index()` (which
+    would break the userscript import) without a test going red — the deletion
+    the audit *would* have made if the chain hadn't been traced.
+    """
+
+    def test_couchpotato_index_still_exists_and_is_callable(self):
+        """The userscript add-via-URL embed renders through couchpotato.index()."""
+        import couchpotato
+
+        assert callable(getattr(couchpotato, 'index', None)), (
+            'couchpotato.index() was removed, but Userscript.iFrame still calls '
+            'it — see specs/UI-CLEANUP-01 / UI-MIGRATION.md before deleting it.'
+        )
+
+    def test_userscript_iframe_imports_and_calls_index(self):
+        """Userscript.iFrame imports index from couchpotato and calls it. If
+        index() is deleted, importing this plugin module raises ImportError —
+        this test surfaces that as a clear failure at the call site."""
+        import inspect
+
+        from couchpotato.core.plugins.userscript import main as userscript_main
+
+        module_src = inspect.getsource(userscript_main)
+        assert 'from couchpotato import index' in module_src, (
+            'Userscript no longer imports index from couchpotato — if the '
+            'add-via-URL embed was ported/removed, update specs/UI-MIGRATION.md '
+            'and UI-CLEANUP-02 may now delete the kept legacy chain.'
+        )
+        iframe_src = inspect.getsource(userscript_main.Userscript.iFrame)
+        assert 'index()' in iframe_src, (
+            'Userscript.iFrame no longer calls index() — re-evaluate whether the '
+            'kept clientscript/index.html/combined-bundle chain is still needed.'
+        )

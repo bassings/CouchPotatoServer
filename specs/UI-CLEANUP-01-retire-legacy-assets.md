@@ -1,5 +1,17 @@
 # UI-CLEANUP-01 — Retire the legacy MooTools/SCSS asset layer
 
+> **Implementation note (deviation from this spec — read first).** As written,
+> the delete-list and acceptance grep below would remove `clientscript.py`, the
+> 4 compiled `combined.*` bundles, `static/fonts/**`, `index.html`, and
+> `index()`. During implementation a live consumer was found:
+> `couchpotato/core/plugins/userscript/main.py` (`Userscript.iFrame`, the
+> `userscript` API view) calls `index()`, which renders `index.html` via the
+> `clientscript.*` events. That whole chain was therefore **kept**, and only the
+> genuinely-orphaned assets were deleted. So the acceptance grep below does
+> **not** come back clean for `clientscript`/`combined.min`/`static/fonts` — that
+> is expected. Full retirement is deferred to follow-up **UI-CLEANUP-02**, gated
+> on porting/removing the userscript add-via-URL embed. See `specs/UI-MIGRATION.md`.
+
 ## Problem
 
 The classic `/old` MooTools UI is dead: `/old/*` is a redirect-only shim

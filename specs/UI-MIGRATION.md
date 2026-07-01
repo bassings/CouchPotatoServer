@@ -54,5 +54,14 @@ Medium: quick library scan · manual folder scan · log pagination · notificati
       `clientscript.get_styles`/`get_scripts`. Retiring this last piece
       requires porting or removing that iFrame call site first — tracked as the
       follow-up UI-CLEANUP-02, gated on the userscript add-via-URL port.
+      **Caveat for UI-CLEANUP-02:** the `userscript` API view returns `index()`'s
+      HTML through the generic API dispatch, which JSON-encodes `str` results —
+      so `GET /api/<key>/userscript` currently responds `application/json` with
+      escaped HTML, i.e. the iframe embed may not actually render today (behaviour
+      pre-dates this cleanup; only the HTTP 200 was verified, not the rendered
+      output). UI-CLEANUP-02 should first establish whether the add-via-URL embed
+      is still used/working: if it is already broken or unused, the whole kept
+      chain can simply be deleted; if it is to be kept, it should be ported to the
+      new UI and served with a real `text/html` response.
 - [ ] New UI passes `docs/design-system/CONFORMANCE.md` (tokens, Heroicons, components, a11y).
 - [ ] No references to `/old` or the legacy stack remain in code or docs.
