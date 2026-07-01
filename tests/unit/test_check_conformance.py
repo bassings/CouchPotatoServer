@@ -121,6 +121,22 @@ class TestDriftIsDetected:
         assert "icon-download" in result.stdout
         assert "#ff0000" in result.stdout
 
+    def test_multiline_attribute_values_are_checked(self, tmp_path):
+        """Drift hidden inside a multi-line :class="{ ... }" binding must still be
+        caught (regression for the ATTR_RE-lacked-re.DOTALL nit)."""
+        path = write_html(
+            tmp_path,
+            "multiline.html",
+            "<div :class=\"{\n"
+            "    'bg-[#abcdef]': ok,\n"
+            "    'icon-emo-coffee': other,\n"
+            "}\">x</div>\n",
+        )
+        result = run_checker(path)
+        assert result.returncode != 0
+        assert "#abcdef" in result.stdout
+        assert "icon-emo-coffee" in result.stdout
+
     def test_raw_hex_in_inline_style_fails(self, tmp_path):
         path = write_html(
             tmp_path, "hex_style.html", '<div style="color: #ff0000;"></div>\n'

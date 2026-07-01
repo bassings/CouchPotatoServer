@@ -41,8 +41,9 @@ Scoping / deliberate non-flags:
 Usage:
     python scripts/check_conformance.py [path ...]
 
-With no arguments, scans ``couchpotato/ui/templates`` recursively. Arguments
-may be individual ``.html`` files or directories (scanned recursively).
+With no arguments, scans ``couchpotato/ui/templates`` recursively plus the
+ported ``couchpotato/templates/login.html``. Arguments may be individual
+``.html`` files or directories (scanned recursively).
 Exits 0 with a one-line summary when clean, or non-zero after printing one
 ``file:line: message`` per finding.
 """
@@ -55,6 +56,13 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ROOT = REPO_ROOT / "couchpotato" / "ui" / "templates"
+# The ported login page lives in the legacy templates dir but is now a
+# design-system page, so it must be guarded too. We add just this one file, NOT
+# the whole couchpotato/templates/ dir — index.html there is the deliberately
+# kept legacy MooTools page (see specs/UI-CLEANUP-01) and is expected to contain
+# legacy classes/hex.
+LOGIN_TEMPLATE = REPO_ROOT / "couchpotato" / "templates" / "login.html"
+DEFAULT_ROOTS = [DEFAULT_ROOT, LOGIN_TEMPLATE]
 
 # --- Rule 1: off-spec toggle sizing -----------------------------------------
 # Literal substrings lifted from the pre-UI-CONFORM-01 wizard toggles. \b
@@ -77,10 +85,21 @@ TOGGLE_RE = re.compile(r"\bw-10 h-5\b|\btranslate-x-5\b")
 # the icon-font / hex-color rules; the quote char is group(1), the value is
 # group(2). See the module docstring for why scoping to these attributes is what
 # excludes base.html's legitimate token definitions without an exclusion list.
-ATTR_RE = re.compile(r"""[:\w.-]*\b(?:class|style)\s*=\s*(["'])((?:(?!\1).)*)\1""")
+# re.DOTALL so the value capture spans newlines: multi-line ``:class="{ ... }"``
+# Alpine object bindings (e.g. base.html's toast classes) would otherwise fail
+# to match at all, silently skipping the icon-font / hex checks for their
+# contents. With DOTALL the `(?:(?!\1).)*` still stops at the closing quote.
+ATTR_RE = re.compile(
+    r"""[:\w.-]*\b(?:class|style)\s*=\s*(["'])((?:(?!\1).)*)\1""", re.DOTALL
+)
 
-# Legacy icon-font token: a whole class token starting with "icon-".
-ICON_FONT_RE = re.compile(r"(?:^|\s)icon-[\w-]+")
+# Legacy icon-font token: a whole class token starting with "icon-". The
+# lookbehind treats anything that isn't a word char or hyphen as a boundary, so
+# it catches icon-* whether space-separated (class="a icon-x") OR quoted inside
+# an Alpine object binding (:class="{ 'icon-x': cond }"), while still not
+# matching a substring like "my-icon-x". Kept from matching legit non-class
+# uses (e.g. static/icons/icon-192.png) by ATTR_RE only scanning class/style.
+ICON_FONT_RE = re.compile(r"(?<![\w-])icon-[\w-]+")
 
 # Raw hex color literal, e.g. #fff or #35c5f4, as a standalone token.
 HEX_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
@@ -135,7 +154,7 @@ def iter_html_files(paths: list[Path]) -> list[Path]:
 
 
 def main(argv: list[str]) -> int:
-    roots = [Path(p) for p in argv] if argv else [DEFAULT_ROOT]
+    roots = [Path(p) for p in argv] if argv else DEFAULT_ROOTS
     html_files = iter_html_files(roots)
 
     total_findings = 0
