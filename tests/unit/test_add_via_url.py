@@ -132,6 +132,18 @@ class TestPartialAddViaUrl:
         assert resp.status_code == 200
         assert "Couldn't find a movie at that URL" in resp.text
 
+    def test_empty_dict_movie_renders_error_state_with_message(self, client):
+        """A truthy-but-empty {} movie (getViaUrl treats it as success with no
+        error key) must be handled as a no-match and show explanatory error text,
+        not a bare empty state."""
+        _register_add_via_url({'url': 'https://example.com/empty', 'movie': {}})
+
+        resp = client.get('/partial/add-via-url?url=https://example.com/empty')
+
+        assert resp.status_code == 200
+        assert "Couldn't find a movie at that URL" in resp.text
+        assert 'Failed getting movie info' in resp.text
+
     def test_missing_url_param_renders_error_state(self, client):
         """No url query param at all should not attempt a lookup and should show the empty/error state."""
         resp = client.get('/partial/add-via-url')

@@ -221,7 +221,11 @@ def create_router(require_auth) -> APIRouter:
             try:
                 result = callApiHandler('userscript.add_via_url', url=url)
                 candidate = result.get('movie') if isinstance(result, dict) else None
-                if isinstance(candidate, dict):
+                # `and candidate` guards the empty-dict case: getViaUrl treats a
+                # truthy-but-empty {} movie as success (no error key), but the
+                # partial renders {} as "no movie" — without this it'd show the
+                # empty state with no explanatory error text.
+                if isinstance(candidate, dict) and candidate:
                     movie = candidate
                 elif isinstance(result, dict) and result.get('error'):
                     error = result['error']
