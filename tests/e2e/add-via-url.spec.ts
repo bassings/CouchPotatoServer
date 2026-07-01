@@ -64,6 +64,29 @@ test.describe('Add by URL', () => {
       expect(href).toMatch(/^javascript:/);
       expect(href).toContain('add/?url=');
     });
+
+    test('clicking the bookmarklet on this page hints instead of navigating', async ({ page }) => {
+      await page.goto('/add/');
+      await waitForPageReady(page);
+
+      const toggleButton = page.getByRole('button', { name: 'Add from a movie site' });
+      await toggleButton.click();
+
+      const bookmarkletLink = page.locator('#bookmarklet-disclosure a');
+      await expect(bookmarkletLink).toBeVisible();
+
+      // @click.prevent on the link stops the javascript: URL from firing, so
+      // the page must not self-navigate to ?url= ...
+      await bookmarkletLink.click();
+
+      expect(page.url()).toMatch(/\/add\/$/);
+      expect(page.url()).not.toContain('?url=');
+
+      // ... and the hint (role="status") is revealed instead.
+      const hint = page.locator('#bookmarklet-disclosure [role="status"]');
+      await expect(hint).toBeVisible();
+      await expect(hint).toContainText("That's a bookmarklet");
+    });
   });
 
   test.describe('resolve from ?url=', () => {
