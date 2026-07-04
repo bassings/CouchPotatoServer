@@ -7,7 +7,7 @@ import random
 import traceback
 from base64 import b64decode as bd
 
-from couchpotato import fireEvent
+from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.base import MultiProvider

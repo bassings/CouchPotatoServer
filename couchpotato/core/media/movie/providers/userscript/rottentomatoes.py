@@ -1,7 +1,7 @@
 import re
 import traceback
 
-from couchpotato import fireEvent
+from couchpotato.core.event import fireEvent
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.userscript.base import UserscriptBase
 

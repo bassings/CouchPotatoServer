@@ -1,7 +1,7 @@
 import traceback
 
 from bs4 import BeautifulSoup
-from couchpotato import fireEvent
+from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import tryInt
 from couchpotato.core.logger import CPLog

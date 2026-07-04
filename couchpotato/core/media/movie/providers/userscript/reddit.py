@@ -1,4 +1,4 @@
-from couchpotato import fireEvent
+from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.variable import splitString
 from couchpotato.core.media._base.providers.userscript.base import UserscriptBase
 
