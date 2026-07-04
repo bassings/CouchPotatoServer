@@ -71,7 +71,9 @@ doesn't use the root import.
   tmdb_charts, popularmovies, yifypopular, trakt AND
   `Loaded media_movie_providers_userscript:` for filmweb, reddit, rottentomatoes;
   `GET /api/<key>/settings` contains sections `imdb`, `bluray`, `tmdb_charts`,
-  `popularmovies`, `yifypopular`, `trakt`. Kill the server and delete
+  `popularmovies`, `ytspopular`, `trakt` (note: `yifypopular.py` has always
+  registered its config section as `ytspopular` — pre-existing naming quirk,
+  not part of this regression). Kill the server and delete
   `.reg001-data` afterwards (it is not gitignored — do not commit it).
 - No UI/template changes → no E2E updates needed.
 - Conventional commit(s) locally. **STOP after committing — do NOT push.**
