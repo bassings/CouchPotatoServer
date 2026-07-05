@@ -44,7 +44,9 @@ adapter (`get_torrents`, `load_magnet`, `load_torrent`, etc.) never needs to
 know which path was used:
 
 1. **`scgi://host:port`** (TCP) and **`scgi:///path/to/socket`** (Unix
-   socket) — passed straight to `rtorrent_rpc.RTorrent(url, timeout=30).rpc`.
+   socket) — passed straight to
+   `rtorrent_rpc.RTorrent(url, timeout=_RPC_TIMEOUT).rpc` (`_RPC_TIMEOUT` =
+   30s).
    No auth concept applies to raw SCGI (CP's auth dropdown is documented as
    being for http(s) connections only), so no transport shim is needed here.
    **Cross-platform note:** scgi TCP works identically on Windows/macOS/
@@ -80,11 +82,19 @@ know which path was used:
      `requests` natively accepts all three forms, no conversion needed.
 
    `single_request()` POSTs the XML-RPC body via the session with a
-   `Content-Type: text/xml` header and parses the streamed response via
+   `Content-Type: text/xml` header **and a `timeout=_RPC_TIMEOUT` (30s)**
+   (VENDORED-04 review — SHOULD-FIX), then parses the streamed response via
    `self.getparser()` + `feed()`/`close()` — the same shape as the deleted
    vendored lib's own `lib/xmlrpc/transports/requests_.py`, kept as a
    reference while writing this (now removed along with the rest of
-   `couchpotato/lib/rtorrent/`).
+   `couchpotato/lib/rtorrent/`). The timeout matters: without it an http(s)
+   endpoint that accepts the TCP connection but never responds (firewall
+   black-hole, hung daemon) would block the calling thread forever
+   (`getAllDownloadStatus()`/`download()` hang instead of failing over to
+   their `except Exception` handler). `_RPC_TIMEOUT` is the single shared
+   connect+read timeout used for both transports — the scgi
+   `rtorrent_rpc.RTorrent(url, timeout=_RPC_TIMEOUT)` construction and this
+   requests `session.post(..., timeout=_RPC_TIMEOUT)`.
 
    A plain `xmlrpc.client.ServerProxy(url, transport=transport)` is then
    constructed and used exactly like `rtorrent_rpc`'s own `rt.rpc` — dotted
@@ -280,15 +290,19 @@ real sockets, no real HTTP, no real rTorrent:
   to `session.verify`, **and (VENDORED-04 review) `single_request()`'s full
   round-trip** (mocking `requests.Session.post`): a 200 XML-RPC body parsed
   correctly via getparser/Unmarshaller and returned, http-vs-https URL
-  construction, a non-200 response raising `xmlrpc.client.ProtocolError` with
-  the right host/handler/status, and a 200 body carrying an XML-RPC `<fault>`
-  still raising `xmlrpc.client.Fault`.
+  construction, **the `timeout=_RPC_TIMEOUT` kwarg passed to
+  `session.post`** (VENDORED-04 cloud review — the thread-hang guard), a
+  non-200 response raising `xmlrpc.client.ProtocolError` with the right
+  host/handler/status, and a 200 body carrying an XML-RPC `<fault>` still
+  raising `xmlrpc.client.Fault`.
 - `TestRTorrentRpcSignatureGuard` (VENDORED-04 review) — a
   `pytest.importorskip('rtorrent_rpc')` guard asserting
   `inspect.signature(rtorrent_rpc.RTorrent.__init__)` still accepts the
   `(url, timeout=...)` call CP makes and that a constructed instance exposes
-  `.rpc`, so a future lib upgrade that drifts the constructor/`.rpc` surface
-  fails CI loudly (mirrors the putio/qbittorrent precedent).
+  `.rpc` — for **both** the scgi TCP form (`scgi://host:port`) **and the unix
+  socket form (`scgi:///path.sock`)** (VENDORED-04 cloud review), so a future
+  lib upgrade that drifts the constructor/`.rpc` surface or drops unix-socket
+  support fails CI loudly (mirrors the putio/qbittorrent precedent).
 - `TestRTorrentDownloaderConnect` — the `system.client_version()`
   connectivity check (success sets `self.rt`/clears `error_msg`; a raised
   exception sets `self.rt = None` and a non-empty `error_msg`), `test()`'s
@@ -302,8 +316,9 @@ real sockets, no real HTTP, no real rTorrent:
 
 ## Acceptance criteria
 
-- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (863 passed after the
-  VENDORED-04 review round).
+- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (961 passed after the
+  VENDORED-04 cloud-review round — count includes the putio/qbit/git vendored
+  work merged into the branch from master).
 - [x] `.venv/bin/ruff check .` clean.
 - [x] No remaining references to `couchpotato.lib.rtorrent` /
   `lib.rtorrent` anywhere in the tree (only a comment in the new test file

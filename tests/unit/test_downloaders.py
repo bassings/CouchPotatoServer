@@ -1908,6 +1908,9 @@ class TestRTorrentAuthTransport:
         assert args[0] == 'http://host:80/RPC2'
         assert kwargs['data'] == b'<methodCall/>'
         assert kwargs['headers']['Content-Type'] == 'text/xml'
+        # A timeout MUST be set so a black-holed/hung endpoint fails over to
+        # the caller's except-handler instead of blocking the thread forever.
+        assert kwargs['timeout'] == rtorrent_module._RPC_TIMEOUT
 
     def test_single_request_uses_https_when_secure(self):
         body = (
@@ -1921,6 +1924,7 @@ class TestRTorrentAuthTransport:
 
         assert result == (1,)
         assert mock_post.call_args[0][0] == 'https://host:443/RPC2'
+        assert mock_post.call_args.kwargs['timeout'] == rtorrent_module._RPC_TIMEOUT
 
     def test_single_request_raises_protocol_error_on_non_200(self):
         transport = rtorrent_module._RTorrentAuthTransport(secure = False)
@@ -1976,6 +1980,18 @@ class TestRTorrentRpcSignatureGuard:
         # Constructing against an scgi URL does not touch the network (lazy
         # XML-RPC proxy), so this is safe and offline.
         rt = rtorrent_rpc.RTorrent('scgi://localhost:5000', timeout = 30)
+        assert hasattr(rt, 'rpc')
+
+    def test_rtorrent_supports_unix_socket_url(self):
+        # CP's scgi branch forwards both scgi://host:port (TCP) and the
+        # triple-slash unix-socket form scgi:///path.sock to the same
+        # rtorrent_rpc.RTorrent(url, timeout=...) call. Guard the unix-socket
+        # form too, so a future rtorrent_rpc that drops unix-socket support
+        # fails loudly in CI instead of breaking unix-socket users at runtime.
+        # Construction is lazy (no socket touched), so this is offline.
+        rtorrent_rpc = pytest.importorskip('rtorrent_rpc')
+
+        rt = rtorrent_rpc.RTorrent('scgi:///tmp/rtorrent.sock', timeout = 30)
         assert hasattr(rt, 'rpc')
 
 

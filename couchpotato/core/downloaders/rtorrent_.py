@@ -41,7 +41,11 @@ _MULTICALL_FIELDS = (
 # Poll settings used while waiting for a just-added magnet/torrent to show
 # up in rTorrent's download list.
 _LOAD_POLL_INTERVAL = 1
-_SCGI_TIMEOUT = 30
+# Socket timeout (connect + read) shared by both transports: the scgi
+# rtorrent_rpc client and the requests-backed http(s) transport. Without it a
+# firewall black-hole or hung daemon that accepts the TCP connection but never
+# responds would block the calling thread forever.
+_RPC_TIMEOUT = 30
 
 
 def _rewrite_httprpc_url(url):
@@ -103,6 +107,7 @@ class _RTorrentAuthTransport(xmlrpc.client.Transport):
             data = request_body,
             headers = {'Content-Type': 'text/xml'},
             stream = True,
+            timeout = _RPC_TIMEOUT,
         )
 
         if response.status_code != 200:
@@ -184,7 +189,7 @@ class _RTorrentAdapter:
         parsed = urlparse(url)
 
         if parsed.scheme == 'scgi':
-            self.rpc = rtorrent_rpc.RTorrent(url, timeout = _SCGI_TIMEOUT).rpc
+            self.rpc = rtorrent_rpc.RTorrent(url, timeout = _RPC_TIMEOUT).rpc
         elif parsed.scheme in ('http', 'https'):
             transport = _RTorrentAuthTransport(
                 secure = parsed.scheme == 'https',
