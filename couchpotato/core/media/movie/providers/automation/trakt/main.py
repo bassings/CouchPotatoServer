@@ -2,12 +2,12 @@ import json
 import traceback
 import time
 
-from couchpotato import Env, fireEvent
 from couchpotato.api import addApiView
-from couchpotato.core.event import addEvent
+from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.providers.base import Provider
 from couchpotato.core.media.movie.providers.automation.base import Automation
+from couchpotato.environment import Env
 
 
 log = CPLog(__name__)

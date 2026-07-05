@@ -1,7 +1,7 @@
 import traceback
 import re
 
-from couchpotato import fireEvent
+from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.encoding import ss, toUnicode
 from couchpotato.core.helpers.rss import RSS
 from couchpotato.core.helpers.variable import getImdb, splitString, tryInt

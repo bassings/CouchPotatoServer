@@ -152,7 +152,11 @@ class Loader:
         try:
             return importlib.import_module(name)
         except (ImportError, SyntaxError):
-            log.debug('Skip loading module plugin %s: %s', name, traceback.format_exc())
+            # Log loudly: a plugin that fails to import must never disappear
+            # silently (see REG-001, where DEBUG here hid nine dropped
+            # plugins from every log level anyone actually looks at). Still
+            # swallow the error so one broken plugin doesn't abort the rest.
+            log.error('Skip loading module plugin %s: %s', name, traceback.format_exc())
             return None
         except Exception:
             raise

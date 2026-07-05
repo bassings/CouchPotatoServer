@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from jinja2 import Environment as JinjaEnv, FileSystemLoader, select_autoescape
 from markupsafe import Markup
+from starlette.concurrency import run_in_threadpool
 
 log = CPLog(__name__)
 
@@ -239,7 +240,12 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                         return JSONResponse(content={'success': False, 'error': 'Invalid JSON body'}, status_code=400)
                 if isinstance(body, dict):
                     kwargs.update(body)
-        result = callApiHandler(route, **kwargs)
+        # Dispatched in the threadpool (REG-002): callApiHandler is
+        # synchronous and can block for a long time (e.g. the chart
+        # scrapers hitting IMDB/Blu-ray.com over the network). Running it
+        # inline on the event loop would freeze every other concurrent
+        # request for the same duration.
+        result = await run_in_threadpool(callApiHandler, route, **kwargs)
 
         if isinstance(result, tuple) and result[0] == 'redirect':
             return RedirectResponse(url=result[1])
