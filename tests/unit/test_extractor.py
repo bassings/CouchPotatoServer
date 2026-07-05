@@ -145,6 +145,18 @@ class TestExtractArchive:
         assert existing.read_bytes() == b'already-here'
         handle.open.assert_not_called()
 
+    def test_duplicate_basenames_are_reported_once(self, tmp_path):
+        # Two entries flattening to the same basename (top-level + Sample/) map
+        # to one destination path; extracted must hold it once, not twice, so the
+        # "distinct target files present" contract holds for any future caller.
+        infos = [_make_info('movie.mkv'), _make_info('Sample/movie.mkv')]
+        handle = _make_rar_handle(infos, {'movie.mkv': b'a', 'Sample/movie.mkv': b'b'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(tmp_path))
+
+        assert extracted == [str(tmp_path / 'movie.mkv')]
+
     def test_no_extractor_tool_raises_rarcannotexec_from_open(self, tmp_path):
         # rarfile raises RarCannotExec from open() (which shells out to the
         # external tool), NOT from infolist() -- header parsing is pure-Python

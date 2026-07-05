@@ -264,8 +264,12 @@ class ExtractorMixin:
                         self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
                     # Report the target path whether we just wrote it or it was
                     # already present -- an already-extracted archive is a success,
-                    # not a no-op, so the caller can still tag/clean it up.
-                    extracted.append(extr_file_path)
+                    # not a no-op, so the caller can still tag/clean it up. Dedupe:
+                    # two entries that flatten to the same basename (e.g. a top-level
+                    # file and a same-named one under Sample/) map to one destination,
+                    # so the contract "distinct target files present" must hold.
+                    if extr_file_path not in extracted:
+                        extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
 
