@@ -332,17 +332,16 @@ class TestPutIO:
     """
 
     def _make_putio(self, conf_values=None):
-        """Create a PutIO instance without running __init__ (which registers
-        real API views / events against the running app)."""
+        """Create a PutIO instance without running __init__.
+
+        Using ``PutIO.__new__(PutIO)`` skips ``__init__`` entirely, so the
+        real ``addApiView`` / ``addEvent`` registrations it would perform
+        against the running app never happen — no need to patch them here.
+        """
         conf_values = conf_values or {}
-        import importlib
-        api_module = importlib.import_module('couchpotato.api')
-        with patch('couchpotato.core.event.addEvent'), \
-             patch.object(api_module, 'addApiView'), \
-             patch('couchpotato.core._base.downloader.main.addApiView', create=True):
-            from couchpotato.core.downloaders.putio.main import PutIO
-            putio = PutIO.__new__(PutIO)
-            putio.downloading_list = []
+        from couchpotato.core.downloaders.putio.main import PutIO
+        putio = PutIO.__new__(PutIO)
+        putio.downloading_list = []
 
         def conf(key, **kw):
             return conf_values.get(key, kw.get('default', ''))
@@ -565,6 +564,30 @@ class TestPutIO:
 
         mock_client.File.download.assert_not_called()
 
+    def test_putioDownloader_uses_generous_timeout_for_streaming_download(self):
+        """The streaming File.download() reuses the Client's timeout for each
+        chunk read, so putiopy's 5s default would raise ReadTimeout on a >5s
+        put.io-side stall mid-download. putioDownloader() must build its client
+        with a generous per-chunk-read timeout (30s), unlike the light metadata
+        calls elsewhere which keep the default.
+        """
+        putio = self._make_putio({
+            'oauth_token': 'tok', 'folder': 0,
+            'download_dir': '/downloads', 'delete_file': False,
+        })
+        putio.downloading_list = ['123']
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        matching_file = MagicMock(id=123)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.File.list.return_value = [matching_file]
+
+            putio.putioDownloader('123')
+
+        mock_client_cls.assert_called_once_with('tok', timeout=30)
+
     # -- convertFolder()/recursionFolder() -------------------------------------
 
     def test_convertFolder_returns_zero_for_root(self):
@@ -582,3 +605,34 @@ class TestPutIO:
         result = putio.recursionFolder(client, folder=0, tfolder='Movies')
 
         assert result == 10
+
+    def test_recursionFolder_descends_into_subfolders(self):
+        """The target folder lives one level down, so a first-level name-match
+        can't find it — only the recursive ``recursionFolder(client, f.id, ...)``
+        descent does. The mock returns a *different* listing depending on the
+        folder id it is called with, so this genuinely exercises the recursion
+        rather than re-matching the same top-level result.
+        """
+        putio = self._make_putio()
+
+        top_dir = self._resource(id=10, name='Media', content_type='application/x-directory')
+        target_dir = self._resource(id=20, name='Movies', content_type='application/x-directory')
+        stray_file = self._resource(id=30, name='notes.txt', content_type='text/plain')
+
+        listings = {
+            0: [stray_file, top_dir],   # root: no 'Movies' here, only 'Media'/
+            10: [target_dir],           # inside 'Media/': the 'Movies' target
+            20: [],                     # inside 'Movies/': nothing further
+        }
+
+        client = MagicMock()
+        client.File.list.side_effect = lambda folder: listings[folder]
+
+        result = putio.recursionFolder(client, folder=0, tfolder='Movies')
+
+        assert result == 20
+        # Proof the recursion actually descended: File.list was called for the
+        # root AND for the first-level 'Media' folder (id 10).
+        called_folders = [call.args[0] for call in client.File.list.call_args_list]
+        assert 0 in called_folders
+        assert 10 in called_folders

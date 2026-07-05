@@ -120,7 +120,12 @@ class PutIO(DownloaderBase):
     def putioDownloader(self, fid):
 
         log.info('Put.io Real downloader called with file_id: %s',fid)
-        client = pio.Client(self.conf('oauth_token'))
+        # putiopy's default timeout=5 applies to the chunked read() calls of
+        # the streaming File.download() below, so a >5s put.io-side stall
+        # between chunks on a large file would raise ReadTimeout. Give the
+        # streaming pull generous headroom (30s per-chunk read); the light
+        # metadata calls elsewhere keep the 5s default.
+        client = pio.Client(self.conf('oauth_token'), timeout=30)
 
         log.debug('About to get file List')
         putioFolder = self.convertFolder(client, self.conf('folder'))

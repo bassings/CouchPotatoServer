@@ -63,19 +63,22 @@ No call sites needed behavioral changes beyond the import line itself.
    **strictly better** — it stops the OAuth token from leaking into any
    logged/proxied request URL — and is a drop-in change from CP's point of
    view (CP never inspected the request URL).
-2. **Default request timeout:** the vendored client passed no `timeout` to
-   `requests`, so a stalled connection would hang forever. putiopy 8.8.0
-   defaults `Client(..., timeout=5)` (5 seconds), applied to both the connect
-   and read phases of every request, including the chunked `iter_content()`
-   reads during `File.download()`. This is a behavior change worth watching:
-   a put.io-side stall of more than 5s between chunks during a large-file
-   download could now raise a `ReadTimeout` where the old code would have
-   simply hung. CP does not currently override this; it inherits putiopy's
-   default. No CP call site was changed to compensate — flagging this here
-   per this spec's scope (replace the client; do not otherwise change
-   download robustness), but it's worth keeping in mind for a future
-   downloader-hardening pass if put.io downloads start failing with
-   `ReadTimeout` in the field.
+2. **Default request timeout (handled — 30s on the streaming path):** the
+   vendored client passed no `timeout` to `requests`, so a stalled connection
+   would hang forever. putiopy 8.8.0 defaults `Client(..., timeout=5)` (5
+   seconds), applied to both the connect and read phases of every request,
+   including the chunked `iter_content()` reads during `File.download()`. A
+   put.io-side stall of more than 5s between chunks during a large-file
+   download would therefore raise a `ReadTimeout` where the old code simply
+   hung. **Resolved (VENDORED-02 review):** `putioDownloader()` — the only
+   method that performs the streaming file pull — now builds its client as
+   `pio.Client(self.conf('oauth_token'), timeout=30)`, giving each chunk read
+   30s of headroom (chunks arrive frequently, so 30s is plenty). The light
+   metadata calls (`test()`, `download()`'s add-transfer, `getAllDownloadStatus()`)
+   keep putiopy's 5s default, which is appropriate for them.
+   `test_putioDownloader_uses_generous_timeout_for_streaming_download` in
+   `tests/unit/test_downloaders.py` asserts the download client is constructed
+   with `timeout=30`.
 3. **Vestigial OAuth code-flow removed.** `PutIO.getAuthorizationUrl` /
    `PutIO.getCredentials` (and their `downloader.putio.auth_url` /
    `downloader.putio.credentials` API views, plus the `oauth_authenticate`
