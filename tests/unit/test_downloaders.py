@@ -406,9 +406,18 @@ class TestPutIO:
 
             putio.download(data={'name': 'Some.Movie', 'url': 'http://example.com/x.torrent'})
 
+        # Assert the FULL callback URL with exact equality rather than a
+        # substring/startswith check: the latter trips CodeQL's "Incomplete URL
+        # substring sanitization" query (it can't tell a test assertion from a
+        # security check) and is a weaker assertion anyway. Expected value is
+        # deterministic from the mocked inputs:
+        #   pre ('http://', since https=False)
+        #   + callback_host ('example.com:5050')
+        #   + '%sdownloader.putio.getfrom/' % Env.get(...)  (Env.get -> '/api/somekey/')
         _, kwargs = mock_client.Transfer.add_url.call_args
-        assert kwargs['callback_url'].startswith('http://example.com:5050')
-        assert 'downloader.putio.getfrom' in kwargs['callback_url']
+        assert kwargs['callback_url'] == (
+            'http://example.com:5050/api/somekey/downloader.putio.getfrom/'
+        )
 
     # -- test() ---------------------------------------------------------------
 
@@ -636,3 +645,55 @@ class TestPutIO:
         called_folders = [call.args[0] for call in client.File.list.call_args_list]
         assert 0 in called_folders
         assert 10 in called_folders
+
+    # -- putiopy signature guard ----------------------------------------------
+
+    def test_putiopy_signatures_match_what_cp_passes(self):
+        """Guard against silent breakage when putiopy is upgraded.
+
+        Every other TestPutIO test patches ``pio.Client`` wholesale, so none
+        would notice if a future ``putio.py`` release renamed or dropped a
+        keyword CP actually passes. This test imports the REAL putiopy and
+        checks (via ``inspect.signature``) that each parameter CP relies on
+        still exists, turning a would-be production breakage into a caught CI
+        failure. Skips cleanly if putiopy isn't installed.
+        """
+        putiopy = pytest.importorskip('putiopy')
+        import inspect
+
+        # Client.__init__ must accept `timeout` — putioDownloader() passes
+        # timeout=30 for the streaming download.
+        client_params = inspect.signature(putiopy.Client.__init__).parameters
+        assert 'timeout' in client_params, (
+            'putiopy.Client.__init__ lost the `timeout` kwarg CP depends on: '
+            f'{list(client_params)}'
+        )
+
+        # The file-download method CP calls as `client.File.download(f, dest=...,
+        # delete_after_download=...)` (bound off the `_File` resource class in
+        # 8.8.0) must still accept `dest` and `delete_after_download`.
+        file_cls = getattr(putiopy, '_File', None) or getattr(putiopy, 'File', None)
+        assert file_cls is not None and hasattr(file_cls, 'download'), (
+            'putiopy no longer exposes a File resource class with a download() '
+            'method'
+        )
+        download_params = inspect.signature(file_cls.download).parameters
+        for kw in ('dest', 'delete_after_download'):
+            assert kw in download_params, (
+                f'putiopy File.download lost the `{kw}` kwarg CP depends on: '
+                f'{list(download_params)}'
+            )
+
+        # Transfer.add_url, called as
+        # `client.Transfer.add_url(url, callback_url=..., parent_id=...)`.
+        transfer_cls = getattr(putiopy, '_Transfer', None) or getattr(putiopy, 'Transfer', None)
+        assert transfer_cls is not None and hasattr(transfer_cls, 'add_url'), (
+            'putiopy no longer exposes a Transfer resource class with an '
+            'add_url() method'
+        )
+        add_url_params = inspect.signature(transfer_cls.add_url).parameters
+        for kw in ('callback_url', 'parent_id'):
+            assert kw in add_url_params, (
+                f'putiopy Transfer.add_url lost the `{kw}` kwarg CP depends on: '
+                f'{list(add_url_params)}'
+            )
