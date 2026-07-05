@@ -130,7 +130,16 @@ class qBittorrent(DownloaderBase):
             # (b32decode needs uppercase input; b16encode returns uppercase
             # hex bytes) which must be converted to 40-char hex to match qBit.
             if len(torrent_hash) == 32:
-                torrent_hash = b16encode(b32decode(torrent_hash.upper())).decode()
+                # A 32-char [\w] match isn't guaranteed valid base32 (\w allows
+                # 0/1/8/9/_, none of which are in the base32 alphabet), so guard
+                # the decode the same way the file branch guards its bencode: a
+                # bad hash fails with a specific log + clean False rather than an
+                # uncaught binascii.Error (a ValueError) escaping to fireEvent.
+                try:
+                    torrent_hash = b16encode(b32decode(torrent_hash.upper())).decode()
+                except ValueError as e:  # binascii.Error is a ValueError subclass
+                    log.error('Failed to send torrent to qBittorrent: invalid info-hash in magnet URL "%s": %s', data.get('url'), e)
+                    return False
             torrent_hash = torrent_hash.lower()
 
             # Send request to qBittorrent directly as a magnet. A genuine add

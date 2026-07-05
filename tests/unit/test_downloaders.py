@@ -992,6 +992,31 @@ class TestQBittorrent:
         assert mock_log_error.call_count == 1
         assert 'no info-hash in magnet URL' in mock_log_error.call_args[0][0]
 
+    def test_download_magnet_invalid_base32_hash_returns_false_with_specific_error(self):
+        """A 32-char btih that matches [\\w] but isn't valid base32 (\\w allows
+        0/1/8/9/_) must fail with a specific, logged error and a falsy return --
+        NOT an uncaught binascii.Error from b32decode escaping to fireEvent."""
+        qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
+             patch.object(qbt_main.log, 'error') as mock_log_error:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            # 32 chars, all valid \w, but '0' and '1' are not in the base32
+            # alphabet (A-Z2-7), so b32decode raises binascii.Error.
+            result = qbt.download(data={
+                'name': 'Some.Movie', 'protocol': 'torrent_magnet',
+                'url': 'magnet:?xt=urn:btih:00000000000000000000000000000000&dn=Some.Movie',
+            })
+
+        assert result is False
+        # A bad hash is a handled failure -- the torrent is never sent.
+        mock_client.torrents_add.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'invalid info-hash in magnet URL' in mock_log_error.call_args[0][0]
+
     def test_download_magnet_returns_false_on_api_error(self):
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
         import couchpotato.core.downloaders.qbittorrent_ as qbt_main
