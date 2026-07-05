@@ -92,6 +92,7 @@ RequestHandler, IOLoop, StaticFileHandler) remain compatible.
 | `libs/pyutil/` | Removed — unused |
 | `libs/suds/` | Removed — unused |
 | `libs/six.py` | Replaced by PyPI `six` |
+| `libs/caper/` | Removed — TV-episode parser (`show_name`/season/episode), dead in this movies-only fork; its only consumer, the `matcher` plugin, fired events nothing else called. `guessit` covers the one theoretical parse use (see `folder_scanner.py`). See `specs/VENDORED-01-remove-caper.md`. |
 
 ## Libraries Kept Vendored
 
@@ -103,6 +104,5 @@ RequestHandler, IOLoop, StaticFileHandler) remain compatible.
 | `libs/oauth2/` | Used by Twitter notifications, legacy |
 | `libs/gntp/` | Growl notifications |
 | `libs/bencode/` | Simple bencode implementation |
-| `libs/caper/` | Custom media parsing |
 | `libs/axl/` | Custom XML library |
 | Various others | App-specific or no PyPI equivalent |
