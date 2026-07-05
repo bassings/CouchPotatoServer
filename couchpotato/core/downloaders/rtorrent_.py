@@ -223,10 +223,24 @@ class _RTorrentAdapter:
 
         return None
 
-    def _poll_for_torrent(self, info_hash, retries):
+    def _poll_for_torrent(self, info_hash, retries, require_name_resolved = False):
+        """ Poll get_torrents() until a torrent with `info_hash` appears (and,
+        for magnets, until its name has resolved away from the raw info-hash
+        placeholder), or `retries` attempts are exhausted.
+
+        :param require_name_resolved: when True (magnet loads), only accept a
+            match whose `name` has resolved to real torrent metadata rather
+            than still being the raw info-hash. rTorrent shows a just-added
+            magnet with its name set to the info-hash until the metadata is
+            fetched from peers; returning before that would hand CP a torrent
+            whose reported name/files are not yet meaningful. This mirrors the
+            wait-for-name-resolution poll the old vendored client performed.
+        """
+        info_hash = str(info_hash).upper()
+
         for attempt in range(retries):
             torrent = self.find_torrent(info_hash)
-            if torrent:
+            if torrent and not (require_name_resolved and info_hash in str(torrent.name).upper()):
                 return torrent
             if attempt < retries - 1:
                 time.sleep(_LOAD_POLL_INTERVAL)
@@ -235,7 +249,7 @@ class _RTorrentAdapter:
 
     def load_magnet(self, magnet_url, info_hash, verify_retries = 10):
         self.rpc.load.start('', magnet_url)
-        return self._poll_for_torrent(info_hash, verify_retries)
+        return self._poll_for_torrent(info_hash, verify_retries, require_name_resolved = True)
 
     def load_torrent(self, filedata, info_hash, verify_retries = 10):
         self.rpc.load.raw('', xmlrpc.client.Binary(filedata))
@@ -405,7 +419,9 @@ class rTorrent(DownloaderBase):
                 return False
 
         if data.get('protocol') == 'torrent':
-            info = bdecode(filedata)["info"]
+            # bencodepy.decode() returns bytes keys, so the info dict must be
+            # looked up with a bytes key (b"info", not "info").
+            info = bdecode(filedata)[b"info"]
             torrent_hash = sha1(bencode(info)).hexdigest().upper()
 
             # Convert base 32 to hex

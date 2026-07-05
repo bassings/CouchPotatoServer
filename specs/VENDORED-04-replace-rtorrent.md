@@ -157,11 +157,31 @@ case-insensitive match, or `None`.
   issues `rpc.load.start("", magnet_url)` (the `""` first arg is rTorrent's
   required-but-unused target parameter), then polls `get_torrents()` (with a
   1-second `time.sleep` between attempts, skipping the sleep after the final
-  attempt) until a torrent with matching `info_hash` appears, returning it
-  or `None`.
+  attempt) until a torrent with matching `info_hash` appears **and its name
+  has resolved away from the raw info-hash placeholder** (rTorrent reports a
+  just-added magnet's name AS the info-hash until metadata is fetched from
+  peers). This `require_name_resolved` wait mirrors the old vendored client's
+  second poll loop — returning the placeholder early would hand CP a torrent
+  whose name/files aren't yet meaningful. Returns the resolved torrent or
+  `None`.
 - **Torrent file:** `rt.load_torrent(filedata, info_hash, verify_retries=10)`
   — issues `rpc.load.raw("", xmlrpc.client.Binary(filedata))`, then the same
-  poll loop.
+  poll loop **without** the name-resolution wait (a `.torrent` file's
+  metadata is known immediately, so a name that happens to equal the hash is
+  accepted right away).
+
+**bencode bytes-key fix (VENDORED-04 review — BLOCKER):** `download()`'s
+torrent-file branch computes the info-hash via
+`sha1(bencode(bdecode(filedata)[b"info"]))`. The key MUST be the **bytes**
+literal `b"info"`, not the string `"info"`: `bencodepy.decode()` (pinned
+`bencodepy==0.9.5`) returns a dict with **bytes** keys, so `["info"]` raises
+`KeyError` on every real `.torrent` file. This was dormant while the old
+client crashed on connect; once rTorrent actually connects it is the next
+thing every torrent-file add hits. The regression test
+`test_download_torrent_file_loads_raw_and_sets_label` now uses a **real**
+`bencodepy.encode`/`decode` round-trip (no mocking of `bdecode`/`bencode`)
+and asserts the computed hash matches an independent computation — it fails
+against `["info"]` and passes against `[b"info"]`.
 
 **Deviation from the original task framing:** the deleted vendored lib's
 `load_torrent` computed `info_hash` itself internally (via its own
@@ -235,7 +255,7 @@ called-out auth/verify_ssl/connectivity-check gaps)
 
 ## Tests added (`tests/unit/test_downloaders.py`)
 
-Four new classes, all mocking at the `rpc` (XML-RPC proxy) boundary — no
+Six new classes, all mocking at the `rpc` (XML-RPC proxy) boundary — no
 real sockets, no real HTTP, no real rTorrent:
 
 - `TestRTorrentAdapter` — `get_torrents()` field conversion (ratio ÷ 1000.0,
@@ -243,7 +263,11 @@ real sockets, no real HTTP, no real rTorrent:
   `find_torrent()` case-insensitive matching, `load_magnet()`/
   `load_torrent()` polling (found immediately / found after a couple of
   polls / never found → `None` without crashing, `time.sleep` mocked so
-  tests don't actually sleep), and the unsupported-scheme `ValueError`.
+  tests don't actually sleep), **the magnet name-resolution wait
+  (VENDORED-04 review): `load_magnet` skips a present-but-name-still-hash
+  torrent and waits for the resolved name, returns `None` if the name never
+  resolves, while `load_torrent` accepts a name-equals-hash torrent
+  immediately**, and the unsupported-scheme `ValueError`.
 - `TestRTorrentTorrentOperations` — `get_files()`, `set_custom(1, ...)` →
   `d.custom1.set`, `set_directory` → `d.directory.set`, `start`/`pause`/
   `resume` → `d.start`/`d.stop`/`d.start`, `erase()` → `d.erase` **and**
@@ -252,8 +276,19 @@ real sockets, no real HTTP, no real rTorrent:
   rewrites (including the path-prefix-preserving case), and pass-through
   for non-httprpc schemes.
 - `TestRTorrentAuthTransport` — digest vs. basic vs. no-auth session
-  construction, and `verify_ssl` (`True`/`False`/CA-bundle path) flowing
-  through to `session.verify`.
+  construction, `verify_ssl` (`True`/`False`/CA-bundle path) flowing through
+  to `session.verify`, **and (VENDORED-04 review) `single_request()`'s full
+  round-trip** (mocking `requests.Session.post`): a 200 XML-RPC body parsed
+  correctly via getparser/Unmarshaller and returned, http-vs-https URL
+  construction, a non-200 response raising `xmlrpc.client.ProtocolError` with
+  the right host/handler/status, and a 200 body carrying an XML-RPC `<fault>`
+  still raising `xmlrpc.client.Fault`.
+- `TestRTorrentRpcSignatureGuard` (VENDORED-04 review) — a
+  `pytest.importorskip('rtorrent_rpc')` guard asserting
+  `inspect.signature(rtorrent_rpc.RTorrent.__init__)` still accepts the
+  `(url, timeout=...)` call CP makes and that a constructed instance exposes
+  `.rpc`, so a future lib upgrade that drifts the constructor/`.rpc` surface
+  fails CI loudly (mirrors the putio/qbittorrent precedent).
 - `TestRTorrentDownloaderConnect` — the `system.client_version()`
   connectivity check (success sets `self.rt`/clears `error_msg`; a raised
   exception sets `self.rt = None` and a non-empty `error_msg`), `test()`'s
@@ -267,7 +302,8 @@ real sockets, no real HTTP, no real rTorrent:
 
 ## Acceptance criteria
 
-- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (854 passed).
+- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (863 passed after the
+  VENDORED-04 review round).
 - [x] `.venv/bin/ruff check .` clean.
 - [x] No remaining references to `couchpotato.lib.rtorrent` /
   `lib.rtorrent` anywhere in the tree (only a comment in the new test file

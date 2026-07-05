@@ -435,6 +435,53 @@ class TestRTorrentAdapter:
         # No sleep after the final (futile) attempt.
         assert mock_sleep.call_count == 2
 
+    def test_load_magnet_waits_for_name_to_resolve(self):
+        # rTorrent initially reports a magnet's name AS the info-hash until
+        # metadata is fetched from peers. load_magnet must keep polling until
+        # the name resolves to real metadata, not return the placeholder.
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.side_effect = [
+            # Present, but name is still the raw info-hash placeholder.
+            [('ABC123', 'ABC123', 0, 0, 0, 1, 0, 0, '/downloads')],
+            # Name now resolved.
+            [('ABC123', 'Real.Movie.mkv', 0, 0, 0, 1, 0, 0, '/downloads/Real.Movie')],
+        ]
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep') as mock_sleep:
+            torrent = adapter.load_magnet('magnet:?xt=urn:btih:ABC123', 'ABC123')
+
+        assert torrent is not None
+        assert torrent.name == 'Real.Movie.mkv'
+        # Slept once between the placeholder poll and the resolved poll.
+        assert mock_sleep.call_count == 1
+
+    def test_load_magnet_returns_none_if_name_never_resolves(self):
+        adapter = self._make_adapter()
+        # Always present but name stays as the raw info-hash placeholder.
+        adapter.rpc.d.multicall2.return_value = [
+            ('ABC123', 'abc123', 0, 0, 0, 1, 0, 0, '/downloads'),
+        ]
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep'):
+            torrent = adapter.load_magnet('magnet:?xt=urn:btih:ABC123', 'ABC123', verify_retries=3)
+
+        assert torrent is None
+
+    def test_load_torrent_accepts_name_equal_to_hash(self):
+        # For torrent-FILE loads the metadata is already known, so we must NOT
+        # apply the magnet name-resolution wait -- a name that happens to equal
+        # the hash must still be accepted immediately.
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = [
+            ('ABC123', 'ABC123', 1, 0, 0, 1, 0, 0, '/downloads'),
+        ]
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep') as mock_sleep:
+            torrent = adapter.load_torrent(b'irrelevant', 'ABC123', verify_retries=3)
+
+        assert torrent is not None
+        mock_sleep.assert_not_called()
+
     def test_load_torrent_issues_load_raw_with_binary_and_polls(self):
         adapter = self._make_adapter()
         adapter.rpc.d.multicall2.side_effect = [
@@ -607,6 +654,103 @@ class TestRTorrentAuthTransport:
 
         assert transport.session.verify == '/etc/ssl/mycerts'
 
+    def _mock_response(self, status_code, body, reason = 'OK'):
+        resp = MagicMock()
+        resp.status_code = status_code
+        resp.reason = reason
+        resp.headers = {}
+        # xmlrpc.client's Transport.getparser() feeds via iter_content chunks.
+        resp.iter_content.return_value = [body]
+        return resp
+
+    def test_single_request_parses_200_xmlrpc_response(self):
+        # A valid XML-RPC methodResponse carrying a single string value.
+        body = (
+            b"<?xml version='1.0'?><methodResponse><params><param>"
+            b"<value><string>0.9.8</string></value>"
+            b"</param></params></methodResponse>"
+        )
+        transport = rtorrent_module._RTorrentAuthTransport(secure = False)
+
+        with patch.object(transport.session, 'post', return_value = self._mock_response(200, body)) as mock_post:
+            result = transport.single_request('host:80', '/RPC2', b'<methodCall/>')
+
+        # xmlrpc unmarshals a single-value response into that bare value.
+        assert result == ('0.9.8',)
+        args, kwargs = mock_post.call_args
+        assert args[0] == 'http://host:80/RPC2'
+        assert kwargs['data'] == b'<methodCall/>'
+        assert kwargs['headers']['Content-Type'] == 'text/xml'
+
+    def test_single_request_uses_https_when_secure(self):
+        body = (
+            b"<?xml version='1.0'?><methodResponse><params><param>"
+            b"<value><i4>1</i4></value></param></params></methodResponse>"
+        )
+        transport = rtorrent_module._RTorrentAuthTransport(secure = True)
+
+        with patch.object(transport.session, 'post', return_value = self._mock_response(200, body)) as mock_post:
+            result = transport.single_request('host:443', '/RPC2', b'<methodCall/>')
+
+        assert result == (1,)
+        assert mock_post.call_args[0][0] == 'https://host:443/RPC2'
+
+    def test_single_request_raises_protocol_error_on_non_200(self):
+        transport = rtorrent_module._RTorrentAuthTransport(secure = False)
+
+        with patch.object(transport.session, 'post', return_value = self._mock_response(401, b'nope', reason = 'Unauthorized')):
+            with pytest.raises(_xmlrpc_client.ProtocolError) as exc_info:
+                transport.single_request('host:80', '/RPC2', b'<methodCall/>')
+
+        assert exc_info.value.errcode == 401
+        assert exc_info.value.url == 'host:80/RPC2'
+
+    def test_single_request_raises_fault_on_xmlrpc_fault_body(self):
+        # A 200 response whose body is an XML-RPC <fault> must still raise Fault.
+        body = (
+            b"<?xml version='1.0'?><methodResponse><fault><value><struct>"
+            b"<member><name>faultCode</name><value><int>-506</int></value></member>"
+            b"<member><name>faultString</name><value><string>Method not found</string></value></member>"
+            b"</struct></value></fault></methodResponse>"
+        )
+        transport = rtorrent_module._RTorrentAuthTransport(secure = False)
+
+        with patch.object(transport.session, 'post', return_value = self._mock_response(200, body)):
+            with pytest.raises(_xmlrpc_client.Fault) as exc_info:
+                transport.single_request('host:80', '/RPC2', b'<methodCall/>')
+
+        assert exc_info.value.faultCode == -506
+
+
+class TestRTorrentRpcSignatureGuard:
+    """Guard against silent rtorrent_rpc API drift on upgrade (mirrors the
+    putio/qbittorrent precedent). If a future rtorrent-rpc release changes the
+    RTorrent constructor or drops the public .rpc attribute CP relies on, this
+    turns the break into a caught CI failure instead of a runtime surprise."""
+
+    def test_rtorrent_constructor_accepts_url_and_timeout(self):
+        rtorrent_rpc = pytest.importorskip('rtorrent_rpc')
+        import inspect
+
+        sig = inspect.signature(rtorrent_rpc.RTorrent.__init__)
+        params = sig.parameters
+
+        # CP constructs rtorrent_rpc.RTorrent(url, timeout=<int>).
+        assert 'timeout' in params
+        # The first positional (after self) is the address/url.
+        positional = [p for p in params.values() if p.name != 'self']
+        assert positional, 'RTorrent.__init__ takes no positional args'
+        # Binding the exact call CP makes must not raise.
+        sig.bind(None, 'scgi://localhost:5000', timeout = 30)
+
+    def test_rtorrent_exposes_rpc_attribute(self):
+        rtorrent_rpc = pytest.importorskip('rtorrent_rpc')
+
+        # Constructing against an scgi URL does not touch the network (lazy
+        # XML-RPC proxy), so this is safe and offline.
+        rt = rtorrent_rpc.RTorrent('scgi://localhost:5000', timeout = 30)
+        assert hasattr(rt, 'rpc')
+
 
 class TestRTorrentDownloaderConnect:
     """Tests for rTorrent.connect()/test() -- the connectivity check that
@@ -740,6 +884,35 @@ class TestRTorrentDownload:
         assert result is False
 
     def test_download_torrent_file_loads_raw_and_sets_label(self):
+        """Real bencode round-trip: NO mocking of bdecode/bencode.
+
+        A previous version of this test mocked bdecode to return a
+        STRING-keyed {'info': ...} dict, which is not what bencodepy.decode()
+        actually returns (it returns BYTES keys, b'info'). That masked a real
+        KeyError-on-every-torrent-file bug in download(). This test feeds a
+        genuine bencoded torrent so the b"info" lookup and sha1 info-hash are
+        exercised for real, and asserts the hash matches an independent
+        computation. It FAILS against `bdecode(filedata)["info"]` (KeyError)
+        and passes against `bdecode(filedata)[b"info"]`.
+        """
+        import bencodepy
+        from hashlib import sha1
+
+        info_dict = {
+            b'name': b'Movie.mkv',
+            b'piece length': 32768,
+            b'pieces': b'0' * 20,
+            b'length': 1024,
+        }
+        torrent_dict = {b'announce': b'http://tracker.example/announce', b'info': info_dict}
+        filedata = bencodepy.encode(torrent_dict)
+
+        # Independent expected info-hash (re-encode the decoded info dict, as
+        # download() does, to normalise key ordering).
+        expected_hash = sha1(
+            bencodepy.encode(bencodepy.decode(filedata)[b'info'])
+        ).hexdigest().upper()
+
         adapter = MagicMock()
         mock_torrent = MagicMock()
         adapter.load_torrent.return_value = mock_torrent
@@ -747,20 +920,16 @@ class TestRTorrentDownload:
         rt = self._make_downloader(adapter)
         data = {'protocol': 'torrent', 'name': 'Movie.torrent'}
 
-        # bdecode/bencode are stubbed here: the hash computed from a real
-        # torrent's "info" dict is unrelated to what VENDORED-04 changed
-        # (the load_torrent call-site wiring), so this isolates that.
-        with patch.object(rt, 'conf', side_effect = self._conf(label = 'movies')), \
-             patch.object(rtorrent_module, 'bdecode', return_value = {'info': {'name': 'Movie'}}), \
-             patch.object(rtorrent_module, 'bencode', return_value = b'encoded-info'):
-            result = rt.download(data = data, filedata = b'd...e')
+        with patch.object(rt, 'conf', side_effect = self._conf(label = 'movies')):
+            result = rt.download(data = data, filedata = filedata)
 
         assert adapter.load_torrent.call_count == 1
         call_args = adapter.load_torrent.call_args[0]
-        assert call_args[0] == b'd...e'  # filedata passed through unchanged
+        assert call_args[0] == filedata  # filedata passed through unchanged
         # info_hash (2nd positional arg) is now passed to load_torrent
         # directly, instead of load_torrent re-deriving it internally.
+        assert call_args[1] == expected_hash
         assert isinstance(call_args[1], str) and len(call_args[1]) == 40
         mock_torrent.set_custom.assert_called_once_with(1, 'movies')
         mock_torrent.start.assert_called_once()
-        assert result['id']
+        assert result['id'] == expected_hash
