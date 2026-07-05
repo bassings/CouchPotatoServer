@@ -317,3 +317,450 @@ class TestSabnzbd:
             result = sab.removeFailed(release)
 
         assert result is False
+
+
+# ===========================================================================
+# rTorrent (VENDORED-04: rtorrent-rpc based adapter, replacing the vendored
+# couchpotato/lib/rtorrent client that crashed under Python 3)
+# ===========================================================================
+
+import xmlrpc.client as _xmlrpc_client
+import requests.auth as _requests_auth
+
+from couchpotato.core.downloaders import rtorrent_ as rtorrent_module
+
+
+class TestRTorrentAdapter:
+    """Tests for the internal rTorrent RPC adapter (no real sockets)."""
+
+    def _make_adapter(self):
+        adapter = rtorrent_module._RTorrentAdapter.__new__(rtorrent_module._RTorrentAdapter)
+        adapter.rpc = MagicMock()
+        return adapter
+
+    def test_get_torrents_converts_ratio_from_per_mille(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = [
+            ('abc123', 'Movie.mkv', 1, 1, 1500, 1, 0, 1000, '/downloads/Movie'),
+        ]
+
+        torrents = adapter.get_torrents()
+
+        assert len(torrents) == 1
+        assert torrents[0].ratio == 1.5
+
+    def test_get_torrents_converts_booleans_and_upcases_hash(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = [
+            ('abc123def', 'Movie.mkv', 0, 1, 0, 1, 500, 0, '/downloads/Movie'),
+        ]
+
+        torrent = adapter.get_torrents()[0]
+
+        assert torrent.complete is False
+        assert torrent.open is True
+        assert torrent.info_hash == 'ABC123DEF'
+        assert torrent.name == 'Movie.mkv'
+        assert torrent.state == 1
+        assert torrent.left_bytes == 500
+        assert torrent.down_rate == 0
+        assert torrent.directory == '/downloads/Movie'
+
+    def test_get_torrents_issues_expected_multicall(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = []
+
+        adapter.get_torrents()
+
+        adapter.rpc.d.multicall2.assert_called_once_with(
+            '', 'main',
+            'd.hash=', 'd.name=', 'd.complete=', 'd.is_open=', 'd.ratio=',
+            'd.state=', 'd.left_bytes=', 'd.down.rate=', 'd.directory=',
+        )
+
+    def test_find_torrent_matches_case_insensitively(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = [
+            ('abc123', 'Movie.mkv', 1, 0, 0, 1, 0, 0, '/downloads/Movie'),
+        ]
+
+        torrent = adapter.find_torrent('abc123')
+
+        assert torrent is not None
+        assert torrent.info_hash == 'ABC123'
+
+    def test_find_torrent_returns_none_when_missing(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = []
+
+        assert adapter.find_torrent('deadbeef') is None
+
+    def test_load_magnet_found_immediately(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = [
+            ('ABC123', 'Movie.mkv', 1, 0, 0, 1, 0, 0, '/downloads/Movie'),
+        ]
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep') as mock_sleep:
+            torrent = adapter.load_magnet('magnet:?xt=urn:btih:ABC123', 'ABC123')
+
+        adapter.rpc.load.start.assert_called_once_with('', 'magnet:?xt=urn:btih:ABC123')
+        assert torrent is not None
+        assert torrent.info_hash == 'ABC123'
+        mock_sleep.assert_not_called()
+
+    def test_load_magnet_found_after_a_couple_of_polls(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.side_effect = [
+            [],
+            [],
+            [('ABC123', 'Movie.mkv', 1, 0, 0, 1, 0, 0, '/downloads/Movie')],
+        ]
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep') as mock_sleep:
+            torrent = adapter.load_magnet('magnet:?xt=urn:btih:ABC123', 'ABC123', verify_retries=10)
+
+        assert torrent is not None
+        assert torrent.info_hash == 'ABC123'
+        assert mock_sleep.call_count == 2
+
+    def test_load_magnet_never_found_returns_none(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = []
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep') as mock_sleep:
+            torrent = adapter.load_magnet('magnet:?xt=urn:btih:ABC123', 'ABC123', verify_retries=3)
+
+        assert torrent is None
+        # No sleep after the final (futile) attempt.
+        assert mock_sleep.call_count == 2
+
+    def test_load_torrent_issues_load_raw_with_binary_and_polls(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.side_effect = [
+            [],
+            [('ABC123', 'Movie.mkv', 1, 0, 0, 1, 0, 0, '/downloads/Movie')],
+        ]
+        filedata = b'd8:announce...e'
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep'):
+            torrent = adapter.load_torrent(filedata, 'ABC123', verify_retries=10)
+
+        assert adapter.rpc.load.raw.call_count == 1
+        call_args = adapter.rpc.load.raw.call_args[0]
+        assert call_args[0] == ''
+        assert isinstance(call_args[1], _xmlrpc_client.Binary)
+        assert call_args[1].data == filedata
+        assert torrent is not None
+
+    def test_load_torrent_never_found_returns_none(self):
+        adapter = self._make_adapter()
+        adapter.rpc.d.multicall2.return_value = []
+
+        with patch('couchpotato.core.downloaders.rtorrent_.time.sleep'):
+            torrent = adapter.load_torrent(b'irrelevant', 'ABC123', verify_retries=2)
+
+        assert torrent is None
+
+    def test_unsupported_scheme_raises(self):
+        with pytest.raises(ValueError):
+            rtorrent_module._RTorrentAdapter('ftp://localhost')
+
+
+class TestRTorrentTorrentOperations:
+    """Tests for the per-torrent _RTorrentTorrent RPC dispatch."""
+
+    def _make_torrent(self, **overrides):
+        rpc = MagicMock()
+        kwargs = dict(
+            rpc = rpc, info_hash = 'ABC123', name = 'Movie.mkv', complete = True,
+            open_ = False, ratio = 1.5, state = 1, left_bytes = 0, down_rate = 0,
+            directory = '/downloads/Movie',
+        )
+        kwargs.update(overrides)
+        return rpc, rtorrent_module._RTorrentTorrent(**kwargs)
+
+    def test_get_files_returns_path_objects(self):
+        rpc, torrent = self._make_torrent()
+        rpc.f.multicall.return_value = [('Movie.mkv',), ('Movie.nfo',)]
+
+        files = torrent.get_files()
+
+        rpc.f.multicall.assert_called_once_with('ABC123', '', 'f.path=')
+        assert [f.path for f in files] == ['Movie.mkv', 'Movie.nfo']
+
+    def test_set_custom_dispatches_to_custom1(self):
+        rpc, torrent = self._make_torrent()
+
+        torrent.set_custom(1, 'my-label')
+
+        rpc.d.custom1.set.assert_called_once_with('ABC123', 'my-label')
+
+    def test_set_directory_dispatches_correctly(self):
+        rpc, torrent = self._make_torrent()
+
+        torrent.set_directory('/new/path')
+
+        rpc.d.directory.set.assert_called_once_with('ABC123', '/new/path')
+
+    def test_start_calls_d_start(self):
+        rpc, torrent = self._make_torrent()
+
+        torrent.start()
+
+        rpc.d.start.assert_called_once_with('ABC123')
+
+    def test_pause_calls_d_stop(self):
+        rpc, torrent = self._make_torrent()
+
+        torrent.pause()
+
+        rpc.d.stop.assert_called_once_with('ABC123')
+
+    def test_resume_calls_d_start(self):
+        rpc, torrent = self._make_torrent()
+
+        torrent.resume()
+
+        rpc.d.start.assert_called_once_with('ABC123')
+
+    def test_erase_calls_d_erase_and_touches_no_filesystem(self):
+        rpc, torrent = self._make_torrent()
+
+        with patch('os.unlink') as mock_unlink, patch('os.rmdir') as mock_rmdir:
+            torrent.erase()
+
+        rpc.d.erase.assert_called_once_with('ABC123')
+        mock_unlink.assert_not_called()
+        mock_rmdir.assert_not_called()
+
+    def test_is_multi_file_converts_to_bool(self):
+        rpc, torrent = self._make_torrent()
+        rpc.d.is_multi_file.return_value = '1'
+
+        assert torrent.is_multi_file() is True
+
+        rpc.d.is_multi_file.return_value = 0
+
+        assert torrent.is_multi_file() is False
+
+
+class TestRTorrentUrlRewrite:
+    """Tests for the httprpc(+https) -> ruTorrent action.php rewrite."""
+
+    def test_httprpc_rewrites_to_fixed_action_php(self):
+        result = rtorrent_module._rewrite_httprpc_url('httprpc://myhost:80/')
+
+        assert result == 'http://myhost:80/plugins/httprpc/action.php'
+
+    def test_httprpc_preserves_existing_path_prefix(self):
+        result = rtorrent_module._rewrite_httprpc_url('httprpc://myhost/rutorrent/')
+
+        assert result == 'http://myhost/rutorrent/plugins/httprpc/action.php'
+
+    def test_httprpc_https_variant_rewrites_to_https(self):
+        result = rtorrent_module._rewrite_httprpc_url('httprpc+https://myhost/')
+
+        assert result == 'https://myhost/plugins/httprpc/action.php'
+
+    def test_non_httprpc_urls_are_passed_through_unchanged(self):
+        assert rtorrent_module._rewrite_httprpc_url('http://myhost:80/RPC2') == 'http://myhost:80/RPC2'
+        assert rtorrent_module._rewrite_httprpc_url('scgi://myhost:5000') == 'scgi://myhost:5000'
+
+
+class TestRTorrentAuthTransport:
+    """Tests for the requests-backed XML-RPC transport used for http(s)."""
+
+    def test_digest_auth_sets_http_digest_auth(self):
+        transport = rtorrent_module._RTorrentAuthTransport(
+            secure = False, auth = ('digest', 'user', 'pass'), verify_ssl = True,
+        )
+
+        assert isinstance(transport.session.auth, _requests_auth.HTTPDigestAuth)
+
+    def test_basic_auth_sets_http_basic_auth(self):
+        transport = rtorrent_module._RTorrentAuthTransport(
+            secure = False, auth = ('basic', 'user', 'pass'), verify_ssl = True,
+        )
+
+        assert isinstance(transport.session.auth, _requests_auth.HTTPBasicAuth)
+
+    def test_no_auth_leaves_session_anonymous(self):
+        transport = rtorrent_module._RTorrentAuthTransport(
+            secure = False, auth = None, verify_ssl = True,
+        )
+
+        assert transport.session.auth is None
+
+    def test_verify_ssl_false_disables_verification(self):
+        transport = rtorrent_module._RTorrentAuthTransport(secure = True, verify_ssl = False)
+
+        assert transport.session.verify is False
+
+    def test_verify_ssl_true_enables_verification(self):
+        transport = rtorrent_module._RTorrentAuthTransport(secure = True, verify_ssl = True)
+
+        assert transport.session.verify is True
+
+    def test_verify_ssl_ca_bundle_path_passed_through(self):
+        transport = rtorrent_module._RTorrentAuthTransport(secure = True, verify_ssl = '/etc/ssl/mycerts')
+
+        assert transport.session.verify == '/etc/ssl/mycerts'
+
+
+class TestRTorrentDownloaderConnect:
+    """Tests for rTorrent.connect()/test() -- the connectivity check that
+    replaces the vendored lib's now-nonexistent connection.verify()."""
+
+    def _make_downloader(self):
+        rt = rtorrent_module.rTorrent.__new__(rtorrent_module.rTorrent)
+        rt.rt = None
+        rt.error_msg = ''
+        return rt
+
+    def _conf(self, **overrides):
+        values = {
+            'host': 'localhost:80', 'ssl': False, 'ssl_verify': True,
+            'ssl_ca_bundle': '', 'username': '', 'password': '',
+            'authentication': 'basic', 'rpc_url': 'RPC2',
+        }
+        values.update(overrides)
+        return lambda k, **kw: values.get(k, kw.get('default', ''))
+
+    def test_connect_succeeds_when_client_version_call_works(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+        mock_adapter.rpc.system.client_version.return_value = '0.9.8'
+
+        with patch.object(rt, 'conf', side_effect = self._conf()), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter) as mock_cls:
+            result = rt.connect(True)
+
+        assert result is mock_adapter
+        assert rt.error_msg == ''
+        mock_adapter.rpc.system.client_version.assert_called_once()
+        # Default host + default rpc_url is appended for a plain http(s) URL.
+        called_url = mock_cls.call_args[0][0]
+        assert called_url == 'http://localhost:80/RPC2'
+
+    def test_connect_fails_and_sets_error_msg_when_rpc_call_raises(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+        mock_adapter.rpc.system.client_version.side_effect = Exception('no route to host')
+
+        with patch.object(rt, 'conf', side_effect = self._conf()), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter):
+            result = rt.connect(True)
+
+        assert result is None
+        assert rt.rt is None
+        assert rt.error_msg == 'no route to host'
+
+    def test_test_returns_true_on_success(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+
+        with patch.object(rt, 'conf', side_effect = self._conf()), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter):
+            assert rt.test() is True
+
+    def test_test_returns_failure_tuple_with_message_on_error(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+        mock_adapter.rpc.system.client_version.side_effect = Exception('timed out')
+
+        with patch.object(rt, 'conf', side_effect = self._conf()), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter):
+            result = rt.test()
+
+        assert result == (False, 'Connection failed: timed out')
+
+    def test_connect_httprpc_url_rewritten_and_rpc_url_not_appended(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+
+        with patch.object(rt, 'conf', side_effect = self._conf(host = 'httprpc://myhost/rutorrent')), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter) as mock_cls:
+            rt.connect(True)
+
+        called_url = mock_cls.call_args[0][0]
+        assert called_url == 'http://myhost/rutorrent/plugins/httprpc/action.php'
+
+    def test_connect_httprpc_becomes_https_when_ssl_enabled(self):
+        rt = self._make_downloader()
+        mock_adapter = MagicMock()
+
+        with patch.object(rt, 'conf', side_effect = self._conf(host = 'httprpc://myhost', ssl = True)), \
+             patch.object(rtorrent_module, '_RTorrentAdapter', return_value = mock_adapter) as mock_cls:
+            rt.connect(True)
+
+        called_url = mock_cls.call_args[0][0]
+        assert called_url == 'https://myhost/plugins/httprpc/action.php'
+
+
+class TestRTorrentDownload:
+    """Tests for rTorrent.download() -- magnet and torrent-file add paths."""
+
+    def _make_downloader(self, adapter):
+        rt = rtorrent_module.rTorrent.__new__(rtorrent_module.rTorrent)
+        rt.rt = adapter  # already "connected"
+        rt.error_msg = ''
+        return rt
+
+    def _conf(self, **overrides):
+        values = {'label': '', 'directory': '', 'paused': 0}
+        values.update(overrides)
+        return lambda k, **kw: values.get(k, kw.get('default', ''))
+
+    def test_download_magnet_loads_and_starts_torrent(self):
+        adapter = MagicMock()
+        mock_torrent = MagicMock()
+        adapter.load_magnet.return_value = mock_torrent
+
+        rt = self._make_downloader(adapter)
+        data = {'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01'}
+
+        with patch.object(rt, 'conf', side_effect = self._conf()):
+            result = rt.download(data = data)
+
+        adapter.load_magnet.assert_called_once_with(data['url'], 'ABCDEF0123456789ABCDEF0123456789ABCDEF01')
+        mock_torrent.start.assert_called_once()
+        assert result['id'] == 'ABCDEF0123456789ABCDEF0123456789ABCDEF01'
+
+    def test_download_magnet_returns_false_when_never_found(self):
+        adapter = MagicMock()
+        adapter.load_magnet.return_value = None
+
+        rt = self._make_downloader(adapter)
+        data = {'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01'}
+
+        with patch.object(rt, 'conf', side_effect = self._conf()):
+            result = rt.download(data = data)
+
+        assert result is False
+
+    def test_download_torrent_file_loads_raw_and_sets_label(self):
+        adapter = MagicMock()
+        mock_torrent = MagicMock()
+        adapter.load_torrent.return_value = mock_torrent
+
+        rt = self._make_downloader(adapter)
+        data = {'protocol': 'torrent', 'name': 'Movie.torrent'}
+
+        # bdecode/bencode are stubbed here: the hash computed from a real
+        # torrent's "info" dict is unrelated to what VENDORED-04 changed
+        # (the load_torrent call-site wiring), so this isolates that.
+        with patch.object(rt, 'conf', side_effect = self._conf(label = 'movies')), \
+             patch.object(rtorrent_module, 'bdecode', return_value = {'info': {'name': 'Movie'}}), \
+             patch.object(rtorrent_module, 'bencode', return_value = b'encoded-info'):
+            result = rt.download(data = data, filedata = b'd...e')
+
+        assert adapter.load_torrent.call_count == 1
+        call_args = adapter.load_torrent.call_args[0]
+        assert call_args[0] == b'd...e'  # filedata passed through unchanged
+        # info_hash (2nd positional arg) is now passed to load_torrent
+        # directly, instead of load_torrent re-deriving it internally.
+        assert isinstance(call_args[1], str) and len(call_args[1]) == 40
+        mock_torrent.set_custom.assert_called_once_with(1, 'movies')
+        mock_torrent.start.assert_called_once()
+        assert result['id']

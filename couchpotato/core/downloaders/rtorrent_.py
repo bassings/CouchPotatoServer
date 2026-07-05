@@ -1,9 +1,15 @@
+import time
+import xmlrpc.client
 from base64 import b16encode, b32decode
 from datetime import timedelta
 from hashlib import sha1
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 import os
 import re
+
+import requests
+import requests.auth
+import rtorrent_rpc
 
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.event import addEvent
@@ -11,12 +17,229 @@ from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost, splitString
 from couchpotato.core.logger import CPLog
 from bencodepy import encode as bencode, decode as bdecode
-from couchpotato.lib.rtorrent import RTorrent
 
 
 log = CPLog(__name__)
 
 autoload = 'rTorrent'
+
+# Fields fetched (in this exact order) for every torrent by get_torrents().
+# Matches what getAllDownloadStatus()/getTorrentStatus() below read off each
+# returned torrent object.
+_MULTICALL_FIELDS = (
+    'd.hash=',
+    'd.name=',
+    'd.complete=',
+    'd.is_open=',
+    'd.ratio=',
+    'd.state=',
+    'd.left_bytes=',
+    'd.down.rate=',
+    'd.directory=',
+)
+
+# Poll settings used while waiting for a just-added magnet/torrent to show
+# up in rTorrent's download list.
+_LOAD_POLL_INTERVAL = 1
+_SCGI_TIMEOUT = 30
+
+
+def _rewrite_httprpc_url(url):
+    """ Rewrite CouchPotato's 'httprpc(+https)' pseudo-scheme to ruTorrent's
+    httprpc plugin's fixed mount point, preserving host/port and any existing
+    path prefix (e.g. a ruTorrent install mounted under a sub-path).
+
+    httprpc://host       -> http://host/plugins/httprpc/action.php
+    httprpc://host/path  -> http://host/path/plugins/httprpc/action.php
+    httprpc+https://host -> https://host/plugins/httprpc/action.php
+    """
+
+    parsed = urlparse(url)
+
+    if parsed.scheme == 'httprpc':
+        transport_scheme = 'http'
+    elif parsed.scheme == 'httprpc+https':
+        transport_scheme = 'https'
+    else:
+        return url
+
+    path = parsed.path.rstrip('/')
+    new_path = (path + '/plugins/httprpc/action.php') if path else '/plugins/httprpc/action.php'
+
+    return urlunparse((transport_scheme, parsed.netloc, new_path, parsed.params, parsed.query, parsed.fragment))
+
+
+class _RTorrentAuthTransport(xmlrpc.client.Transport):
+    """ XML-RPC transport for http(s) rTorrent endpoints, backed by
+    ``requests``.
+
+    rtorrent_rpc's public API (RTorrent/_HTTPTransport) has no way to
+    configure per-instance basic/digest authentication or per-instance TLS
+    verification (its only option is a process-wide environment variable
+    that disables cert checking globally) so we drive our own
+    ``requests.Session``-backed transport for every http(s) connection.
+    """
+
+    def __init__(self, secure, auth = None, verify_ssl = True):
+        super().__init__()
+
+        self.secure = secure
+        self.session = requests.Session()
+
+        if auth:
+            auth_method, username, password = auth
+            if auth_method == 'digest':
+                self.session.auth = requests.auth.HTTPDigestAuth(username, password)
+            else:
+                self.session.auth = requests.auth.HTTPBasicAuth(username, password)
+
+        self.session.verify = verify_ssl
+
+    def single_request(self, host, handler, request_body, verbose = 0):
+        url = '%s://%s%s' % ('https' if self.secure else 'http', host, handler)
+
+        response = self.session.post(
+            url,
+            data = request_body,
+            headers = {'Content-Type': 'text/xml'},
+            stream = True,
+        )
+
+        if response.status_code != 200:
+            raise xmlrpc.client.ProtocolError(
+                host + handler, response.status_code, response.reason, response.headers
+            )
+
+        p, u = self.getparser()
+        for chunk in response.iter_content(1024):
+            p.feed(chunk)
+        p.close()
+
+        return u.close()
+
+
+class _RTorrentFile:
+    """ A single file belonging to a torrent (only what CP reads: `.path`). """
+
+    def __init__(self, path):
+        self.path = path
+
+
+class _RTorrentTorrent:
+    """ Lightweight view over a single rTorrent download, backed by direct
+    ``d.*``/``f.*`` RPC calls keyed on `info_hash`. """
+
+    def __init__(self, rpc, info_hash, name, complete, open_, ratio, state,
+                 left_bytes, down_rate, directory):
+        self._rpc = rpc
+
+        self.info_hash = info_hash
+        self.name = name
+        self.complete = complete
+        self.open = open_
+        self.ratio = ratio
+        self.state = state
+        self.left_bytes = left_bytes
+        self.down_rate = down_rate
+        self.directory = directory
+
+    def get_files(self):
+        rows = self._rpc.f.multicall(self.info_hash, '', 'f.path=')
+        return [_RTorrentFile(row[0]) for row in rows]
+
+    def set_custom(self, key, value):
+        return getattr(self._rpc.d, 'custom%s' % key).set(self.info_hash, value)
+
+    def set_directory(self, directory):
+        return self._rpc.d.directory.set(self.info_hash, directory)
+
+    def start(self):
+        return self._rpc.d.start(self.info_hash)
+
+    def pause(self):
+        # CP's "pause" maps to rTorrent's "stop" (mirrors the vendored lib's
+        # naming, which is confusing, but is the existing contract).
+        return self._rpc.d.stop(self.info_hash)
+
+    def resume(self):
+        return self._rpc.d.start(self.info_hash)
+
+    def erase(self):
+        # Only removes rTorrent's internal tracking; CP deletes files itself.
+        return self._rpc.d.erase(self.info_hash)
+
+    def is_multi_file(self):
+        return bool(int(self._rpc.d.is_multi_file(self.info_hash)))
+
+
+class _RTorrentAdapter:
+    """ Thin wrapper around an rTorrent XML-RPC endpoint, built on top of
+    `rtorrent_rpc` (scgi://, scgi:///path) or a custom requests-backed
+    transport (http://, https://) -- exposing only the operations
+    CouchPotato's rTorrent downloader plugin needs. This insulates CP from
+    churn in the small library's ruTorrent-flavoured convenience API, which
+    CP doesn't use. """
+
+    def __init__(self, url, auth = None, verify_ssl = True):
+        parsed = urlparse(url)
+
+        if parsed.scheme == 'scgi':
+            self.rpc = rtorrent_rpc.RTorrent(url, timeout = _SCGI_TIMEOUT).rpc
+        elif parsed.scheme in ('http', 'https'):
+            transport = _RTorrentAuthTransport(
+                secure = parsed.scheme == 'https',
+                auth = auth,
+                verify_ssl = verify_ssl,
+            )
+            self.rpc = xmlrpc.client.ServerProxy(url, transport = transport)
+        else:
+            raise ValueError('Unsupported rTorrent RPC scheme: %r' % parsed.scheme)
+
+    def get_torrents(self):
+        rows = self.rpc.d.multicall2('', 'main', *_MULTICALL_FIELDS)
+
+        torrents = []
+        for info_hash, name, complete, is_open, ratio, state, left_bytes, down_rate, directory in rows:
+            torrents.append(_RTorrentTorrent(
+                self.rpc,
+                info_hash = str(info_hash).upper(),
+                name = name,
+                complete = bool(int(complete)),
+                open_ = bool(int(is_open)),
+                ratio = int(ratio) / 1000.0,
+                state = state,
+                left_bytes = left_bytes,
+                down_rate = down_rate,
+                directory = directory,
+            ))
+
+        return torrents
+
+    def find_torrent(self, info_hash):
+        info_hash = str(info_hash).upper()
+        for torrent in self.get_torrents():
+            if torrent.info_hash == info_hash:
+                return torrent
+
+        return None
+
+    def _poll_for_torrent(self, info_hash, retries):
+        for attempt in range(retries):
+            torrent = self.find_torrent(info_hash)
+            if torrent:
+                return torrent
+            if attempt < retries - 1:
+                time.sleep(_LOAD_POLL_INTERVAL)
+
+        return None
+
+    def load_magnet(self, magnet_url, info_hash, verify_retries = 10):
+        self.rpc.load.start('', magnet_url)
+        return self._poll_for_torrent(info_hash, verify_retries)
+
+    def load_torrent(self, filedata, info_hash, verify_retries = 10):
+        self.rpc.load.raw('', xmlrpc.client.Binary(filedata))
+        return self._poll_for_torrent(info_hash, verify_retries)
 
 
 class rTorrent(DownloaderBase):
@@ -89,23 +312,32 @@ class rTorrent(DownloaderBase):
         if self.conf('ssl') and url.startswith('httprpc://'):
             url = url.replace('httprpc://', 'httprpc+https://')
 
+        is_httprpc = url.startswith('httprpc://') or url.startswith('httprpc+https://')
+        url = _rewrite_httprpc_url(url)
+
         parsed = urlparse(url)
 
-        # rpc_url is only used on http/https scgi pass-through
-        if parsed.scheme in ['http', 'https']:
+        # rpc_url is only used on the plain http/https scgi pass-through
+        # case, not httprpc (ruTorrent's fixed mount point) or scgi (no
+        # concept of an RPC path).
+        if parsed.scheme in ('http', 'https') and not is_httprpc:
             url += self.conf('rpc_url')
 
         # Construct client
-        self.rt = RTorrent(
-            url, self.getAuth(),
-            verify_ssl=self.getVerifySsl()
-        )
-
         self.error_msg = ''
         try:
-            self.rt.connection.verify()
-        except AssertionError as e:
-            self.error_msg = e.message
+            self.rt = _RTorrentAdapter(
+                url,
+                auth = self.getAuth(),
+                verify_ssl = self.getVerifySsl(),
+            )
+
+            # XML-RPC proxy construction never touches the network, so this
+            # is the only way to actually confirm the endpoint is a working
+            # rTorrent instance.
+            self.rt.rpc.system.client_version()
+        except Exception as e:
+            self.error_msg = str(e)
             self.rt = None
 
         return self.rt
@@ -183,7 +415,7 @@ class rTorrent(DownloaderBase):
             # Send request to rTorrent
             try:
                 # Send torrent to rTorrent
-                torrent = self.rt.load_torrent(filedata, verify_retries=10)
+                torrent = self.rt.load_torrent(filedata, torrent_hash, verify_retries = 10)
 
                 if not torrent:
                     log.error('Unable to find the torrent, did it fail to load?')

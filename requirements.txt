@@ -29,6 +29,7 @@ bencodepy==0.9.5
 
 # Downloaders
 deluge-client==1.10.2
+rtorrent-rpc==0.9.7
 
 # Notifications
 gntp==1.0.3
