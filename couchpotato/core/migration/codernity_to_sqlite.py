@@ -72,23 +72,36 @@ def migrate_codernity_to_sqlite(codernity_path: str, sqlite_path: str, sqlite_db
                     print(f"  Migrated {migrated} documents...", end='\r')
 
             except sqlite3.IntegrityError as e:
-                # The UNIQUE (provider, identifier) index (REG-004) rejected a
-                # document whose media identifier is already taken by an
-                # earlier-migrated doc. This is a DATA-LOSS event on a
-                # disaster-recovery path -- the source DB contained duplicate
-                # media, and this row is NOT carried into SQLite. Make it loud;
-                # the original CodernityDB is preserved in database.bak.
-                duplicates += 1
                 doc_id = doc.get('_id', 'unknown')
-                print(f"  DUPLICATE: skipping document {doc_id} (identifier already migrated): {e}")
-                log.warning(
-                    'Migration DROPPED a duplicate-identifier document %s '
-                    '(_t=%s): its media identifier was already migrated, and '
-                    'the UNIQUE index rejected it (REG-004). This row was NOT '
-                    'migrated (data loss); the original is preserved in '
-                    'database.bak. Error: %s',
-                    doc_id, doc.get('_t', 'unknown'), e,
-                )
+                # insert() can raise IntegrityError from TWO distinct
+                # constraints: the UNIQUE (provider, identifier) index
+                # (REG-004, a real duplicate movie) OR the documents._id
+                # PRIMARY KEY (a duplicate/malformed _id in the source
+                # CodernityDB). Only the former is an "already-migrated
+                # identifier" -- attribute by the error text so a different
+                # corruption isn't mislabeled as a duplicate identifier.
+                if 'media_identifiers' in str(e):
+                    # DATA-LOSS event on a disaster-recovery path -- the source
+                    # DB contained duplicate media and this row is NOT carried
+                    # into SQLite. Make it loud; the original CodernityDB is
+                    # preserved in database.bak.
+                    duplicates += 1
+                    print(f"  DUPLICATE: skipping document {doc_id} (identifier already migrated): {e}")
+                    log.warning(
+                        'Migration DROPPED a duplicate-identifier document %s '
+                        '(_t=%s): its media identifier was already migrated, and '
+                        'the UNIQUE index rejected it (REG-004). This row was NOT '
+                        'migrated (data loss); the original is preserved in '
+                        'database.bak. Error: %s',
+                        doc_id, doc.get('_t', 'unknown'), e,
+                    )
+                else:
+                    # A different integrity violation (e.g. duplicate _id
+                    # PRIMARY KEY): treat as a generic migration error, not an
+                    # already-migrated identifier.
+                    errors += 1
+                    print(f"  Warning: Failed to migrate document {doc_id}: {e}")
+                    log.warning('Failed to migrate document %s: %s', doc_id, e)
 
             except Exception as e:
                 errors += 1

@@ -138,6 +138,24 @@ correctness bug (`is` vs `==` on a JSON-deserialized string).
   the DB backstop cleaning up after the fact. (Negative control: with the lock
   stubbed to a no-op, the same scenario yields N inserts.)
 
+### Scope boundary / known follow-up (Wave-2 P1)
+
+`media_lock(identifier_key)` in `movie.add()` covers the get-or-insert
+**decision** only — it is released before `m.update(media)` / the
+`force_readd` `db.update(m)`. That fully closes the duplicate-**INSERT** race
+this PR targets (Item 1): no two concurrent `add()`s can both decide "not
+found" and both insert (and the UNIQUE index + `IntegrityError` re-fetch is
+the cross-process backstop).
+
+It does **not** cover the post-lock read-modify-write on an *existing* doc:
+two concurrent found / race-loss re-adds for the same imdb id can still
+interleave their `db.update(m)`, and `SQLiteAdapter.update()` stamps a new
+`_rev` **unconditionally** (no optimistic-concurrency / compare-and-swap
+check), so one update can silently lose the other's field writes. That
+pre-existing RMW race is **out of scope** for this PR and is tracked for the
+Wave-2 P1 work (`_rev` compare-and-swap on `update()` + unifying the media
+lock to span the whole read-modify-write, not just the insert decision).
+
 ## Item 2 — `is 'available'` identity-comparison bug (MED correctness) — VERIFIED
 
 ### Problem

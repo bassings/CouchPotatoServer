@@ -143,11 +143,12 @@ class SQLiteAdapter(DatabaseInterface):
                     pass
                 if dropped:
                     try:
-                        conn.execute(
-                            "CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
-                            "ON media_identifiers(provider, identifier)"
-                        )
-                        conn.commit()
+                        with self._write_lock:
+                            conn.execute(
+                                "CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
+                                "ON media_identifiers(provider, identifier)"
+                            )
+                            conn.commit()
                     except sqlite3.Error:
                         pass
                 if isinstance(create_error, (sqlite3.IntegrityError, sqlite3.OperationalError)):
