@@ -8,6 +8,7 @@ rather than failing or tagging the release.
 """
 import logging
 import os
+import stat
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -239,6 +240,23 @@ class TestExtractArchiveAtomicWrite:
         assert (tmp_path / 'movie.mkv').read_bytes() == b'good-bytes'
         assert extracted == [str(tmp_path / 'movie.mkv')]
         assert list(tmp_path.glob('.cp-extract-*.part')) == []
+
+    def test_extracted_file_gets_configured_permission_not_0600(self, tmp_path):
+        # Regression: tempfile.mkstemp creates 0600 and os.replace preserves it,
+        # so without an explicit chmod the extracted media file would be
+        # owner-only -- unreadable by Plex/Kodi/other users (and broken under
+        # the Docker PUID/PGID drop). It must get the configured file permission.
+        info = _make_info('movie.mkv')
+        handle = _make_rar_handle([info], {'movie.mkv': b'good-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor.Env.getPermission', return_value=0o644) as mock_perm:
+            _Extractor().extractArchive('archive.rar', str(tmp_path))
+
+        extracted = tmp_path / 'movie.mkv'
+        assert extracted.exists()
+        assert stat.S_IMODE(os.stat(extracted).st_mode) == 0o644
+        mock_perm.assert_called_with('file')
 
     def test_next_scan_does_not_treat_interrupted_write_as_extracted(self, tmp_path):
         # Model the full "transient hiccup then retry" sequence end-to-end:
@@ -558,3 +576,37 @@ class TestNoExtractorToolMessage:
         assert 'brew install unar' in NO_EXTRACTOR_TOOL_MESSAGE
         assert 'Linux' in NO_EXTRACTOR_TOOL_MESSAGE
         assert 'apk add 7zip' in NO_EXTRACTOR_TOOL_MESSAGE
+
+
+class TestRarfileApiSignatureGuard:
+    """Every other test mocks rarfile, baking in assumptions about its API.
+    This guard pins the REAL installed rarfile==4.2 surface CP's extractor
+    depends on, so a future dependency bump that drifts the API fails here
+    (loudly) instead of silently passing every mocked test.
+
+    NOTE: a full smoke test against a real .rar fixture would additionally
+    catch behavioral drift, but that needs an external extractor tool
+    (unrar/unar/7z/bsdtar) present in CI. Tracked as a possible follow-up;
+    this signature guard is the cheap, environment-independent coverage."""
+
+    def test_rarfile_exposes_the_api_the_extractor_relies_on(self):
+        rf = pytest.importorskip('rarfile')
+
+        # RarFile methods the extractor calls.
+        assert hasattr(rf.RarFile, 'open')
+        assert hasattr(rf.RarFile, 'infolist')
+        assert hasattr(rf.RarFile, 'close')
+
+        # RarInfo.isdir must be a callable method (extractor calls info.isdir()).
+        assert callable(getattr(rf.RarInfo, 'isdir'))
+
+        # Exception types the extractor catches / the caller distinguishes.
+        for exc_name in ('RarCannotExec', 'BadRarFile', 'Error'):
+            assert hasattr(rf, exc_name)
+            assert issubclass(getattr(rf, exc_name), Exception)
+        assert issubclass(rf.RarCannotExec, rf.Error)
+        assert issubclass(rf.BadRarFile, rf.Error)
+
+        # Tool-selection surface the extractor mutates.
+        assert isinstance(rf.UNRAR_TOOL, str)
+        assert callable(rf.tool_setup)

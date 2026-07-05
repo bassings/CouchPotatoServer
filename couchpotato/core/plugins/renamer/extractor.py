@@ -21,6 +21,7 @@ import rarfile
 
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog
+from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
@@ -288,6 +289,12 @@ class ExtractorMixin:
                     if not chunk:
                         break
                     target.write(chunk)
+            # tempfile.mkstemp always creates the file 0600 (owner-only),
+            # ignoring umask; without this the extracted media file would be
+            # unreadable by Plex/Kodi/other users (and broken under the Docker
+            # PUID/PGID drop-privilege setup). Apply the configured file
+            # permission before the atomic rename, matching mover.py.
+            os.chmod(tmp_path, Env.getPermission('file'))
             os.replace(tmp_path, extr_file_path)
         except BaseException:
             try:

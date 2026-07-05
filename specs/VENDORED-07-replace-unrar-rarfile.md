@@ -108,6 +108,16 @@ available on the host:
   on the next scan. The temp name (`_TEMP_PREFIX`/`_TEMP_SUFFIX`/`_TEMP_GLOB`
   module constants) is shared between the `mkstemp` writer and the sweep so
   the pattern can never drift.
+- **Configured file permission** (`os.chmod(tmp, Env.getPermission('file'))`
+  before the atomic rename): `tempfile.mkstemp` always creates its file `0600`
+  (owner-only) regardless of umask, and `os.replace` preserves that mode — so
+  without an explicit chmod every extracted media file would be unreadable by
+  Plex/Kodi/other users and broken under the Docker PUID/PGID drop-privilege
+  setup. The chmod matches the pattern used everywhere else this plugin writes
+  into the library (`renamer/mover.py`, `downloaders/blackhole.py`,
+  `providers/metadata/base.py`), applying the same configurable
+  `permission_file` setting. Applied to the temp file *before* `os.replace` so
+  the final file appears atomically with the correct mode.
 - **Tool-path concurrency lock** (`_extract_lock`, a module-level
   `threading.Lock`): `rarfile` selects the extractor via the process-global
   `rarfile.UNRAR_TOOL` (no per-call parameter), so `extractArchive` now
@@ -203,7 +213,14 @@ practical alternative):
   subsequent scan does not mistake a leftover partial for "already extracted"
   — the retry actually extracts the file and only then tags the release. Also
   covers the stray-temp self-heal: a pre-existing `.cp-extract-*.part` (from a
-  hard kill) is swept before a successful extraction.
+  hard kill) is swept before a successful extraction; and the extracted file
+  gets the configured `Env.getPermission('file')` mode (not mkstemp's `0600`).
+- `TestRarfileApiSignatureGuard`: a `pytest.importorskip('rarfile')` guard
+  pinning the REAL installed `rarfile==4.2` surface CP depends on
+  (`RarFile.open`/`infolist`/`close`, `RarInfo.isdir` callable, the
+  `RarCannotExec`/`BadRarFile`/`Error` hierarchy, `UNRAR_TOOL`, `tool_setup`)
+  so a future dependency bump that drifts the API fails loudly instead of
+  silently passing every mocked test.
 - `TestExtractFilesGracefulDegradation`: end-to-end through
   `ExtractorMixin.extractFiles` with a minimal fake Renamer double —
   confirms exactly **one** warning is logged across two archives when no
@@ -237,9 +254,21 @@ practical alternative):
       and the runtime warning message.
 - [x] `tests/unit/test_extractor.py` covers success, no-tool degradation,
       and bad-archive skip.
-- [x] `pytest tests/unit/ -q` green (860 passed), `ruff check .` clean.
+- [x] Extracted files get the configured `permission_file` mode, not
+      mkstemp's `0600`.
+- [x] `pytest tests/unit/ -q` green (870 passed), `ruff check .` clean.
 - [x] `couchpotato.core.plugins.renamer.extractor` and
       `couchpotato.core.plugins.renamer.main` (`Renamer`) import cleanly.
+
+## Follow-ups (not blocking)
+
+- **Real `.rar` smoke test:** the unit tests mock `rarfile.RarFile`, and
+  `TestRarfileApiSignatureGuard` pins the real API *shape* but not real
+  extraction *behavior*. A full smoke test against a committed tiny `.rar`
+  fixture (list + extract + verify bytes/permission) would catch behavioral
+  drift, but requires an external extractor tool (unrar/unar/7z/bsdtar) in the
+  CI image. Consider adding `7zip` to the test image and a
+  `@pytest.mark.skipif(no tool on PATH)` smoke test.
 
 ## Files
 
