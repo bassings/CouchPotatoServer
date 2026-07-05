@@ -820,6 +820,25 @@ class TestQBittorrent:
 
         assert result is False
 
+    def test_connect_returns_false_when_session_check_raises_api_error(self):
+        """is_logged_in is a live authenticated call, so a transient blip
+        (connection/timeout/SSL, all APIError subclasses) at re-validation
+        must return False cleanly rather than escape as an unhandled
+        traceback — same guarantee as a failed auth_log_in."""
+        qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            type(mock_client).is_logged_in = PropertyMock(
+                side_effect = qbittorrentapi.APIConnectionError('unreachable'))
+
+            result = qbt.connect()
+
+        assert result is False
+        # never reached login — the guard caught the session-check failure
+        mock_client.auth_log_in.assert_not_called()
+
     def test_test_logs_out_old_session_and_builds_fresh_client(self):
         """test() always reflects the current settings, so it forces a brand
         new client rather than reusing whatever was connected before."""

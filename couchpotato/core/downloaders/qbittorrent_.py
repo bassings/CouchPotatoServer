@@ -60,10 +60,13 @@ class qBittorrent(DownloaderBase):
                 password = self.conf('password') or None,
             )
 
-        if self.qb.is_logged_in:
-            return True
-
         try:
+            # is_logged_in performs a live authenticated call, so it can raise
+            # the same APIError family (connection/timeout/SSL) as auth_log_in;
+            # keep both inside one guard so a transient blip returns False
+            # cleanly instead of escaping as an unhandled traceback.
+            if self.qb.is_logged_in:
+                return True
             self.qb.auth_log_in()
             return True
         except qbittorrentapi.APIError as e:
