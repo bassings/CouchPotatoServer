@@ -10,11 +10,14 @@ import sys
 import shutil
 import tempfile
 
-# Add libs to path for CodernityDB
+# Add libs to path for CodernityDB, and scripts/ for the migration module
+# (REFACTOR-01 moved the migration logic out of couchpotato/core/ into a
+# standalone script).
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'libs'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'scripts'))
 
 from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
-from couchpotato.core.migration.codernity_to_sqlite import migrate_codernity_to_sqlite
+from migrate_codernity_to_sqlite import migrate_codernity_to_sqlite
 
 
 def test_migration(source_db_path: str, test_name: str):

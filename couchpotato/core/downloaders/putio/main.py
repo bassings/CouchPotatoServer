@@ -1,10 +1,9 @@
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEventAsync
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
-from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
-from couchpotato.lib.pio import api as pio
+import putiopy as pio
 import datetime
 
 log = CPLog(__name__)
@@ -16,16 +15,11 @@ class PutIO(DownloaderBase):
 
     protocol = ['torrent', 'torrent_magnet']
     downloading_list = []
-    # Original OAuth proxy (api.couchpota.to) is dead. Put.io OAuth needs
-    # a direct integration with Put.io's API to work again.
-    oauth_authenticate = ''
 
     def __init__(self):
         addApiView('downloader.putio.getfrom', self.getFromPutio, docs = {
             'desc': 'Allows you to download file from prom Put.io',
         })
-        addApiView('downloader.putio.auth_url', self.getAuthorizationUrl)
-        addApiView('downloader.putio.credentials', self.getCredentials)
         addEvent('putio.download', self.putioDownloader)
 
         return super().__init__()
@@ -81,28 +75,6 @@ class PutIO(DownloaderBase):
             log.info('Failed to get file listing, check OAUTH_TOKEN')
             return False
 
-    def getAuthorizationUrl(self, host = None, **kwargs):
-
-        callback_url = cleanHost(host) + '%sdownloader.putio.credentials/' % (Env.get('api_base').lstrip('/'))
-        log.debug('callback_url is %s', callback_url)
-
-        target_url = self.oauth_authenticate + "?target=" + callback_url
-        log.debug('target_url is %s', target_url)
-
-        return {
-            'success': True,
-            'url': target_url,
-        }
-
-    def getCredentials(self, **kwargs):
-        try:
-            oauth_token = kwargs.get('oauth')
-        except Exception:
-            return 'redirect', Env.get('web_base') + 'settings/downloaders/'
-        log.debug('Received put.io oauth token')
-        self.conf('oauth_token', value = oauth_token);
-        return 'redirect', Env.get('web_base') + 'settings/downloaders/'
-
     def getAllDownloadStatus(self, ids):
 
         log.debug('Checking putio download status.')
@@ -148,7 +120,12 @@ class PutIO(DownloaderBase):
     def putioDownloader(self, fid):
 
         log.info('Put.io Real downloader called with file_id: %s',fid)
-        client = pio.Client(self.conf('oauth_token'))
+        # putiopy's default timeout=5 applies to the chunked read() calls of
+        # the streaming File.download() below, so a >5s put.io-side stall
+        # between chunks on a large file would raise ReadTimeout. Give the
+        # streaming pull generous headroom (30s per-chunk read); the light
+        # metadata calls elsewhere keep the 5s default.
+        client = pio.Client(self.conf('oauth_token'), timeout=30)
 
         log.debug('About to get file List')
         putioFolder = self.convertFolder(client, self.conf('folder'))
