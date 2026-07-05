@@ -7,7 +7,6 @@ import traceback
 import zipfile
 from datetime import datetime
 from threading import RLock
-import re
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
@@ -36,10 +35,7 @@ class Updater(Plugin):
         elif os.environ.get('CP_DOCKER') == '1' or os.path.isfile('/.dockerenv'):
             self.updater = DockerUpdater()
         elif os.path.isdir(os.path.join(Env.get('app_dir'), '.git')):
-            git_default = 'git'
-            git_command = self.conf('git_command', default = git_default)
-            git_command = git_command if git_command != git_default and (os.path.isfile(git_command) or re.match(r'^[a-zA-Z0-9_/\.\-]+$', git_command)) else git_default
-            self.updater = GitUpdater(git_command)
+            self.updater = GitUpdater()
         else:
             self.updater = SourceUpdater()
 
@@ -205,26 +201,60 @@ class BaseUpdater(Plugin):
 
 
 class GitUpdater(BaseUpdater):
+    """Updates a source (`.git`-directory-present) install straight from its
+    git repository, using dulwich (pure-Python, no system `git` binary needed).
+
+    Pull semantics differ from plain `git pull`: instead of a merge/rebase,
+    `doUpdate()` does a `fetch` from `origin` followed by a hard reset of the
+    current branch to `refs/remotes/origin/<branch>`. This is deliberate -
+    CouchPotato source installs are not expected to carry local commits, so a
+    fast-forward-or-reset always converges to upstream instead of failing on
+    a diverged history.
+    """
 
     old_repo = 'RuudBurger/CouchPotatoServer'
     new_repo = 'CouchPotato/CouchPotatoServer'
+    remote_name = 'origin'
 
-    def __init__(self, git_command):
-        from couchpotato.lib.git.repository import LocalRepository
-        self.repo = LocalRepository(Env.get('app_dir'), command = git_command)
+    def __init__(self):
+        from dulwich.repo import Repo
+        self.repo = Repo(Env.get('app_dir'))
 
-        remote_name = 'origin'
-        remote = self.repo.getRemoteByName(remote_name)
-        if self.old_repo in remote.url:
+        self._remapOldRepoUrl()
+
+    def _remapOldRepoUrl(self):
+        """One-time migration: CouchPotato's GitHub organization moved from
+        RuudBurger to CouchPotato (and later to this fork); rewrite `origin`
+        if it still points at the old location."""
+
+        config = self.repo.get_config()
+        try:
+            url = config.get((b'remote', self.remote_name.encode()), b'url').decode()
+        except KeyError:
+            return
+
+        if self.old_repo in url:
+            new_url = url.replace(self.old_repo, self.new_repo)
             log.info('Changing repo to new github organization: %s -> %s', self.old_repo, self.new_repo)
-            new_url = remote.url.replace(self.old_repo, self.new_repo)
-            self.repo._executeGitCommandAssertSuccess("remote set-url %s %s" % (remote_name, new_url))
+            config.set((b'remote', self.remote_name.encode()), b'url', new_url.encode())
+            config.write_to_path()
+
+    def _getRemoteBranchRef(self, branch_name):
+        return ('refs/remotes/%s/%s' % (self.remote_name, branch_name)).encode()
 
     def doUpdate(self):
 
         try:
+            from dulwich import porcelain
+
             log.info('Updating to latest version')
-            self.repo.pull()
+            porcelain.fetch(self.repo, self.remote_name)
+
+            branch_name = porcelain.active_branch(self.repo).decode()
+            remote_sha = self.repo.refs[self._getRemoteBranchRef(branch_name)]
+            porcelain.reset(self.repo, 'hard', treeish = remote_sha)
+
+            self.version = None  # Force re-read on next getVersion()
 
             return True
         except Exception:
@@ -238,17 +268,20 @@ class GitUpdater(BaseUpdater):
 
         if not self.version:
 
+            from dulwich import porcelain
+
             hash = None
             date = None
             branch = self.branch
 
             try:
-                output = self.repo.getHead()  # Yes, please
-                log.debug('Git version output: %s', output.hash)
+                head_sha = self.repo.head()
+                commit = self.repo[head_sha]
+                log.debug('Git version output: %s', head_sha)
 
-                hash = output.hash[:8]
-                date = output.getDate()
-                branch = self.repo.getCurrentBranch().name
+                hash = head_sha.decode()[:8]
+                date = commit.author_time
+                branch = porcelain.active_branch(self.repo).decode()
             except Exception as e:
                 log.error('Failed using GIT updater, running from source, you need to have GIT installed. %s', e)
 
@@ -268,25 +301,38 @@ class GitUpdater(BaseUpdater):
             return True
 
         log.info('Checking for new version on github for %s', self.repo_name)
-        if not Env.get('dev'):
-            self.repo.fetch()
 
-        current_branch = self.repo.getCurrentBranch().name
+        from dulwich import porcelain
 
-        for branch in self.repo.getRemoteByName('origin').getBranches():
-            if current_branch == branch.name:
+        try:
+            if not Env.get('dev'):
+                porcelain.fetch(self.repo, self.remote_name)
 
-                local = self.repo.getHead()
-                remote = branch.getHead()
+            current_branch = porcelain.active_branch(self.repo).decode()
+            remote_ref = self._getRemoteBranchRef(current_branch)
 
-                log.debug('Versions, local:%s, remote:%s', local.hash[:8], remote.hash[:8])
+            if remote_ref not in self.repo.refs:
+                log.debug('No remote branch %s found on %s', current_branch, self.remote_name)
+                self.last_check = time.time()
+                return False
 
-                if local.getDate() < remote.getDate():
-                    self.update_version = {
-                        'hash': remote.hash[:8],
-                        'date': remote.getDate(),
-                    }
-                    return True
+            local_sha = self.repo.head()
+            remote_sha = self.repo.refs[remote_ref]
+
+            local_date = self.repo[local_sha].author_time
+            remote_date = self.repo[remote_sha].author_time
+
+            log.debug('Versions, local:%s, remote:%s', local_sha.decode()[:8], remote_sha.decode()[:8])
+
+            if local_date < remote_date:
+                self.update_version = {
+                    'hash': remote_sha.decode()[:8],
+                    'date': remote_date,
+                }
+                self.last_check = time.time()
+                return True
+        except Exception:
+            log.error('Failed checking for update via GIT: %s', traceback.format_exc())
 
         self.last_check = time.time()
         return False
