@@ -116,6 +116,19 @@ loader, etc.), which has no existing test seam.
 `tests/unit/test_runner_uvicorn.py` — patches `uvicorn.run`, calls
 `_run_uvicorn(...)`, and asserts it was called with `access_log=False`.
 
+### Trade-off / follow-up (noted, not implemented here)
+`access_log=False` disables uvicorn's request access log **entirely** — not
+just the api_key portion of it. That removes the per-request line
+(method/path/status/latency) that can be useful for debugging and basic
+traffic visibility. The correct long-term fix is redacted request logging
+(a custom access-log formatter / logging middleware that strips the
+`api_key` path segment and query param but still emits the request line, or
+moving API auth off the URL entirely). That is deliberately **out of scope**
+for this P0 hardening pass and is tracked as a **separate follow-up** — the
+immediate priority is stopping the secret from leaking, and turning the
+access log off is the smallest change that does so. Do not re-enable
+`access_log` without the redaction layer in place.
+
 ## 4. `info2` log level invisible in production (HIGH)
 
 ### Problem
@@ -194,12 +207,44 @@ finish before tearing down.
 Changed `hasattr(handler, 'im_self')` to `hasattr(handler, '__self__')` in
 `couchpotato/core/event.py`.
 
+### Review follow-up (BLOCKER found in local review): isRunning self-count
+Re-enabling `beforeCall`/`afterCall` surfaced a latent self-referential bug.
+Every `Plugin` registers `addEvent('plugin.running', self.isRunning)` in
+`registerPlugin`. When `Core.initShutdown` fires `plugin.running`, the
+call-tracking wrapper would record the `isRunning` bookkeeping handler
+itself as "running" (append `"<Class>.isRunning"` to `_running`) and then
+`isRunning()` returns a snapshot that includes that just-added entry.
+Result: `fireEvent('plugin.running', merge=True)` is **never** empty, none
+of the reported `*.isRunning` entries are in `Core.ignore_restart`, so the
+shutdown/restart wait loop always burns its hard 30s timeout — a mandatory
+30s hang on every UI restart, auto-update restart, and post-migration
+restart (where before the `im_self` fix it was an instant no-op).
+
+Fix: exempt query/bookkeeping handlers from call-tracking. Added a
+`Plugin._call_tracking_exempt = frozenset({'isRunning'})` set and a guard in
+`Plugin.beforeCall`/`afterCall` that returns early when
+`handler.__name__` is in it. Placed in `base.py` (not `event.py`) because
+the exemption is *Plugin domain knowledge* — the generic event dispatcher
+shouldn't know that `isRunning` is special — and expressed as a named set
+rather than an inline magic string so future exempt handlers are added in
+one obvious place. Grepped for other event handlers that read `_running`:
+`isRunning` is the only reader (the only method that both queries `_running`
+and is registered as an event handler), so a targeted exemption is
+sufficient; no other handler has the self-counting problem.
+
 ### Test
-`tests/unit/test_event_system.py::TestBeforeAfterCall` — registers a bound
-method of a `Plugin` instance as an event handler, fires the event from
-inside the handler body (so we can observe state *during* the call), and
-asserts `plugin.isRunning()` contains the handler's running-key during the
-call and no longer contains it afterward.
+- `tests/unit/test_event_system.py::TestBeforeAfterCall` — registers a bound
+  method (`work`, a normal handler) of a `Plugin` instance as an event
+  handler, observes state *during* the call, and asserts `_running` contains
+  the handler's key during the call and is cleared afterward (proves
+  before/afterCall genuinely fire).
+- `tests/unit/test_event_system.py::TestPluginRunningAggregation` — exercises
+  the real `plugin.running` aggregation the way `initShutdown` uses it:
+  registers two actual `Plugin` subclasses and asserts
+  `fireEvent('plugin.running', merge=True)` is `[]` when nothing is running,
+  and reports *only* a genuinely in-flight handler when one plugin's
+  `_running` is non-empty. Fails on the blocked code
+  (`['PluginA.isRunning', 'PluginB.isRunning']`), passes after the exemption.
 
 ## CLAUDE.md "Known Technical Debt" lines this makes stale
 

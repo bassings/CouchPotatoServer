@@ -320,6 +320,29 @@ class TestGatherFilesSymlinkContainment:
 
         assert str(regular) in files
 
+    def test_partial_results_returned_on_midwalk_error(self, monkeypatch):
+        """REG-003 review nit (a): if os.walk raises partway through, files
+        gathered before the error must still be returned (best-effort),
+        matching the pre-refactor behaviour -- not discarded."""
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+
+        def exploding_walk(folder, followlinks=False):
+            yield ('/movies', [], ['first.mkv'])
+            raise OSError('permission denied deep in the tree')
+
+        # Keep files contained: everything under the yielded root resolves
+        # inside it, so containment doesn't filter them out.
+        monkeypatch.setattr(fs.os, 'walk', exploding_walk)
+        monkeypatch.setattr(scanner, '_isWithinFolder', lambda file_path, real_folder: True)
+
+        files = scanner._gatherFiles('/movies')
+
+        assert any('first.mkv' in f for f in files), (
+            'partial results gathered before the error were discarded'
+        )
+
 
 class TestGetReleaseNameYear:
     def test_basic(self, scanner):

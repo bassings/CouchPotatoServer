@@ -286,6 +286,75 @@ class TestBeforeAfterCall:
             events.clear()
 
 
+class TestPluginRunningAggregation:
+    """REG-003 review: re-enabling beforeCall/afterCall (item 6) must NOT make
+    the `plugin.running` query self-report.
+
+    Every Plugin registers `addEvent('plugin.running', self.isRunning)`.
+    `Core.initShutdown` fires `plugin.running` (merge=True) in a loop and
+    waits until the result (minus an ignore allowlist) is empty. If the
+    call-tracking wrapper records the `isRunning` bookkeeping handler itself
+    as "running", every plugin reports `<Class>.isRunning` as running, the
+    result is never empty, nothing is in the allowlist, and every
+    shutdown/restart hangs on the hard 30s timeout instead of returning
+    instantly. The isRunning query handler must be exempt from call-tracking.
+    """
+
+    def test_running_aggregation_empty_when_nothing_running(self):
+        from couchpotato.core.event import fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class PluginA(Plugin):
+                pass
+
+            class PluginB(Plugin):
+                pass
+
+            # Plugin.__new__ -> registerPlugin registers
+            # addEvent('plugin.running', self.isRunning) for each instance.
+            PluginA()
+            PluginB()
+
+            # This is exactly how Core.initShutdown asks "who is running".
+            still_running = fireEvent('plugin.running', merge=True)
+
+            assert still_running == [], (
+                'plugin.running self-reported when nothing was actually '
+                'running: %r' % (still_running,)
+            )
+        finally:
+            events.clear()
+
+    def test_running_aggregation_reports_only_genuine_work(self):
+        from couchpotato.core.event import fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class PluginA(Plugin):
+                pass
+
+            class PluginB(Plugin):
+                pass
+
+            a = PluginA()
+            PluginB()
+
+            # Simulate PluginA genuinely mid-handler.
+            a.isRunning('PluginA.realWork')
+
+            still_running = fireEvent('plugin.running', merge=True)
+
+            assert still_running == ['PluginA.realWork'], (
+                'expected only the genuine in-flight handler, got: %r'
+                % (still_running,)
+            )
+        finally:
+            events.clear()
+
+
 class TestGetEvent:
     def test_get_event(self):
         from couchpotato.core.event import addEvent, getEvent

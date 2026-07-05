@@ -51,11 +51,7 @@ class FolderScannerMixin:
         leftovers = []
 
         if not files:
-            files = []
-            try:
-                files = self._gatherFiles(folder)
-            except Exception:
-                log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
+            files = self._gatherFiles(folder)
 
             log.debug('Found %s files to scan and group in %s', len(files), folder)
         else:
@@ -310,22 +306,30 @@ class FolderScannerMixin:
         it only controls recursion into symlinked *directories*, symlinked
         *files* are listed regardless of that flag -- so containment has to
         be checked per file. REG-003 item 2.
+
+        Best-effort: if the walk raises partway through (e.g. a permission
+        error deep in the tree), the files gathered before the error are
+        still returned rather than discarded, matching the pre-refactor
+        behaviour.
         """
         real_folder = os.path.realpath(folder)
 
         found_files = []
-        for root, dirs, walk_files in os.walk(folder, followlinks=True):
-            for filename in walk_files:
-                file_path = sp(os.path.join(sp(root), sp(filename)))
+        try:
+            for root, dirs, walk_files in os.walk(folder, followlinks=True):
+                for filename in walk_files:
+                    file_path = sp(os.path.join(sp(root), sp(filename)))
 
-                if not self._isWithinFolder(file_path, real_folder):
-                    log.debug('Skipping file that resolves outside the scanned folder (symlink escape): %s', file_path)
-                    continue
+                    if not self._isWithinFolder(file_path, real_folder):
+                        log.debug('Skipping file that resolves outside the scanned folder (symlink escape): %s', file_path)
+                        continue
 
-                found_files.append(file_path)
+                    found_files.append(file_path)
 
-            if self.shuttingDown():
-                break
+                if self.shuttingDown():
+                    break
+        except Exception:
+            log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
 
         return found_files
 
