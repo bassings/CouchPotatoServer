@@ -262,6 +262,29 @@ class TestSearchSingle:
         assert result is True
         download_mock.assert_not_called()
 
+    def test_alpha2_sidecar_language_satisfies_wanted_language(self, monkeypatch):
+        """VENDORED-05 review (end-to-end): a wanted 'pt' must be treated as
+        already-present when the scanner recorded a Brazilian-Portuguese
+        sidecar. The producer (getSubtitleLanguage) stores the bare alpha2
+        'pt' (not 'pt-BR'), and this consumer compares against wanted
+        `Language.fromalpha2('pt').alpha2` == 'pt', so no re-download happens.
+        """
+        plugin = _make_subtitle({'languages': 'pt'})
+        monkeypatch.setattr(plugin, 'scanVideo', lambda filename: object())
+
+        download_mock = MagicMock()
+        monkeypatch.setattr(subtitle_module.subliminal, 'download_best_subtitles', download_mock)
+
+        # 'pt' is what getSubtitleLanguage stores for a Movie.pt-BR.srt sidecar.
+        group = _group(
+            ['/movies/movie.mkv'],
+            subtitle_language={'/movies/movie.pt-BR.srt': ['pt']},
+        )
+        result = plugin.searchSingle(group)
+
+        assert result is True
+        download_mock.assert_not_called()
+
     def test_force_ignores_already_available_languages(self, monkeypatch):
         plugin = _make_subtitle({'languages': 'en', 'force': True})
         video = object()

@@ -226,6 +226,50 @@ class TestGetSubtitleLanguage:
         languages = sorted(sum(result.values(), []))
         assert languages == ['en', 'fr']
 
+    def test_region_qualified_sidecar_stored_as_alpha2(self, parser, tmp_path):
+        """VENDORED-05 review: region/script-qualified sidecars (e.g.
+        Movie.pt-BR.srt) must be stored as the bare alpha2 ('pt'), NOT the
+        IETF string ('pt-BR'). The consumer (Subtitle.searchSingle) compares
+        wanted `Language.fromalpha2(...).alpha2` against these stored strings;
+        storing 'pt-BR' would never match wanted 'pt', so an already-present
+        Brazilian-Portuguese sidecar would get re-downloaded and overwritten.
+        """
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        sub = tmp_path / 'Movie.Name.2020.1080p.pt-BR.srt'
+        sub.write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert str(sub) in result
+        assert result[str(sub)] == ['pt']
+
+    def test_script_qualified_sidecar_stored_as_alpha2(self, parser, tmp_path):
+        """Same as above for a script-qualified sidecar (Movie.zh-Hans.srt ->
+        'zh', not 'zh-Hans')."""
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        sub = tmp_path / 'Movie.Name.2020.1080p.zh-Hans.srt'
+        sub.write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert str(sub) in result
+        assert result[str(sub)] == ['zh']
+
+    def test_sidecar_without_alpha2_mapping_is_skipped(self, parser, tmp_path):
+        """VENDORED-05 review: a language with no ISO-639-1 alpha2 (e.g.
+        Klingon 'tlh') raises babelfish.LanguageConvertError on `.alpha2`.
+        The consumer only ever compares alpha2, so such a sidecar can never
+        match a wanted language — it must be skipped (not crash, not stored)."""
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        (tmp_path / 'Movie.Name.2020.1080p.tlh.srt').write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert result == {}
+
     def test_no_sidecar_subtitles_returns_empty(self, parser, tmp_path):
         movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
         movie.write_bytes(b'\0')

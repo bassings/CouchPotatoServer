@@ -19,6 +19,14 @@ try:
 except ImportError:
     search_external_subtitles = None
 
+try:
+    from babelfish import LanguageConvertError
+except ImportError:
+    # babelfish ships with subliminal; if it's somehow absent, .alpha2 access
+    # below is unreachable anyway (search_external_subtitles is also None), but
+    # fall back to Exception so the except clause stays valid.
+    LanguageConvertError = Exception
+
 log = CPLog(__name__)
 
 
@@ -216,8 +224,21 @@ class MediaParserMixin:
                         if not external_subtitle.language:
                             continue
                         sub_path = os.path.join(os.path.dirname(path), sub_name)
-                        if sub_path not in paths:
-                            detected_languages[sub_path] = [str(external_subtitle.language)]
+                        if sub_path in paths:
+                            continue
+                        try:
+                            # Store the bare ISO-639-1 alpha2 (e.g. 'pt'), NOT
+                            # the IETF string (e.g. 'pt-BR'/'zh-Hans'). The
+                            # consumer Subtitle.searchSingle compares against
+                            # `Language.fromalpha2(...).alpha2`, so a qualified
+                            # string would never match and the already-present
+                            # sidecar would be re-downloaded and overwritten.
+                            detected_languages[sub_path] = [external_subtitle.language.alpha2]
+                        except LanguageConvertError:
+                            # No ISO-639-1 alpha2 (e.g. Klingon 'tlh'). The
+                            # consumer only compares alpha2, so there is nothing
+                            # this sidecar could ever match — skip recording it.
+                            log.debug('Sidecar %s has no alpha2 language mapping, skipping', sub_name)
         except Exception:
             log.debug('Failed parsing subtitle languages for %s: %s', paths, traceback.format_exc())
 

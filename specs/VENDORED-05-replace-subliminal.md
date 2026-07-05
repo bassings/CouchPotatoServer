@@ -121,6 +121,22 @@ legacy opensubtitles.org XML-RPC API is deprecated in favor of this REST API.
   is wrapped in `try/except ImportError` (mirrors the old `Video` guard) and
   the scan itself stays inside the existing outer `try/except`.
 
+### Producer/consumer language-code contract (review fix)
+
+`getSubtitleLanguage()` (producer) stores each detected sidecar language as its
+**bare ISO-639-1 alpha2** (`external_subtitle.language.alpha2`, e.g. `'pt'`),
+**not** the IETF string (`str(language)`, e.g. `'pt-BR'`/`'zh-Hans'`). This is
+required because the consumer `Subtitle.searchSingle` compares
+`Language.fromalpha2(<wanted>).alpha2` (always a bare alpha2) against these
+stored strings. Storing `'pt-BR'` would never match a wanted `'pt'`, so a
+region/script-qualified sidecar already sitting next to the movie
+(Brazilian Portuguese, Simplified Chinese, ...) would be re-downloaded and
+`save_subtitles` would **overwrite** it — violating the "skip languages already
+present (unless force)" criterion. Languages with no ISO-639-1 alpha2 mapping
+(e.g. Klingon `tlh`, where `.alpha2` raises `babelfish.LanguageConvertError`)
+are caught and skipped: the consumer only ever compares alpha2, so such a
+sidecar could never match a wanted language anyway.
+
 ## Files changed
 
 - `couchpotato/core/plugins/subtitle.py` — rewritten against subliminal 2.x;
@@ -141,8 +157,12 @@ legacy opensubtitles.org XML-RPC API is deprecated in favor of this REST API.
   `save_subtitles`, `scan_video`, `region.configure`/`is_configured`,
   `Video.fromname`, `search_external_subtitles`).
 - `tests/unit/test_scanner_modules.py` — new `TestGetSubtitleLanguage` class:
-  sidecar-subtitle detection (single/multiple languages), no-sidecar case,
-  DVD-group skip, and missing-subliminal degradation.
+  sidecar-subtitle detection (single/multiple languages), region/script-
+  qualified sidecars stored as bare alpha2 (`pt-BR`->`pt`, `zh-Hans`->`zh`),
+  no-alpha2 language (`tlh`) skipped, no-sidecar case, DVD-group skip, and
+  missing-subliminal degradation. `test_subtitle_plugin.py` also adds an
+  end-to-end assertion that a wanted `'pt'` is treated as already-present when
+  the scanner recorded a `pt-BR` sidecar as `'pt'`.
 
 ## Acceptance criteria
 
