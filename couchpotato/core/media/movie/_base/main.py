@@ -54,6 +54,25 @@ class MovieBase(MovieTypeBase):
         addEvent('movie.update', self.update)
         addEvent('movie.update_release_dates', self.updateReleaseDate)
 
+    def existingProfileId(self, db, m):
+        """Return the media doc's current profile_id if it still resolves to a
+        real profile, else None.
+
+        Used by add() to preserve an existing (or just-inserted-by-the-race-
+        winner) movie's profile across a force_readd instead of overwriting it
+        with this call's params/default. Called from BOTH the genuine 'found'
+        branch and the IntegrityError race-loss re-fetch branch so race
+        recovery behaves identically to a real found re-add.
+        """
+        try:
+            db.get('id', m.get('profile_id'))
+            return m.get('profile_id')
+        except (RecordNotFound, KeyError):
+            return None
+        except Exception:
+            log.error('Failed getting previous profile: %s', traceback.format_exc())
+            return None
+
     def add(self, params = None, force_readd = True, search_after = True, update_after = True, notify_after = True, status = None):
         if not params: params = {}
 
@@ -127,14 +146,7 @@ class MovieBase(MovieTypeBase):
             with media_lock(identifier_key):
                 try:
                     m = db.get('media', identifier_key, with_doc = True)['doc']
-
-                    try:
-                        db.get('id', m.get('profile_id'))
-                        previous_profile = m.get('profile_id')
-                    except (RecordNotFound, KeyError):
-                        pass
-                    except Exception:
-                        log.error('Failed getting previous profile: %s', traceback.format_exc())
+                    previous_profile = self.existingProfileId(db, m)
                 except (RecordNotFound, KeyError):
                     new = True
                     try:
@@ -144,10 +156,13 @@ class MovieBase(MovieTypeBase):
                         # covered by our in-process lock): the unique
                         # (provider, identifier) index rejected our insert
                         # because a concurrent insert already created this
-                        # movie. Use that one instead of failing or
-                        # duplicating.
+                        # movie. Re-fetch the winner's doc and preserve its
+                        # profile exactly as a genuine found re-add does --
+                        # otherwise force_readd below would stomp the winner's
+                        # profile_id with this (losing) call's params/default.
                         new = False
                         m = db.get('media', identifier_key, with_doc = True)['doc']
+                        previous_profile = self.existingProfileId(db, m)
 
             # Update dict to be usable
             m.update(media)

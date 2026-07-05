@@ -191,6 +191,92 @@ class TestMovieAddInsertRace:
             "IntegrityError, instead of giving up or duplicating"
         )
 
+    def test_race_loss_preserves_winners_profile_not_losing_calls(self):
+        """PR #152 review: when this add() LOSES the insert race, it must
+        preserve the WINNER's profile_id (the just-inserted movie's), exactly
+        as a genuine 'found' re-add does -- not stomp it with this (losing)
+        call's params/default profile.
+
+        A genuine found re-add validates the existing doc's profile and stashes
+        it in previous_profile so the force_readd branch keeps it. The race-loss
+        re-fetch branch must do the same; otherwise two concurrent add()s with
+        different profile_ids let the loser overwrite the winner's profile.
+        """
+
+        class _RacingProfileFakeDB:
+            def __init__(self, winner_doc, valid_profile_id):
+                self.winner_doc = winner_doc
+                self.valid_profile_id = valid_profile_id
+                self.lookup_calls = 0
+                self.updated = []
+
+            def get(self, index, key, with_doc=False):
+                if index == 'media':
+                    self.lookup_calls += 1
+                    if self.lookup_calls == 1:
+                        raise KeyError('not found yet')
+                    return {'doc': dict(self.winner_doc), '_id': self.winner_doc['_id']}
+                if index == 'id':
+                    # The winner's profile resolves to a real profile doc;
+                    # anything else (e.g. the losing call's profile) is absent.
+                    if key == self.valid_profile_id:
+                        return {'_id': key, '_t': 'profile'}
+                    raise KeyError('no profile: %s' % key)
+                raise KeyError('not found: %s/%s' % (index, key))
+
+            def insert(self, data):
+                raise sqlite3.IntegrityError(
+                    'UNIQUE constraint failed: media_identifiers.provider, media_identifiers.identifier'
+                )
+
+            def update(self, data):
+                self.updated.append(dict(data))
+                return {'_id': data['_id'], '_rev': 'rev2'}
+
+            def delete(self, data):
+                return True
+
+        winner_doc = {
+            '_id': 'winner-media-id',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': 'profile-A',   # the winner's profile
+            'category_id': None,
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        }
+        fake_db = _RacingProfileFakeDB(winner_doc, valid_profile_id='profile-A')
+
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=fake_db),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'winner-media-id', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                # The LOSING call passes a DIFFERENT profile.
+                params=_base_params(profile_id='profile-B'),
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+            )
+
+        assert result is not False
+        assert fake_db.updated, "force_readd should have persisted the movie via db.update"
+        assert fake_db.updated[-1]['profile_id'] == 'profile-A', (
+            "race-loss must preserve the winner's profile (profile-A), not "
+            "overwrite it with the losing call's profile (profile-B)"
+        )
+
     def test_real_threads_racing_add_same_imdb_produce_one_doc(self, tmp_path):
         """REG-004 review: real threads calling MovieBase.add() concurrently
         against a real SQLiteAdapter for the same imdb id must produce exactly

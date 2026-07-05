@@ -629,6 +629,79 @@ class TestSQLiteAdapterExistingDbSelfUpgrade:
             adapter.close()
 
 
+def _seed_raw_db_with_duplicate_identifiers_no_index(path):
+    """Create a raw couchpotato.db at ``path`` that has the core tables and
+    duplicate (provider, identifier) rows in media_identifiers, but NO
+    idx_media_identifiers_lookup index of any kind. This is the state a
+    retried/partial CodernityDB->SQLite migration can leave behind, where
+    create()'s schema.sql then tries to build the UNIQUE index for the first
+    time and hits the duplicate rows.
+
+    (Contrast with _make_legacy_sqlite_db, which keeps a same-named NON-unique
+    index -- there CREATE UNIQUE INDEX IF NOT EXISTS is a silent no-op and the
+    fallback never fires.)
+    """
+    os.makedirs(path, exist_ok=True)
+    db_file = os.path.join(path, 'couchpotato.db')
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                _id TEXT PRIMARY KEY, _rev TEXT NOT NULL, _t TEXT NOT NULL,
+                data JSON NOT NULL, created_at REAL, updated_at REAL
+            );
+            CREATE TABLE IF NOT EXISTS media_identifiers (
+                media_id TEXT NOT NULL, provider TEXT NOT NULL, identifier TEXT NOT NULL,
+                PRIMARY KEY (media_id, provider)
+            );
+            """
+        )
+        conn.execute("INSERT INTO documents VALUES ('m1', 'r1', 'media', '{}', 0, 0)")
+        conn.execute("INSERT INTO documents VALUES ('m2', 'r2', 'media', '{}', 0, 0)")
+        # Same (provider, identifier) owned by two different media docs.
+        conn.execute("INSERT INTO media_identifiers VALUES ('m1', 'imdb', 'tt1111111')")
+        conn.execute("INSERT INTO media_identifiers VALUES ('m2', 'imdb', 'tt1111111')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestSQLiteAdapterInitSchemaFallback:
+    """REG-004 review: _init_schema()'s fallback (create() against an already-
+    populated path whose data has duplicate identifiers) must not crash startup
+    -- it downgrades to the non-unique index and warns. Real trigger:
+    codernity_to_sqlite.py's sqlite_db.create(sqlite_path) on a retried/partial
+    migration."""
+
+    def test_create_over_duplicate_rows_downgrades_and_warns(self, tmp_path, caplog):
+        path = str(tmp_path / 'partial_migration')
+        _seed_raw_db_with_duplicate_identifiers_no_index(path)
+
+        adapter = SQLiteAdapter()
+        with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+            adapter.create(path)  # must NOT raise despite the duplicate rows
+        try:
+            # The rest of the schema still initialized, and the index exists
+            # but as the NON-unique fallback.
+            assert not adapter._has_unique_identifier_index()
+            names = [r['name'] for r in
+                     adapter._get_conn().execute(
+                         "PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' in names, (
+                "the non-unique fallback index must be created"
+            )
+            assert any(
+                'duplicate' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected the _init_schema duplicate-identifier fallback warning"
+
+            # The DB is usable: the pre-seeded docs are readable.
+            assert len(list(adapter.all('id'))) == 2
+        finally:
+            adapter.close()
+
+
 class TestSQLiteAdapterDuplicateDetectionRegression:
     """Promoted from tests/integration/test_duplicate_detection.py (REG-004
     item 3): these are pure tmp_path SQLite tests with nothing integration
