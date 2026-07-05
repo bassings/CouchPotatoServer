@@ -15,9 +15,9 @@ except ImportError:
     enzyme = None
 
 try:
-    from couchpotato.lib.subliminal.videos import Video
+    from subliminal.core import search_external_subtitles
 except ImportError:
-    Video = None
+    search_external_subtitles = None
 
 log = CPLog(__name__)
 
@@ -195,22 +195,29 @@ class MediaParserMixin:
         return {}
 
     def getSubtitleLanguage(self, group):
+        """Detect languages of subtitle files already sitting next to the movie file(s).
+
+        Uses subliminal's `search_external_subtitles`, which matches sidecar
+        files by filename suffix (e.g. `movie.en.srt`) and needs no native
+        libraries. This does not detect embedded (in-container) subtitle
+        tracks -- that would need a metadata backend (mediainfo/ffmpeg/
+        mkvmerge), which we deliberately don't require just to scan a group.
+        """
         detected_languages = {}
 
         paths = None
         try:
             paths = group['files']['movie']
-            scan_result = []
-            for p in paths:
-                if not group['is_dvd'] and Video:
-                    video = Video.from_path(toUnicode(sp(p)))
-                    video_result = [(video, video.scan())]
-                    scan_result.extend(video_result)
-
-            for video, detected_subtitles in scan_result:
-                for s in detected_subtitles:
-                    if s.language and s.path not in paths:
-                        detected_languages[s.path] = [s.language]
+            if not group['is_dvd'] and search_external_subtitles:
+                for p in paths:
+                    path = toUnicode(sp(p))
+                    externals = search_external_subtitles(path)
+                    for sub_name, external_subtitle in externals.items():
+                        if not external_subtitle.language:
+                            continue
+                        sub_path = os.path.join(os.path.dirname(path), sub_name)
+                        if sub_path not in paths:
+                            detected_languages[sub_path] = [str(external_subtitle.language)]
         except Exception:
             log.debug('Failed parsing subtitle languages for %s: %s', paths, traceback.format_exc())
 

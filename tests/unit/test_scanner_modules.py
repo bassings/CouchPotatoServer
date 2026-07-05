@@ -191,6 +191,77 @@ class TestGetMeta:
         assert parser.getMeta('/fake/file.mkv') == {}
 
 
+class TestGetSubtitleLanguage:
+    """VENDORED-05: getSubtitleLanguage now uses subliminal's
+    search_external_subtitles (sidecar-file matching by filename suffix)
+    instead of the vendored subliminal's Video.from_path().scan(). No mocking
+    needed here since search_external_subtitles is pure filesystem matching.
+    """
+
+    def _group(self, movie_path):
+        return {
+            'files': {'movie': [movie_path], 'subtitle_extra': []},
+            'is_dvd': False,
+        }
+
+    def test_detects_external_subtitle_language(self, parser, tmp_path):
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        sub = tmp_path / 'Movie.Name.2020.1080p.en.srt'
+        sub.write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert str(sub) in result
+        assert result[str(sub)] == ['en']
+
+    def test_detects_multiple_sidecar_languages(self, parser, tmp_path):
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        (tmp_path / 'Movie.Name.2020.1080p.en.srt').write_bytes(b'\0')
+        (tmp_path / 'Movie.Name.2020.1080p.fr.srt').write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        languages = sorted(sum(result.values(), []))
+        assert languages == ['en', 'fr']
+
+    def test_no_sidecar_subtitles_returns_empty(self, parser, tmp_path):
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert result == {}
+
+    def test_dvd_group_skips_external_scan(self, parser, tmp_path):
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        (tmp_path / 'Movie.Name.2020.1080p.en.srt').write_bytes(b'\0')
+
+        group = self._group(str(movie))
+        group['is_dvd'] = True
+
+        result = parser.getSubtitleLanguage(group)
+
+        assert result == {}
+
+    def test_missing_search_external_subtitles_degrades_gracefully(self, parser, tmp_path, monkeypatch):
+        """If subliminal isn't importable, search_external_subtitles is None
+        (see the module-level try/except import) -- scanning must not crash,
+        just find nothing."""
+        import couchpotato.core.plugins.scanner.media_parser as mp
+        monkeypatch.setattr(mp, 'search_external_subtitles', None)
+
+        movie = tmp_path / 'Movie.Name.2020.1080p.mkv'
+        movie.write_bytes(b'\0')
+        (tmp_path / 'Movie.Name.2020.1080p.en.srt').write_bytes(b'\0')
+
+        result = parser.getSubtitleLanguage(self._group(str(movie)))
+
+        assert result == {}
+
+
 # ---------- FolderScannerMixin ----------
 
 class FakeScanner(FolderScannerMixin):

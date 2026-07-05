@@ -27,6 +27,20 @@ lxml==6.1.1
 # Media
 enzyme==0.5.2
 bencodepy==0.9.5
+subliminal==2.6.0
+babelfish==0.6.1
+dogpile.cache==1.5.0
+stevedore==5.9.0
+pysubs2==1.8.1
+pymediainfo==7.0.1
+knowit==0.5.11
+rebulk==3.2.0
+srt==3.5.3
+tomlkit==0.15.0
+click-option-group==0.5.9
+defusedxml==0.7.1
+trakit==0.2.5
+decorator==5.3.1
 
 # Downloaders
 deluge-client==1.10.2
