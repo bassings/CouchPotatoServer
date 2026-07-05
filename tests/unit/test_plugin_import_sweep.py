@@ -116,8 +116,20 @@ def test_matcher_and_caper_are_gone():
     movies-only, and nothing else in the codebase ever fired any `matcher.*`
     event or subclassed `MatcherBase` — the real release-matching path is
     `searcher.correct_release` in `couchpotato/core/media/movie/searcher.py`,
-    which never touches caper. Both were removed (VENDORED-01); this guards
-    against either reappearing or leaving a dangling import.
+    which never touches caper. Both were removed (VENDORED-01).
+
+    Scope of this test: it guarantees the exact `matcher`/`caper` module
+    PATHS are gone and do not reappear — importing either raises
+    `ModuleNotFoundError`, and neither a `pkgutil.walk_packages` scan of
+    `couchpotato.core` nor the import sweep surfaces any `matcher`-named
+    module. It does NOT prove that no surviving sibling still *references*
+    the deleted code (a stray `from ...matcher... import ...` in another
+    module would fail under that other module's name, not a `matcher` name,
+    so it slips past the `'matcher' in name` filter here). That blanket
+    "nothing silently imports the deleted module" guarantee is provided by
+    `test_every_core_module_imports_cleanly` above (the REG-001 full-import
+    sweep), which `import_module`s every core module and `pytest.fail`s on
+    any failure.
     """
     with pytest.raises(ModuleNotFoundError):
         importlib.import_module('couchpotato.core.media._base.matcher')
@@ -142,15 +154,24 @@ def test_matcher_and_caper_are_gone():
 
 
 def test_loader_discovers_media_base_siblings_without_matcher(caplog):
-    """The Loader's directory-scan discovery must not list `matcher` and must
-    not log any error about it or about `caper` while discovering the real
-    (still-present) siblings under `couchpotato/core/media/_base/`.
+    """The Loader's directory-scan discovery must not list `matcher`, and must
+    still list the real (still-present) siblings under
+    `couchpotato/core/media/_base/`.
 
     `Loader.preload()` only walks the filesystem (`pkgutil.iter_modules`) to
-    build its module registry — it doesn't import anything yet — so removing
-    the `matcher/` directory should make it vanish from discovery cleanly,
-    with the loader none the wiser, rather than the loader tripping over a
-    stale reference and logging an ImportError for it later.
+    build its module registry — it does NOT import any module (that happens
+    later in `Loader.run()` -> `loadModule()`). So this test verifies exactly
+    two things about discovery: (a) deleting the `matcher/` directory removed
+    it from the registry, and (b) the deletion did not disturb discovery of
+    its siblings (`library`, `media`, `providers`, `search`, `searcher`).
+
+    Note the deliberate limit: because preload never imports, it can neither
+    emit an ImportError nor an ERROR log for a dangling reference to the
+    deleted module — a stray sibling `import` of `matcher` would surface only
+    later under `run()`/`loadModule()`, or in the
+    `test_every_core_module_imports_cleanly` sweep above, NOT here. The
+    caplog ERROR assertion below therefore only asserts that *discovery
+    itself* stays quiet, not that no dangling reference exists anywhere.
     """
     from unittest.mock import patch
 

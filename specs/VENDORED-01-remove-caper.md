@@ -103,10 +103,21 @@ two new tests:
   `loader.modules`; every real sibling under
   `couchpotato/core/media/_base/` (`library`, `media`, `providers`, `search`,
   `searcher`) is still discovered; and no `ERROR`-level log line mentions
-  `matcher` or `caper` during discovery. This ties to the REG-001 bug class
-  (`Loader.loadModule()` used to swallow `ImportError` at DEBUG) — a stray
-  reference to the deleted module would have to surface loudly here, not
-  vanish silently.
+  `matcher` or `caper` during discovery.
+
+  Scope note (what this does and does not cover): `Loader.preload()` only
+  walks the filesystem with `pkgutil.iter_modules` — it does **not** import
+  any module (that happens later in `Loader.run()` -> `loadModule()`), so it
+  cannot emit an ImportError or ERROR log for a dangling reference to the
+  deleted code. This test therefore only proves the `matcher/` directory
+  vanished from discovery cleanly and its siblings still appear — it does
+  **not** catch a surviving sibling that still `import`s `matcher`/`caper`.
+  The blanket "no core module silently imports the deleted code" guarantee is
+  provided by the pre-existing `test_every_core_module_imports_cleanly`
+  (REG-001) in the same file, which `importlib.import_module`s every module
+  under `couchpotato.core` and `pytest.fail`s on any failure — that is the
+  test that actually ties to the REG-001 bug class (`Loader.loadModule()`
+  used to swallow `ImportError` at DEBUG).
 
 While writing the second test, found and fixed a latent bug in the test
 file's own `REPO_ROOT` constant: for a file under `tests/unit/`, it was
