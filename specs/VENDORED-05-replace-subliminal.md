@@ -52,7 +52,7 @@ confirmed to import cleanly in `.venv`, `pip check` clean):
 | subliminal | 2.6.0 | `py3-none-any` | pure Python |
 | babelfish | 0.6.1 | `py3-none-any` | pure Python; language objects |
 | dogpile.cache | 1.5.0 | `py3-none-any` | pure Python; cache backend (dbm) |
-| stevedore | 5.9.0 | `py3-none-any` | pure Python; provider plugin loading |
+| stevedore | 5.8.0 | `py3-none-any` | pure Python; provider plugin loading (pinned <5.9.0, which dropped Python 3.10 — CP supports 3.10+) |
 | pysubs2 | 1.8.1 | `py3-none-any` | pure Python; subtitle format conversion |
 | **pymediainfo** | **7.0.1** | macOS/Windows/**manylinux** wheels bundle a native `libmediainfo`; **no musllinux wheel** | See "libmediainfo degradation" below |
 | knowit | 0.5.11 | `py3-none-any` | pure Python; metadata backend dispatcher (mediainfo/ffmpeg/mkvmerge/enzyme) |
