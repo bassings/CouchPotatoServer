@@ -12,6 +12,7 @@ blinker==1.9.0
 pydantic==2.13.4
 apscheduler==3.11.3
 tenacity==9.1.4
+dulwich==1.2.7
 
 # Network
 requests==2.34.2
@@ -29,6 +30,8 @@ bencodepy==0.9.5
 
 # Downloaders
 deluge-client==1.10.2
+putio.py==8.8.0
+qbittorrent-api==2026.6.1
 rtorrent-rpc==0.9.7
 
 # Notifications

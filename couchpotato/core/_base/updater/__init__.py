@@ -1,7 +1,4 @@
-import os
-
 from .main import Updater
-from couchpotato.environment import Env
 
 
 def autoload():
@@ -50,12 +47,6 @@ config = [{
                     'label': 'Include Beta Releases',
                     'description': 'Also check for beta/pre-release versions. Not recommended for production use.',
                     'advanced': True,
-                },
-                {
-                    'name': 'git_command',
-                    'default': 'git',
-                    'hidden': not os.path.isdir(os.path.join(Env.get('app_dir'), '.git')),
-                    'advanced': True
                 },
             ],
         },
