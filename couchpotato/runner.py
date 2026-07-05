@@ -2,6 +2,7 @@ from uuid import uuid4
 import locale
 import logging
 import os.path
+import subprocess
 import sys
 import time
 import traceback
@@ -55,6 +56,85 @@ def getOptions(args):
     return options
 
 
+def _resolve_migration_script(base_path):
+    """Return the absolute path to the standalone CodernityDB->SQLite
+    migration script (REFACTOR-01), or raise if it cannot be found.
+
+    The live server process must not import the migration code or
+    CodernityDB itself -- it only needs to know where the script lives so it
+    can hand off to it as a subprocess.
+    """
+    script_path = sp(os.path.join(base_path, 'scripts', 'migrate_codernity_to_sqlite.py'))
+    if not os.path.isfile(script_path):
+        raise RuntimeError(
+            'Found a legacy CodernityDB database but the migration script is '
+            'missing (expected at %s). Refusing to continue: the app will '
+            'not silently create a fresh, empty database in place of your '
+            'existing library. Reinstall CouchPotato so scripts/'
+            'migrate_codernity_to_sqlite.py is present, then restart.'
+            % script_path
+        )
+    return script_path
+
+
+def _open_or_create_database(db, data_dir, base_path):
+    """Open the SQLite database, migrating a legacy CodernityDB database in
+    place first if one is found. Returns True if the resulting database has
+    pre-existing data (it was already there, or was just migrated from
+    CodernityDB); False for a brand new, empty database.
+
+    A legacy CodernityDB is migrated by running scripts/
+    migrate_codernity_to_sqlite.py ONCE as a subprocess (REFACTOR-01) --
+    preserving the historical zero-touch upgrade experience without the
+    migration code living in the live application tree. The script itself
+    renames the CodernityDB directory to database.bak on success, so this
+    function does not repeat that rename.
+
+    If the migration subprocess fails, this function raises instead of
+    falling through to fresh-database creation -- silently creating an empty
+    database over an unmigrated library would be a silent data-loss bug.
+    """
+    sqlite_db_dir = sp(os.path.join(data_dir, 'database_v2'))
+    sqlite_db_file = os.path.join(sqlite_db_dir, 'couchpotato.db')
+    codernity_db_path = sp(os.path.join(data_dir, 'database'))
+    codernity_backup_path = sp(os.path.join(data_dir, 'database.bak'))
+
+    # Check if SQLite database exists
+    if os.path.isfile(sqlite_db_file):
+        print("INFO: Opening existing SQLite database...")
+        db.open(sqlite_db_dir)
+        print("INFO: SQLite database opened successfully.")
+        return True
+
+    # Check if old CodernityDB exists and needs migration
+    if os.path.isdir(codernity_db_path) and not os.path.isdir(codernity_backup_path):
+        migration_script = _resolve_migration_script(base_path)
+        print("INFO: Found CodernityDB database, running one-time migration to SQLite...")
+        result = subprocess.run(
+            [sys.executable, migration_script, '--data-dir', data_dir],
+            check=False,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                'CodernityDB migration failed (exit code %s); see the '
+                'migration output above for details. Your original '
+                'CodernityDB data is untouched at %s -- refusing to create '
+                'a fresh database in its place. Fix the underlying problem '
+                'and restart CouchPotato to retry the migration.'
+                % (result.returncode, codernity_db_path)
+            )
+        print("INFO: Migration complete. Opening new SQLite database...")
+        db.open(sqlite_db_dir)
+        print("INFO: CodernityDB migrated. Now using SQLite.")
+        return True
+
+    # Fresh install - create new SQLite database
+    print("INFO: No existing database found, creating fresh SQLite database...")
+    db.create(sqlite_db_dir)
+    print("INFO: SQLite database created successfully.")
+    return False
+
+
 def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=None, desktop=None):
 
     try:
@@ -73,37 +153,8 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     # SQLite is the primary database; CodernityDB is only for migration
     from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
 
-    sqlite_db_dir = sp(os.path.join(data_dir, 'database_v2'))
-    sqlite_db_file = os.path.join(sqlite_db_dir, 'couchpotato.db')
-    codernity_db_path = sp(os.path.join(data_dir, 'database'))
-    codernity_backup_path = sp(os.path.join(data_dir, 'database.bak'))
-
     db = SQLiteAdapter()
-    db_exists = False  # Track if this is an existing database
-
-    # Check if SQLite database exists
-    if os.path.isfile(sqlite_db_file):
-        print("INFO: Opening existing SQLite database...")
-        db.open(sqlite_db_dir)
-        db_exists = True
-        print("INFO: SQLite database opened successfully.")
-
-    # Check if old CodernityDB exists and needs migration
-    elif os.path.isdir(codernity_db_path) and not os.path.isdir(codernity_backup_path):
-        print("INFO: Found CodernityDB database, migrating to SQLite...")
-        from couchpotato.core.migration.codernity_to_sqlite import migrate_codernity_to_sqlite
-        migrate_codernity_to_sqlite(codernity_db_path, sqlite_db_dir, db)
-        print("INFO: Migration complete. Renaming old database to database.bak...")
-        os.rename(codernity_db_path, codernity_backup_path)
-        db_exists = True  # Migrated data counts as existing
-        print("INFO: CodernityDB renamed to database.bak. Now using SQLite.")
-
-    # Fresh install - create new SQLite database
-    else:
-        print("INFO: No existing database found, creating fresh SQLite database...")
-        db.create(sqlite_db_dir)
-        db_exists = False
-        print("INFO: SQLite database created successfully.")
+    db_exists = _open_or_create_database(db, data_dir, base_path)
 
     # Force creation of cachedir
     log_dir = sp(log_dir)
