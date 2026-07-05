@@ -1,7 +1,10 @@
 """Tests for the SQLite database adapter."""
 import json
 import os
+import sqlite3
 import tempfile
+import threading
+import time
 
 import pytest
 
@@ -172,7 +175,10 @@ class TestSQLiteAdapterCRUD:
 class TestSQLiteAdapterIndexQueries:
     def test_media_status_query(self, db, sample_media):
         db.insert(sample_media)
-        sample2 = dict(sample_media, title='Inception', status='done')
+        # Distinct identifiers: two media docs can no longer share the same
+        # (provider, identifier) pair (REG-004 unique index).
+        sample2 = dict(sample_media, title='Inception', status='done',
+                        identifiers={'imdb': 'tt1375666', 'tmdb': 27205})
         db.insert(sample2)
 
         active = list(db.query('media_status', key='active', with_doc=True))
@@ -368,3 +374,161 @@ class TestSQLiteAdapterCompat:
         db.insert(sample_property)
         doc = db.get('property', 'manage.last_update', with_doc=True)
         assert doc['doc']['value'] == '1700000000.0'
+
+
+class TestSQLiteAdapterUniqueMediaIdentifiers:
+    """REG-004 (P0): (provider, identifier) must be unique across media docs.
+
+    Regression coverage for the prod incident where a lookup race in
+    movie.add() created 77 duplicate movie entries with the same IMDb id.
+    """
+
+    def test_duplicate_provider_identifier_raises_integrity_error(self, db, sample_media):
+        db.insert(sample_media)
+
+        duplicate = dict(sample_media)
+        duplicate.pop('_id', None)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert(duplicate)
+
+    def test_failed_duplicate_insert_leaves_no_orphaned_document(self, db, sample_media):
+        """An IntegrityError from the unique index must not leave a
+        lingering, uncommitted 'documents' row behind -- otherwise a later,
+        unrelated commit on the same connection could accidentally persist
+        the half-inserted duplicate."""
+        db.insert(sample_media)
+
+        duplicate = dict(sample_media)
+        duplicate.pop('_id', None)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert(duplicate)
+
+        assert len(list(db.all('id'))) == 1
+
+        # A subsequent, unrelated insert must still work normally --
+        # proves the connection wasn't left in a broken transaction state.
+        other = {
+            '_t': 'media',
+            'status': 'active',
+            'title': 'Unrelated Movie',
+            'type': 'movie',
+            'identifiers': {'imdb': 'tt9999999'},
+            'info': {},
+            'tags': [],
+        }
+        db.insert(other)
+        assert len(list(db.all('id'))) == 2
+
+    def test_concurrent_inserts_of_same_identifier_yield_one_media_doc(self, db, sample_media):
+        """Simulated concurrent movie.add(): two threads race to insert a
+        media doc for the same IMDb id. Exactly one must win; the loser
+        must get IntegrityError (which movie.add() catches and re-fetches
+        instead of duplicating -- see test_movie_add_integrity.py)."""
+        results = {'ok': 0}
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def worker():
+            barrier.wait()
+            doc = dict(sample_media)
+            try:
+                db.insert(doc)
+                results['ok'] += 1
+            except sqlite3.IntegrityError as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert results['ok'] == 1
+        assert len(errors) == 1
+
+        media_docs = list(db.all('id'))
+        assert len(media_docs) == 1
+
+
+class TestSQLiteAdapterDuplicateDetectionRegression:
+    """Promoted from tests/integration/test_duplicate_detection.py (REG-004
+    item 3): these are pure tmp_path SQLite tests with nothing integration
+    about them, but only ran under tests/integration/, which isn't part of
+    `make verify` / CI. Copied here (originals kept in place) so the exact
+    corruption branches stay covered on every PR.
+    """
+
+    @staticmethod
+    def _make_movie(imdb_id, title):
+        return {
+            '_t': 'media',
+            'type': 'movie',
+            'title': title,
+            'status': 'done',
+            'identifiers': {'imdb': imdb_id},
+            'info': {'titles': [title], 'year': 2020},
+            'files': {},
+            'tags': [],
+            'last_edit': int(time.time()),
+        }
+
+    @staticmethod
+    def _make_release(media_id, imdb_id, audio='DTS', quality='720p'):
+        return {
+            '_t': 'release',
+            'media_id': media_id,
+            'identifier': f'{imdb_id}.{audio}.{quality}',
+            'quality': quality,
+            'is_3d': 0,
+            'last_edit': int(time.time()),
+            'status': 'done',
+            'files': {},
+        }
+
+    def test_media_lookup_returns_correct_movie_among_many(self, db):
+        """BUG REPRODUCTION (Bug 1, sqlite_adapter._query_index('media')).
+
+        With multiple movies in the database, db.get('media', 'imdb-XXXX')
+        must return the movie matching XXXX, not just the first one
+        inserted. Before the fix, the SQL/params were overwritten and
+        limit=1 silently returned the first media doc in the database.
+        """
+        for movie in [
+            self._make_movie('tt5697572', 'Cats'),
+            self._make_movie('tt3105662', 'Breaking the Bank'),
+            self._make_movie('tt13320622', 'The Lost City'),
+        ]:
+            db.insert(movie)
+
+        result = db.get('media', 'imdb-tt13320622', with_doc=True)
+        doc = result['doc']
+
+        assert doc['identifiers']['imdb'] == 'tt13320622', (
+            f"Expected tt13320622 (The Lost City) but got "
+            f"{doc['identifiers']['imdb']} ({doc['title']})"
+        )
+        assert doc['title'] == 'The Lost City'
+
+    def test_release_identifier_lookup_finds_matching_release(self, db):
+        """db.get('release_identifier', ...) must return the release with
+        the matching identifier, not just any release/document."""
+        movie = db.insert(self._make_movie('tt13320622', 'The Lost City'))
+        db.insert(self._make_release(movie['_id'], 'tt13320622'))
+
+        result = db.get('release_identifier', 'tt13320622.DTS.720p', with_doc=True)
+        doc = result['doc']
+        assert doc['_t'] == 'release'
+        assert doc['identifier'] == 'tt13320622.DTS.720p'
+
+    def test_release_identifier_lookup_raises_keyerror_when_absent(self, db):
+        """BUG REPRODUCTION (Bug 2, sqlite_adapter._query_index('release_identifier')).
+
+        When a media doc exists but no matching release exists, the lookup
+        must raise KeyError -- not fall through to the generic "return all
+        documents" branch and hand back the media doc as if it were a
+        release (which caused release.add() to overwrite the media doc).
+        """
+        db.insert(self._make_movie('tt13320622', 'The Lost City'))
+
+        with pytest.raises(KeyError):
+            db.get('release_identifier', 'tt13320622.DTS.720p', with_doc=True)

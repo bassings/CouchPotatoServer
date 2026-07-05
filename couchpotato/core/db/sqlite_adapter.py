@@ -187,13 +187,26 @@ class SQLiteAdapter(DatabaseInterface):
 
             json_data = self._doc_to_json(data)
 
-            conn.execute(
-                "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (doc_id, doc_rev, doc_type, json_data, now, now)
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (doc_id, doc_rev, doc_type, json_data, now, now)
+                )
 
-            # Update denormalized tables
-            self._update_denormalized(doc_id, data)
+                # Update denormalized tables
+                self._update_denormalized(doc_id, data)
+            except sqlite3.IntegrityError:
+                # E.g. the UNIQUE(provider, identifier) index on
+                # media_identifiers rejected a duplicate media doc (see
+                # REG-004). Roll back so the partially-inserted document row
+                # doesn't linger uncommitted and get swept into some later,
+                # unrelated commit -- then let the caller decide what to do
+                # (movie.add() catches this and re-fetches the existing doc
+                # instead of duplicating it).
+                if self._transaction_depth == 0:
+                    conn.rollback()
+                raise
+
             self._commit_if_not_transaction()
 
             return {'_id': doc_id, '_rev': doc_rev}
@@ -215,13 +228,22 @@ class SQLiteAdapter(DatabaseInterface):
             now = time.time()
             json_data = self._doc_to_json(data)
 
-            conn.execute(
-                "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
-                (doc_rev, doc_type, json_data, now, doc_id)
-            )
+            try:
+                conn.execute(
+                    "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
+                    (doc_rev, doc_type, json_data, now, doc_id)
+                )
 
-            # Update denormalized tables
-            self._update_denormalized(doc_id, data)
+                # Update denormalized tables
+                self._update_denormalized(doc_id, data)
+            except sqlite3.IntegrityError:
+                # E.g. an edit gave this doc an identifier another media doc
+                # already owns. Roll back rather than leaving an uncommitted
+                # half-applied update sitting on the connection.
+                if self._transaction_depth == 0:
+                    conn.rollback()
+                raise
+
             self._commit_if_not_transaction()
 
             return {'_id': doc_id, '_rev': doc_rev}
@@ -511,8 +533,14 @@ class SQLiteAdapter(DatabaseInterface):
                 identifiers['imdb'] = data['identifier']
             for provider, ident in identifiers.items():
                 if ident:
+                    # Plain INSERT (not OR REPLACE): the DELETE above already
+                    # cleared any rows this same doc owned, so the only way
+                    # this can violate the UNIQUE(provider, identifier) index
+                    # is if a *different* media doc already owns this
+                    # identifier -- in which case we want IntegrityError, not
+                    # a silent REPLACE that would delete the other doc's row.
                     conn.execute(
-                        "INSERT OR REPLACE INTO media_identifiers (media_id, provider, identifier) VALUES (?, ?, ?)",
+                        "INSERT INTO media_identifiers (media_id, provider, identifier) VALUES (?, ?, ?)",
                         (doc_id, provider, str(ident))
                     )
 

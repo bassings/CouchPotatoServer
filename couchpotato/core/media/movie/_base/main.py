@@ -1,3 +1,4 @@
+import sqlite3
 import traceback
 import time
 
@@ -9,6 +10,7 @@ from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getTitle, getImdb, getIdentifier
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media.movie import MovieTypeBase
+from couchpotato.core.media_lock import media_lock
 
 
 log = CPLog(__name__)
@@ -116,19 +118,36 @@ class MovieBase(MovieTypeBase):
 
             new = False
             previous_profile = None
-            try:
-                m = db.get('media', 'imdb-%s' % params.get('identifier'), with_doc = True)['doc']
+            identifier_key = 'imdb-%s' % params.get('identifier')
 
+            # Serialize the get-or-insert critical section per imdb id so two
+            # concurrent add()s for the same movie can't both decide "not
+            # found" and both insert (REG-004: this created 77 duplicate
+            # movie entries in production).
+            with media_lock(identifier_key):
                 try:
-                    db.get('id', m.get('profile_id'))
-                    previous_profile = m.get('profile_id')
+                    m = db.get('media', identifier_key, with_doc = True)['doc']
+
+                    try:
+                        db.get('id', m.get('profile_id'))
+                        previous_profile = m.get('profile_id')
+                    except (RecordNotFound, KeyError):
+                        pass
+                    except Exception:
+                        log.error('Failed getting previous profile: %s', traceback.format_exc())
                 except (RecordNotFound, KeyError):
-                    pass
-                except Exception:
-                    log.error('Failed getting previous profile: %s', traceback.format_exc())
-            except Exception:
-                new = True
-                m = db.insert(media)
+                    new = True
+                    try:
+                        m = db.insert(media)
+                    except sqlite3.IntegrityError:
+                        # Lost the race anyway (e.g. another process, not
+                        # covered by our in-process lock): the unique
+                        # (provider, identifier) index rejected our insert
+                        # because a concurrent insert already created this
+                        # movie. Use that one instead of failing or
+                        # duplicating.
+                        new = False
+                        m = db.get('media', identifier_key, with_doc = True)['doc']
 
             # Update dict to be usable
             m.update(media)
@@ -172,7 +191,7 @@ class MovieBase(MovieTypeBase):
 
             # Remove releases
             for rel in fireEvent('release.for_media', m['_id'], single = True):
-                if rel['status'] is 'available':
+                if rel['status'] == 'available':
                     db.delete(rel)
 
             movie_dict = fireEvent('media.get', m['_id'], single = True)
@@ -226,7 +245,7 @@ class MovieBase(MovieTypeBase):
 
                     # Remove releases
                     for rel in fireEvent('release.for_media', m['_id'], single = True):
-                        if rel['status'] is 'available':
+                        if rel['status'] == 'available':
                             db.delete(rel)
 
                     # Default title

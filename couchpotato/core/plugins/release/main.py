@@ -144,7 +144,7 @@ class Release(Plugin):
                 # Add movie if it doesn't exist
                 try:
                     media = db.get('media', 'imdb-%s' % group['identifier'], with_doc = True)['doc']
-                except Exception:
+                except (RecordNotFound, KeyError):
                     media = fireEvent('movie.add', params = {
                         'identifier': group['identifier'],
                         'profile_id': None,
@@ -178,7 +178,7 @@ class Release(Plugin):
                     try:
                         r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
                         r['media_id'] = media['_id']
-                    except Exception:
+                    except (RecordNotFound, KeyError):
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
 
