@@ -897,8 +897,55 @@ class TestQBittorrent:
             urls='magnet:?xt=urn:btih:AABBCCDDEEFF00112233445566778899AABBCCDD',
             category='couchpotato', is_stopped=True,
         )
-        assert result['id'] == 'AABBCCDDEEFF00112233445566778899AABBCCDD'
+        # id is normalized to lowercase hex to match qBit's reported hash.
+        assert result['id'] == 'aabbccddeeff00112233445566778899aabbccdd'
         assert result['downloader'] == 'qBittorrent'
+
+    def test_download_magnet_uppercase_hex_hash_is_lowercased(self):
+        """A 40-char UPPER hex btih must be stored lowercase so it matches
+        qBittorrent's lowercase-hex torrent['hash'] in getAllDownloadStatus."""
+        qbt = self._make_qbittorrent({
+            'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
+        })
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            result = qbt.download(data={
+                'name': 'Some.Movie', 'protocol': 'torrent_magnet',
+                'url': 'magnet:?xt=urn:btih:AABBCCDDEEFF00112233445566778899AABBCCDD',
+            })
+
+        assert result['id'] == 'aabbccddeeff00112233445566778899aabbccdd'
+
+    def test_download_magnet_base32_hash_converted_to_lowercase_hex(self):
+        """A 32-char BASE32 btih must be converted to 40-char lowercase hex
+        (qBittorrent only knows the hex form), otherwise it can never match."""
+        from base64 import b16encode, b32decode
+
+        qbt = self._make_qbittorrent({
+            'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
+        })
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        # A real 32-char base32 info-hash and its expected 40-char lowercase hex.
+        b32_hash = 'MFRGGZDFMZTWQ2LKNNWG23TPOBYXE43U'  # 32 base32 chars
+        expected_hex = b16encode(b32decode(b32_hash)).decode().lower()
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            result = qbt.download(data={
+                'name': 'Some.Movie', 'protocol': 'torrent_magnet',
+                'url': 'magnet:?xt=urn:btih:%s' % b32_hash,
+            })
+
+        assert len(result['id']) == 40
+        assert result['id'] == expected_hex
+        assert result['id'] == result['id'].lower()
 
     def test_download_magnet_defaults_to_started_when_not_paused(self):
         qbt = self._make_qbittorrent({
@@ -1063,6 +1110,31 @@ class TestQBittorrent:
         assert mock_log_error.call_count == 1
         assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
 
+    def test_download_torrent_file_non_dict_bencode_returns_false(self):
+        """A truthy but non-dict bencoded payload (e.g. b'i5e' -> the tuple
+        (5,)) decodes to a non-subscriptable value, so bdecode(filedata)[b"info"]
+        raises TypeError. The guard must catch it (b'' can't be used here -- it
+        is falsy and bails out earlier on the `not filedata` guard). Fails
+        today with an uncaught TypeError."""
+        qbt = self._make_qbittorrent({
+            'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
+        })
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
+             patch.object(qbt_main.log, 'error') as mock_log_error:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            # b'i5e' is a bencoded integer; bdecode returns (5,), and
+            # (5,)[b"info"] raises TypeError.
+            result = qbt.download(data={'name': 'Some.Movie', 'protocol': 'torrent'}, filedata=b'i5e')
+
+        assert result is False
+        mock_client.torrents_add.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
     def test_download_file_without_filedata_returns_false(self):
         # download() calls self.connect() BEFORE checking filedata, so a
         # missing filedata fails AFTER connecting, not before — the missing
@@ -1140,6 +1212,39 @@ class TestQBittorrent:
         assert result[0]['status'] == 'seeding'
         assert result[0]['seed_ratio'] == 1.5
         assert result[0]['files'] == [os.path.join(save_path, 'Movie.mkv')]
+
+    def test_getAllDownloadStatus_matches_magnet_hash_case_insensitively(self, tmp_path):
+        """The actual bug: a magnet-added torrent's stored id could be UPPER
+        hex while qBittorrent reports torrent['hash'] in LOWER hex. The old
+        case-sensitive `torrent['hash'] in ids` compare never matched, so CP
+        never saw magnet torrents complete/seed. The compare must be
+        case-insensitive."""
+        qbt = self._make_qbittorrent({'label': 'couchpotato'})
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        save_path = str(tmp_path)
+        (tmp_path / 'Movie.mkv').write_bytes(b'data')
+
+        # qBittorrent reports the hash in LOWERCASE hex.
+        torrent = {
+            'hash': 'aabbccddeeff00112233445566778899aabbccdd',
+            'name': 'Movie.mkv', 'state': 'uploading',
+            'progress': 1, 'ratio': 2.0, 'eta': 0, 'save_path': save_path,
+        }
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+            mock_client.torrents_info.return_value = [torrent]
+            mock_client.torrents_files.return_value = [{'name': 'Movie.mkv'}]
+
+            # CP asks about the same hash but in UPPERCASE (as an old magnet
+            # add would have stored it) -- must still match.
+            result = qbt.getAllDownloadStatus(['AABBCCDDEEFF00112233445566778899AABBCCDD'])
+
+        assert len(result) == 1
+        assert result[0]['id'] == 'aabbccddeeff00112233445566778899aabbccdd'
+        assert result[0]['status'] == 'seeding'
 
     def test_getAllDownloadStatus_walks_multi_file_torrent_subfolder(self, tmp_path):
         qbt = self._make_qbittorrent({'label': 'couchpotato'})

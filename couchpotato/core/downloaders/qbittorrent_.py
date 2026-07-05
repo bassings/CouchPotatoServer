@@ -121,7 +121,17 @@ class qBittorrent(DownloaderBase):
             if not hash_match:
                 log.error('Failed to send torrent to qBittorrent: no info-hash in magnet URL "%s"', data.get('url'))
                 return False
-            torrent_hash = hash_match[0].upper()
+            torrent_hash = hash_match[0]
+
+            # Normalize to lowercase 40-char hex, which is how qBittorrent's
+            # WebUI reports torrent['hash'] -- otherwise getAllDownloadStatus's
+            # case-sensitive `torrent['hash'] in ids` compare never matches a
+            # magnet-added torrent. A magnet btih may be 32-char BASE32
+            # (b32decode needs uppercase input; b16encode returns uppercase
+            # hex bytes) which must be converted to 40-char hex to match qBit.
+            if len(torrent_hash) == 32:
+                torrent_hash = b16encode(b32decode(torrent_hash.upper())).decode()
+            torrent_hash = torrent_hash.lower()
 
             # Send request to qBittorrent directly as a magnet. A genuine add
             # failure surfaces as a typed qbittorrentapi.APIError (e.g.
@@ -149,17 +159,16 @@ class qBittorrent(DownloaderBase):
              # bencodepy.decode() returns a dict keyed by BYTES, so the info
              # dict lives under b'info', not the string 'info'. Re-bencoding
              # the bytes-keyed info dict and sha1'ing it yields the correct
-             # info-hash.
+             # info-hash (already lowercase 40-char hex, matching qBit's
+             # torrent['hash']).
              try:
                 info = bdecode(filedata)[b"info"]
                 torrent_hash = sha1(bencode(info)).hexdigest()
-
-                # Convert base 32 to hex
-                if len(torrent_hash) == 32:
-                   torrent_hash = b16encode(b32decode(torrent_hash))
-             # ValueError covers binascii.Error (bad base32 in the b32decode
-             # branch), which is a ValueError subclass.
-             except (BencodeDecodingError, KeyError, ValueError) as e:
+             # ValueError covers binascii.Error (a ValueError subclass);
+             # TypeError covers bdecode() returning a non-subscriptable value
+             # (e.g. bdecode(b'') -> () or bdecode(b'i5e') -> (5,), whose
+             # [b"info"] raises TypeError).
+             except (BencodeDecodingError, KeyError, ValueError, TypeError) as e:
                 log.error('Invalid/corrupt torrent file, cannot add to qBittorrent: %s', e)
                 return False
 
@@ -209,8 +218,14 @@ class qBittorrent(DownloaderBase):
 
             release_downloads = ReleaseDownloadList(self)
 
+            # qBittorrent reports torrent['hash'] in lowercase hex; our stored
+            # ids are normalized lowercase too. Compare case-insensitively so a
+            # magnet-added torrent (whose btih may have arrived upper/base32)
+            # still matches.
+            lower_ids = {str(i).lower() for i in ids}
+
             for torrent in torrents:
-                if torrent['hash'] in ids:
+                if torrent['hash'].lower() in lower_ids:
                     torrent_filelist = self.qb.torrents_files(torrent_hash = torrent['hash'])
 
                     torrent_files = []
