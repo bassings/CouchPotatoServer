@@ -132,10 +132,20 @@ class ExtractorMixin:
                 log.error('Unexpected error extracting %s: %s %s', archive['file'], e, traceback.format_exc())
                 continue
 
+            # extractArchive() returns every target file present after the call
+            # -- newly written AND already-present (the idempotency contract), so
+            # a fully-extracted archive (e.g. files written then a crash before
+            # tagRelease persisted) still reaches the tag + cleanup below on the
+            # next scan. An empty list therefore means the archive had no real
+            # file entries at all (directory-only / empty): nothing to tag,
+            # date-stamp, or move on, so skipping is correct.
             if not extracted:
                 continue
 
             if self.conf('unrar_modify_date'):
+                # extracted may include already-present files (idempotency);
+                # re-stamping their mtime from the archive on a re-scan before
+                # the release is tagged is a harmless, idempotent refresh.
                 for extr_file_path in extracted:
                     try:
                         os.utime(extr_file_path, (os.path.getatime(archive['file']), os.path.getmtime(archive['file'])))
