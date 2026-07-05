@@ -66,6 +66,35 @@ class _FakeOpenResult:
         return False
 
 
+class _RaisingReader:
+    """File-like object that yields one chunk then raises, to model a
+    mid-stream read failure (CRC error, disk hiccup) partway through a file."""
+
+    def __init__(self, first_chunk, exc):
+        self._first_chunk = first_chunk
+        self._exc = exc
+        self._sent = False
+
+    def read(self, size=-1):
+        if not self._sent:
+            self._sent = True
+            return self._first_chunk
+        raise self._exc
+
+
+class _RaisingOpenResult:
+    """Context manager whose reader raises partway through .read()."""
+
+    def __init__(self, first_chunk, exc):
+        self._reader = _RaisingReader(first_chunk, exc)
+
+    def __enter__(self):
+        return self._reader
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 @pytest.fixture(autouse=True)
 def _restore_unrar_tool():
     """extractArchive can mutate the module-global rarfile.UNRAR_TOOL; restore it."""
@@ -167,6 +196,73 @@ class TestExtractArchive:
             # Setting cleared: next call passes no custom path.
             ext.extractArchive('b.rar', str(tmp_path))
             assert rarfile.UNRAR_TOOL == DEFAULT_UNRAR_TOOL
+
+
+class TestExtractArchiveAtomicWrite:
+    """A mid-stream read/write failure must NOT leave a partial file at the
+    real destination -- otherwise the next scan would accept the truncated
+    file as 'already extracted' and move corrupt data into the library."""
+
+    def test_interrupted_write_leaves_no_partial_file(self, tmp_path):
+        info = _make_info('movie.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        # First read yields data; the second raises mid-stream.
+        handle.open.side_effect = lambda i: _RaisingOpenResult(
+            b'partial-bytes', OSError('disk full')
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            with pytest.raises(OSError):
+                _Extractor().extractArchive('archive.rar', str(tmp_path))
+
+        # No file at the real destination, and no leftover temp/part file.
+        assert not (tmp_path / 'movie.mkv').exists()
+        assert list(tmp_path.iterdir()) == []
+
+    def test_next_scan_does_not_treat_interrupted_write_as_extracted(self, tmp_path):
+        # Model the full "transient hiccup then retry" sequence end-to-end:
+        # scan 1 fails mid-write; scan 2 (tool now healthy) must actually
+        # extract the file and NOT tag off a leftover partial.
+        folder = tmp_path / 'downloads'
+        folder.mkdir()
+        archive = folder / 'Movie.One.2020.rar'
+        archive.write_bytes(b'not-a-real-rar')
+
+        info = _make_info('movie.mkv')
+
+        # Scan 1: read raises partway -> extractArchive raises -> extractFiles
+        # logs+continues. No partial must be left behind.
+        handle_fail = MagicMock()
+        handle_fail.infolist.return_value = [info]
+        handle_fail.open.side_effect = lambda i: _RaisingOpenResult(
+            b'partial', OSError('mid-stream failure')
+        )
+
+        fake = _FakeRenamer(from_folder=str(folder))
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle_fail):
+            _f, _m, _files, extr_files = fake.extractFiles(
+                folder=str(folder), media_folder=str(folder), files=[str(archive)],
+            )
+
+        # First scan extracted nothing and did NOT tag the release.
+        assert extr_files == []
+        assert fake.tagged == []
+        # Crucially: no partial file left at the destination to fool scan 2.
+        assert not (folder / 'movie.mkv').exists()
+
+        # Scan 2: the read now succeeds -> real extraction + tagging.
+        handle_ok = _make_rar_handle([info], {'movie.mkv': b'good-bytes'})
+        fake2 = _FakeRenamer(from_folder=str(folder))
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle_ok):
+            _f, _m, _files, extr_files2 = fake2.extractFiles(
+                folder=str(folder), media_folder=str(folder), files=[str(archive)],
+            )
+
+        assert (folder / 'movie.mkv').read_bytes() == b'good-bytes'
+        assert str(folder / 'movie.mkv') in extr_files2
+        assert [t['tag'] for t in fake2.tagged] == ['extracted']
 
 
 class _FakeRenamer(ExtractorMixin):

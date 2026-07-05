@@ -12,6 +12,8 @@ available.
 """
 import os
 import re
+import tempfile
+import threading
 import traceback
 
 import rarfile
@@ -20,6 +22,15 @@ from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog
 
 log = CPLog(__name__)
+
+# rarfile forces the extractor tool to be selected via the process-global
+# ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
+# then shelling out to it is shared mutable state. Serialize the whole
+# tool-path-mutation + extraction critical section so overlapping renamer
+# scans (e.g. a manual ``renamer.scan`` API trigger racing a scheduled one)
+# cannot flip UNRAR_TOOL while another extraction is mid-flight. Extraction is
+# rare and IO-bound, so a single coarse lock is fine.
+_extract_lock = threading.Lock()
 
 # rarfile's default extractor-tool name, captured at import before any custom
 # path is applied. Used to restore auto-detection when the user clears the
@@ -184,6 +195,14 @@ class ExtractorMixin:
         up the release instead of retrying it forever. The returned list is
         empty only for a genuinely empty/all-directory archive.
 
+        Each entry is written atomically: it streams to a temporary file in
+        the destination directory and is only ``os.replace``-d into place once
+        the full read/write succeeds. If any read/write raises partway (disk
+        full, permission revoked, mid-stream CRC error), the temp file is
+        unlinked and no partial file is ever left at the real destination, so a
+        transient I/O hiccup cannot leave a truncated file that a later scan
+        mistakes for "already extracted".
+
         Raises ``rarfile.RarCannotExec`` if no extractor tool (unrar/unar/
         7z/7zz/bsdtar) is available, and other ``rarfile.Error`` subclasses
         for archive problems (bad/corrupt archive, wrong password, etc). On
@@ -191,41 +210,64 @@ class ExtractorMixin:
         archive without tagging it -- the caller (``extractFiles``) does
         exactly that.
         """
-        if custom_tool_path:
-            # Pin rarfile to the user-provided binary and force it to re-probe.
-            if rarfile.UNRAR_TOOL != custom_tool_path:
-                rarfile.UNRAR_TOOL = custom_tool_path
+        # rarfile.UNRAR_TOOL is a process-global; hold the lock across setting
+        # it AND the whole extraction so a concurrent scan cannot swap the tool
+        # out from under an in-flight extraction (see _extract_lock above).
+        with _extract_lock:
+            if custom_tool_path:
+                # Pin rarfile to the user-provided binary and force it to re-probe.
+                if rarfile.UNRAR_TOOL != custom_tool_path:
+                    rarfile.UNRAR_TOOL = custom_tool_path
+                    rarfile.tool_setup(force=True)
+            elif rarfile.UNRAR_TOOL != DEFAULT_UNRAR_TOOL:
+                # A previous call pinned a custom path; the setting has since been
+                # cleared. Restore rarfile's default auto-detection (UNRAR_TOOL is
+                # a module-global, so it would otherwise stay stale forever).
+                rarfile.UNRAR_TOOL = DEFAULT_UNRAR_TOOL
                 rarfile.tool_setup(force=True)
-        elif rarfile.UNRAR_TOOL != DEFAULT_UNRAR_TOOL:
-            # A previous call pinned a custom path; the setting has since been
-            # cleared. Restore rarfile's default auto-detection (UNRAR_TOOL is
-            # a module-global, so it would otherwise stay stale forever).
-            rarfile.UNRAR_TOOL = DEFAULT_UNRAR_TOOL
-            rarfile.tool_setup(force=True)
 
-        extracted = []
-        rar_handle = rarfile.RarFile(rar_path)
-        try:
-            for info in rar_handle.infolist():
-                if info.isdir():
-                    continue
-                extr_file_path = sp(os.path.join(extr_path, os.path.basename(info.filename)))
-                if not os.path.isfile(extr_file_path):
-                    log.debug('Extracting %s...', info.filename)
-                    with rar_handle.open(info) as source, open(extr_file_path, 'wb') as target:
-                        while True:
-                            chunk = source.read(1024 * 1024)
-                            if not chunk:
-                                break
-                            target.write(chunk)
-                # Report the target path whether we just wrote it or it was
-                # already present -- an already-extracted archive is a success,
-                # not a no-op, so the caller can still tag/clean it up.
-                extracted.append(extr_file_path)
-        finally:
-            rar_handle.close()
+            extracted = []
+            rar_handle = rarfile.RarFile(rar_path)
+            try:
+                for info in rar_handle.infolist():
+                    if info.isdir():
+                        continue
+                    extr_file_path = sp(os.path.join(extr_path, os.path.basename(info.filename)))
+                    if not os.path.isfile(extr_file_path):
+                        log.debug('Extracting %s...', info.filename)
+                        self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
+                    # Report the target path whether we just wrote it or it was
+                    # already present -- an already-extracted archive is a success,
+                    # not a no-op, so the caller can still tag/clean it up.
+                    extracted.append(extr_file_path)
+            finally:
+                rar_handle.close()
 
         return extracted
+
+    @staticmethod
+    def _extractOneAtomic(rar_handle, info, extr_file_path, extr_path):
+        """Stream a single archive entry to a temp file in extr_path, then
+        atomically ``os.replace`` it into extr_file_path. On ANY error the
+        temp file is removed so no partial output survives at the real path."""
+        # Temp file in the SAME directory so os.replace is atomic (same fs).
+        fd, tmp_path = tempfile.mkstemp(dir=extr_path, prefix='.cp-extract-', suffix='.part')
+        try:
+            # fdopen first so the fd is always owned/closed by the `with`, even
+            # if rar_handle.open(info) raises before we start reading.
+            with os.fdopen(fd, 'wb') as target, rar_handle.open(info) as source:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    target.write(chunk)
+            os.replace(tmp_path, extr_file_path)
+        except BaseException:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def keepFile(self, filename):
         for i in self.ignored_in_path:

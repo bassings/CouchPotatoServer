@@ -74,19 +74,39 @@ available on the host:
 - New `ExtractorMixin.extractArchive(rar_path, extr_path,
   custom_tool_path=None)`: opens the archive with `rarfile.RarFile`, iterates
   `.infolist()`, skips directories (`info.isdir()`), and for each file streams
-  it via `rar_handle.open(info)` to `open(dest, 'wb')` in 1 MiB chunks —
-  unless a file already exists at the flattened destination, in which case
-  the re-write I/O is skipped. Returns **all** target files present at the
-  destination after the call (newly written OR already present), so the list
-  is empty only for a genuinely empty/all-directory archive. This is
-  deliberate for idempotency: if a crash/restart lands between writing the
-  files and persisting the `extracted` tag, the next scan finds every target
-  already on disk; returning them (not `[]`) lets `extractFiles` still tag and
-  clean up the release instead of retrying it forever. Raises `rarfile.Error`
-  subclasses (including `RarCannotExec`) to the caller rather than swallowing
-  them, so `extractFiles` can apply the shared warn-once-and-skip /
-  log-and-skip policy above (on those failures it returns nothing/raises, so
-  the archive is skipped without tagging).
+  it in 1 MiB chunks — unless a file already exists at the flattened
+  destination, in which case the re-write I/O is skipped. Returns **all**
+  target files present at the destination after the call (newly written OR
+  already present), so the list is empty only for a genuinely
+  empty/all-directory archive. This is deliberate for idempotency: if a
+  crash/restart lands between writing the files and persisting the `extracted`
+  tag, the next scan finds every target already on disk; returning them (not
+  `[]`) lets `extractFiles` still tag and clean up the release instead of
+  retrying it forever. Raises `rarfile.Error` subclasses (including
+  `RarCannotExec`) to the caller rather than swallowing them, so
+  `extractFiles` can apply the shared warn-once-and-skip / log-and-skip policy
+  above (on those failures it returns nothing/raises, so the archive is
+  skipped without tagging).
+- **Atomic per-file write** (`ExtractorMixin._extractOneAtomic`): each entry
+  streams to a `tempfile.mkstemp` temp file in the **same** destination
+  directory and is only `os.replace`-d into the real path once the full
+  read/write succeeds; on ANY exception the temp file is unlinked (guarded)
+  before re-raising, so no partial/truncated file is ever left at the real
+  destination. Without this, a transient mid-stream failure (disk full,
+  permission revoked, CRC error) would leave a truncated file that the *next*
+  scan's `os.path.isfile` check would accept as "already extracted" — silently
+  tagging the release and moving corrupt data into the media library. The
+  temp file shares the destination directory so `os.replace` is a same-fs
+  atomic rename.
+- **Tool-path concurrency lock** (`_extract_lock`, a module-level
+  `threading.Lock`): `rarfile` selects the extractor via the process-global
+  `rarfile.UNRAR_TOOL` (no per-call parameter), so `extractArchive` now
+  mutates shared state. The lock is held across the `UNRAR_TOOL` mutation +
+  `tool_setup()` + the whole `RarFile` open/extraction, so overlapping renamer
+  scans (e.g. a manual `renamer.scan` API trigger racing the scheduled one —
+  `Renamer.scan()`'s `renaming_started` guard is a check-then-set TOCTOU)
+  cannot flip the tool out from under an in-flight extraction. One coarse lock
+  is sufficient since extraction is rare and IO-bound.
 - `extractFiles` now calls `self.extractArchive(...)` instead of the old
   `unrar2.RarFile(...)` + manual `.extract()` loop; the surrounding
   archive-discovery, `.partNN.rar` handling, date-check, and leftover-file
@@ -168,6 +188,10 @@ practical alternative):
   `rarfile.RarCannotExec` (raised from `open()`, the real seam) and
   `rarfile.BadRarFile` to the caller, and applies/clears a custom tool path
   via `rarfile.UNRAR_TOOL` + `tool_setup(force=True)`.
+- `TestExtractArchiveAtomicWrite`: a mid-stream read/write failure leaves no
+  partial file (and no leftover temp/`.part` file) at the destination, and a
+  subsequent scan does not mistake a leftover partial for "already extracted"
+  — the retry actually extracts the file and only then tags the release.
 - `TestExtractFilesGracefulDegradation`: end-to-end through
   `ExtractorMixin.extractFiles` with a minimal fake Renamer double —
   confirms exactly **one** warning is logged across two archives when no
