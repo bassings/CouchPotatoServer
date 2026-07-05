@@ -1898,8 +1898,9 @@ class TestRTorrentAuthTransport:
             b"</param></params></methodResponse>"
         )
         transport = rtorrent_module._RTorrentAuthTransport(secure = False)
+        response = self._mock_response(200, body)
 
-        with patch.object(transport.session, 'post', return_value = self._mock_response(200, body)) as mock_post:
+        with patch.object(transport.session, 'post', return_value = response) as mock_post:
             result = transport.single_request('host:80', '/RPC2', b'<methodCall/>')
 
         # xmlrpc unmarshals a single-value response into that bare value.
@@ -1911,6 +1912,9 @@ class TestRTorrentAuthTransport:
         # A timeout MUST be set so a black-holed/hung endpoint fails over to
         # the caller's except-handler instead of blocking the thread forever.
         assert kwargs['timeout'] == rtorrent_module._RPC_TIMEOUT
+        # stream=True: the response MUST be closed to return the connection to
+        # urllib3's pool (success path).
+        response.close.assert_called_once()
 
     def test_single_request_uses_https_when_secure(self):
         body = (
@@ -1928,13 +1932,17 @@ class TestRTorrentAuthTransport:
 
     def test_single_request_raises_protocol_error_on_non_200(self):
         transport = rtorrent_module._RTorrentAuthTransport(secure = False)
+        response = self._mock_response(401, b'nope', reason = 'Unauthorized')
 
-        with patch.object(transport.session, 'post', return_value = self._mock_response(401, b'nope', reason = 'Unauthorized')):
+        with patch.object(transport.session, 'post', return_value = response):
             with pytest.raises(_xmlrpc_client.ProtocolError) as exc_info:
                 transport.single_request('host:80', '/RPC2', b'<methodCall/>')
 
         assert exc_info.value.errcode == 401
         assert exc_info.value.url == 'host:80/RPC2'
+        # The error path must still close the response -- otherwise a WAF/401
+        # loop leaks a pooled connection on every call.
+        response.close.assert_called_once()
 
     def test_single_request_raises_fault_on_xmlrpc_fault_body(self):
         # A 200 response whose body is an XML-RPC <fault> must still raise Fault.
@@ -2176,3 +2184,257 @@ class TestRTorrentDownload:
         mock_torrent.set_custom.assert_called_once_with(1, 'movies')
         mock_torrent.start.assert_called_once()
         assert result['id'] == expected_hash
+
+
+class _FakeTorrent:
+    """A stand-in for the _RTorrentTorrent objects get_torrents() yields, with
+    just the fields/methods the downloader status/cleanup methods read. Fields
+    mirror _RTorrentTorrent exactly (booleans already coerced, ratio already
+    divided by 1000.0) so these tests exercise the real downstream derivation,
+    not the adapter's parsing (which TestRTorrentAdapter covers)."""
+
+    def __init__(self, info_hash = 'ABC123', name = 'Movie', complete = True,
+                 open_ = True, ratio = 1.5, state = 1, left_bytes = 0,
+                 down_rate = 0, directory = '/downloads/Movie', files = None,
+                 multi_file = False):
+        self.info_hash = info_hash
+        self.name = name
+        self.complete = complete
+        self.open = open_
+        self.ratio = ratio
+        self.state = state
+        self.left_bytes = left_bytes
+        self.down_rate = down_rate
+        self.directory = directory
+        self._files = files if files is not None else []
+        self._multi_file = multi_file
+        self.erased = False
+
+    def get_files(self):
+        return [_FakeFile(p) for p in self._files]
+
+    def is_multi_file(self):
+        return self._multi_file
+
+    def erase(self):
+        self.erased = True
+
+    def pause(self):
+        return 'paused'
+
+    def resume(self):
+        return 'resumed'
+
+
+class _FakeFile:
+    def __init__(self, path):
+        self.path = path
+
+
+class TestRTorrentDownloaderStatus:
+    """Integration seam: rTorrent.getAllDownloadStatus/getTorrentStatus/pause/
+    processComplete/removeFailed consuming adapter (_RTorrentTorrent) output.
+    A _MULTICALL_FIELDS reorder or _RTorrentTorrent constructor typo would
+    corrupt these; these tests assert the real derived values."""
+
+    def _make_downloader(self, adapter):
+        rt = rtorrent_module.rTorrent.__new__(rtorrent_module.rTorrent)
+        rt.rt = adapter  # already "connected"; connect() returns it as-is
+        rt.error_msg = ''
+        return rt
+
+    # -- getTorrentStatus derivation ----------------------------------------
+
+    def test_status_busy_when_not_complete(self):
+        rt = self._make_downloader(MagicMock())
+        assert rt.getTorrentStatus(_FakeTorrent(complete = False, open_ = True)) == 'busy'
+
+    def test_status_seeding_when_complete_and_open(self):
+        rt = self._make_downloader(MagicMock())
+        assert rt.getTorrentStatus(_FakeTorrent(complete = True, open_ = True)) == 'seeding'
+
+    def test_status_completed_when_complete_and_not_open(self):
+        rt = self._make_downloader(MagicMock())
+        assert rt.getTorrentStatus(_FakeTorrent(complete = True, open_ = False)) == 'completed'
+
+    # -- getAllDownloadStatus -----------------------------------------------
+
+    def test_getAllDownloadStatus_derives_full_release_dict(self):
+        torrent = _FakeTorrent(
+            info_hash = 'ABC123', name = 'Movie', complete = True, open_ = True,
+            ratio = 2.5, state = 3, directory = '/downloads/Movie',
+            files = ['/downloads/Movie/Movie.mkv'],
+        )
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [torrent]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert len(result) == 1
+        entry = result[0]
+        assert entry['id'] == 'ABC123'
+        assert entry['name'] == 'Movie'
+        assert entry['status'] == 'seeding'
+        assert entry['seed_ratio'] == 2.5
+        assert entry['original_status'] == 3
+        assert entry['folder'] == '/downloads/Movie'
+        assert entry['files'] == ['/downloads/Movie/Movie.mkv']
+
+    def test_getAllDownloadStatus_ignores_torrents_not_in_ids(self):
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [_FakeTorrent(info_hash = 'OTHER999')]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert list(result) == []
+
+    def test_getAllDownloadStatus_joins_relative_file_path_to_directory(self):
+        # A file path that is NOT already under the torrent directory gets
+        # joined onto it (leading slash stripped).
+        torrent = _FakeTorrent(
+            info_hash = 'ABC123', directory = '/downloads/Movie',
+            files = ['/Movie.mkv'],
+        )
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [torrent]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert result[0]['files'] == [os.path.join('/downloads/Movie', 'Movie.mkv')]
+
+    def test_getAllDownloadStatus_keeps_absolute_file_path_under_directory(self):
+        # A file path already under the torrent directory is used as-is.
+        torrent = _FakeTorrent(
+            info_hash = 'ABC123', directory = '/downloads/Movie',
+            files = ['/downloads/Movie/sub/Movie.mkv'],
+        )
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [torrent]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert result[0]['files'] == ['/downloads/Movie/sub/Movie.mkv']
+
+    def test_getAllDownloadStatus_timeleft_minus_one_when_no_download_rate(self):
+        torrent = _FakeTorrent(info_hash = 'ABC123', left_bytes = 1000, down_rate = 0)
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [torrent]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert result[0]['timeleft'] == -1
+
+    def test_getAllDownloadStatus_timeleft_computed_from_rate(self):
+        # 200 bytes left at 100 bytes/s -> 2 seconds.
+        from datetime import timedelta
+        torrent = _FakeTorrent(info_hash = 'ABC123', left_bytes = 200, down_rate = 100)
+        adapter = MagicMock()
+        adapter.get_torrents.return_value = [torrent]
+        rt = self._make_downloader(adapter)
+
+        result = rt.getAllDownloadStatus(['ABC123'])
+
+        assert result[0]['timeleft'] == str(timedelta(seconds = 2))
+
+    # -- pause / resume -----------------------------------------------------
+
+    def test_pause_calls_torrent_pause(self):
+        torrent = _FakeTorrent(info_hash = 'ABC123')
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = torrent
+        rt = self._make_downloader(adapter)
+
+        assert rt.pause({'id': 'ABC123'}, pause = True) == 'paused'
+        adapter.find_torrent.assert_called_once_with('ABC123')
+
+    def test_pause_false_calls_torrent_resume(self):
+        torrent = _FakeTorrent(info_hash = 'ABC123')
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = torrent
+        rt = self._make_downloader(adapter)
+
+        assert rt.pause({'id': 'ABC123'}, pause = False) == 'resumed'
+
+    def test_pause_returns_false_when_torrent_missing(self):
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = None
+        rt = self._make_downloader(adapter)
+
+        assert rt.pause({'id': 'MISSING'}) is False
+
+    # -- processComplete / removeFailed -------------------------------------
+
+    def test_processComplete_without_delete_erases_but_keeps_files(self):
+        torrent = _FakeTorrent(info_hash = 'ABC123', files = ['/downloads/Movie/Movie.mkv'])
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = torrent
+        rt = self._make_downloader(adapter)
+
+        with patch('os.unlink') as mock_unlink, patch('os.rmdir') as mock_rmdir:
+            result = rt.processComplete({'id': 'ABC123', 'name': 'Movie'}, delete_files = False)
+
+        assert result is True
+        assert torrent.erased is True
+        mock_unlink.assert_not_called()
+        mock_rmdir.assert_not_called()
+
+    def test_processComplete_with_delete_unlinks_files_and_erases(self):
+        torrent = _FakeTorrent(
+            info_hash = 'ABC123', name = 'Movie', directory = '/downloads/Movie',
+            files = ['file1.mkv', 'file2.nfo'], multi_file = False,
+        )
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = torrent
+        rt = self._make_downloader(adapter)
+
+        with patch('os.unlink') as mock_unlink, patch('os.rmdir') as mock_rmdir:
+            result = rt.processComplete({'id': 'ABC123', 'name': 'Movie'}, delete_files = True)
+
+        assert result is True
+        assert torrent.erased is True
+        assert mock_unlink.call_count == 2
+        mock_unlink.assert_any_call(os.path.join('/downloads/Movie', 'file1.mkv'))
+        mock_unlink.assert_any_call(os.path.join('/downloads/Movie', 'file2.nfo'))
+        # Single-file torrent -> no directory teardown.
+        mock_rmdir.assert_not_called()
+
+    def test_processComplete_multi_file_removes_directory_tree(self):
+        # Multi-file torrent whose directory ends with its name triggers the
+        # bottom-up rmdir walk.
+        torrent = _FakeTorrent(
+            info_hash = 'ABC123', name = 'Movie', directory = '/downloads/Movie',
+            files = ['Movie/a.mkv'], multi_file = True,
+        )
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = torrent
+        rt = self._make_downloader(adapter)
+
+        with patch('os.unlink'), \
+             patch('os.walk', return_value = [('/downloads/Movie', [], [])]) as mock_walk, \
+             patch('os.rmdir') as mock_rmdir:
+            result = rt.processComplete({'id': 'ABC123', 'name': 'Movie'}, delete_files = True)
+
+        assert result is True
+        mock_walk.assert_called_once()
+        mock_rmdir.assert_called_once_with('/downloads/Movie')
+
+    def test_processComplete_returns_false_when_torrent_missing(self):
+        adapter = MagicMock()
+        adapter.find_torrent.return_value = None
+        rt = self._make_downloader(adapter)
+
+        assert rt.processComplete({'id': 'MISSING', 'name': 'x'}, delete_files = True) is False
+
+    def test_removeFailed_delegates_to_processComplete_with_delete(self):
+        rt = self._make_downloader(MagicMock())
+
+        with patch.object(rt, 'processComplete', return_value = True) as mock_pc:
+            result = rt.removeFailed({'id': 'ABC123', 'name': 'Movie'})
+
+        assert result is True
+        mock_pc.assert_called_once_with({'id': 'ABC123', 'name': 'Movie'}, delete_files = True)

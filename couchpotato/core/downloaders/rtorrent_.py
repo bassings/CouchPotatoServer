@@ -110,17 +110,25 @@ class _RTorrentAuthTransport(xmlrpc.client.Transport):
             timeout = _RPC_TIMEOUT,
         )
 
-        if response.status_code != 200:
-            raise xmlrpc.client.ProtocolError(
-                host + handler, response.status_code, response.reason, response.headers
-            )
+        # stream=True defers reading the body, so urllib3 only returns the
+        # connection to the pool once the response is fully drained/closed.
+        # Close it on every path -- including the non-200 and malformed-XML
+        # error paths -- or a persistently-bad endpoint leaks a connection on
+        # every call.
+        try:
+            if response.status_code != 200:
+                raise xmlrpc.client.ProtocolError(
+                    host + handler, response.status_code, response.reason, dict(response.headers)
+                )
 
-        p, u = self.getparser()
-        for chunk in response.iter_content(1024):
-            p.feed(chunk)
-        p.close()
+            p, u = self.getparser()
+            for chunk in response.iter_content(1024):
+                p.feed(chunk)
+            p.close()
 
-        return u.close()
+            return u.close()
+        finally:
+            response.close()
 
 
 class _RTorrentFile:

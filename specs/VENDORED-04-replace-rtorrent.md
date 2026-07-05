@@ -96,6 +96,14 @@ know which path was used:
    `rtorrent_rpc.RTorrent(url, timeout=_RPC_TIMEOUT)` construction and this
    requests `session.post(..., timeout=_RPC_TIMEOUT)`.
 
+   Because the POST uses `stream=True`, the read/parse is wrapped in
+   `try/finally: response.close()` (VENDORED-04 cloud review round 2 —
+   SHOULD-FIX): urllib3 only returns the connection to its pool once the
+   response body is drained/closed, so a `response.close()` on **every** path
+   (success, the non-200 `ProtocolError`, and a malformed-XML `p.feed` raise)
+   is required — otherwise a persistently-bad endpoint (401/WAF loop) leaks a
+   pooled connection on every `connect()`/status poll.
+
    A plain `xmlrpc.client.ServerProxy(url, transport=transport)` is then
    constructed and used exactly like `rtorrent_rpc`'s own `rt.rpc` — dotted
    calls (`.d`, `.f`, `.system`, ...) are ordinary `ServerProxy` behavior,
@@ -293,8 +301,10 @@ real sockets, no real HTTP, no real rTorrent:
   construction, **the `timeout=_RPC_TIMEOUT` kwarg passed to
   `session.post`** (VENDORED-04 cloud review — the thread-hang guard), a
   non-200 response raising `xmlrpc.client.ProtocolError` with the right
-  host/handler/status, and a 200 body carrying an XML-RPC `<fault>` still
-  raising `xmlrpc.client.Fault`.
+  host/handler/status, a 200 body carrying an XML-RPC `<fault>` still raising
+  `xmlrpc.client.Fault`, and **`response.close()` called on both the success
+  and the non-200 error path** (VENDORED-04 cloud review round 2 — the
+  connection-leak guard).
 - `TestRTorrentRpcSignatureGuard` (VENDORED-04 review) — a
   `pytest.importorskip('rtorrent_rpc')` guard asserting
   `inspect.signature(rtorrent_rpc.RTorrent.__init__)` still accepts the
@@ -313,12 +323,24 @@ real sockets, no real HTTP, no real rTorrent:
   correct `load_magnet`/`load_torrent` args, label/`start()` applied to the
   returned torrent, and a falsy `load_magnet` result correctly propagating
   to `download()` returning `False`.
+- `TestRTorrentDownloaderStatus` (VENDORED-04 cloud review round 2) — the
+  integration seam where the downloader consumes adapter (`_RTorrentTorrent`)
+  output, previously untested. Covers `getTorrentStatus` derivation
+  (busy/seeding/completed), `getAllDownloadStatus` (full release-dict
+  derivation, id filtering, relative-vs-absolute file-path joining, and the
+  `timeleft` −1-vs-computed branch from `left_bytes`/`down_rate`),
+  `pause()`/resume/missing-torrent, and `processComplete`/`removeFailed`
+  (erase-without-delete, unlink-and-erase with delete, multi-file directory
+  teardown, missing-torrent → `False`, and `removeFailed` delegating with
+  `delete_files=True`). Uses a `_FakeTorrent` stub mirroring
+  `_RTorrentTorrent`'s field/method surface so the assertions are on the real
+  derived values, not tautologies.
 
 ## Acceptance criteria
 
-- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (961 passed after the
-  VENDORED-04 cloud-review round — count includes the putio/qbit/git vendored
-  work merged into the branch from master).
+- [x] `.venv/bin/python -m pytest tests/unit/ -q` green (978 passed after the
+  VENDORED-04 cloud-review round 2 — count includes the putio/qbit/git
+  vendored work merged into the branch from master).
 - [x] `.venv/bin/ruff check .` clean.
 - [x] No remaining references to `couchpotato.lib.rtorrent` /
   `lib.rtorrent` anywhere in the tree (only a comment in the new test file
