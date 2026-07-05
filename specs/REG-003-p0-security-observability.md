@@ -95,6 +95,29 @@ symlinking a subtree in.
 created inside a `tmp_path` scan folder pointing at a file created *outside*
 that folder is not returned as a scannable file by `scan()`.
 
+### PR #151 review follow-up (MEDIUM): prune escaping dirs before recursion
+Cloud review noted that per-file containment runs *after*
+`os.walk(followlinks=True)` has already recursed into an escaping symlinked
+*subdirectory* — so the escape target (an NFS mount, `/proc`, another
+library) still gets fully walked at scan time (perf/DoS), and, since
+`followlinks=True` has no loop detection, a dir-symlink chain could be
+followed to the OS symlink limit. Fix: prune in place inside the walk loop —
+`dirs[:] = [d for d in dirs if self._isWithinFolder(os.path.join(root, d),
+real_folder)]` — so os.walk never descends into an escaping symlinked dir.
+The "whole scanned folder is itself a symlink" case still works (its own
+realpath is the containment boundary); the per-file check is kept as
+belt-and-braces for *file* symlinks. Tests:
+`test_escaping_symlinked_dir_is_not_descended_into` (spies on `os.walk` and
+asserts the escape target is never yielded as a visited root — the stronger
+claim per-file filtering alone does not provide) and
+`test_self_looping_symlink_terminates`.
+
+> Note: this closes the *scan-time* symlink exposure. A residual
+> time-of-check/time-of-use gap at *move/rename* time (a path validated here
+> could be swapped for a symlink before the renamer acts on it) is out of
+> scope for this package and routed to the renamer package by the
+> orchestrator.
+
 ## 3. API key leaked to logs (HIGH)
 
 ### Problem
@@ -245,6 +268,24 @@ sufficient; no other handler has the self-counting problem.
   and reports *only* a genuinely in-flight handler when one plugin's
   `_running` is non-empty. Fails on the blocked code
   (`['PluginA.isRunning', 'PluginB.isRunning']`), passes after the exemption.
+
+### PR #151 review follow-up (HIGH): afterCall must run on handler exception
+Cloud review found a second door to the same shutdown-hang failure mode.
+`createHandle` marks the handler running via `beforeCall`, then calls
+`runHandler`, which **re-raises** handler exceptions by design. `afterCall`
+only ran on the success path, so any tracked handler that raised leaked its
+`beforeCall` entry in `Plugin._running` permanently — after that,
+`fireEvent('plugin.running', merge=True)` never returns `[]` again and
+`Core.initShutdown` hangs on its hard 30s timeout for the rest of the
+process life. The `isRunning` exemption does **not** cover this (any *other*
+handler raising leaks). Fix: wrap the call so `afterCall` always runs —
+`try: h = runHandler(...) finally: afterCall (if present)` — keeping the
+outer `except Exception` swallow so one bad handler still doesn't kill the
+whole `fireEvent` dispatch. Tests
+(`tests/unit/test_event_system.py::TestAfterCallOnHandlerException`): a real
+`Plugin` handler that raises leaves `_running` empty afterward AND
+`fireEvent('plugin.running', merge=True)` returns `[]`. Both fail without the
+`finally`.
 
 ## CLAUDE.md "Known Technical Debt" lines this makes stale
 

@@ -48,12 +48,20 @@ def addEvent(name, handler, priority=100):
                 if bc:
                     parent.beforeCall(handler)
 
-            h = runHandler(name, handler, *args, **kwargs)
-
-            if parent and has_parent:
-                ac = hasattr(parent, 'afterCall')
-                if ac:
-                    parent.afterCall(handler)
+            # afterCall MUST run even if the handler raises -- runHandler
+            # re-raises handler exceptions by design, and beforeCall has
+            # already marked `<Class>.<method>` running. Without the finally,
+            # a raised handler would leak that entry in Plugin._running
+            # forever, so `fireEvent('plugin.running', merge=True)` would
+            # never drain and Core.initShutdown's wait loop would hang on its
+            # hard 30s timeout for the rest of the process life. PR #151.
+            try:
+                h = runHandler(name, handler, *args, **kwargs)
+            finally:
+                if parent and has_parent:
+                    ac = hasattr(parent, 'afterCall')
+                    if ac:
+                        parent.afterCall(handler)
         except Exception:
             log.error('Failed creating handler %s %s: %s', name, handler, traceback.format_exc())
 

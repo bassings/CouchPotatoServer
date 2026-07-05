@@ -307,6 +307,17 @@ class FolderScannerMixin:
         *files* are listed regardless of that flag -- so containment has to
         be checked per file. REG-003 item 2.
 
+        Escaping symlinked *directories* are additionally pruned in place
+        (`dirs[:] = ...`) BEFORE os.walk recurses into them. Filtering only
+        per-file would let os.walk fully enumerate the escape target first
+        (an NFS mount, /proc, another library) -- a scan-time perf/DoS hit --
+        and, since `followlinks=True` has no loop detection, a dir symlink
+        chain could otherwise be followed until the OS symlink limit. Pruning
+        keeps the "whole scanned folder is itself a symlink" case working
+        (its own realpath is the containment boundary) while stopping descent
+        into inner escaping symlinked dirs. The per-file check is retained as
+        belt-and-braces for file symlinks. PR #151 review.
+
         Best-effort: if the walk raises partway through (e.g. a permission
         error deep in the tree), the files gathered before the error are
         still returned rather than discarded, matching the pre-refactor
@@ -317,6 +328,10 @@ class FolderScannerMixin:
         found_files = []
         try:
             for root, dirs, walk_files in os.walk(folder, followlinks=True):
+                # Prune escaping symlinked subdirs before descending into them.
+                dirs[:] = [d for d in dirs
+                           if self._isWithinFolder(os.path.join(root, d), real_folder)]
+
                 for filename in walk_files:
                     file_path = sp(os.path.join(sp(root), sp(filename)))
 

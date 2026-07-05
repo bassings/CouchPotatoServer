@@ -343,6 +343,64 @@ class TestGatherFilesSymlinkContainment:
             'partial results gathered before the error were discarded'
         )
 
+    def test_escaping_symlinked_dir_is_not_descended_into(self, tmp_path, monkeypatch):
+        """PR #151 review (MEDIUM): a symlinked subdirectory that escapes the
+        scan folder must be pruned BEFORE os.walk recurses into it -- not just
+        filtered per-file after the fact. Otherwise the escape target (an NFS
+        mount, /proc, another library) gets fully walked at scan time (perf /
+        DoS). Assert os.walk never *descends* into it -- the stronger claim
+        that per-file filtering alone does NOT provide (per-file filtering
+        would still enumerate the escape target's contents first)."""
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_dir = tmp_path / 'outside'
+        outside_dir.mkdir()
+        (outside_dir / 'ONLY_IN_ESCAPE_TARGET.mkv').write_bytes(b'\0' * 1024)
+        linked_dir = scan_dir / 'linked'
+        linked_dir.symlink_to(outside_dir)
+
+        # Spy: record every directory os.walk actually visits (yields as root).
+        real_walk = os.walk
+        visited_roots = []
+
+        def spying_walk(top, *args, **kwargs):
+            for root, dirs, walk_files in real_walk(top, *args, **kwargs):
+                visited_roots.append(root)
+                yield root, dirs, walk_files
+
+        monkeypatch.setattr(fs.os, 'walk', spying_walk)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        # The escaping symlinked dir must never be descended into...
+        assert not any(os.path.realpath(r) == os.path.realpath(str(outside_dir))
+                       for r in visited_roots), (
+            'os.walk descended into the escaping symlinked dir before '
+            'containment pruning: %r' % (visited_roots,)
+        )
+        # ...and its contents are of course not returned either.
+        assert not any('ONLY_IN_ESCAPE_TARGET' in f for f in files)
+
+    def test_self_looping_symlink_terminates(self, tmp_path):
+        """PR #151 review (MEDIUM): followlinks=True has no loop detection.
+        A dir symlink looping back to the scan root must not hang / recurse
+        without bound. Confirm _gatherFiles terminates and still returns the
+        real media file."""
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        (scan_dir / 'movie.mkv').write_bytes(b'\0' * 1024)
+        loop = scan_dir / 'loop'
+        loop.symlink_to(scan_dir)
+
+        # Must terminate (SYMLOOP_MAX bounds the OS symlink resolution).
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert any('movie.mkv' in f for f in files)
+
 
 class TestGetReleaseNameYear:
     def test_basic(self, scanner):
