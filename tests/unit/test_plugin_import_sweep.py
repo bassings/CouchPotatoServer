@@ -102,3 +102,96 @@ def test_loader_logs_import_error_at_error_level(caplog):
         f'{[(r.levelname, r.message) for r in caplog.records]}'
     )
     assert any('couchpotato_reg001_test_nonexistent_module' in r.message for r in error_records)
+
+
+def test_matcher_and_caper_are_gone():
+    """VENDORED-01: the dead TV-episode `matcher` plugin and vendored `caper`.
+
+    `couchpotato/core/media/_base/matcher/` wrapped the vendored
+    `couchpotato/lib/caper` parser and registered `matcher.parse`,
+    `matcher.match`, `matcher.flatten_info`, `matcher.construct_from_raw`,
+    `matcher.correct_title` and `matcher.correct_quality` events plus a
+    `<type>.matcher.correct` hook via `MatcherBase`. Its own code operated on
+    `show_name`/season/episode chains (TV terms) even though this fork is
+    movies-only, and nothing else in the codebase ever fired any `matcher.*`
+    event or subclassed `MatcherBase` — the real release-matching path is
+    `searcher.correct_release` in `couchpotato/core/media/movie/searcher.py`,
+    which never touches caper. Both were removed (VENDORED-01); this guards
+    against either reappearing or leaving a dangling import.
+    """
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module('couchpotato.core.media._base.matcher')
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module('couchpotato.lib.caper')
+
+    failures = _sweep_import_failures()
+    matcher_related = [name for name in failures if 'matcher' in name.lower()]
+    assert not matcher_related, (
+        f'Unexpected matcher-related import failures: {matcher_related}'
+    )
+
+    swept_names = set(failures) | {
+        name
+        for _finder, name, _ispkg in pkgutil.walk_packages(
+            couchpotato.core.__path__, prefix='couchpotato.core.'
+        )
+    }
+    assert 'couchpotato.core.media._base.matcher' not in swept_names
+    assert not any(name.startswith('couchpotato.core.media._base.matcher.') for name in swept_names)
+
+
+def test_loader_discovers_media_base_siblings_without_matcher(caplog):
+    """The Loader's directory-scan discovery must not list `matcher` and must
+    not log any error about it or about `caper` while discovering the real
+    (still-present) siblings under `couchpotato/core/media/_base/`.
+
+    `Loader.preload()` only walks the filesystem (`pkgutil.iter_modules`) to
+    build its module registry — it doesn't import anything yet — so removing
+    the `matcher/` directory should make it vanish from discovery cleanly,
+    with the loader none the wiser, rather than the loader tripping over a
+    stale reference and logging an ImportError for it later.
+    """
+    from unittest.mock import patch
+
+    import couchpotato
+    from couchpotato.core.loader import Loader
+
+    # Derive the real repo root from the `couchpotato` package location
+    # rather than this module-level REPO_ROOT: that constant is computed
+    # with one dirname() too few for a file living in tests/unit/ (it
+    # resolves to .../tests, not the repo root), which is harmless for the
+    # sys.path bootstrapping above but not for the Loader, which needs the
+    # actual on-disk `couchpotato/core/media` directory to walk.
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(couchpotato.__file__)))
+
+    loader = Loader()
+    with caplog.at_level(logging.DEBUG), patch('couchpotato.environment.Env') as mock_env:
+        mock_env.get.return_value = '/tmp/cp_test_data_vendored01'
+        loader.preload(root=repo_root)
+
+    discovered_modules = {
+        module_name
+        for modules_at_priority in loader.modules.values()
+        for module_name in modules_at_priority
+    }
+
+    matcher_hits = [name for name in discovered_modules if 'matcher' in name.lower()]
+    assert not matcher_hits, f'Loader still discovered matcher module(s): {matcher_hits}'
+
+    # Siblings that used to live alongside matcher/ under _base/ must still
+    # be discovered fine (the directory deletion shouldn't disturb them).
+    for sibling in ('library', 'media', 'providers', 'search', 'searcher'):
+        expected = f'couchpotato.core.media._base.{sibling}'
+        assert expected in discovered_modules, (
+            f'Expected sibling module {expected!r} to still be discovered, '
+            f'got: {sorted(discovered_modules)}'
+        )
+
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    matcher_or_caper_errors = [
+        r for r in error_records if 'matcher' in r.message.lower() or 'caper' in r.message.lower()
+    ]
+    assert not matcher_or_caper_errors, (
+        f'Loader logged an error mentioning matcher/caper during discovery: {matcher_or_caper_errors}'
+    )
