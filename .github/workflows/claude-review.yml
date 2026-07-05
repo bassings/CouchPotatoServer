@@ -25,7 +25,13 @@ jobs:
     runs-on: ubuntu-latest
     # Skip if the secret isn't configured yet, so PRs aren't blocked by a
     # missing token while you finish setup.
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    # Also skip for Dependabot: claude-code-action@v1 rejects bot actors by
+    # default ("Workflow initiated by non-human actor"), and registering
+    # CLAUDE_CODE_OAUTH_TOKEN as a separate Dependabot secret isn't wanted. A
+    # job skipped via `if:` reports conclusion `skipped`, which satisfies the
+    # required-status-check branch protection (unlike a workflow that never
+    # runs at all).
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
     steps:
       - uses: actions/checkout@v7
         with:
