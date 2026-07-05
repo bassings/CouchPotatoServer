@@ -126,8 +126,13 @@ def test_concurrent_ignore_stress_no_errors_and_no_lost_updates(monkeypatch):
     threads = [threading.Thread(target=worker, args=(t,)) for t in range(n_threads)]
     for t in threads:
         t.start()
+    # Bounded join so a reintroduced deadlock (e.g. a lock-ordering bug)
+    # fails fast with a clear signal instead of hanging until the blunt
+    # suite-wide pytest-timeout fires.
     for t in threads:
-        t.join()
+        t.join(timeout=30)
+    stuck = [t.name for t in threads if t.is_alive()]
+    assert not stuck, 'worker threads deadlocked / never finished: %r' % stuck
 
     assert not errors, 'concurrent ignoreSuggestion raised: %r' % errors
 
