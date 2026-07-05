@@ -202,7 +202,9 @@ class BaseUpdater(Plugin):
 
 class GitUpdater(BaseUpdater):
     """Updates a source (`.git`-directory-present) install straight from its
-    git repository, using dulwich (pure-Python, no system `git` binary needed).
+    git repository, using dulwich (no system `git` binary needed; dulwich carries
+    optional C accelerators but ships a pure-Python `py3-none-any` fallback, so
+    musl/Alpine installs resolve without compiling).
 
     Pull semantics differ from plain `git pull`: instead of a merge/rebase,
     `doUpdate()` does a `fetch` from `origin` followed by a hard reset of the
