@@ -268,6 +268,140 @@ class TestGetCPImdb:
         assert scanner.getCPImdb('movie.mkv') is False
 
 
+class FakeScannerWithShutdown(FolderScannerMixin):
+    """FolderScannerMixin needs `shuttingDown()` from Plugin; stub it here so
+    `_gatherFiles`/`scan` can be exercised without instantiating the full
+    Scanner plugin (which needs Env/loader wiring)."""
+
+    def shuttingDown(self):
+        return False
+
+
+class TestGatherFilesSymlinkContainment:
+    """REG-003 item 2: a symlink inside the scanned folder that resolves to a
+    location outside it must never be handed back as a scannable file --
+    otherwise the renamer will move/delete the real target."""
+
+    def test_symlink_to_external_file_is_excluded(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_file = tmp_path / 'secret.mkv'
+        outside_file.write_bytes(b'\0' * 1024)
+        link = scan_dir / 'link.mkv'
+        link.symlink_to(outside_file)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert str(link) not in files
+
+    def test_symlink_to_external_directory_is_excluded(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_dir = tmp_path / 'outside'
+        outside_dir.mkdir()
+        (outside_dir / 'movie.mkv').write_bytes(b'\0' * 1024)
+        linked_dir = scan_dir / 'linked'
+        linked_dir.symlink_to(outside_dir)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert not any('movie.mkv' in f for f in files)
+
+    def test_regular_file_inside_scan_folder_is_included(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        regular = scan_dir / 'movie.mkv'
+        regular.write_bytes(b'\0' * 1024)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert str(regular) in files
+
+    def test_partial_results_returned_on_midwalk_error(self, monkeypatch):
+        """REG-003 review nit (a): if os.walk raises partway through, files
+        gathered before the error must still be returned (best-effort),
+        matching the pre-refactor behaviour -- not discarded."""
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+
+        def exploding_walk(folder, followlinks=False):
+            yield ('/movies', [], ['first.mkv'])
+            raise OSError('permission denied deep in the tree')
+
+        # Keep files contained: everything under the yielded root resolves
+        # inside it, so containment doesn't filter them out.
+        monkeypatch.setattr(fs.os, 'walk', exploding_walk)
+        monkeypatch.setattr(scanner, '_isWithinFolder', lambda file_path, real_folder: True)
+
+        files = scanner._gatherFiles('/movies')
+
+        assert any('first.mkv' in f for f in files), (
+            'partial results gathered before the error were discarded'
+        )
+
+    def test_escaping_symlinked_dir_is_not_descended_into(self, tmp_path, monkeypatch):
+        """PR #151 review (MEDIUM): a symlinked subdirectory that escapes the
+        scan folder must be pruned BEFORE os.walk recurses into it -- not just
+        filtered per-file after the fact. Otherwise the escape target (an NFS
+        mount, /proc, another library) gets fully walked at scan time (perf /
+        DoS). Assert os.walk never *descends* into it -- the stronger claim
+        that per-file filtering alone does NOT provide (per-file filtering
+        would still enumerate the escape target's contents first)."""
+        import couchpotato.core.plugins.scanner.folder_scanner as fs
+
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_dir = tmp_path / 'outside'
+        outside_dir.mkdir()
+        (outside_dir / 'ONLY_IN_ESCAPE_TARGET.mkv').write_bytes(b'\0' * 1024)
+        linked_dir = scan_dir / 'linked'
+        linked_dir.symlink_to(outside_dir)
+
+        # Spy: record every directory os.walk actually visits (yields as root).
+        real_walk = os.walk
+        visited_roots = []
+
+        def spying_walk(top, *args, **kwargs):
+            for root, dirs, walk_files in real_walk(top, *args, **kwargs):
+                visited_roots.append(root)
+                yield root, dirs, walk_files
+
+        monkeypatch.setattr(fs.os, 'walk', spying_walk)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        # The escaping symlinked dir must never be descended into...
+        assert not any(os.path.realpath(r) == os.path.realpath(str(outside_dir))
+                       for r in visited_roots), (
+            'os.walk descended into the escaping symlinked dir before '
+            'containment pruning: %r' % (visited_roots,)
+        )
+        # ...and its contents are of course not returned either.
+        assert not any('ONLY_IN_ESCAPE_TARGET' in f for f in files)
+
+    def test_self_looping_symlink_terminates(self, tmp_path):
+        """PR #151 review (MEDIUM): followlinks=True has no loop detection.
+        A dir symlink looping back to the scan root must not hang / recurse
+        without bound. Confirm _gatherFiles terminates and still returns the
+        real media file."""
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        (scan_dir / 'movie.mkv').write_bytes(b'\0' * 1024)
+        loop = scan_dir / 'loop'
+        loop.symlink_to(scan_dir)
+
+        # Must terminate (SYMLOOP_MAX bounds the OS symlink resolution).
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert any('movie.mkv' in f for f in files)
+
+
 class TestGetReleaseNameYear:
     def test_basic(self, scanner):
         result = scanner.getReleaseNameYear('The.Movie.2023.720p.BluRay')

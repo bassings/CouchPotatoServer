@@ -166,10 +166,24 @@ class Plugin:
         )
 
 
+    # Bookkeeping/query handlers that must NOT be recorded as "running" when
+    # they execute. `isRunning` is itself registered as a `plugin.running`
+    # event handler (see registerPlugin), so if call-tracking recorded it,
+    # querying "who is running" would append its own entry and then return a
+    # snapshot that includes it -- `fireEvent('plugin.running', merge=True)`
+    # in Core.initShutdown would never drain and every shutdown/restart would
+    # hang on the hard 30s timeout. It's the only handler that reads
+    # `_running`, so a targeted exemption is sufficient. REG-003 review.
+    _call_tracking_exempt = frozenset({'isRunning'})
+
     def beforeCall(self, handler):
+        if handler.__name__ in self._call_tracking_exempt:
+            return
         self.isRunning('%s.%s' % (self.getName(), handler.__name__))
 
     def afterCall(self, handler):
+        if handler.__name__ in self._call_tracking_exempt:
+            return
         self.isRunning('%s.%s' % (self.getName(), handler.__name__), False)
 
     def doShutdown(self, *args, **kwargs):

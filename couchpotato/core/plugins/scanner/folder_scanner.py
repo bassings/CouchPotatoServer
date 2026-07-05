@@ -51,14 +51,7 @@ class FolderScannerMixin:
         leftovers = []
 
         if not files:
-            try:
-                files = []
-                for root, dirs, walk_files in os.walk(folder, followlinks=True):
-                    files.extend([sp(os.path.join(sp(root), sp(filename))) for filename in walk_files])
-                    if self.shuttingDown():
-                        break
-            except Exception:
-                log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
+            files = self._gatherFiles(folder)
 
             log.debug('Found %s files to scan and group in %s', len(files), folder)
         else:
@@ -300,6 +293,69 @@ class FolderScannerMixin:
             log.debug('Found no movies in the folder %s', folder)
 
         return processed_movies
+
+    def _gatherFiles(self, folder):
+        """Walk `folder` and return every file found inside it.
+
+        Any entry (whether reached directly or via a symlinked directory)
+        whose real path resolves outside `folder` is skipped. Without this,
+        a symlink planted inside a release folder can point at an arbitrary
+        file elsewhere on disk (e.g. a large host file); once "scanned" as
+        a movie file, the renamer would move/delete the real target instead
+        of the symlink. `os.walk`'s `followlinks` flag does not help here --
+        it only controls recursion into symlinked *directories*, symlinked
+        *files* are listed regardless of that flag -- so containment has to
+        be checked per file. REG-003 item 2.
+
+        Escaping symlinked *directories* are additionally pruned in place
+        (`dirs[:] = ...`) BEFORE os.walk recurses into them. Filtering only
+        per-file would let os.walk fully enumerate the escape target first
+        (an NFS mount, /proc, another library) -- a scan-time perf/DoS hit --
+        and, since `followlinks=True` has no loop detection, a dir symlink
+        chain could otherwise be followed until the OS symlink limit. Pruning
+        keeps the "whole scanned folder is itself a symlink" case working
+        (its own realpath is the containment boundary) while stopping descent
+        into inner escaping symlinked dirs. The per-file check is retained as
+        belt-and-braces for file symlinks. PR #151 review.
+
+        Best-effort: if the walk raises partway through (e.g. a permission
+        error deep in the tree), the files gathered before the error are
+        still returned rather than discarded, matching the pre-refactor
+        behaviour.
+        """
+        real_folder = os.path.realpath(folder)
+
+        found_files = []
+        try:
+            for root, dirs, walk_files in os.walk(folder, followlinks=True):
+                # Prune escaping symlinked subdirs before descending into them.
+                dirs[:] = [d for d in dirs
+                           if self._isWithinFolder(os.path.join(root, d), real_folder)]
+
+                for filename in walk_files:
+                    file_path = sp(os.path.join(sp(root), sp(filename)))
+
+                    if not self._isWithinFolder(file_path, real_folder):
+                        log.debug('Skipping file that resolves outside the scanned folder (symlink escape): %s', file_path)
+                        continue
+
+                    found_files.append(file_path)
+
+                if self.shuttingDown():
+                    break
+        except Exception:
+            log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
+
+        return found_files
+
+    @staticmethod
+    def _isWithinFolder(file_path, real_folder):
+        try:
+            real_path = os.path.realpath(file_path)
+            return os.path.commonpath([real_folder, real_path]) == real_folder
+        except ValueError:
+            # e.g. paths on different drives on Windows
+            return False
 
     def determineMedia(self, group, release_download=None):
         imdb_id = release_download and release_download.get('imdb_id')

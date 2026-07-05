@@ -15,8 +15,12 @@ import logging
 import re
 import sys
 
-# Custom log level for "info2" (less important info, between DEBUG and INFO)
-INFO2 = 19
+# Custom log level for "info2" (release-rejection reasons, provider
+# circuit-breaker trips, etc). Must be ABOVE INFO (20) so it is visible at
+# the default production log level -- setup_logging(debug=False) sets the
+# root logger to INFO, and anything below that threshold is dropped before
+# it ever reaches a handler. REG-003 item 4.
+INFO2 = 21
 logging.addLevelName(INFO2, 'INFO')
 
 # Privacy filter patterns
@@ -147,10 +151,21 @@ def setup_logging(log_path=None, debug=False, console=True, encoding='utf-8'):
     fmt = '%(asctime)s %(levelname)s %(message)s'
     datefmt = '%m-%d %H:%M:%S'
 
+    # Privacy filter must be attached to each HANDLER, not the root logger.
+    # A Logger's own `.filters` only run for records that *originate* on
+    # that logger (see Logger.handle()); CPLog always logs through a named
+    # child logger, whose records reach the root's handlers via
+    # `callHandlers()` without ever consulting the root logger's own
+    # filters. Handler.handle() re-checks its filters for every record it
+    # emits regardless of which logger it came from, so attaching there
+    # actually redacts secrets (api_key, passkey, ...) in logged URLs.
+    # REG-003 item 5.
+
     # Console handler with colors
     if console:
         console_handler = logging.StreamHandler(sys.stderr)
         console_handler.setFormatter(ColorFormatter(fmt, datefmt))
+        console_handler.addFilter(PrivacyFilter())
         logger.addHandler(console_handler)
 
     # File handler (no colors)
@@ -160,10 +175,8 @@ def setup_logging(log_path=None, debug=False, console=True, encoding='utf-8'):
             backupCount=10, encoding=encoding
         )
         file_handler.setFormatter(logging.Formatter(fmt, datefmt))
+        file_handler.addFilter(PrivacyFilter())
         logger.addHandler(file_handler)
-
-    # Add privacy filter to root logger
-    logger.addFilter(PrivacyFilter())
 
     # Quiet noisy libraries
     for name in ['enzyme', 'guessit', 'subliminal', 'apscheduler', 'uvicorn', 'requests']:

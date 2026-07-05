@@ -243,6 +243,182 @@ class TestErrorHandling:
         assert 'good' in result
 
 
+class TestBeforeAfterCall:
+    """REG-003 item 6: addEvent's createHandle used to detect a bound-method
+    handler via `hasattr(handler, 'im_self')` -- the Python 2 attribute name
+    for a bound method's owning instance. On Python 3 this is always False
+    (the attribute is `__self__`), so `Plugin.beforeCall`/`afterCall` never
+    ran for any plugin event handler, `Plugin._running` never got entries,
+    and `Core.initShutdown`'s wait loop (`fireEvent('plugin.running',
+    merge=True)`) was a silent no-op -- shutdown/restart never actually
+    waited for in-flight plugin work.
+    """
+
+    def test_bound_method_handler_populates_running_during_call(self):
+        from couchpotato.core.event import addEvent, fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class FakePlugin(Plugin):
+                def __init__(self):
+                    self.observed_running = None
+
+                def work(self):
+                    # Snapshot _running from *inside* the call, since
+                    # afterCall clears it again once the handler returns.
+                    self.observed_running = list(self.isRunning())
+                    return 'done'
+
+            plugin = FakePlugin()
+            addEvent('test.reg003.before_after_call', plugin.work)
+
+            result = fireEvent('test.reg003.before_after_call', single=True)
+
+            assert result == 'done'
+            assert plugin.observed_running == ['FakePlugin.work'], (
+                'beforeCall never populated Plugin._running during the call'
+            )
+            assert plugin.isRunning() == [], (
+                'afterCall never cleared Plugin._running after the call'
+            )
+        finally:
+            events.clear()
+
+
+class TestPluginRunningAggregation:
+    """REG-003 review: re-enabling beforeCall/afterCall (item 6) must NOT make
+    the `plugin.running` query self-report.
+
+    Every Plugin registers `addEvent('plugin.running', self.isRunning)`.
+    `Core.initShutdown` fires `plugin.running` (merge=True) in a loop and
+    waits until the result (minus an ignore allowlist) is empty. If the
+    call-tracking wrapper records the `isRunning` bookkeeping handler itself
+    as "running", every plugin reports `<Class>.isRunning` as running, the
+    result is never empty, nothing is in the allowlist, and every
+    shutdown/restart hangs on the hard 30s timeout instead of returning
+    instantly. The isRunning query handler must be exempt from call-tracking.
+    """
+
+    def test_running_aggregation_empty_when_nothing_running(self):
+        from couchpotato.core.event import fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class PluginA(Plugin):
+                pass
+
+            class PluginB(Plugin):
+                pass
+
+            # Plugin.__new__ -> registerPlugin registers
+            # addEvent('plugin.running', self.isRunning) for each instance.
+            PluginA()
+            PluginB()
+
+            # This is exactly how Core.initShutdown asks "who is running".
+            still_running = fireEvent('plugin.running', merge=True)
+
+            assert still_running == [], (
+                'plugin.running self-reported when nothing was actually '
+                'running: %r' % (still_running,)
+            )
+        finally:
+            events.clear()
+
+    def test_running_aggregation_reports_only_genuine_work(self):
+        from couchpotato.core.event import fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class PluginA(Plugin):
+                pass
+
+            class PluginB(Plugin):
+                pass
+
+            a = PluginA()
+            PluginB()
+
+            # Simulate PluginA genuinely mid-handler.
+            a.isRunning('PluginA.realWork')
+
+            still_running = fireEvent('plugin.running', merge=True)
+
+            assert still_running == ['PluginA.realWork'], (
+                'expected only the genuine in-flight handler, got: %r'
+                % (still_running,)
+            )
+        finally:
+            events.clear()
+
+
+class TestAfterCallOnHandlerException:
+    """PR #151 review (HIGH): afterCall must run even when the handler raises.
+
+    createHandle marks `<Class>.<method>` running via beforeCall, then calls
+    runHandler (which re-raises on a handler exception by design). If afterCall
+    only runs on the success path, a raised handler leaks its beforeCall entry
+    in Plugin._running permanently. After ANY tracked handler ever raises,
+    `fireEvent('plugin.running', merge=True)` never returns [] again, so
+    Core.initShutdown's wait loop hits its hard 30s timeout on every restart
+    for the rest of the process life -- the same failure mode item 6 fixed,
+    via a different door. The isRunning exemption does NOT cover this (any
+    other handler raising leaks).
+    """
+
+    def test_raised_handler_does_not_leak_running_entry(self):
+        from couchpotato.core.event import addEvent, fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class BoomPlugin(Plugin):
+                def work(self):
+                    raise ValueError('boom')
+
+            plugin = BoomPlugin()
+            addEvent('test.reg003.raising_handler', plugin.work)
+
+            # fireEvent swallows the handler exception (callers rely on one
+            # bad handler not killing the whole dispatch).
+            fireEvent('test.reg003.raising_handler', single=True)
+
+            assert plugin.isRunning() == [], (
+                'afterCall was skipped on exception, leaking a _running '
+                'entry: %r' % (plugin.isRunning(),)
+            )
+        finally:
+            events.clear()
+
+    def test_raised_handler_does_not_stick_shutdown_loop(self):
+        from couchpotato.core.event import addEvent, fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class BoomPlugin(Plugin):
+                def work(self):
+                    raise ValueError('boom')
+
+            plugin = BoomPlugin()
+            addEvent('test.reg003.raising_handler2', plugin.work)
+
+            fireEvent('test.reg003.raising_handler2', single=True)
+
+            # This is exactly how Core.initShutdown asks "who is running".
+            still_running = fireEvent('plugin.running', merge=True)
+
+            assert still_running == [], (
+                'a raised handler left the shutdown loop stuck: %r'
+                % (still_running,)
+            )
+        finally:
+            events.clear()
+
+
 class TestGetEvent:
     def test_get_event(self):
         from couchpotato.core.event import addEvent, getEvent
