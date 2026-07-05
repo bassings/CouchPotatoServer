@@ -148,7 +148,14 @@ class MovieBase(MovieTypeBase):
                 try:
                     m = db.get('media', identifier_key, with_doc = True)['doc']
                     previous_profile = self.existingProfileId(db, m)
-                    previous_category = m.get('category_id')
+                    # NB: previous_category is deliberately NOT set here.
+                    # profile_id and category_id have intentionally ASYMMETRIC
+                    # genuine-found semantics (matching master): a found re-add
+                    # keeps the existing profile (existing-wins, via
+                    # previous_profile) but HONORS an explicitly-passed
+                    # category_id (new-wins, via the else-branch below). Only
+                    # the race-loss branch preserves category, to stop a losing
+                    # concurrent add() from clobbering the winner's value.
                 except (RecordNotFound, KeyError):
                     new = True
                     try:
@@ -159,10 +166,12 @@ class MovieBase(MovieTypeBase):
                         # (provider, identifier) index rejected our insert
                         # because a concurrent insert already created this
                         # movie. Re-fetch the winner's doc and preserve its
-                        # profile/category exactly as a genuine found re-add
-                        # does -- otherwise force_readd below would stomp the
-                        # winner's values with this (losing) call's
-                        # params/default.
+                        # profile/category -- otherwise force_readd below would
+                        # stomp the winner's values with this (losing) call's
+                        # params/default. previous_category is taken unvalidated
+                        # (unlike previous_profile's existingProfileId check):
+                        # the just-inserted winner's category is valid by
+                        # construction.
                         new = False
                         m = db.get('media', identifier_key, with_doc = True)['doc']
                         previous_profile = self.existingProfileId(db, m)
@@ -191,7 +200,7 @@ class MovieBase(MovieTypeBase):
                             fireEvent('release.delete', release['_id'], single = True)
 
                 m['profile_id'] = (params.get('profile_id') or default_profile.get('_id')) if not previous_profile else previous_profile
-                m['category_id'] = (cat_id if cat_id is not None and len(cat_id) > 0 else None) if not previous_category else previous_category
+                m['category_id'] = previous_category if previous_category else (cat_id if cat_id is not None and len(cat_id) > 0 else (m.get('category_id') or None))
                 m['last_edit'] = int(time.time())
                 m['tags'] = []
 

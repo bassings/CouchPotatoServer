@@ -360,6 +360,90 @@ class TestMovieAddInsertRace:
             "overwrite it with the losing call's category (cat-B)"
         )
 
+    def _run_genuine_found_readd(self, existing_category, passed_category):
+        """Drive a GENUINE (non-race) found re-add: the movie already exists,
+        db.get('media') succeeds first try (no IntegrityError), force_readd
+        runs. Returns the category_id persisted via db.update."""
+        existing_media = {
+            '_id': 'media-1',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': None,
+            'category_id': existing_category,
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        }
+        fake_db = _FakeDB(existing=existing_media)
+
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        params = {
+            'identifier': 'tt0133093',
+            'info': {'titles': ['The Matrix'], 'title': 'The Matrix'},
+            'profile_id': None,
+        }
+        if passed_category is not None:
+            params['category_id'] = passed_category
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=fake_db),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'media-1', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                params=params,
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+                status='done',  # skip profile.default fetch; targets category
+            )
+
+        assert result is not False
+        assert fake_db.updated, "force_readd should have persisted via db.update"
+        return fake_db.updated[-1]['category_id']
+
+    def test_genuine_found_readd_honors_explicitly_passed_category(self):
+        """No-API-regression guard: on a GENUINE (non-race) found re-add, an
+        explicitly-passed category_id must WIN over the existing one -- that is
+        master's public movie.add behavior. The race-loss preservation must NOT
+        leak into the genuine-found path (which it did after the over-broad
+        category mirror)."""
+        persisted = self._run_genuine_found_readd(
+            existing_category='cat-existing', passed_category='cat-new'
+        )
+        assert persisted == 'cat-new', (
+            "genuine found re-add must honor the explicitly-passed category "
+            "(new-wins), not silently keep the existing one"
+        )
+
+    def test_genuine_found_readd_without_category_matches_master(self):
+        """Genuine (non-race) found re-add with NO category_id passed must
+        behave exactly as master. On master, `m.update(media)` sets
+        category_id to None (media is built with None when no category is
+        passed) BEFORE the else-fallback `m.get('category_id') or None` runs,
+        so the result is None -- master does NOT actually preserve the existing
+        category here (a pre-existing latent quirk, out of scope for REG-004).
+
+        The point of this guard: the race-loss preservation must NOT leak into
+        the genuine-found path and start preserving the existing category,
+        which would be a behavior change vs master.
+        """
+        persisted = self._run_genuine_found_readd(
+            existing_category='cat-existing', passed_category=None
+        )
+        assert persisted is None, (
+            "genuine found re-add with no category must match master (None); "
+            "race-loss preservation must not leak into the genuine-found path"
+        )
+
     def test_real_threads_racing_add_same_imdb_produce_one_doc(self, tmp_path):
         """REG-004 review: real threads calling MovieBase.add() concurrently
         against a real SQLiteAdapter for the same imdb id must produce exactly
