@@ -9,6 +9,7 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse, RedirectResponse
 from jinja2 import Environment as JinjaEnv, FileSystemLoader
+from starlette.concurrency import run_in_threadpool
 
 from couchpotato.environment import Env
 from couchpotato.core.logger import CPLog
@@ -161,7 +162,7 @@ def create_router(require_auth) -> APIRouter:
             # with_releases=False → Wanted page: active movies with no releases yet
             params['has_releases'] = with_releases
 
-            result = callApiHandler('media.list', **params)
+            result = await run_in_threadpool(callApiHandler, 'media.list', **params)
             if isinstance(result, dict):
                 movies = result.get('movies', [])
             else:
@@ -177,7 +178,7 @@ def create_router(require_auth) -> APIRouter:
         """Return movie detail as HTML partial."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('media.get', id=movie_id)
+            result = await run_in_threadpool(callApiHandler, 'media.get', id=movie_id)
             if isinstance(result, dict):
                 movie = result.get('media', result)
             else:
@@ -195,7 +196,7 @@ def create_router(require_auth) -> APIRouter:
         movies = []
         if q:
             try:
-                result = callApiHandler('movie.search', q=q)
+                result = await run_in_threadpool(callApiHandler, 'movie.search', q=q)
                 if isinstance(result, dict):
                     movies = result.get('movies', [])
                 elif isinstance(result, list):
@@ -219,7 +220,7 @@ def create_router(require_auth) -> APIRouter:
         error = None
         if url:
             try:
-                result = callApiHandler('userscript.add_via_url', url=url)
+                result = await run_in_threadpool(callApiHandler, 'userscript.add_via_url', url=url)
                 candidate = result.get('movie') if isinstance(result, dict) else None
                 # `and candidate` guards the empty-dict case: getViaUrl treats a
                 # truthy-but-empty {} movie as success (no error key), but the
@@ -248,7 +249,7 @@ def create_router(require_auth) -> APIRouter:
         """Return movie suggestions as HTML partial."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('suggestion.view')
+            result = await run_in_threadpool(callApiHandler, 'suggestion.view')
             # callApiHandler swallows handler exceptions and returns
             # {'success': False, ...} rather than raising, so an error-shaped
             # result — not just a thrown exception — is the real failure signal.
@@ -273,7 +274,7 @@ def create_router(require_auth) -> APIRouter:
         """Return chart lists (IMDB, Blu-ray, etc.) as HTML partial."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('charts.view')
+            result = await run_in_threadpool(callApiHandler, 'charts.view')
             # callApiHandler swallows handler exceptions and returns
             # {'success': False, ...} rather than raising, so an error-shaped
             # result — not just a thrown exception — is the real failure signal.
@@ -299,7 +300,7 @@ def create_router(require_auth) -> APIRouter:
         from couchpotato.api import callApiHandler
         collections = []
         try:
-            result = callApiHandler('collection.list')
+            result = await run_in_threadpool(callApiHandler, 'collection.list')
             if isinstance(result, dict):
                 collections = result.get('collections', [])
         except Exception:
@@ -313,7 +314,7 @@ def create_router(require_auth) -> APIRouter:
         from couchpotato.api import callApiHandler
         collections = []
         try:
-            result = callApiHandler('collection.list', include_movies='0')
+            result = await run_in_threadpool(callApiHandler, 'collection.list', include_movies='0')
             if isinstance(result, dict):
                 collections = result.get('collections', [])
         except Exception:
@@ -338,7 +339,7 @@ def create_router(require_auth) -> APIRouter:
         """Return quality profiles as options."""
         from couchpotato.api import callApiHandler
         try:
-            result = callApiHandler('profile.list')
+            result = await run_in_threadpool(callApiHandler, 'profile.list')
             if isinstance(result, dict):
                 profiles = result.get('list', result.get('profiles', []))
             else:
