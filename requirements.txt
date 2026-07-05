@@ -26,6 +26,7 @@ lxml==6.1.1
 # Media
 enzyme==0.5.2
 bencodepy==0.9.5
+rarfile==4.2
 
 # Downloaders
 deluge-client==1.10.2

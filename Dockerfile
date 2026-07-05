@@ -45,11 +45,15 @@ ENV PYTHONUNBUFFERED=1 \
 # - curl is intentionally NOT installed — the HEALTHCHECK uses Python's stdlib
 #   urllib instead, avoiding libcurl and its recurring CVEs.
 # - libstdc++ is required at runtime by mediainfo and some compiled wheels.
+# - 7zip provides `7zz`, rarfile's preferred external tool for extracting
+#   RAR archives (VENDORED-07: replaces the vendored unrar2 binaries) so RAR
+#   extraction works out of the box in the container without extra setup.
 RUN apk add --no-cache \
         ca-certificates \
         su-exec \
         mediainfo \
-        libstdc++
+        libstdc++ \
+        7zip
 
 # Create app user
 ARG PUID=1000

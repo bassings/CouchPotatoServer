@@ -100,13 +100,23 @@ config = [{
                 {
                     'name': 'unrar',
                     'type': 'bool',
-                    'description': 'Extract rar files if found.',
+                    'description': (
+                        'Extract rar files if found.',
+                        'Requires an external extractor tool (unrar, unar, 7z/7zz, or bsdtar) '
+                        'to be installed and on PATH -- CouchPotato does not bundle one. '
+                        'Windows: install UnRAR.exe or 7-Zip and add it to PATH. '
+                        'macOS: "brew install unar" (or "brew install rar"). '
+                        'Linux: install your distro\'s "unrar" or "unar" package. '
+                        'Alpine/Docker: "apk add 7zip" (already included in the official image). '
+                        'If no tool is found, RAR extraction is skipped (archives are left alone, '
+                        'not tagged as failed) and a warning is logged once per scan.',
+                    ),
                     'default': False,
                 },
                 {
                     'advanced': True,
                     'name': 'unrar_path',
-                    'description': 'Custom path to unrar bin',
+                    'description': 'Custom path to the unrar (or unar/7z/7zz) binary, if it is not on PATH',
                 },
                 {
                     'advanced': True,
