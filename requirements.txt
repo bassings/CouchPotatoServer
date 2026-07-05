@@ -29,6 +29,7 @@ bencodepy==0.9.5
 
 # Downloaders
 deluge-client==1.10.2
+putio.py==8.8.0
 
 # Notifications
 gntp==1.0.3

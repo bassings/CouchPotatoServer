@@ -1,7 +1,10 @@
 """Task 18: Downloader tests — Transmission RPC and SABnzbd.
 
+VENDORED-02: Put.io downloader tests (maintained putiopy client).
+
 Uses unittest.mock to avoid real network calls.
 """
+import datetime
 import json
 import os
 import sys
@@ -317,3 +320,265 @@ class TestSabnzbd:
             result = sab.removeFailed(release)
 
         assert result is False
+
+
+# ===========================================================================
+# Put.io (VENDORED-02: maintained putiopy client, replacing vendored pio/tus)
+# ===========================================================================
+
+class TestPutIO:
+    """Tests for the PutIO downloader, mocking putiopy.Client so no network
+    calls are made and no real put.io credentials are needed.
+    """
+
+    def _make_putio(self, conf_values=None):
+        """Create a PutIO instance without running __init__ (which registers
+        real API views / events against the running app)."""
+        conf_values = conf_values or {}
+        import importlib
+        api_module = importlib.import_module('couchpotato.api')
+        with patch('couchpotato.core.event.addEvent'), \
+             patch.object(api_module, 'addApiView'), \
+             patch('couchpotato.core._base.downloader.main.addApiView', create=True):
+            from couchpotato.core.downloaders.putio.main import PutIO
+            putio = PutIO.__new__(PutIO)
+            putio.downloading_list = []
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        putio.conf = conf
+        return putio
+
+    @staticmethod
+    def _resource(**attrs):
+        """Build a MagicMock standing in for a putiopy _BaseResource (File or
+        Transfer). Passing `name=` to MagicMock()'s constructor configures
+        the mock's own repr instead of a `.name` attribute, so attributes
+        are set afterwards instead."""
+        mock = MagicMock()
+        for key, value in attrs.items():
+            setattr(mock, key, value)
+        return mock
+
+    # -- Client construction -------------------------------------------------
+
+    def test_download_constructs_client_with_oauth_token(self):
+        putio = self._make_putio({'oauth_token': 'my-token', 'folder': 0})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.Transfer.add_url.return_value = MagicMock(id=555)
+
+            putio.download(data={'name': 'Some.Movie', 'url': 'magnet:?xt=urn:btih:abc'})
+
+        mock_client_cls.assert_called_once_with('my-token')
+
+    # -- download() -> Transfer.add_url --------------------------------------
+
+    def test_download_sends_transfer_add_url_and_returns_download_id(self):
+        putio = self._make_putio({'oauth_token': 'tok', 'folder': 0, 'download': False})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.Transfer.add_url.return_value = MagicMock(id=1234)
+
+            result = putio.download(data={'name': 'Some.Movie', 'url': 'http://example.com/x.torrent'})
+
+        mock_client.Transfer.add_url.assert_called_once_with(
+            'http://example.com/x.torrent', callback_url=None, parent_id=0
+        )
+        assert result['id'] == 1234
+        assert result['downloader'] == 'PutIO'
+
+    def test_download_builds_callback_url_when_download_enabled(self):
+        putio = self._make_putio({
+            'oauth_token': 'tok', 'folder': 0, 'download': True,
+            'https': False, 'callback_host': 'example.com:5050',
+        })
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls, \
+             patch.object(putio_main.Env, 'get', return_value='/api/somekey/'):
+            mock_client = mock_client_cls.return_value
+            mock_client.Transfer.add_url.return_value = MagicMock(id=42)
+
+            putio.download(data={'name': 'Some.Movie', 'url': 'http://example.com/x.torrent'})
+
+        _, kwargs = mock_client.Transfer.add_url.call_args
+        assert kwargs['callback_url'].startswith('http://example.com:5050')
+        assert 'downloader.putio.getfrom' in kwargs['callback_url']
+
+    # -- test() ---------------------------------------------------------------
+
+    def test_test_returns_true_when_file_list_succeeds(self):
+        putio = self._make_putio({'oauth_token': 'tok'})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.File.list.return_value = [MagicMock()]
+
+            result = putio.test()
+
+        assert result is True
+
+    def test_test_returns_false_on_client_error(self):
+        putio = self._make_putio({'oauth_token': 'bad-token'})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.File.list.side_effect = Exception('401 Unauthorized')
+
+            result = putio.test()
+
+        assert result is False
+
+    # -- getAllDownloadStatus() -> Transfer.list() -----------------------------
+
+    def test_getAllDownloadStatus_marks_completed_when_not_downloading(self):
+        putio = self._make_putio({'oauth_token': 'tok', 'download': False})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        transfer = self._resource(id=99, name='Some.Movie', status='COMPLETED',
+                                   estimated_time=0, file_id=1, finished_at=None)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([99])
+
+        assert len(result) == 1
+        assert result[0]['id'] == 99
+        assert result[0]['status'] == 'completed'
+        assert result[0]['timeleft'] == 0
+
+    def test_getAllDownloadStatus_ignores_transfers_not_in_ids(self):
+        putio = self._make_putio({'oauth_token': 'tok', 'download': False})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        transfer = self._resource(id=1, name='Other', status='COMPLETED', estimated_time=0)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([999])
+
+        assert len(result) == 0
+
+    def test_getAllDownloadStatus_parses_finished_at_as_raw_string(self):
+        """putiopy's _BaseResource only rewrites `created_at`; `finished_at`
+        stays a raw API string, so CP's own datetime.strptime parsing must
+        keep working unmodified against the new client."""
+        putio = self._make_putio({'oauth_token': 'tok', 'download': True})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        # finished 10 minutes ago -> past the 5 minute race-condition window
+        finished = (datetime.datetime.utcnow() - datetime.timedelta(minutes=10))
+        finished_at_str = finished.strftime('%Y-%m-%dT%H:%M:%S')
+
+        transfer = self._resource(id=7, name='Some.Movie', status='COMPLETED',
+                                   estimated_time=0, file_id=55, finished_at=finished_at_str)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([7])
+
+        assert result[0]['status'] == 'completed'
+
+    def test_getAllDownloadStatus_busy_within_race_condition_window(self):
+        putio = self._make_putio({'oauth_token': 'tok', 'download': True})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        # finished 10 seconds ago -> still inside the 5 minute window
+        finished = (datetime.datetime.utcnow() - datetime.timedelta(seconds=10))
+        finished_at_str = finished.strftime('%Y-%m-%dT%H:%M:%S')
+
+        transfer = self._resource(id=8, name='Some.Movie', status='COMPLETED',
+                                   estimated_time=0, file_id=56, finished_at=finished_at_str)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([8])
+
+        assert result[0]['status'] == 'busy'
+
+    def test_getAllDownloadStatus_busy_when_still_transferring(self):
+        putio = self._make_putio({'oauth_token': 'tok', 'download': False})
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        transfer = self._resource(id=3, name='Some.Movie', status='DOWNLOADING', estimated_time=120)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client_cls.return_value.Transfer.list.return_value = [transfer]
+
+            result = putio.getAllDownloadStatus([3])
+
+        assert result[0]['status'] == 'busy'
+        assert result[0]['timeleft'] == 120
+
+    # -- putioDownloader() -> File.list()/File.download() ---------------------
+
+    def test_putioDownloader_downloads_matching_file(self):
+        putio = self._make_putio({
+            'oauth_token': 'tok', 'folder': 0,
+            'download_dir': '/downloads', 'delete_file': True,
+        })
+        putio.downloading_list = ['123']
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        matching_file = MagicMock(id=123)
+        other_file = MagicMock(id=456)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.File.list.return_value = [other_file, matching_file]
+
+            result = putio.putioDownloader('123')
+
+        mock_client.File.download.assert_called_once_with(
+            matching_file, dest='/downloads', delete_after_download=True
+        )
+        assert result is True
+        assert '123' not in putio.downloading_list
+
+    def test_putioDownloader_skips_non_matching_files(self):
+        putio = self._make_putio({
+            'oauth_token': 'tok', 'folder': 0,
+            'download_dir': '/downloads', 'delete_file': False,
+        })
+        putio.downloading_list = ['123']
+        from couchpotato.core.downloaders.putio import main as putio_main
+
+        other_file = MagicMock(id=456)
+
+        with patch.object(putio_main.pio, 'Client') as mock_client_cls:
+            mock_client = mock_client_cls.return_value
+            mock_client.File.list.return_value = [other_file]
+
+            putio.putioDownloader('123')
+
+        mock_client.File.download.assert_not_called()
+
+    # -- convertFolder()/recursionFolder() -------------------------------------
+
+    def test_convertFolder_returns_zero_for_root(self):
+        putio = self._make_putio()
+        assert putio.convertFolder(MagicMock(), 0) == 0
+
+    def test_recursionFolder_finds_matching_named_folder(self):
+        putio = self._make_putio()
+
+        root_dir = self._resource(id=10, name='Movies', content_type='application/x-directory')
+        plain_file = self._resource(id=11, name='readme.txt', content_type='text/plain')
+        client = MagicMock()
+        client.File.list.return_value = [plain_file, root_dir]
+
+        result = putio.recursionFolder(client, folder=0, tfolder='Movies')
+
+        assert result == 10
