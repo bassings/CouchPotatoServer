@@ -137,6 +137,7 @@ class MovieBase(MovieTypeBase):
 
             new = False
             previous_profile = None
+            previous_category = None
             identifier_key = 'imdb-%s' % params.get('identifier')
 
             # Serialize the get-or-insert critical section per imdb id so two
@@ -147,6 +148,7 @@ class MovieBase(MovieTypeBase):
                 try:
                     m = db.get('media', identifier_key, with_doc = True)['doc']
                     previous_profile = self.existingProfileId(db, m)
+                    previous_category = m.get('category_id')
                 except (RecordNotFound, KeyError):
                     new = True
                     try:
@@ -157,12 +159,14 @@ class MovieBase(MovieTypeBase):
                         # (provider, identifier) index rejected our insert
                         # because a concurrent insert already created this
                         # movie. Re-fetch the winner's doc and preserve its
-                        # profile exactly as a genuine found re-add does --
-                        # otherwise force_readd below would stomp the winner's
-                        # profile_id with this (losing) call's params/default.
+                        # profile/category exactly as a genuine found re-add
+                        # does -- otherwise force_readd below would stomp the
+                        # winner's values with this (losing) call's
+                        # params/default.
                         new = False
                         m = db.get('media', identifier_key, with_doc = True)['doc']
                         previous_profile = self.existingProfileId(db, m)
+                        previous_category = m.get('category_id')
 
             # Update dict to be usable
             m.update(media)
@@ -187,7 +191,7 @@ class MovieBase(MovieTypeBase):
                             fireEvent('release.delete', release['_id'], single = True)
 
                 m['profile_id'] = (params.get('profile_id') or default_profile.get('_id')) if not previous_profile else previous_profile
-                m['category_id'] = cat_id if cat_id is not None and len(cat_id) > 0 else (m.get('category_id') or None)
+                m['category_id'] = (cat_id if cat_id is not None and len(cat_id) > 0 else None) if not previous_category else previous_category
                 m['last_edit'] = int(time.time())
                 m['tags'] = []
 

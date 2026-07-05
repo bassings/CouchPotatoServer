@@ -628,6 +628,71 @@ class TestSQLiteAdapterExistingDbSelfUpgrade:
         finally:
             adapter.close()
 
+    def test_double_ddl_failure_never_bricks_startup(self, tmp_path, caplog):
+        """Compounded failure: BOTH the CREATE UNIQUE INDEX and the fallback
+        CREATE INDEX (recreate-non-unique) fail. Even with no index left at
+        all, _ensure_unique_media_identifier_index() must NOT raise -- the
+        never-brick guarantee has to hold in the worst case.
+        """
+        path = str(tmp_path / 'legacy_double_fail')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)  # clean DB -> auto-upgrades to UNIQUE
+        try:
+            # Reset to the legacy non-unique state to exercise the upgrade path.
+            real_conn = adapter._get_conn()
+            real_conn.execute("DROP INDEX idx_media_identifiers_lookup")
+            real_conn.execute(
+                "CREATE INDEX idx_media_identifiers_lookup "
+                "ON media_identifiers(provider, identifier)"
+            )
+            real_conn.commit()
+            assert not adapter._has_unique_identifier_index()
+
+            class _DoubleFlakyConn:
+                """Proxy that fails BOTH CREATE statements (unique AND the
+                non-unique recreate); DROP and PRAGMA still delegate."""
+                def __init__(self, real):
+                    self._real = real
+
+                def execute(self, sql, *args, **kwargs):
+                    if 'CREATE' in sql and 'INDEX' in sql:
+                        raise sqlite3.OperationalError('forced index create failure')
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def commit(self):
+                    return self._real.commit()
+
+                def rollback(self):
+                    return self._real.rollback()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            adapter._conn = _DoubleFlakyConn(real_conn)
+            try:
+                with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+                    # Must NOT raise even though we can't create ANY index.
+                    adapter._ensure_unique_media_identifier_index()
+            finally:
+                adapter._conn = real_conn
+
+            # Worst case: no index of that name remains, but startup survived.
+            names = [r['name'] for r in
+                     real_conn.execute("PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' not in names
+            assert not adapter._has_unique_identifier_index()
+            assert any(
+                r.levelno >= logging.WARNING and 'REG-004' in r.getMessage()
+                for r in caplog.records
+            ), "expected a warning even in the double-failure case"
+
+            # The DB is still fully usable despite the missing index.
+            assert adapter.get_by_identifier('imdb', 'tt1111111')['title'] == 'The Lost City'
+        finally:
+            adapter.close()
+
 
 def _seed_raw_db_with_duplicate_identifiers_no_index(path):
     """Create a raw couchpotato.db at ``path`` that has the core tables and

@@ -277,6 +277,89 @@ class TestMovieAddInsertRace:
             "overwrite it with the losing call's profile (profile-B)"
         )
 
+    def test_race_loss_preserves_winners_category_not_losing_calls(self):
+        """PR #152 review: same clobber bug as profile_id, for category_id.
+
+        On a force_readd re-add, m.update(media) overwrites m['category_id']
+        with THIS call's value before the preserve line runs, so the winner's
+        (just-inserted) category must be stashed before that update and
+        restored -- otherwise two concurrent add()s with different categories
+        let the loser overwrite the winner's category.
+        """
+
+        class _RacingCategoryFakeDB:
+            def __init__(self, winner_doc):
+                self.winner_doc = winner_doc
+                self.lookup_calls = 0
+                self.updated = []
+
+            def get(self, index, key, with_doc=False):
+                if index == 'media':
+                    self.lookup_calls += 1
+                    if self.lookup_calls == 1:
+                        raise KeyError('not found yet')
+                    return {'doc': dict(self.winner_doc), '_id': self.winner_doc['_id']}
+                # No profile validated for this test (winner profile is None).
+                raise KeyError('not found: %s/%s' % (index, key))
+
+            def insert(self, data):
+                raise sqlite3.IntegrityError(
+                    'UNIQUE constraint failed: media_identifiers.provider, media_identifiers.identifier'
+                )
+
+            def update(self, data):
+                self.updated.append(dict(data))
+                return {'_id': data['_id'], '_rev': 'rev2'}
+
+            def delete(self, data):
+                return True
+
+        winner_doc = {
+            '_id': 'winner-media-id',
+            '_t': 'media',
+            'type': 'movie',
+            'status': 'active',
+            'profile_id': None,
+            'category_id': 'cat-A',   # the winner's category
+            'identifiers': {'imdb': 'tt0133093'},
+            'info': {'titles': ['The Matrix']},
+            'tags': [],
+        }
+        fake_db = _RacingCategoryFakeDB(winner_doc)
+
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=fake_db),
+            patch(
+                'couchpotato.core.media.movie._base.main.fireEvent',
+                side_effect=_fire_event_returning(
+                    [], {'_id': 'winner-media-id', 'title': 'The Matrix'}
+                ),
+            ),
+        ):
+            result = plugin.add(
+                params={
+                    'identifier': 'tt0133093',
+                    'info': {'titles': ['The Matrix'], 'title': 'The Matrix'},
+                    'profile_id': None,
+                    'category_id': 'cat-B',   # the LOSING call's category
+                },
+                force_readd=True,
+                search_after=False,
+                update_after=False,
+                notify_after=False,
+                status='done',  # skip profile.default fetch; this test targets category
+            )
+
+        assert result is not False
+        assert fake_db.updated, "force_readd should have persisted the movie via db.update"
+        assert fake_db.updated[-1]['category_id'] == 'cat-A', (
+            "race-loss must preserve the winner's category (cat-A), not "
+            "overwrite it with the losing call's category (cat-B)"
+        )
+
     def test_real_threads_racing_add_same_imdb_produce_one_doc(self, tmp_path):
         """REG-004 review: real threads calling MovieBase.add() concurrently
         against a real SQLiteAdapter for the same imdb id must produce exactly
