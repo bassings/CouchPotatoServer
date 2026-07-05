@@ -1,7 +1,11 @@
 """Tests for the SQLite database adapter."""
 import json
+import logging
 import os
+import sqlite3
 import tempfile
+import threading
+import time
 
 import pytest
 
@@ -172,7 +176,10 @@ class TestSQLiteAdapterCRUD:
 class TestSQLiteAdapterIndexQueries:
     def test_media_status_query(self, db, sample_media):
         db.insert(sample_media)
-        sample2 = dict(sample_media, title='Inception', status='done')
+        # Distinct identifiers: two media docs can no longer share the same
+        # (provider, identifier) pair (REG-004 unique index).
+        sample2 = dict(sample_media, title='Inception', status='done',
+                        identifiers={'imdb': 'tt1375666', 'tmdb': 27205})
         db.insert(sample2)
 
         active = list(db.query('media_status', key='active', with_doc=True))
@@ -368,3 +375,477 @@ class TestSQLiteAdapterCompat:
         db.insert(sample_property)
         doc = db.get('property', 'manage.last_update', with_doc=True)
         assert doc['doc']['value'] == '1700000000.0'
+
+
+class TestSQLiteAdapterUniqueMediaIdentifiers:
+    """REG-004 (P0): (provider, identifier) must be unique across media docs.
+
+    Regression coverage for the prod incident where a lookup race in
+    movie.add() created 77 duplicate movie entries with the same IMDb id.
+    """
+
+    def test_duplicate_provider_identifier_raises_integrity_error(self, db, sample_media):
+        db.insert(sample_media)
+
+        duplicate = dict(sample_media)
+        duplicate.pop('_id', None)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert(duplicate)
+
+    def test_failed_duplicate_insert_leaves_no_orphaned_document(self, db, sample_media):
+        """An IntegrityError from the unique index must not leave a
+        lingering, uncommitted 'documents' row behind -- otherwise a later,
+        unrelated commit on the same connection could accidentally persist
+        the half-inserted duplicate."""
+        db.insert(sample_media)
+
+        duplicate = dict(sample_media)
+        duplicate.pop('_id', None)
+        with pytest.raises(sqlite3.IntegrityError):
+            db.insert(duplicate)
+
+        assert len(list(db.all('id'))) == 1
+
+        # A subsequent, unrelated insert must still work normally --
+        # proves the connection wasn't left in a broken transaction state.
+        other = {
+            '_t': 'media',
+            'status': 'active',
+            'title': 'Unrelated Movie',
+            'type': 'movie',
+            'identifiers': {'imdb': 'tt9999999'},
+            'info': {},
+            'tags': [],
+        }
+        db.insert(other)
+        assert len(list(db.all('id'))) == 2
+
+    def test_concurrent_inserts_of_same_identifier_yield_one_media_doc(self, db, sample_media):
+        """Simulated concurrent movie.add(): two threads race to insert a
+        media doc for the same IMDb id. Exactly one must win; the loser
+        must get IntegrityError (which movie.add() catches and re-fetches
+        instead of duplicating -- see test_movie_add_integrity.py)."""
+        results = {'ok': 0}
+        errors = []
+        barrier = threading.Barrier(2)
+
+        def worker():
+            barrier.wait()
+            doc = dict(sample_media)
+            try:
+                db.insert(doc)
+                results['ok'] += 1
+            except sqlite3.IntegrityError as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+
+        assert results['ok'] == 1
+        assert len(errors) == 1
+
+        media_docs = list(db.all('id'))
+        assert len(media_docs) == 1
+
+    def test_double_update_changing_identifiers_does_not_raise(self, db, sample_media):
+        """REG-004 review: prove the double-update path is safe with the
+        plain-INSERT denormalizer. update() DELETEs this doc's own
+        media_identifiers rows before re-inserting, so updating the same doc
+        repeatedly -- even changing its identifier on a later update -- must
+        never trip the UNIQUE (provider, identifier) index on its own rows.
+        """
+        ref = db.insert(sample_media)
+
+        # First update: identifiers unchanged (the self-collision candidate).
+        doc = db.get('id', ref['_id'])
+        doc['status'] = 'done'
+        db.update(doc)
+
+        # Second update: change the imdb identifier.
+        doc = db.get('id', ref['_id'])
+        doc['identifiers'] = {'imdb': 'tt7777777'}
+        db.update(doc)
+
+        updated = db.get('id', ref['_id'])
+        assert updated['identifiers']['imdb'] == 'tt7777777'
+        assert db.get_by_identifier('imdb', 'tt7777777')['_id'] == ref['_id']
+        # The old identifier row must be gone (no orphan / no duplicate).
+        with pytest.raises(KeyError):
+            db.get_by_identifier('imdb', 'tt0133093')
+
+
+def _make_legacy_sqlite_db(path, with_duplicate=False):
+    """Build a *pre-REG-004*-shaped SQLite DB at ``path``: the media
+    identifier index is the old NON-unique one. With ``with_duplicate`` the
+    DB also contains two media docs claiming the same (imdb, tt1111111) pair
+    -- exactly the corrupt state the prod incident left behind. The adapter
+    is closed before returning so a fresh adapter can open() the path.
+    """
+    adapter = SQLiteAdapter()
+    adapter.create(path)  # schema.sql builds the UNIQUE index...
+
+    conn = adapter._get_conn()
+    # ...downgrade it to the legacy non-unique index to mimic an old install.
+    conn.execute("DROP INDEX idx_media_identifiers_lookup")
+    conn.execute(
+        "CREATE INDEX idx_media_identifiers_lookup "
+        "ON media_identifiers(provider, identifier)"
+    )
+    conn.commit()
+    assert not adapter._has_unique_identifier_index()
+
+    adapter.insert({
+        '_t': 'media', 'type': 'movie', 'status': 'active',
+        'title': 'The Lost City', 'identifiers': {'imdb': 'tt1111111'},
+        'info': {}, 'tags': [],
+    })
+    if with_duplicate:
+        # A second, distinct media doc claiming the same identifier -- only
+        # possible because the index is currently non-unique.
+        adapter.insert({
+            '_t': 'media', 'type': 'movie', 'status': 'active',
+            'title': 'The Lost City (dup)', 'identifiers': {'imdb': 'tt1111111'},
+            'info': {}, 'tags': [],
+        })
+
+    adapter.close()
+
+
+class TestSQLiteAdapterExistingDbSelfUpgrade:
+    """REG-004 review: open() must self-upgrade an existing install to the
+    UNIQUE identifier index (open() never re-runs schema.sql), and must do so
+    without ever bricking startup on a DB that still has duplicate rows."""
+
+    def test_open_upgrades_clean_existing_db_to_unique_index(self, tmp_path):
+        path = str(tmp_path / 'legacy_clean')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)
+        try:
+            assert adapter._has_unique_identifier_index(), (
+                "open() should have upgraded the non-unique index to UNIQUE"
+            )
+            # The backstop is now live: a duplicate media doc is rejected.
+            with pytest.raises(sqlite3.IntegrityError):
+                adapter.insert({
+                    '_t': 'media', 'type': 'movie', 'status': 'active',
+                    'title': 'The Lost City (dup)',
+                    'identifiers': {'imdb': 'tt1111111'},
+                    'info': {}, 'tags': [],
+                })
+        finally:
+            adapter.close()
+
+    def test_open_with_duplicate_rows_does_not_raise_and_warns(self, tmp_path, caplog):
+        path = str(tmp_path / 'legacy_dirty')
+        _make_legacy_sqlite_db(path, with_duplicate=True)
+
+        adapter = SQLiteAdapter()
+        with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+            adapter.open(path)  # must NOT raise despite the duplicate rows
+        try:
+            # Startup survived and the index stayed non-unique (lock-only mode).
+            assert not adapter._has_unique_identifier_index()
+            assert any(
+                'duplicate' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected a loud duplicate-identifier warning"
+
+            # The (non-unique) index is still usable, and the DB still works.
+            assert len(list(adapter.all('id'))) == 2
+        finally:
+            adapter.close()
+
+    def test_non_integrity_create_failure_restores_non_unique_index(self, tmp_path, caplog):
+        """If DROP succeeds but CREATE UNIQUE INDEX fails with an UNEXPECTED
+        error (not IntegrityError/OperationalError), the non-unique index must
+        still be restored -- otherwise media_identifiers is left with NO index
+        at all (a lookup perf cliff on a large prod DB). open()/ensure must not
+        raise either.
+        """
+        path = str(tmp_path / 'legacy_clean_flaky')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)  # clean DB -> auto-upgrades to UNIQUE
+        try:
+            # Reset to the legacy non-unique state so we exercise the upgrade path.
+            real_conn = adapter._get_conn()
+            real_conn.execute("DROP INDEX idx_media_identifiers_lookup")
+            real_conn.execute(
+                "CREATE INDEX idx_media_identifiers_lookup "
+                "ON media_identifiers(provider, identifier)"
+            )
+            real_conn.commit()
+            assert not adapter._has_unique_identifier_index()
+
+            class _FlakyConn:
+                """Proxy that fails ONLY the CREATE UNIQUE INDEX with a
+                non-Integrity/Operational error; everything else delegates."""
+                def __init__(self, real):
+                    self._real = real
+
+                def execute(self, sql, *args, **kwargs):
+                    if 'CREATE UNIQUE INDEX' in sql:
+                        raise sqlite3.ProgrammingError('forced non-integrity failure')
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def commit(self):
+                    return self._real.commit()
+
+                def rollback(self):
+                    return self._real.rollback()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            adapter._conn = _FlakyConn(real_conn)
+            try:
+                with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+                    # Must NOT raise despite the unexpected CREATE failure.
+                    adapter._ensure_unique_media_identifier_index()
+            finally:
+                adapter._conn = real_conn
+
+            # Fallback restored the non-unique index (no perf cliff).
+            assert not adapter._has_unique_identifier_index()
+            names = [r['name'] for r in
+                     real_conn.execute("PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' in names, (
+                "the non-unique index must be restored after any CREATE failure"
+            )
+            assert any(
+                'failed creating the unique' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected the non-integrity create-failure warning"
+
+            # Lookups via the restored index still work.
+            assert adapter.get_by_identifier('imdb', 'tt1111111')['title'] == 'The Lost City'
+        finally:
+            adapter.close()
+
+    def test_double_ddl_failure_never_bricks_startup(self, tmp_path, caplog):
+        """Compounded failure: BOTH the CREATE UNIQUE INDEX and the fallback
+        CREATE INDEX (recreate-non-unique) fail. Even with no index left at
+        all, _ensure_unique_media_identifier_index() must NOT raise -- the
+        never-brick guarantee has to hold in the worst case.
+        """
+        path = str(tmp_path / 'legacy_double_fail')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)  # clean DB -> auto-upgrades to UNIQUE
+        try:
+            # Reset to the legacy non-unique state to exercise the upgrade path.
+            real_conn = adapter._get_conn()
+            real_conn.execute("DROP INDEX idx_media_identifiers_lookup")
+            real_conn.execute(
+                "CREATE INDEX idx_media_identifiers_lookup "
+                "ON media_identifiers(provider, identifier)"
+            )
+            real_conn.commit()
+            assert not adapter._has_unique_identifier_index()
+
+            class _DoubleFlakyConn:
+                """Proxy that fails BOTH CREATE statements (unique AND the
+                non-unique recreate); DROP and PRAGMA still delegate."""
+                def __init__(self, real):
+                    self._real = real
+
+                def execute(self, sql, *args, **kwargs):
+                    if 'CREATE' in sql and 'INDEX' in sql:
+                        raise sqlite3.OperationalError('forced index create failure')
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def commit(self):
+                    return self._real.commit()
+
+                def rollback(self):
+                    return self._real.rollback()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            adapter._conn = _DoubleFlakyConn(real_conn)
+            try:
+                with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+                    # Must NOT raise even though we can't create ANY index.
+                    adapter._ensure_unique_media_identifier_index()
+            finally:
+                adapter._conn = real_conn
+
+            # Worst case: no index of that name remains, but startup survived.
+            names = [r['name'] for r in
+                     real_conn.execute("PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' not in names
+            assert not adapter._has_unique_identifier_index()
+            assert any(
+                r.levelno >= logging.WARNING and 'REG-004' in r.getMessage()
+                for r in caplog.records
+            ), "expected a warning even in the double-failure case"
+
+            # The DB is still fully usable despite the missing index.
+            assert adapter.get_by_identifier('imdb', 'tt1111111')['title'] == 'The Lost City'
+        finally:
+            adapter.close()
+
+
+def _seed_raw_db_with_duplicate_identifiers_no_index(path):
+    """Create a raw couchpotato.db at ``path`` that has the core tables and
+    duplicate (provider, identifier) rows in media_identifiers, but NO
+    idx_media_identifiers_lookup index of any kind. This is the state a
+    retried/partial CodernityDB->SQLite migration can leave behind, where
+    create()'s schema.sql then tries to build the UNIQUE index for the first
+    time and hits the duplicate rows.
+
+    (Contrast with _make_legacy_sqlite_db, which keeps a same-named NON-unique
+    index -- there CREATE UNIQUE INDEX IF NOT EXISTS is a silent no-op and the
+    fallback never fires.)
+    """
+    os.makedirs(path, exist_ok=True)
+    db_file = os.path.join(path, 'couchpotato.db')
+    conn = sqlite3.connect(db_file)
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS documents (
+                _id TEXT PRIMARY KEY, _rev TEXT NOT NULL, _t TEXT NOT NULL,
+                data JSON NOT NULL, created_at REAL, updated_at REAL
+            );
+            CREATE TABLE IF NOT EXISTS media_identifiers (
+                media_id TEXT NOT NULL, provider TEXT NOT NULL, identifier TEXT NOT NULL,
+                PRIMARY KEY (media_id, provider)
+            );
+            """
+        )
+        conn.execute("INSERT INTO documents VALUES ('m1', 'r1', 'media', '{}', 0, 0)")
+        conn.execute("INSERT INTO documents VALUES ('m2', 'r2', 'media', '{}', 0, 0)")
+        # Same (provider, identifier) owned by two different media docs.
+        conn.execute("INSERT INTO media_identifiers VALUES ('m1', 'imdb', 'tt1111111')")
+        conn.execute("INSERT INTO media_identifiers VALUES ('m2', 'imdb', 'tt1111111')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestSQLiteAdapterInitSchemaFallback:
+    """REG-004 review: _init_schema()'s fallback (create() against an already-
+    populated path whose data has duplicate identifiers) must not crash startup
+    -- it downgrades to the non-unique index and warns. Real trigger:
+    codernity_to_sqlite.py's sqlite_db.create(sqlite_path) on a retried/partial
+    migration."""
+
+    def test_create_over_duplicate_rows_downgrades_and_warns(self, tmp_path, caplog):
+        path = str(tmp_path / 'partial_migration')
+        _seed_raw_db_with_duplicate_identifiers_no_index(path)
+
+        adapter = SQLiteAdapter()
+        with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+            adapter.create(path)  # must NOT raise despite the duplicate rows
+        try:
+            # The rest of the schema still initialized, and the index exists
+            # but as the NON-unique fallback.
+            assert not adapter._has_unique_identifier_index()
+            names = [r['name'] for r in
+                     adapter._get_conn().execute(
+                         "PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' in names, (
+                "the non-unique fallback index must be created"
+            )
+            assert any(
+                'duplicate' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected the _init_schema duplicate-identifier fallback warning"
+
+            # The DB is usable: the pre-seeded docs are readable.
+            assert len(list(adapter.all('id'))) == 2
+        finally:
+            adapter.close()
+
+
+class TestSQLiteAdapterDuplicateDetectionRegression:
+    """Promoted from tests/integration/test_duplicate_detection.py (REG-004
+    item 3): these are pure tmp_path SQLite tests with nothing integration
+    about them, but only ran under tests/integration/, which isn't part of
+    `make verify` / CI. Copied here (originals kept in place) so the exact
+    corruption branches stay covered on every PR.
+    """
+
+    @staticmethod
+    def _make_movie(imdb_id, title):
+        return {
+            '_t': 'media',
+            'type': 'movie',
+            'title': title,
+            'status': 'done',
+            'identifiers': {'imdb': imdb_id},
+            'info': {'titles': [title], 'year': 2020},
+            'files': {},
+            'tags': [],
+            'last_edit': int(time.time()),
+        }
+
+    @staticmethod
+    def _make_release(media_id, imdb_id, audio='DTS', quality='720p'):
+        return {
+            '_t': 'release',
+            'media_id': media_id,
+            'identifier': f'{imdb_id}.{audio}.{quality}',
+            'quality': quality,
+            'is_3d': 0,
+            'last_edit': int(time.time()),
+            'status': 'done',
+            'files': {},
+        }
+
+    def test_media_lookup_returns_correct_movie_among_many(self, db):
+        """BUG REPRODUCTION (Bug 1, sqlite_adapter._query_index('media')).
+
+        With multiple movies in the database, db.get('media', 'imdb-XXXX')
+        must return the movie matching XXXX, not just the first one
+        inserted. Before the fix, the SQL/params were overwritten and
+        limit=1 silently returned the first media doc in the database.
+        """
+        for movie in [
+            self._make_movie('tt5697572', 'Cats'),
+            self._make_movie('tt3105662', 'Breaking the Bank'),
+            self._make_movie('tt13320622', 'The Lost City'),
+        ]:
+            db.insert(movie)
+
+        result = db.get('media', 'imdb-tt13320622', with_doc=True)
+        doc = result['doc']
+
+        assert doc['identifiers']['imdb'] == 'tt13320622', (
+            f"Expected tt13320622 (The Lost City) but got "
+            f"{doc['identifiers']['imdb']} ({doc['title']})"
+        )
+        assert doc['title'] == 'The Lost City'
+
+    def test_release_identifier_lookup_finds_matching_release(self, db):
+        """db.get('release_identifier', ...) must return the release with
+        the matching identifier, not just any release/document."""
+        movie = db.insert(self._make_movie('tt13320622', 'The Lost City'))
+        db.insert(self._make_release(movie['_id'], 'tt13320622'))
+
+        result = db.get('release_identifier', 'tt13320622.DTS.720p', with_doc=True)
+        doc = result['doc']
+        assert doc['_t'] == 'release'
+        assert doc['identifier'] == 'tt13320622.DTS.720p'
+
+    def test_release_identifier_lookup_raises_keyerror_when_absent(self, db):
+        """BUG REPRODUCTION (Bug 2, sqlite_adapter._query_index('release_identifier')).
+
+        When a media doc exists but no matching release exists, the lookup
+        must raise KeyError -- not fall through to the generic "return all
+        documents" branch and hand back the media doc as if it were a
+        release (which caused release.add() to overwrite the media doc).
+        """
+        db.insert(self._make_movie('tt13320622', 'The Lost City'))
+
+        with pytest.raises(KeyError):
+            db.get('release_identifier', 'tt13320622.DTS.720p', with_doc=True)

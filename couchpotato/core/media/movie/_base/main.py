@@ -1,3 +1,4 @@
+import sqlite3
 import traceback
 import time
 
@@ -9,6 +10,7 @@ from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getTitle, getImdb, getIdentifier
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media.movie import MovieTypeBase
+from couchpotato.core.media_lock import media_lock
 
 
 log = CPLog(__name__)
@@ -51,6 +53,25 @@ class MovieBase(MovieTypeBase):
         addEvent('movie.add', self.add)
         addEvent('movie.update', self.update)
         addEvent('movie.update_release_dates', self.updateReleaseDate)
+
+    def existingProfileId(self, db, m):
+        """Return the media doc's current profile_id if it still resolves to a
+        real profile, else None.
+
+        Used by add() to preserve an existing (or just-inserted-by-the-race-
+        winner) movie's profile across a force_readd instead of overwriting it
+        with this call's params/default. Called from BOTH the genuine 'found'
+        branch and the IntegrityError race-loss re-fetch branch so race
+        recovery behaves identically to a real found re-add.
+        """
+        try:
+            db.get('id', m.get('profile_id'))
+            return m.get('profile_id')
+        except (RecordNotFound, KeyError):
+            return None
+        except Exception:
+            log.error('Failed getting previous profile: %s', traceback.format_exc())
+            return None
 
     def add(self, params = None, force_readd = True, search_after = True, update_after = True, notify_after = True, status = None):
         if not params: params = {}
@@ -116,19 +137,45 @@ class MovieBase(MovieTypeBase):
 
             new = False
             previous_profile = None
-            try:
-                m = db.get('media', 'imdb-%s' % params.get('identifier'), with_doc = True)['doc']
+            previous_category = None
+            identifier_key = 'imdb-%s' % params.get('identifier')
 
+            # Serialize the get-or-insert critical section per imdb id so two
+            # concurrent add()s for the same movie can't both decide "not
+            # found" and both insert (REG-004: this created 77 duplicate
+            # movie entries in production).
+            with media_lock(identifier_key):
                 try:
-                    db.get('id', m.get('profile_id'))
-                    previous_profile = m.get('profile_id')
+                    m = db.get('media', identifier_key, with_doc = True)['doc']
+                    previous_profile = self.existingProfileId(db, m)
+                    # NB: previous_category is deliberately NOT set here.
+                    # profile_id and category_id have intentionally ASYMMETRIC
+                    # genuine-found semantics (matching master): a found re-add
+                    # keeps the existing profile (existing-wins, via
+                    # previous_profile) but HONORS an explicitly-passed
+                    # category_id (new-wins, via the else-branch below). Only
+                    # the race-loss branch preserves category, to stop a losing
+                    # concurrent add() from clobbering the winner's value.
                 except (RecordNotFound, KeyError):
-                    pass
-                except Exception:
-                    log.error('Failed getting previous profile: %s', traceback.format_exc())
-            except Exception:
-                new = True
-                m = db.insert(media)
+                    new = True
+                    try:
+                        m = db.insert(media)
+                    except sqlite3.IntegrityError:
+                        # Lost the race anyway (e.g. another process, not
+                        # covered by our in-process lock): the unique
+                        # (provider, identifier) index rejected our insert
+                        # because a concurrent insert already created this
+                        # movie. Re-fetch the winner's doc and preserve its
+                        # profile/category -- otherwise force_readd below would
+                        # stomp the winner's values with this (losing) call's
+                        # params/default. previous_category is taken unvalidated
+                        # (unlike previous_profile's existingProfileId check):
+                        # the just-inserted winner's category is valid by
+                        # construction.
+                        new = False
+                        m = db.get('media', identifier_key, with_doc = True)['doc']
+                        previous_profile = self.existingProfileId(db, m)
+                        previous_category = m.get('category_id')
 
             # Update dict to be usable
             m.update(media)
@@ -153,7 +200,7 @@ class MovieBase(MovieTypeBase):
                             fireEvent('release.delete', release['_id'], single = True)
 
                 m['profile_id'] = (params.get('profile_id') or default_profile.get('_id')) if not previous_profile else previous_profile
-                m['category_id'] = cat_id if cat_id is not None and len(cat_id) > 0 else (m.get('category_id') or None)
+                m['category_id'] = previous_category if previous_category else (cat_id if cat_id is not None and len(cat_id) > 0 else (m.get('category_id') or None))
                 m['last_edit'] = int(time.time())
                 m['tags'] = []
 
@@ -172,7 +219,7 @@ class MovieBase(MovieTypeBase):
 
             # Remove releases
             for rel in fireEvent('release.for_media', m['_id'], single = True):
-                if rel['status'] is 'available':
+                if rel['status'] == 'available':
                     db.delete(rel)
 
             movie_dict = fireEvent('media.get', m['_id'], single = True)
@@ -226,7 +273,7 @@ class MovieBase(MovieTypeBase):
 
                     # Remove releases
                     for rel in fireEvent('release.for_media', m['_id'], single = True):
-                        if rel['status'] is 'available':
+                        if rel['status'] == 'available':
                             db.delete(rel)
 
                     # Default title

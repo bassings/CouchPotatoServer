@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional
 from collections.abc import Iterator
 
 from couchpotato.core.db.interface import DatabaseInterface
+from couchpotato.core.logger import CPLog
+
+
+log = CPLog(__name__)
 
 
 def _generate_id():
@@ -58,7 +62,127 @@ class SQLiteAdapter(DatabaseInterface):
         schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
         with open(schema_path) as f:
             schema_sql = f.read()
-        self._conn.executescript(schema_sql)
+        try:
+            self._conn.executescript(schema_sql)
+        except (sqlite3.IntegrityError, sqlite3.OperationalError) as schema_error:
+            # Fail-safe: the full schema (with its UNIQUE identifier index)
+            # could not be applied -- fall back to the non-unique index so the
+            # rest of the schema still initializes and startup never bricks.
+            # Every schema statement uses IF NOT EXISTS, so re-running the
+            # (downgraded) script is idempotent. Only an IntegrityError actually
+            # implies duplicate rows; an OperationalError (locked DB, I/O, an
+            # unrelated schema statement) does not -- keep the diagnosis honest
+            # so on-call isn't sent to the dedup migration for a lock error.
+            if isinstance(schema_error, sqlite3.IntegrityError):
+                log.warning(
+                    'Could not apply the full schema (likely duplicate media '
+                    'identifiers): retrying without the UNIQUE identifier index. '
+                    'Running with in-process-lock duplicate protection only; run '
+                    'the dedup migration to enable the DB-level backstop (REG-004).'
+                )
+            else:
+                log.warning(
+                    'Could not apply the full schema (%s): retrying without the '
+                    'UNIQUE identifier index. This is likely a locked database or '
+                    'an unrelated schema error rather than duplicate identifiers '
+                    '(REG-004).', schema_error
+                )
+            safe_sql = schema_sql.replace(
+                'CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
+                'CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
+            )
+            self._conn.executescript(safe_sql)
+
+    def _has_unique_identifier_index(self) -> bool:
+        """Return True if a UNIQUE index on media_identifiers(provider,
+        identifier) already exists (fresh installs get one from schema.sql)."""
+        conn = self._get_conn()
+        for idx in conn.execute("PRAGMA index_list('media_identifiers')").fetchall():
+            if not idx['unique']:
+                continue
+            # Index names here come from our own schema; quote defensively.
+            name = str(idx['name']).replace("'", "''")
+            cols = [r['name'] for r in
+                    conn.execute("PRAGMA index_info('%s')" % name).fetchall()]
+            if cols == ['provider', 'identifier']:
+                return True
+        return False
+
+    def _ensure_unique_media_identifier_index(self) -> None:
+        """Idempotently upgrade an existing install to the UNIQUE
+        media_identifiers(provider, identifier) index (REG-004).
+
+        Fresh installs already get the UNIQUE index from schema.sql, so this
+        is a no-op there. Pre-REG-004 installs have a NON-unique index named
+        ``idx_media_identifiers_lookup``; ``CREATE UNIQUE INDEX IF NOT EXISTS``
+        with that same name would silently do nothing, so we must DROP the old
+        index and recreate it UNIQUE. If historical duplicate rows exist the
+        CREATE fails -- in that case we restore the non-unique index, warn
+        loudly, and continue running with in-process-lock protection only.
+        This never auto-dedups (destructive) and never bricks startup.
+
+        Note: sqlite3 auto-commits DDL, so a failed CREATE cannot be undone by
+        a rollback -- we explicitly recreate the non-unique index instead.
+        """
+        conn = self._get_conn()
+        try:
+            if self._has_unique_identifier_index():
+                return
+
+            dropped = False
+            try:
+                with self._write_lock:
+                    conn.execute("DROP INDEX IF EXISTS idx_media_identifiers_lookup")
+                    dropped = True
+                    conn.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
+                        "ON media_identifiers(provider, identifier)"
+                    )
+                    conn.commit()
+                log.info('Upgraded media_identifiers(provider, identifier) to a '
+                         'UNIQUE index (REG-004 duplicate-media backstop).')
+            except Exception as create_error:
+                # The UNIQUE index could not be created. Restore the original
+                # non-unique index on ANY failure once we've dropped it --
+                # otherwise media_identifiers is left with NO index at all,
+                # a lookup perf cliff on large prod DBs. (This runs for the
+                # expected duplicate-rows case AND any unexpected error.)
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                if dropped:
+                    try:
+                        with self._write_lock:
+                            conn.execute(
+                                "CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
+                                "ON media_identifiers(provider, identifier)"
+                            )
+                            conn.commit()
+                    except sqlite3.Error:
+                        pass
+                if isinstance(create_error, sqlite3.IntegrityError):
+                    # Expected case: duplicate (provider, identifier) rows already
+                    # exist (the exact state the prod incident left behind), so the
+                    # DB-level backstop can't be enabled yet. Only an IntegrityError
+                    # implies duplicates -- an OperationalError (locked DB, I/O) does
+                    # not, so it takes the generic message below.
+                    log.warning(
+                        'Duplicate media identifiers present in the database: could '
+                        'not create the UNIQUE (provider, identifier) index. Running '
+                        'with in-process-lock duplicate protection only. Run the '
+                        'dedup migration to enable the database-level backstop '
+                        '(REG-004).'
+                    )
+                else:
+                    log.warning('Failed creating the unique media identifier index '
+                                '(%s); restored the non-unique index and continuing '
+                                'without the DB-level backstop (REG-004).',
+                                create_error)
+        except Exception:
+            # Absolute fail-safe: index maintenance must never brick startup.
+            log.warning('Failed ensuring the unique media identifier index; '
+                        'continuing without the DB-level backstop (REG-004).')
 
     def open(self, path: str) -> None:
         if self._conn is not None:
@@ -69,6 +193,9 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # Existing DBs never re-run schema.sql (open() doesn't call
+        # _init_schema), so self-upgrade the duplicate-media backstop here.
+        self._ensure_unique_media_identifier_index()
 
     def create(self, path: str) -> None:
         if self._conn is not None:
@@ -187,13 +314,26 @@ class SQLiteAdapter(DatabaseInterface):
 
             json_data = self._doc_to_json(data)
 
-            conn.execute(
-                "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (doc_id, doc_rev, doc_type, json_data, now, now)
-            )
+            try:
+                conn.execute(
+                    "INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)",
+                    (doc_id, doc_rev, doc_type, json_data, now, now)
+                )
 
-            # Update denormalized tables
-            self._update_denormalized(doc_id, data)
+                # Update denormalized tables
+                self._update_denormalized(doc_id, data)
+            except sqlite3.IntegrityError:
+                # E.g. the UNIQUE(provider, identifier) index on
+                # media_identifiers rejected a duplicate media doc (see
+                # REG-004). Roll back so the partially-inserted document row
+                # doesn't linger uncommitted and get swept into some later,
+                # unrelated commit -- then let the caller decide what to do
+                # (movie.add() catches this and re-fetches the existing doc
+                # instead of duplicating it).
+                if self._transaction_depth == 0:
+                    conn.rollback()
+                raise
+
             self._commit_if_not_transaction()
 
             return {'_id': doc_id, '_rev': doc_rev}
@@ -215,13 +355,22 @@ class SQLiteAdapter(DatabaseInterface):
             now = time.time()
             json_data = self._doc_to_json(data)
 
-            conn.execute(
-                "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
-                (doc_rev, doc_type, json_data, now, doc_id)
-            )
+            try:
+                conn.execute(
+                    "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
+                    (doc_rev, doc_type, json_data, now, doc_id)
+                )
 
-            # Update denormalized tables
-            self._update_denormalized(doc_id, data)
+                # Update denormalized tables
+                self._update_denormalized(doc_id, data)
+            except sqlite3.IntegrityError:
+                # E.g. an edit gave this doc an identifier another media doc
+                # already owns. Roll back rather than leaving an uncommitted
+                # half-applied update sitting on the connection.
+                if self._transaction_depth == 0:
+                    conn.rollback()
+                raise
+
             self._commit_if_not_transaction()
 
             return {'_id': doc_id, '_rev': doc_rev}
@@ -511,8 +660,14 @@ class SQLiteAdapter(DatabaseInterface):
                 identifiers['imdb'] = data['identifier']
             for provider, ident in identifiers.items():
                 if ident:
+                    # Plain INSERT (not OR REPLACE): the DELETE above already
+                    # cleared any rows this same doc owned, so the only way
+                    # this can violate the UNIQUE(provider, identifier) index
+                    # is if a *different* media doc already owns this
+                    # identifier -- in which case we want IntegrityError, not
+                    # a silent REPLACE that would delete the other doc's row.
                     conn.execute(
-                        "INSERT OR REPLACE INTO media_identifiers (media_id, provider, identifier) VALUES (?, ?, ?)",
+                        "INSERT INTO media_identifiers (media_id, provider, identifier) VALUES (?, ?, ?)",
                         (doc_id, provider, str(ident))
                     )
 

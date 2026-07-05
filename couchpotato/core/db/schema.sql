@@ -91,7 +91,18 @@ CREATE TABLE IF NOT EXISTS media_identifiers (
     PRIMARY KEY (media_id, provider)
 );
 
-CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup ON media_identifiers(provider, identifier);
+-- UNIQUE: a given (provider, identifier) pair (e.g. imdb/tt1234567) must map
+-- to exactly one media document. Without this, a lookup race in the
+-- get-or-insert path (see movie/_base/main.py:add) could create duplicate
+-- media rows for the same movie -- this is the storage-layer backstop for
+-- that class of bug (see REG-004 / the 77-duplicate-movie prod incident).
+-- This statement covers fresh installs (create() -> _init_schema()). Existing
+-- databases never re-run this file, so SQLiteAdapter.open() self-upgrades them
+-- via _ensure_unique_media_identifier_index(): a clean DB gets this UNIQUE
+-- index on next open; a DB that still holds historical duplicate rows keeps its
+-- non-unique index and runs lock-only (with a loud warning) until a dedup
+-- migration clears the dups (see REG-004 / the 77-duplicate-movie prod incident).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup ON media_identifiers(provider, identifier);
 
 -- === Media tags lookup table ===
 -- Denormalized for fast tag lookups (MediaTagIndex is a MultiTreeBasedIndex)
