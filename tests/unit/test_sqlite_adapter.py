@@ -560,6 +560,74 @@ class TestSQLiteAdapterExistingDbSelfUpgrade:
         finally:
             adapter.close()
 
+    def test_non_integrity_create_failure_restores_non_unique_index(self, tmp_path, caplog):
+        """If DROP succeeds but CREATE UNIQUE INDEX fails with an UNEXPECTED
+        error (not IntegrityError/OperationalError), the non-unique index must
+        still be restored -- otherwise media_identifiers is left with NO index
+        at all (a lookup perf cliff on a large prod DB). open()/ensure must not
+        raise either.
+        """
+        path = str(tmp_path / 'legacy_clean_flaky')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)  # clean DB -> auto-upgrades to UNIQUE
+        try:
+            # Reset to the legacy non-unique state so we exercise the upgrade path.
+            real_conn = adapter._get_conn()
+            real_conn.execute("DROP INDEX idx_media_identifiers_lookup")
+            real_conn.execute(
+                "CREATE INDEX idx_media_identifiers_lookup "
+                "ON media_identifiers(provider, identifier)"
+            )
+            real_conn.commit()
+            assert not adapter._has_unique_identifier_index()
+
+            class _FlakyConn:
+                """Proxy that fails ONLY the CREATE UNIQUE INDEX with a
+                non-Integrity/Operational error; everything else delegates."""
+                def __init__(self, real):
+                    self._real = real
+
+                def execute(self, sql, *args, **kwargs):
+                    if 'CREATE UNIQUE INDEX' in sql:
+                        raise sqlite3.ProgrammingError('forced non-integrity failure')
+                    return self._real.execute(sql, *args, **kwargs)
+
+                def commit(self):
+                    return self._real.commit()
+
+                def rollback(self):
+                    return self._real.rollback()
+
+                def __getattr__(self, name):
+                    return getattr(self._real, name)
+
+            adapter._conn = _FlakyConn(real_conn)
+            try:
+                with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+                    # Must NOT raise despite the unexpected CREATE failure.
+                    adapter._ensure_unique_media_identifier_index()
+            finally:
+                adapter._conn = real_conn
+
+            # Fallback restored the non-unique index (no perf cliff).
+            assert not adapter._has_unique_identifier_index()
+            names = [r['name'] for r in
+                     real_conn.execute("PRAGMA index_list('media_identifiers')").fetchall()]
+            assert 'idx_media_identifiers_lookup' in names, (
+                "the non-unique index must be restored after any CREATE failure"
+            )
+            assert any(
+                'failed creating the unique' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected the non-integrity create-failure warning"
+
+            # Lookups via the restored index still work.
+            assert adapter.get_by_identifier('imdb', 'tt1111111')['title'] == 'The Lost City'
+        finally:
+            adapter.close()
+
 
 class TestSQLiteAdapterDuplicateDetectionRegression:
     """Promoted from tests/integration/test_duplicate_detection.py (REG-004

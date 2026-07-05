@@ -96,9 +96,12 @@ CREATE TABLE IF NOT EXISTS media_identifiers (
 -- get-or-insert path (see movie/_base/main.py:add) could create duplicate
 -- media rows for the same movie -- this is the storage-layer backstop for
 -- that class of bug (see REG-004 / the 77-duplicate-movie prod incident).
--- Fresh installs only: no migration is run against existing databases here
--- (there is no migration runner yet, and historical dup rows in prod DBs
--- would make creating this index fail).
+-- This statement covers fresh installs (create() -> _init_schema()). Existing
+-- databases never re-run this file, so SQLiteAdapter.open() self-upgrades them
+-- via _ensure_unique_media_identifier_index(): a clean DB gets this UNIQUE
+-- index on next open; a DB that still holds historical duplicate rows keeps its
+-- non-unique index and runs lock-only (with a loud warning) until a dedup
+-- migration clears the dups (see REG-004 / the 77-duplicate-movie prod incident).
 CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup ON media_identifiers(provider, identifier);
 
 -- === Media tags lookup table ===

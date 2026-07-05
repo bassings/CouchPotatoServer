@@ -131,11 +131,12 @@ class SQLiteAdapter(DatabaseInterface):
                     conn.commit()
                 log.info('Upgraded media_identifiers(provider, identifier) to a '
                          'UNIQUE index (REG-004 duplicate-media backstop).')
-            except (sqlite3.IntegrityError, sqlite3.OperationalError):
-                # Duplicate (provider, identifier) rows already exist (the exact
-                # state the prod incident left behind), so the DB-level backstop
-                # can't be enabled yet. Restore the original non-unique index so
-                # lookups stay indexed, and warn loudly.
+            except Exception as create_error:
+                # The UNIQUE index could not be created. Restore the original
+                # non-unique index on ANY failure once we've dropped it --
+                # otherwise media_identifiers is left with NO index at all,
+                # a lookup perf cliff on large prod DBs. (This runs for the
+                # expected duplicate-rows case AND any unexpected error.)
                 try:
                     conn.rollback()
                 except sqlite3.Error:
@@ -149,13 +150,22 @@ class SQLiteAdapter(DatabaseInterface):
                         conn.commit()
                     except sqlite3.Error:
                         pass
-                log.warning(
-                    'Duplicate media identifiers present in the database: could '
-                    'not create the UNIQUE (provider, identifier) index. Running '
-                    'with in-process-lock duplicate protection only. Run the '
-                    'dedup migration to enable the database-level backstop '
-                    '(REG-004).'
-                )
+                if isinstance(create_error, (sqlite3.IntegrityError, sqlite3.OperationalError)):
+                    # Expected case: duplicate (provider, identifier) rows already
+                    # exist (the exact state the prod incident left behind), so the
+                    # DB-level backstop can't be enabled yet.
+                    log.warning(
+                        'Duplicate media identifiers present in the database: could '
+                        'not create the UNIQUE (provider, identifier) index. Running '
+                        'with in-process-lock duplicate protection only. Run the '
+                        'dedup migration to enable the database-level backstop '
+                        '(REG-004).'
+                    )
+                else:
+                    log.warning('Failed creating the unique media identifier index '
+                                '(%s); restored the non-unique index and continuing '
+                                'without the DB-level backstop (REG-004).',
+                                create_error)
         except Exception:
             # Absolute fail-safe: index maintenance must never brick startup.
             log.warning('Failed ensuring the unique media identifier index; '
