@@ -99,7 +99,10 @@ class TestExtractArchive:
         assert extracted == []
         handle.open.assert_not_called()
 
-    def test_skips_files_that_already_exist(self, tmp_path):
+    def test_does_not_rewrite_existing_files_but_reports_them(self, tmp_path):
+        # An already-extracted target is a success, not a no-op: the extract
+        # I/O is skipped (open never called, bytes untouched) but the path is
+        # still returned so the caller can tag/clean the release.
         existing = tmp_path / 'movie.mkv'
         existing.write_bytes(b'already-here')
         infos = [_make_info('movie.mkv')]
@@ -108,7 +111,7 @@ class TestExtractArchive:
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
             extracted = _Extractor().extractArchive('archive.rar', str(tmp_path))
 
-        assert extracted == []
+        assert extracted == [str(tmp_path / 'movie.mkv')]
         assert existing.read_bytes() == b'already-here'
         handle.open.assert_not_called()
 
@@ -255,6 +258,67 @@ class TestExtractFilesGracefulDegradation:
         assert len(errors) == 1
 
 
+class TestExtractFilesAlreadyExtractedIdempotency:
+    """An archive whose target files are ALL already on disk (e.g. a crash
+    between writing them and persisting the 'extracted' tag) must still be
+    tagged and cleaned up -- not skipped and retried forever."""
+
+    def _handle_with_one_file(self):
+        infos = [_make_info('movie.mkv')]
+        # contents are never read because the target already exists
+        return _make_rar_handle(infos, {'movie.mkv': b'unused'})
+
+    def test_already_extracted_archive_is_tagged_not_stuck(self, tmp_path):
+        folder = tmp_path / 'downloads'
+        folder.mkdir()
+        archive = folder / 'Movie.One.2020.rar'
+        archive.write_bytes(b'not-a-real-rar')
+        # Target file already present from a previous (crashed) extraction run.
+        already = folder / 'movie.mkv'
+        already.write_bytes(b'already-extracted')
+
+        handle = self._handle_with_one_file()
+        fake = _FakeRenamer(from_folder=str(folder))
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            _folder, _media_folder, _files, extr_files = fake.extractFiles(
+                folder=str(folder),
+                media_folder=str(folder),
+                files=[str(archive)],
+            )
+
+        # Release IS tagged 'extracted' (cleanup=False path), the existing file
+        # is reported, and it was NOT re-written (open never called).
+        assert [t['tag'] for t in fake.tagged] == ['extracted']
+        assert str(already) in extr_files
+        handle.open.assert_not_called()
+        assert already.read_bytes() == b'already-extracted'
+
+    def test_already_extracted_archive_is_cleaned_up(self, tmp_path):
+        folder = tmp_path / 'downloads'
+        folder.mkdir()
+        archive = folder / 'Movie.One.2020.rar'
+        archive.write_bytes(b'not-a-real-rar')
+        already = folder / 'movie.mkv'
+        already.write_bytes(b'already-extracted')
+
+        handle = self._handle_with_one_file()
+        fake = _FakeRenamer(from_folder=str(folder))
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            fake.extractFiles(
+                folder=str(folder),
+                media_folder=str(folder),
+                files=[str(archive)],
+                cleanup=True,
+            )
+
+        # cleanup loop ran: the source archive was removed. (With cleanup=True
+        # the release is not tagged -- cleanup supersedes tagging.)
+        assert not archive.exists()
+        handle.open.assert_not_called()
+
+
 class TestScanScopedWarning:
     """The 'no extractor tool' warning must be emitted at most once per whole
     scan, not once per movie group. Renamer.scan() may call extractFiles once
@@ -367,7 +431,9 @@ class TestNoExtractorToolMessage:
     """The warning message must name the missing tool and give per-OS install hints."""
 
     def test_mentions_all_supported_tools(self):
-        for tool in ('unrar', 'unar', '7z', '7zz'):
+        # Must match the tool list documented in the module docstring and the
+        # `unrar` setting description in api.py (which include bsdtar).
+        for tool in ('unrar', 'unar', '7z', '7zz', 'bsdtar'):
             assert tool in NO_EXTRACTOR_TOOL_MESSAGE
 
     def test_mentions_per_os_install_instructions(self):

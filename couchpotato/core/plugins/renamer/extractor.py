@@ -30,8 +30,8 @@ DEFAULT_UNRAR_TOOL = getattr(rarfile, 'ORIG_UNRAR_TOOL', rarfile.UNRAR_TOOL)
 # Shown once per scan when no external extractor tool is available for
 # rarfile to shell out to.
 NO_EXTRACTOR_TOOL_MESSAGE = (
-    'No RAR extractor tool found (rarfile needs "unrar", "unar", "7z" or '
-    '"7zz" on PATH). Skipping RAR extraction until one is installed. '
+    'No RAR extractor tool found (rarfile needs "unrar", "unar", "7z", '
+    '"7zz" or "bsdtar" on PATH). Skipping RAR extraction until one is installed. '
     'Windows: install UnRAR.exe or 7-Zip and add it to PATH (or set '
     '"Custom path to unrar bin" in Renamer settings). '
     'macOS: "brew install unar" (or "brew install rar"). '
@@ -102,10 +102,12 @@ class ExtractorMixin:
                     self._warned_no_tool = True
                 continue
             except rarfile.Error as e:
-                log.error('Failed to extract %s: %s %s', archive['file'], e, traceback.format_exc())
+                # Known archive problem (corrupt/bad RAR, wrong password, etc.).
+                log.error('Skipping archive with a known RAR problem %s: %s %s', archive['file'], e, traceback.format_exc())
                 continue
             except Exception as e:
-                log.error('Failed to extract %s: %s %s', archive['file'], e, traceback.format_exc())
+                # Anything else (I/O error, permissions, unexpected bug).
+                log.error('Unexpected error extracting %s: %s %s', archive['file'], e, traceback.format_exc())
                 continue
 
             if not extracted:
@@ -169,15 +171,25 @@ class ExtractorMixin:
         """Extract every file in a RAR archive (and its parts) into extr_path.
 
         Files are flattened to their basename in extr_path (matching the
-        previous unrar2-based behavior) and any file that already exists at
-        the destination is left alone (not re-extracted). Returns the list
-        of paths that were extracted.
+        previous unrar2-based behavior). A file that already exists at the
+        destination is not re-written (the extract I/O is skipped), but its
+        destination path IS still included in the returned list: the return
+        value is the set of target files present at the destination after
+        the call -- newly written OR already present.
+
+        This matters for idempotency: if the process crashes after the files
+        were written to disk but before the caller persisted the "extracted"
+        tag, the next scan finds every target already present. Returning them
+        (rather than an empty list) lets ``extractFiles`` still tag and clean
+        up the release instead of retrying it forever. The returned list is
+        empty only for a genuinely empty/all-directory archive.
 
         Raises ``rarfile.RarCannotExec`` if no extractor tool (unrar/unar/
         7z/7zz/bsdtar) is available, and other ``rarfile.Error`` subclasses
-        for archive problems (bad/corrupt archive, wrong password, etc).
-        Callers should treat both as "skip this archive", not a hard
-        failure -- the caller (``extractFiles``) does exactly that.
+        for archive problems (bad/corrupt archive, wrong password, etc). On
+        either failure it extracts nothing/raises, so the caller skips the
+        archive without tagging it -- the caller (``extractFiles``) does
+        exactly that.
         """
         if custom_tool_path:
             # Pin rarfile to the user-provided binary and force it to re-probe.
@@ -198,15 +210,17 @@ class ExtractorMixin:
                 if info.isdir():
                     continue
                 extr_file_path = sp(os.path.join(extr_path, os.path.basename(info.filename)))
-                if os.path.isfile(extr_file_path):
-                    continue
-                log.debug('Extracting %s...', info.filename)
-                with rar_handle.open(info) as source, open(extr_file_path, 'wb') as target:
-                    while True:
-                        chunk = source.read(1024 * 1024)
-                        if not chunk:
-                            break
-                        target.write(chunk)
+                if not os.path.isfile(extr_file_path):
+                    log.debug('Extracting %s...', info.filename)
+                    with rar_handle.open(info) as source, open(extr_file_path, 'wb') as target:
+                        while True:
+                            chunk = source.read(1024 * 1024)
+                            if not chunk:
+                                break
+                            target.write(chunk)
+                # Report the target path whether we just wrote it or it was
+                # already present -- an already-extracted archive is a success,
+                # not a no-op, so the caller can still tag/clean it up.
                 extracted.append(extr_file_path)
         finally:
             rar_handle.close()

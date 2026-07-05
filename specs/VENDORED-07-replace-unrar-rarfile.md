@@ -73,13 +73,20 @@ available on the host:
 
 - New `ExtractorMixin.extractArchive(rar_path, extr_path,
   custom_tool_path=None)`: opens the archive with `rarfile.RarFile`, iterates
-  `.infolist()`, skips directories (`info.isdir()`) and files that already
-  exist at the flattened destination path, and streams each remaining entry
-  via `rar_handle.open(info)` to `open(dest, 'wb')` in 1 MiB chunks. Returns
-  the list of newly-extracted destination paths. Raises `rarfile.Error`
-  subclasses (including `RarCannotExec`) to the caller rather than
-  swallowing them, so `extractFiles` can apply the shared
-  warn-once-and-skip / log-and-skip policy above.
+  `.infolist()`, skips directories (`info.isdir()`), and for each file streams
+  it via `rar_handle.open(info)` to `open(dest, 'wb')` in 1 MiB chunks —
+  unless a file already exists at the flattened destination, in which case
+  the re-write I/O is skipped. Returns **all** target files present at the
+  destination after the call (newly written OR already present), so the list
+  is empty only for a genuinely empty/all-directory archive. This is
+  deliberate for idempotency: if a crash/restart lands between writing the
+  files and persisting the `extracted` tag, the next scan finds every target
+  already on disk; returning them (not `[]`) lets `extractFiles` still tag and
+  clean up the release instead of retrying it forever. Raises `rarfile.Error`
+  subclasses (including `RarCannotExec`) to the caller rather than swallowing
+  them, so `extractFiles` can apply the shared warn-once-and-skip /
+  log-and-skip policy above (on those failures it returns nothing/raises, so
+  the archive is skipped without tagging).
 - `extractFiles` now calls `self.extractArchive(...)` instead of the old
   `unrar2.RarFile(...)` + manual `.extract()` loop; the surrounding
   archive-discovery, `.partNN.rar` handling, date-check, and leftover-file
@@ -156,18 +163,26 @@ fixture can't be produced without one — mocking the library boundary is the
 practical alternative):
 
 - `TestExtractArchive`: successful extraction flattens nested paths to
-  basename, skips directory entries, skips files that already exist at the
-  destination, propagates `rarfile.RarCannotExec` and `rarfile.BadRarFile`
-  to the caller, and applies a custom tool path via `rarfile.UNRAR_TOOL` +
-  `tool_setup(force=True)`.
+  basename, skips directory entries, does **not** re-write files that already
+  exist at the destination but still reports their paths, propagates
+  `rarfile.RarCannotExec` (raised from `open()`, the real seam) and
+  `rarfile.BadRarFile` to the caller, and applies/clears a custom tool path
+  via `rarfile.UNRAR_TOOL` + `tool_setup(force=True)`.
 - `TestExtractFilesGracefulDegradation`: end-to-end through
   `ExtractorMixin.extractFiles` with a minimal fake Renamer double —
   confirms exactly **one** warning is logged across two archives when no
   tool is available, that the release is **not tagged**, and that a
   `BadRarFile` on a single archive logs an error and is skipped without
   raising.
+- `TestExtractFilesAlreadyExtractedIdempotency`: an archive whose target
+  files are all already on disk (crash-between-write-and-tag) is still
+  tagged `extracted` (cleanup=False) and its source archive still cleaned up
+  (cleanup=True) — i.e. the release is not stuck retrying forever — while the
+  existing files are not re-written.
+- `TestScanScopedWarning`: the no-tool warning is emitted once per whole
+  `scan()` across multiple groups, and re-armed on the next scan.
 - `TestNoExtractorToolMessage`: the warning text names every supported tool
-  and gives install hints for all four OS families.
+  (including `bsdtar`) and gives install hints for all four OS families.
 
 ## Acceptance criteria
 
