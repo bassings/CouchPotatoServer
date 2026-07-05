@@ -29,6 +29,7 @@ bencodepy==0.9.5
 
 # Downloaders
 deluge-client==1.10.2
+qbittorrent-api==2026.6.1
 
 # Notifications
 gntp==1.0.3

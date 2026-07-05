@@ -4,12 +4,12 @@ from datetime import timedelta
 import os
 import re
 
+import qbittorrentapi
 from bencodepy import encode as bencode, decode as bdecode
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
-from couchpotato.lib.qbittorrent.client import QBittorrentClient
 
 
 log = CPLog(__name__)
@@ -25,25 +25,56 @@ class qBittorrent(DownloaderBase):
     def __init__(self):
         super().__init__()
 
-    def connect(self):
-        if self.qb is not None:
-            self.qb.logout()
+    def connect(self, reconnect = False):
+        """ Create (or reuse) the qBittorrent client and make sure it's
+        authenticated.
 
-        url = cleanHost(self.conf('host'), protocol = True, ssl = False)
+        The client/session is created once and reused across calls instead
+        of reconnecting (logging in) for every single operation: modern
+        qBittorrent bans an IP after repeated failed logins, so hammering the
+        login endpoint on every download/status/pause/delete call is
+        actively harmful. ``is_logged_in`` performs a cheap authenticated
+        call to check whether the existing session cookie is still valid and
+        only triggers a fresh ``auth_log_in()`` when it isn't (e.g. the
+        session expired or this is the first call).
 
-        if self.conf('username') and self.conf('password'):
-            self.qb = QBittorrentClient(url)
-            self.qb.login(username=self.conf('username'), password=self.conf('password'))
-        else:
-            self.qb = QBittorrentClient(url)
+        :param reconnect: force a brand new client (and log out the old
+            session first). Used by ``test()`` so a connection test always
+            reflects the current host/username/password settings instead of
+            a stale client from before the user last changed them.
+        :return: bool
+        """
 
-        return self.qb._is_authenticated
+        if reconnect and self.qb is not None:
+            try:
+                self.qb.auth_log_out()
+            except qbittorrentapi.APIError:
+                pass
+            self.qb = None
+
+        if self.qb is None:
+            url = cleanHost(self.conf('host'), protocol = True, ssl = False)
+            self.qb = qbittorrentapi.Client(
+                host = url,
+                username = self.conf('username') or None,
+                password = self.conf('password') or None,
+            )
+
+        if self.qb.is_logged_in:
+            return True
+
+        try:
+            self.qb.auth_log_in()
+            return True
+        except qbittorrentapi.APIError as e:
+            log.error('Failed to authenticate with qBittorrent: %s', e)
+            return False
 
     def test(self):
         """ Check if connection works
         :return: bool
         """
-        return self.connect()
+        return self.connect(reconnect = True)
 
     def download(self, data = None, media = None, filedata = None):
         """ Send a torrent/nzb file to the downloader
@@ -72,15 +103,28 @@ class qBittorrent(DownloaderBase):
             log.error('Failed sending torrent, no data')
             return False
 
+        # Add the torrent paused if requested, honoring the 'paused' setting
+        # (the old vendored v1 client had no way to do this at all - the
+        # torrent was always added started).
+        is_stopped = self.conf('paused')
+
         if data.get('protocol') == 'torrent_magnet':
             # Send request to qBittorrent directly as a magnet
             try:
-                self.qb.download_from_link(data.get('url'), label=self.conf('label'))
+                result = self.qb.torrents_add(
+                    urls = data.get('url'),
+                    category = self.conf('label'),
+                    is_stopped = is_stopped,
+                )
+                if str(result) == 'Fails.':
+                    log.error('Failed to send torrent to qBittorrent: %s', result)
+                    return False
+
                 torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
                 log.info('Torrent [magnet] sent to QBittorrent successfully.')
                 return self.downloadReturnId(torrent_hash)
 
-            except Exception as e:
+            except qbittorrentapi.APIError as e:
                 log.error('Failed to send torrent to qBittorrent: %s', e)
                 return False
 
@@ -94,16 +138,27 @@ class qBittorrent(DownloaderBase):
 
              # Send request to qBittorrent
              try:
-                self.qb.download_from_file(filedata, label=self.conf('label'))
+                result = self.qb.torrents_add(
+                    torrent_files = filedata,
+                    category = self.conf('label'),
+                    is_stopped = is_stopped,
+                )
+                if str(result) == 'Fails.':
+                    log.error('Failed to send torrent to qBittorrent: %s', result)
+                    return False
+
                 log.info('Torrent [file] sent to QBittorrent successfully.')
                 return self.downloadReturnId(torrent_hash)
-             except Exception as e:
+             except qbittorrentapi.APIError as e:
                 log.error('Failed to send torrent to qBittorrent: %s', e)
                 return False
 
     def getTorrentStatus(self, torrent):
 
-        if torrent['state'] in ('uploading', 'queuedUP', 'stalledUP'):
+        # qBittorrent 5.0 (Web API v2.11.0) renamed the *UP states: pausedUP
+        # became stoppedUP. Both are included here so this keeps working
+        # whichever qBittorrent version is on the other end.
+        if torrent['state'] in ('uploading', 'queuedUP', 'stalledUP', 'stoppedUP', 'forcedUP'):
             return 'seeding'
 
         if torrent['progress'] == 1:
@@ -126,13 +181,13 @@ class qBittorrent(DownloaderBase):
             return []
 
         try:
-            torrents = self.qb.torrents(status='all', label=self.conf('label'))
+            torrents = self.qb.torrents_info(status_filter = 'all', category = self.conf('label'))
 
             release_downloads = ReleaseDownloadList(self)
 
             for torrent in torrents:
                 if torrent['hash'] in ids:
-                    torrent_filelist = self.qb.get_torrent_files(torrent['hash'])
+                    torrent_filelist = self.qb.torrents_files(torrent_hash = torrent['hash'])
 
                     torrent_files = []
                     torrent_dir = os.path.join(torrent['save_path'], torrent['name'])
@@ -164,21 +219,39 @@ class qBittorrent(DownloaderBase):
 
             return release_downloads
 
-        except Exception as e:
+        except qbittorrentapi.APIError as e:
             log.error('Failed to get status from qBittorrent: %s', e)
             return []
+
+    def _getTorrent(self, torrent_hash):
+        """ Look up a single torrent by hash.
+        :return: the torrent dict, or None if it doesn't exist (or on error)
+        """
+        try:
+            torrents = self.qb.torrents_info(torrent_hashes = torrent_hash)
+        except qbittorrentapi.APIError as e:
+            log.error('Failed to look up torrent in qBittorrent: %s', e)
+            return None
+
+        return torrents[0] if torrents else None
 
     def pause(self, release_download, pause = True):
         if not self.connect():
             return False
 
-        torrent = self.qb.get_torrent(release_download['id'])
+        torrent = self._getTorrent(release_download['id'])
         if torrent is None:
             return False
 
-        if pause:
-            return self.qb.pause(release_download['id'])
-        return self.qb.resume(release_download['id'])
+        try:
+            if pause:
+                self.qb.torrents_pause(torrent_hashes = release_download['id'])
+            else:
+                self.qb.torrents_resume(torrent_hashes = release_download['id'])
+            return True
+        except qbittorrentapi.APIError as e:
+            log.error('Failed to %s torrent in qBittorrent: %s', 'pause' if pause else 'resume', e)
+            return False
 
     def removeFailed(self, release_download):
         log.info('%s failed downloading, deleting...', release_download['name'])
@@ -191,17 +264,19 @@ class qBittorrent(DownloaderBase):
         if not self.connect():
             return False
 
-        torrent = self.qb.get_torrent(release_download['id'])
+        torrent = self._getTorrent(release_download['id'])
 
         if torrent is None:
             return False
 
-        if delete_files:
-            self.qb.delete_permanently(release_download['id']) # deletes torrent with data
-        else:
-            self.qb.delete(release_download['id']) # just removes the torrent, doesn't delete data
-
-        return True
+        try:
+            # delete_files=True also deletes the downloaded data; False just
+            # removes the torrent from qBittorrent's list
+            self.qb.torrents_delete(delete_files = delete_files, torrent_hashes = release_download['id'])
+            return True
+        except qbittorrentapi.APIError as e:
+            log.error('Failed to remove torrent from qBittorrent: %s', e)
+            return False
 
 
 config = [{
