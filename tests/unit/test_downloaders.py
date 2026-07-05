@@ -521,21 +521,31 @@ class TestQBittorrent:
         _, kwargs = mock_client.torrents_add.call_args
         assert kwargs['is_stopped'] is False
 
-    def test_download_magnet_returns_false_on_fails_response(self):
+    def test_download_magnet_without_info_hash_returns_false_with_specific_error(self):
+        """A magnet URL with no urn:btih: info-hash must fail with a specific,
+        logged error and a falsy return -- NOT an uncaught IndexError from
+        re.findall(...)[0]. The hash is extracted before the API-error try
+        block, so this path never reaches (or is masked by) torrents_add()."""
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
         import couchpotato.core.downloaders.qbittorrent_ as qbt_main
 
-        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
+             patch.object(qbt_main.log, 'error') as mock_log_error:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
-            mock_client.torrents_add.return_value = 'Fails.'
 
+            # No IndexError should escape -- a bad magnet is a handled failure.
             result = qbt.download(data={
                 'name': 'Some.Movie', 'protocol': 'torrent_magnet',
-                'url': 'magnet:?xt=urn:btih:AABBCCDDEEFF00112233445566778899AABBCCDD',
+                'url': 'magnet:?xt=urn:sha1:notabtihhash&dn=Some.Movie',
             })
 
         assert result is False
+        # The torrent is never sent to qBittorrent when the hash can't be read.
+        mock_client.torrents_add.assert_not_called()
+        # The specific no-info-hash message is logged (not a generic traceback).
+        assert mock_log_error.call_count == 1
+        assert 'no info-hash in magnet URL' in mock_log_error.call_args[0][0]
 
     def test_download_magnet_returns_false_on_api_error(self):
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
@@ -738,6 +748,9 @@ class TestQBittorrent:
             result = qbt.pause({'id': 'ABC123'}, pause=True)
 
         assert result is True
+        # _getTorrent must look up ONLY this hash (torrent_hashes= filter), not
+        # fetch every torrent and grab [0] -- guard against that regression.
+        mock_client.torrents_info.assert_called_once_with(torrent_hashes='ABC123')
         mock_client.torrents_pause.assert_called_once_with(torrent_hashes='ABC123')
         mock_client.torrents_resume.assert_not_called()
 
@@ -810,6 +823,9 @@ class TestQBittorrent:
             result = qbt.processComplete({'id': 'ABC123', 'name': 'Some.Movie'}, delete_files=False)
 
         assert result is True
+        # _getTorrent must look up ONLY this hash (torrent_hashes= filter), not
+        # fetch every torrent and grab [0] -- guard against that regression.
+        mock_client.torrents_info.assert_called_once_with(torrent_hashes='ABC123')
         mock_client.torrents_delete.assert_called_once_with(delete_files=False, torrent_hashes='ABC123')
 
     def test_processComplete_removes_torrent_and_data(self):

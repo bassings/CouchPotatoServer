@@ -109,18 +109,25 @@ class qBittorrent(DownloaderBase):
         is_stopped = self.conf('paused')
 
         if data.get('protocol') == 'torrent_magnet':
-            # Send request to qBittorrent directly as a magnet
+            # Extract the info-hash from the magnet BEFORE the API call so a
+            # malformed magnet (no urn:btih:) fails with a specific, logged
+            # error rather than an uncaught IndexError bubbling up to
+            # fireEvent's blanket handler.
+            hash_match = re.findall(r'urn:btih:([\w]{32,40})', data.get('url') or '')
+            if not hash_match:
+                log.error('Failed to send torrent to qBittorrent: no info-hash in magnet URL "%s"', data.get('url'))
+                return False
+            torrent_hash = hash_match[0].upper()
+
+            # Send request to qBittorrent directly as a magnet. A genuine add
+            # failure surfaces as a typed qbittorrentapi.APIError (e.g.
+            # Conflict409Error), caught below.
             try:
-                result = self.qb.torrents_add(
+                self.qb.torrents_add(
                     urls = data.get('url'),
                     category = self.conf('label'),
                     is_stopped = is_stopped,
                 )
-                if str(result) == 'Fails.':
-                    log.error('Failed to send torrent to qBittorrent: %s', result)
-                    return False
-
-                torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
                 log.info('Torrent [magnet] sent to QBittorrent successfully.')
                 return self.downloadReturnId(torrent_hash)
 
@@ -136,17 +143,14 @@ class qBittorrent(DownloaderBase):
              if len(torrent_hash) == 32:
                 torrent_hash = b16encode(b32decode(torrent_hash))
 
-             # Send request to qBittorrent
+             # Send request to qBittorrent. A genuine add failure surfaces as
+             # a typed qbittorrentapi.APIError, caught below.
              try:
-                result = self.qb.torrents_add(
+                self.qb.torrents_add(
                     torrent_files = filedata,
                     category = self.conf('label'),
                     is_stopped = is_stopped,
                 )
-                if str(result) == 'Fails.':
-                    log.error('Failed to send torrent to qBittorrent: %s', result)
-                    return False
-
                 log.info('Torrent [file] sent to QBittorrent successfully.')
                 return self.downloadReturnId(torrent_hash)
              except qbittorrentapi.APIError as e:

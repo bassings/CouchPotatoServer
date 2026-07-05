@@ -58,7 +58,7 @@ The vendored client also:
 | `QBittorrentClient(url)` + `.login(username=, password=)` | `qbittorrentapi.Client(host=, username=, password=)` + `.auth_log_in()` | `Client.__init__` also accepts `VERIFY_WEBUI_CERTIFICATE`, `api_key`, etc. — not needed here, defaults are fine |
 | `.qb._is_authenticated` (private attr) | `.is_logged_in` (public property; performs a cheap authenticated call to check the session cookie is still accepted) | Public, documented API — no more reaching into a private attribute |
 | `.logout()` | `.auth_log_out()` | |
-| `.download_from_link(magnet, label=)` | `.torrents_add(urls=magnet, category=, is_stopped=)` | `label` -> `category` (qBt "category" is the WebUI v2 successor to v1 "label"); returns `"Ok."`/`"Fails."` (or, on very new Web API versions, a `TorrentsAddedMetadata` JSON object) — checked via `str(result) == 'Fails.'` |
+| `.download_from_link(magnet, label=)` | `.torrents_add(urls=magnet, category=, is_stopped=)` | `label` -> `category` (qBt "category" is the WebUI v2 successor to v1 "label"). Genuine add failures raise typed exceptions (`Conflict409Error` etc.), caught by `except qbittorrentapi.APIError` — CP does **not** inspect the return value (on WebAPI v2.14+ it's a `TorrentsAddedMetadata` object, never the legacy `"Ok."`/`"Fails."` string) |
 | `.download_from_file(filedata, label=)` | `.torrents_add(torrent_files=filedata, category=, is_stopped=)` | same as above |
 | `.torrents(status='all', label=)` reading `hash/name/state/progress/ratio/eta/save_path` | `.torrents_info(status_filter='all', category=)` | Returns `TorrentInfoList` of `TorrentDictionary` — both subclass `dict` (via `AttrDict`), so `torrent['hash']` etc. keep working unmodified; field names are qBittorrent's raw WebUI JSON keys, unaffected by the client library swap |
 | `.get_torrent_files(hash)` reading `.name` | `.torrents_files(torrent_hash=hash)` | Same dict-subclass behavior, `f['name']` still works |
@@ -156,7 +156,11 @@ needed:
   `test_test_tolerates_logout_failure_on_already_dead_session`.
 - `download()`: `test_download_magnet_sends_category_and_honours_paused_setting`
   (pins the paused-now-honoured fix), `test_download_magnet_defaults_to_started_when_not_paused`,
-  `test_download_magnet_returns_false_on_fails_response`,
+  `test_download_magnet_without_info_hash_returns_false_with_specific_error`
+  (a malformed magnet with no `urn:btih:` is a handled failure — logs the
+  specific "no info-hash" message and returns falsy without ever calling
+  `torrents_add()`, rather than raising an uncaught `IndexError` from
+  `re.findall(...)[0]`),
   `test_download_magnet_returns_false_on_api_error`,
   `test_download_file_sends_torrent_files_and_category`,
   `test_download_file_without_filedata_fails_before_connecting`,
