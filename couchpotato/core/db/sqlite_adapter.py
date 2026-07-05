@@ -12,6 +12,10 @@ from typing import Any, Dict, List, Optional
 from collections.abc import Iterator
 
 from couchpotato.core.db.interface import DatabaseInterface
+from couchpotato.core.logger import CPLog
+
+
+log = CPLog(__name__)
 
 
 def _generate_id():
@@ -58,7 +62,104 @@ class SQLiteAdapter(DatabaseInterface):
         schema_path = os.path.join(os.path.dirname(__file__), 'schema.sql')
         with open(schema_path) as f:
             schema_sql = f.read()
-        self._conn.executescript(schema_sql)
+        try:
+            self._conn.executescript(schema_sql)
+        except (sqlite3.IntegrityError, sqlite3.OperationalError):
+            # Fail-safe: create() ran against a path that already holds data
+            # with duplicate (provider, identifier) rows, so the UNIQUE index
+            # in schema.sql can't be built. Fall back to the non-unique index
+            # so the rest of the schema still initializes and startup never
+            # bricks. Every schema statement uses IF NOT EXISTS, so re-running
+            # the (downgraded) script is idempotent.
+            log.warning(
+                'Could not apply the full schema (likely duplicate media '
+                'identifiers): retrying without the UNIQUE identifier index. '
+                'Running with in-process-lock duplicate protection only; run '
+                'the dedup migration to enable the DB-level backstop (REG-004).'
+            )
+            safe_sql = schema_sql.replace(
+                'CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
+                'CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
+            )
+            self._conn.executescript(safe_sql)
+
+    def _has_unique_identifier_index(self) -> bool:
+        """Return True if a UNIQUE index on media_identifiers(provider,
+        identifier) already exists (fresh installs get one from schema.sql)."""
+        conn = self._get_conn()
+        for idx in conn.execute("PRAGMA index_list('media_identifiers')").fetchall():
+            if not idx['unique']:
+                continue
+            # Index names here come from our own schema; quote defensively.
+            name = str(idx['name']).replace("'", "''")
+            cols = [r['name'] for r in
+                    conn.execute("PRAGMA index_info('%s')" % name).fetchall()]
+            if cols == ['provider', 'identifier']:
+                return True
+        return False
+
+    def _ensure_unique_media_identifier_index(self) -> None:
+        """Idempotently upgrade an existing install to the UNIQUE
+        media_identifiers(provider, identifier) index (REG-004).
+
+        Fresh installs already get the UNIQUE index from schema.sql, so this
+        is a no-op there. Pre-REG-004 installs have a NON-unique index named
+        ``idx_media_identifiers_lookup``; ``CREATE UNIQUE INDEX IF NOT EXISTS``
+        with that same name would silently do nothing, so we must DROP the old
+        index and recreate it UNIQUE. If historical duplicate rows exist the
+        CREATE fails -- in that case we restore the non-unique index, warn
+        loudly, and continue running with in-process-lock protection only.
+        This never auto-dedups (destructive) and never bricks startup.
+
+        Note: sqlite3 auto-commits DDL, so a failed CREATE cannot be undone by
+        a rollback -- we explicitly recreate the non-unique index instead.
+        """
+        conn = self._get_conn()
+        try:
+            if self._has_unique_identifier_index():
+                return
+
+            dropped = False
+            try:
+                with self._write_lock:
+                    conn.execute("DROP INDEX IF EXISTS idx_media_identifiers_lookup")
+                    dropped = True
+                    conn.execute(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
+                        "ON media_identifiers(provider, identifier)"
+                    )
+                    conn.commit()
+                log.info('Upgraded media_identifiers(provider, identifier) to a '
+                         'UNIQUE index (REG-004 duplicate-media backstop).')
+            except (sqlite3.IntegrityError, sqlite3.OperationalError):
+                # Duplicate (provider, identifier) rows already exist (the exact
+                # state the prod incident left behind), so the DB-level backstop
+                # can't be enabled yet. Restore the original non-unique index so
+                # lookups stay indexed, and warn loudly.
+                try:
+                    conn.rollback()
+                except sqlite3.Error:
+                    pass
+                if dropped:
+                    try:
+                        conn.execute(
+                            "CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
+                            "ON media_identifiers(provider, identifier)"
+                        )
+                        conn.commit()
+                    except sqlite3.Error:
+                        pass
+                log.warning(
+                    'Duplicate media identifiers present in the database: could '
+                    'not create the UNIQUE (provider, identifier) index. Running '
+                    'with in-process-lock duplicate protection only. Run the '
+                    'dedup migration to enable the database-level backstop '
+                    '(REG-004).'
+                )
+        except Exception:
+            # Absolute fail-safe: index maintenance must never brick startup.
+            log.warning('Failed ensuring the unique media identifier index; '
+                        'continuing without the DB-level backstop (REG-004).')
 
     def open(self, path: str) -> None:
         if self._conn is not None:
@@ -69,6 +170,9 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
+        # Existing DBs never re-run schema.sql (open() doesn't call
+        # _init_schema), so self-upgrade the duplicate-media backstop here.
+        self._ensure_unique_media_identifier_index()
 
     def create(self, path: str) -> None:
         if self._conn is not None:

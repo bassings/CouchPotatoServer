@@ -4,9 +4,14 @@ This module provides one-way migration from the legacy CodernityDB
 document store to the new SQLite database format.
 """
 import os
+import sqlite3
 import sys
 
 from CodernityDB.database_super_thread_safe import SuperThreadSafeDatabase
+from couchpotato.core.logger import CPLog
+
+
+log = CPLog(__name__)
 
 
 def migrate_codernity_to_sqlite(codernity_path: str, sqlite_path: str, sqlite_db) -> int:
@@ -46,6 +51,7 @@ def migrate_codernity_to_sqlite(codernity_path: str, sqlite_path: str, sqlite_db
     # Migrate all documents
     migrated = 0
     errors = 0
+    duplicates = 0
     doc_types = {}
 
     print("  Reading documents from CodernityDB...")
@@ -65,9 +71,30 @@ def migrate_codernity_to_sqlite(codernity_path: str, sqlite_path: str, sqlite_db
                 if migrated % 100 == 0:
                     print(f"  Migrated {migrated} documents...", end='\r')
 
+            except sqlite3.IntegrityError as e:
+                # The UNIQUE (provider, identifier) index (REG-004) rejected a
+                # document whose media identifier is already taken by an
+                # earlier-migrated doc. This is a DATA-LOSS event on a
+                # disaster-recovery path -- the source DB contained duplicate
+                # media, and this row is NOT carried into SQLite. Make it loud;
+                # the original CodernityDB is preserved in database.bak.
+                duplicates += 1
+                doc_id = doc.get('_id', 'unknown')
+                print(f"  DUPLICATE: skipping document {doc_id} (identifier already migrated): {e}")
+                log.warning(
+                    'Migration DROPPED a duplicate-identifier document %s '
+                    '(_t=%s): its media identifier was already migrated, and '
+                    'the UNIQUE index rejected it (REG-004). This row was NOT '
+                    'migrated (data loss); the original is preserved in '
+                    'database.bak. Error: %s',
+                    doc_id, doc.get('_t', 'unknown'), e,
+                )
+
             except Exception as e:
                 errors += 1
-                print(f"  Warning: Failed to migrate document {doc.get('_id', 'unknown')}: {e}")
+                doc_id = doc.get('_id', 'unknown')
+                print(f"  Warning: Failed to migrate document {doc_id}: {e}")
+                log.warning('Failed to migrate document %s: %s', doc_id, e)
 
     except Exception as e:
         print(f"  Error iterating CodernityDB: {e}")
@@ -77,7 +104,16 @@ def migrate_codernity_to_sqlite(codernity_path: str, sqlite_path: str, sqlite_db
         codernity_db.close()
 
     # Print summary
-    print(f"\n  Migration complete: {migrated} documents, {errors} errors")
+    print(f"\n  Migration complete: {migrated} documents, {errors} errors, "
+          f"{duplicates} duplicate-identifier documents skipped")
+    if duplicates:
+        log.warning(
+            '%s duplicate-identifier document(s) were skipped during migration '
+            'and are NOT present in the SQLite database. The original CodernityDB '
+            'is preserved in database.bak. Run the dedup migration to recover '
+            'them (REG-004).',
+            duplicates,
+        )
     print("  Document types migrated:")
     for doc_type, count in sorted(doc_types.items()):
         print(f"    {doc_type}: {count}")

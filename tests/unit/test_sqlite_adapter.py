@@ -1,5 +1,6 @@
 """Tests for the SQLite database adapter."""
 import json
+import logging
 import os
 import sqlite3
 import tempfile
@@ -448,6 +449,116 @@ class TestSQLiteAdapterUniqueMediaIdentifiers:
 
         media_docs = list(db.all('id'))
         assert len(media_docs) == 1
+
+    def test_double_update_changing_identifiers_does_not_raise(self, db, sample_media):
+        """REG-004 review: prove the double-update path is safe with the
+        plain-INSERT denormalizer. update() DELETEs this doc's own
+        media_identifiers rows before re-inserting, so updating the same doc
+        repeatedly -- even changing its identifier on a later update -- must
+        never trip the UNIQUE (provider, identifier) index on its own rows.
+        """
+        ref = db.insert(sample_media)
+
+        # First update: identifiers unchanged (the self-collision candidate).
+        doc = db.get('id', ref['_id'])
+        doc['status'] = 'done'
+        db.update(doc)
+
+        # Second update: change the imdb identifier.
+        doc = db.get('id', ref['_id'])
+        doc['identifiers'] = {'imdb': 'tt7777777'}
+        db.update(doc)
+
+        updated = db.get('id', ref['_id'])
+        assert updated['identifiers']['imdb'] == 'tt7777777'
+        assert db.get_by_identifier('imdb', 'tt7777777')['_id'] == ref['_id']
+        # The old identifier row must be gone (no orphan / no duplicate).
+        with pytest.raises(KeyError):
+            db.get_by_identifier('imdb', 'tt0133093')
+
+
+def _make_legacy_sqlite_db(path, with_duplicate=False):
+    """Build a *pre-REG-004*-shaped SQLite DB at ``path``: the media
+    identifier index is the old NON-unique one. With ``with_duplicate`` the
+    DB also contains two media docs claiming the same (imdb, tt1111111) pair
+    -- exactly the corrupt state the prod incident left behind. The adapter
+    is closed before returning so a fresh adapter can open() the path.
+    """
+    adapter = SQLiteAdapter()
+    adapter.create(path)  # schema.sql builds the UNIQUE index...
+
+    conn = adapter._get_conn()
+    # ...downgrade it to the legacy non-unique index to mimic an old install.
+    conn.execute("DROP INDEX idx_media_identifiers_lookup")
+    conn.execute(
+        "CREATE INDEX idx_media_identifiers_lookup "
+        "ON media_identifiers(provider, identifier)"
+    )
+    conn.commit()
+    assert not adapter._has_unique_identifier_index()
+
+    adapter.insert({
+        '_t': 'media', 'type': 'movie', 'status': 'active',
+        'title': 'The Lost City', 'identifiers': {'imdb': 'tt1111111'},
+        'info': {}, 'tags': [],
+    })
+    if with_duplicate:
+        # A second, distinct media doc claiming the same identifier -- only
+        # possible because the index is currently non-unique.
+        adapter.insert({
+            '_t': 'media', 'type': 'movie', 'status': 'active',
+            'title': 'The Lost City (dup)', 'identifiers': {'imdb': 'tt1111111'},
+            'info': {}, 'tags': [],
+        })
+
+    adapter.close()
+
+
+class TestSQLiteAdapterExistingDbSelfUpgrade:
+    """REG-004 review: open() must self-upgrade an existing install to the
+    UNIQUE identifier index (open() never re-runs schema.sql), and must do so
+    without ever bricking startup on a DB that still has duplicate rows."""
+
+    def test_open_upgrades_clean_existing_db_to_unique_index(self, tmp_path):
+        path = str(tmp_path / 'legacy_clean')
+        _make_legacy_sqlite_db(path, with_duplicate=False)
+
+        adapter = SQLiteAdapter()
+        adapter.open(path)
+        try:
+            assert adapter._has_unique_identifier_index(), (
+                "open() should have upgraded the non-unique index to UNIQUE"
+            )
+            # The backstop is now live: a duplicate media doc is rejected.
+            with pytest.raises(sqlite3.IntegrityError):
+                adapter.insert({
+                    '_t': 'media', 'type': 'movie', 'status': 'active',
+                    'title': 'The Lost City (dup)',
+                    'identifiers': {'imdb': 'tt1111111'},
+                    'info': {}, 'tags': [],
+                })
+        finally:
+            adapter.close()
+
+    def test_open_with_duplicate_rows_does_not_raise_and_warns(self, tmp_path, caplog):
+        path = str(tmp_path / 'legacy_dirty')
+        _make_legacy_sqlite_db(path, with_duplicate=True)
+
+        adapter = SQLiteAdapter()
+        with caplog.at_level(logging.WARNING, logger='couchpotato.core.db.sqlite_adapter'):
+            adapter.open(path)  # must NOT raise despite the duplicate rows
+        try:
+            # Startup survived and the index stayed non-unique (lock-only mode).
+            assert not adapter._has_unique_identifier_index()
+            assert any(
+                'duplicate' in r.getMessage().lower()
+                for r in caplog.records if r.levelno >= logging.WARNING
+            ), "expected a loud duplicate-identifier warning"
+
+            # The (non-unique) index is still usable, and the DB still works.
+            assert len(list(adapter.all('id'))) == 2
+        finally:
+            adapter.close()
 
 
 class TestSQLiteAdapterDuplicateDetectionRegression:

@@ -12,8 +12,11 @@ Covers:
 """
 import json
 import sqlite3
+import threading
+import time
 from unittest.mock import patch
 
+from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
 from couchpotato.core.media.movie._base.main import MovieBase
 
 
@@ -187,3 +190,189 @@ class TestMovieAddInsertRace:
             "must re-fetch the doc the race winner inserted after catching "
             "IntegrityError, instead of giving up or duplicating"
         )
+
+    def test_real_threads_racing_add_same_imdb_produce_one_doc(self, tmp_path):
+        """REG-004 review: real threads calling MovieBase.add() concurrently
+        against a real SQLiteAdapter for the same imdb id must produce exactly
+        ONE media doc, with no exception surfacing.
+
+        This is the end-to-end guarantee of the two layers working together:
+        media_lock serializes the get-or-insert critical section, and the
+        UNIQUE (provider, identifier) backstop absorbs the residual window
+        where a late thread's SELECT on the shared SQLite connection hasn't
+        yet observed the winner's just-committed row (a real shared-connection
+        read-visibility race). The lock's serialization is proven in isolation
+        by test_media_lock_serializes_add_without_db_backstop below.
+        """
+        adapter = SQLiteAdapter()
+        adapter.create(str(tmp_path / 'race_db'))
+
+        plugin = MovieBase.__new__(MovieBase)
+        # search_on_add lookup must not touch real settings.
+        plugin.conf = lambda *a, **k: False
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.for_media':
+                return []
+            if event == 'media.get':
+                return {'_id': args[0], 'title': 'The Matrix'}
+            return None
+
+        params = {
+            'identifier': 'tt0133093',
+            'info': {'titles': ['The Matrix'], 'title': 'The Matrix'},
+            'profile_id': 'profile-1',
+        }
+
+        n_threads = 4
+        barrier = threading.Barrier(n_threads)
+        errors = []
+
+        def worker():
+            barrier.wait()  # maximize real contention on the critical section
+            try:
+                plugin.add(
+                    params=dict(params),
+                    force_readd=True,
+                    search_after=False,
+                    update_after=False,
+                    notify_after=False,
+                )
+            except Exception as e:  # noqa: BLE001 - surface any thread failure
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=adapter),
+            patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=fake_fire_event),
+        ):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=15)
+
+        try:
+            assert not errors, f"add() raised under concurrency: {errors}"
+            assert all(not t.is_alive() for t in threads), "a thread hung"
+
+            media_docs = [d for d in adapter.all('id') if d.get('_t') == 'media']
+            assert len(media_docs) == 1, (
+                f"expected exactly one media doc, got {len(media_docs)}"
+            )
+        finally:
+            adapter.close()
+
+    def test_media_lock_serializes_add_without_db_backstop(self):
+        """REG-004 review: prove media_lock ALONE serializes the get-or-insert,
+        independent of the DB-level UNIQUE backstop.
+
+        Uses an in-memory DB with instantly-consistent reads and NO uniqueness
+        enforcement, whose insert() sleeps to widen the race window. If the
+        lock serializes the critical section, only the first of N racing
+        threads ever reaches insert (the rest find the doc), so there is
+        exactly one insert and one media doc. Without the lock, every thread
+        would miss during the sleep and insert, yielding N docs -- so this
+        test would fail, isolating the lock's contribution.
+        """
+
+        class _ConsistentFakeDB:
+            def __init__(self, insert_delay=0.05):
+                self._docs = {}       # _id -> doc
+                self._by_imdb = {}    # imdb -> _id
+                self._lock = threading.Lock()
+                self.insert_delay = insert_delay
+                self.inserts = 0
+                self._counter = 0
+
+            def get(self, index, key, with_doc=False):
+                if index == 'media':
+                    imdb = key.split('-', 1)[1] if '-' in key else key
+                    with self._lock:
+                        _id = self._by_imdb.get(imdb)
+                    if _id is None:
+                        raise KeyError(key)
+                    return {'doc': dict(self._docs[_id]), '_id': _id}
+                if index == 'id':
+                    with self._lock:
+                        if key in self._docs:
+                            return dict(self._docs[key])
+                    raise KeyError(key)
+                raise KeyError(key)
+
+            def insert(self, data):
+                # Widen the get->insert window so a broken lock would let a
+                # second thread miss and also insert.
+                time.sleep(self.insert_delay)
+                with self._lock:
+                    self.inserts += 1
+                    self._counter += 1
+                    _id = 'media-%d' % self._counter
+                    doc = dict(data)
+                    doc['_id'] = _id
+                    doc['_rev'] = 'r1'
+                    self._docs[_id] = doc  # NO uniqueness enforcement
+                    imdb = data.get('identifiers', {}).get('imdb')
+                    if imdb:
+                        self._by_imdb.setdefault(imdb, _id)
+                    return {'_id': _id, '_rev': 'r1'}
+
+            def update(self, data):
+                with self._lock:
+                    self._docs[data['_id']] = dict(data)
+                return {'_id': data['_id'], '_rev': 'r2'}
+
+            def media_count(self):
+                with self._lock:
+                    return sum(1 for d in self._docs.values() if d.get('_t') == 'media')
+
+        fake_db = _ConsistentFakeDB()
+
+        plugin = MovieBase.__new__(MovieBase)
+        plugin.conf = lambda *a, **k: False
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.for_media':
+                return []
+            if event == 'media.get':
+                return {'_id': args[0], 'title': 'The Matrix'}
+            return None
+
+        params = {
+            'identifier': 'tt0133093',
+            'info': {'titles': ['The Matrix'], 'title': 'The Matrix'},
+            'profile_id': 'profile-1',
+        }
+
+        n_threads = 4
+        barrier = threading.Barrier(n_threads)
+        errors = []
+
+        def worker():
+            barrier.wait()
+            try:
+                plugin.add(
+                    params=dict(params),
+                    force_readd=True,
+                    search_after=False,
+                    update_after=False,
+                    notify_after=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=worker) for _ in range(n_threads)]
+        with (
+            patch('couchpotato.core.media.movie._base.main.get_db', return_value=fake_db),
+            patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=fake_fire_event),
+        ):
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=15)
+
+        assert not errors, f"add() raised under concurrency: {errors}"
+        assert fake_db.inserts == 1, (
+            "media_lock must serialize the get-or-insert so only the first "
+            f"thread inserts; got {fake_db.inserts} inserts (lock not working)"
+        )
+        assert fake_db.media_count() == 1

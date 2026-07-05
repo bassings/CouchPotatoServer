@@ -41,12 +41,45 @@ correctness bug (`is` vs `==` on a JSON-deserialized string).
 ### Fix
 
 - `schema.sql`: `idx_media_identifiers_lookup` becomes a `CREATE UNIQUE INDEX`
-  on `media_identifiers(provider, identifier)`. **Fresh installs only** — no
-  migration runs against existing databases (there is no migration runner
-  yet, and historical prod DBs may still contain duplicate rows from the
-  incident above, which would make creating a unique index fail outright).
-  Applying this to existing DBs via a future schema-migration runner is a
-  tracked follow-up, not part of this change.
+  on `media_identifiers(provider, identifier)`. This covers **fresh installs**
+  via `create()` → `_init_schema()`.
+- `sqlite_adapter.py` — **existing-DB self-upgrade** (added in the review
+  follow-up): `open()` never re-runs `schema.sql`, so fresh-install-only
+  coverage would leave every pre-REG-004 database (including prod's live DB —
+  the one from the 77-duplicate incident) permanently unprotected. `open()`
+  now calls `_ensure_unique_media_identifier_index()`, which:
+  - Detects (via `PRAGMA index_list`/`index_info`) whether a UNIQUE index on
+    `media_identifiers(provider, identifier)` already exists; if so, no-op.
+  - Otherwise the install has the legacy **non-unique** index named
+    `idx_media_identifiers_lookup`. Because `CREATE UNIQUE INDEX IF NOT EXISTS`
+    with that same name is a silent no-op, it **`DROP`s** the old index and
+    **`CREATE`s** it UNIQUE (SQLite auto-commits DDL, so a failed CREATE can't
+    be rolled back — the drop+recreate is explicit and deliberate).
+  - If the CREATE fails because **historical duplicate rows still exist**
+    (`sqlite3.IntegrityError`/`OperationalError`), it does **not** auto-dedup
+    (destructive). It recreates the original non-unique index and logs a LOUD
+    `log.warning` (duplicate identifiers present → running with in-process-lock
+    protection only → run the future dedup migration to enable the DB-level
+    backstop), then continues startup. Startup **never bricks**.
+  - Net: clean existing DBs self-upgrade to the backstop the first time they
+    open; dirty DBs keep working in lock-only mode with a loud warning until a
+    dedup migration runs.
+- `sqlite_adapter.py` `_init_schema()` — defensive (review follow-up): the
+  `executescript(schema.sql)` is wrapped so the "dups + a fresh `create()`
+  against an already-populated path" edge can't crash startup uncaught. On
+  `IntegrityError`/`OperationalError` it logs the same warning and retries the
+  script with the UNIQUE index downgraded to a plain index (every schema
+  statement is `IF NOT EXISTS`, so re-running is idempotent).
+- **Future P2 dedup-migration runner (tracked follow-up, NOT in this change).**
+  To enable the DB-level backstop on a DB that still has duplicate rows, that
+  runner must: (1) **dedup** the `media_identifiers` rows (and reconcile the
+  duplicate media documents they point at — merge releases, delete the losing
+  media docs) so each `(provider, identifier)` maps to exactly one media_id;
+  (2) **`DROP INDEX idx_media_identifiers_lookup`** (the surviving non-unique
+  index); (3) **`CREATE UNIQUE INDEX idx_media_identifiers_lookup`**. Steps
+  (2)+(3) are exactly what `_ensure_unique_media_identifier_index()` already
+  does automatically once the data is clean — so in practice the runner only
+  needs the destructive dedup step, then the next `open()` finishes the job.
 - `sqlite_adapter.py`:
   - `_update_denormalized()`: `media_identifiers` rows are now written with a
     plain `INSERT` instead of `INSERT OR REPLACE`. The preceding
@@ -91,6 +124,19 @@ correctness bug (`is` vs `==` on a JSON-deserialized string).
   `SQLiteAdapter.insert()`, and — at the app layer — the `IntegrityError`
   catch-and-refetch path in `movie.add()`) results in **one** media doc, not
   two.
+- **Existing-DB self-upgrade (review follow-up):**
+  - A pre-REG-004-shaped DB (non-unique index) with **no** duplicate rows:
+    after `open()`, a UNIQUE index exists and a duplicate insert raises
+    `IntegrityError`.
+  - A pre-REG-004 DB **with** a duplicate `(provider, identifier)` pair:
+    `open()` does not raise, logs the loud warning, and startup completes with
+    the non-unique index still in place (lock-only mode).
+- **Lock proven in isolation (review follow-up):** with an instantly-consistent
+  in-memory DB that has **no** uniqueness backstop, N real threads racing
+  `MovieBase.add()` for the same imdb id produce exactly **one** insert / one
+  doc — demonstrating `media_lock` serializes the critical section rather than
+  the DB backstop cleaning up after the fact. (Negative control: with the lock
+  stubbed to a no-op, the same scenario yields N inserts.)
 
 ## Item 2 — `is 'available'` identity-comparison bug (MED correctness) — VERIFIED
 
@@ -161,13 +207,43 @@ Copied (not moved — originals stay in place) the following into
 - Originals in `tests/integration/test_duplicate_detection.py` untouched and
   still pass.
 
+## Item 4 — CodernityDB→SQLite migration now silently DROPS duplicates (review follow-up)
+
+### Problem
+
+Once the UNIQUE `(provider, identifier)` index exists, migrating a legacy
+CodernityDB that contains duplicate media (the exact prod state) makes
+`sqlite_db.insert(doc)` raise `sqlite3.IntegrityError` for the second+ doc
+sharing an identifier. `codernity_to_sqlite.py` previously caught **all**
+exceptions in one bucket and reported them with a bare `print`, so this
+**data-loss** on a disaster-recovery path was easy to miss.
+
+### Fix
+
+In the per-document migration loop (`couchpotato/core/migration/codernity_to_sqlite.py`):
+- Catch `sqlite3.IntegrityError` **distinctly** from other errors, count it in
+  a separate `duplicates` tally, and emit a LOUD `CPLog` (`log.warning`, not a
+  bare `print`) naming it a duplicate-identifier skip, stating the row was
+  **not** migrated (data loss), and that the original CodernityDB is preserved
+  in `database.bak`.
+- The end-of-migration summary reports the duplicate count and re-warns via
+  `CPLog` when any were skipped.
+- CodernityDB remains the upgrade path — nothing about *whether* it runs
+  changed; only the logging/counting improved.
+
+### Acceptance
+
+- Migration module imports cleanly; duplicate skips are counted separately and
+  surfaced via `CPLog.warning`, not swallowed into the generic error bucket.
+
 ## Constraints
 
 - No changes to CodernityDB or anything under `libs/` / `couchpotato/lib/`.
   The `codernity` backend keeps working unchanged; only the `sqlite`
-  schema/adapter/call-sites changed.
-- `schema.sql` change is additive/fresh-install only — no ALTER migration
-  against existing databases.
+  schema/adapter/call-sites and the (SQLite-facing) migration logging changed.
+- `schema.sql` covers fresh installs; existing SQLite DBs self-upgrade in
+  `open()` (clean DBs) or run lock-only with a loud warning (dirty DBs) until a
+  future dedup migration. No blind ALTER that could brick startup.
 
 ## Files
 
@@ -175,6 +251,7 @@ Copied (not moved — originals stay in place) the following into
 - `couchpotato/core/db/sqlite_adapter.py`
 - `couchpotato/core/media/movie/_base/main.py`
 - `couchpotato/core/plugins/release/main.py`
+- `couchpotato/core/migration/codernity_to_sqlite.py`
 - `tests/unit/test_sqlite_adapter.py`
 - `tests/unit/test_movie_add_integrity.py` (new)
 
