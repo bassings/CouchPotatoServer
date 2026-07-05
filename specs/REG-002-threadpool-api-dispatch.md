@@ -40,6 +40,10 @@ kwargs):
 
 ### Why this is safe
 
+- `callApiHandler` already serializes same-route calls via per-route
+  `api_locks` (`couchpotato/api.py`), so the new concurrency surface this
+  change introduces is **cross-route only** — a handler can never interleave
+  with another invocation of itself.
 - The DB layer is already multi-thread aware: `SQLiteAdapter` uses
   `check_same_thread=False` plus an `RLock` around writes, and background
   threads (searchers, scheduler jobs, renamer scans) already call handlers and
@@ -68,7 +72,9 @@ kwargs):
 ## Acceptance criteria
 
 - New concurrency test fails before the fix, passes after.
-- `.venv/bin/python -m pytest tests/unit/ -q` fully green (770 expected).
+- `.venv/bin/python -m pytest tests/unit/ -q` fully green (771 expected —
+  768 pre-existing + the concurrency test + the two `Suggestion._ignored`
+  lock tests added by the review follow-up).
 - `ruff check .` clean.
 - Boot check from this worktree:
   `/Volumes/Storage/home/scott.b/repos/CouchPotatoServer/.venv/bin/python CouchPotato.py --data_dir=.reg002-data --console_log`,

@@ -5,6 +5,7 @@ Picks random movies from the user's library, fetches TMDB recommendations,
 and filters out movies already in the library.
 """
 import random
+import threading
 import time
 import traceback
 from base64 import b64decode as bd
@@ -19,6 +20,15 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 autoload = 'Suggestion'
+
+# Guards Suggestion._ignored: suggestion.ignore mutates it while
+# suggestion.view reads it, and callApiHandler's per-route api_locks only
+# serialize same-route calls — since REG-002 dispatches handlers on
+# threadpool workers, cross-route interleaving is reachable from ordinary
+# web traffic. Module-level lock, mirroring _charts_ignore_lock in
+# couchpotato/core/media/movie/charts/main.py. Critical sections stay
+# tight: never held across network calls.
+_ignored_lock = threading.Lock()
 
 
 class Suggestion(Plugin):
@@ -59,10 +69,17 @@ class Suggestion(Plugin):
         """Load the set of ignored suggestion IDs from properties."""
         ignored_str = Env.prop('suggestion.ignored', default='')
         if ignored_str:
-            self._ignored = set(ignored_str.split(','))
+            with _ignored_lock:
+                self._ignored = set(ignored_str.split(','))
 
     def _saveIgnored(self):
-        """Persist the ignored set to properties."""
+        """Persist the ignored set to properties.
+
+        Caller must hold ``_ignored_lock``: the snapshot (join) and the
+        write must be atomic with respect to concurrent mutations, or a
+        stale snapshot persisted last silently drops another request's
+        ignore.
+        """
         Env.prop('suggestion.ignored', ','.join(self._ignored))
 
     _validated_key = None
@@ -253,7 +270,13 @@ class Suggestion(Plugin):
             except Exception:
                 pass
 
-        # Filter out movies already in library or ignored
+        # Filter out movies already in library or ignored. Snapshot the
+        # ignored set under the lock (a concurrent suggestion.ignore may be
+        # mutating it) and iterate the snapshot — the TMDB fetches above and
+        # the loop below must not run with the lock held.
+        with _ignored_lock:
+            ignored = set(self._ignored)
+
         suggestions = []
         for tmdb_id, movie in candidates.items():
             if tmdb_id in library_tmdb_ids:
@@ -261,7 +284,7 @@ class Suggestion(Plugin):
             # We can't easily check IMDB IDs without extra API calls
             # but we filter by TMDB ID which is good enough
             imdb_check = str(tmdb_id)
-            if imdb_check in self._ignored:
+            if imdb_check in ignored:
                 continue
             suggestions.append(self._tmdbToMovieFormat(movie))
 
@@ -297,12 +320,13 @@ class Suggestion(Plugin):
         imdb_id = kwargs.get('imdb', '')
         tmdb_id = kwargs.get('tmdb', '')
 
-        if imdb_id:
-            self._ignored.add(imdb_id)
-        if tmdb_id:
-            self._ignored.add(str(tmdb_id))
+        with _ignored_lock:
+            if imdb_id:
+                self._ignored.add(imdb_id)
+            if tmdb_id:
+                self._ignored.add(str(tmdb_id))
 
-        self._saveIgnored()
+            self._saveIgnored()
 
         # Clear cache so ignored movie is removed
         self._cache = None
