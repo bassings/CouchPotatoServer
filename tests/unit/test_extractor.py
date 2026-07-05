@@ -220,6 +220,26 @@ class TestExtractArchiveAtomicWrite:
         assert not (tmp_path / 'movie.mkv').exists()
         assert list(tmp_path.iterdir()) == []
 
+    def test_sweeps_stray_part_file_from_a_prior_hard_kill(self, tmp_path):
+        # A hard kill (SIGKILL/OOM/power-loss) can orphan a .cp-extract-*.part
+        # temp file that the normal error path never got to unlink. A stray one
+        # blocks empty-folder cleanup forever, so extractArchive must sweep it
+        # on the next run -- while still extracting the real file successfully.
+        stray = tmp_path / '.cp-extract-deadbeef.part'
+        stray.write_bytes(b'orphaned-partial')
+
+        info = _make_info('movie.mkv')
+        handle = _make_rar_handle([info], {'movie.mkv': b'good-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(tmp_path))
+
+        # Stray gone, real extraction succeeded, no leftover temp files.
+        assert not stray.exists()
+        assert (tmp_path / 'movie.mkv').read_bytes() == b'good-bytes'
+        assert extracted == [str(tmp_path / 'movie.mkv')]
+        assert list(tmp_path.glob('.cp-extract-*.part')) == []
+
     def test_next_scan_does_not_treat_interrupted_write_as_extracted(self, tmp_path):
         # Model the full "transient hiccup then retry" sequence end-to-end:
         # scan 1 fails mid-write; scan 2 (tool now healthy) must actually

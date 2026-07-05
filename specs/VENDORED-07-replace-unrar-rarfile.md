@@ -98,6 +98,16 @@ available on the host:
   tagging the release and moving corrupt data into the media library. The
   temp file shares the destination directory so `os.replace` is a same-fs
   atomic rename.
+- **Stray-temp self-heal** (`ExtractorMixin._sweepStrayTempFiles`): the
+  guarded unlink above cannot run on a *hard* kill (SIGKILL/OOM/power-loss),
+  which can orphan a `.cp-extract-*.part` temp file. A leftover one makes
+  `deleteEmptyFolder`'s `rmdir` fail with `ENOTEMPTY` (swallowed + logged) on
+  every later scan, so the folder is never cleaned. `extractArchive` therefore
+  globs the target dir for `.cp-extract-*.part` and unlinks any matches
+  (guarded, debug-logged) before extracting, so a crashed prior run self-heals
+  on the next scan. The temp name (`_TEMP_PREFIX`/`_TEMP_SUFFIX`/`_TEMP_GLOB`
+  module constants) is shared between the `mkstemp` writer and the sweep so
+  the pattern can never drift.
 - **Tool-path concurrency lock** (`_extract_lock`, a module-level
   `threading.Lock`): `rarfile` selects the extractor via the process-global
   `rarfile.UNRAR_TOOL` (no per-call parameter), so `extractArchive` now
@@ -191,7 +201,9 @@ practical alternative):
 - `TestExtractArchiveAtomicWrite`: a mid-stream read/write failure leaves no
   partial file (and no leftover temp/`.part` file) at the destination, and a
   subsequent scan does not mistake a leftover partial for "already extracted"
-  — the retry actually extracts the file and only then tags the release.
+  — the retry actually extracts the file and only then tags the release. Also
+  covers the stray-temp self-heal: a pre-existing `.cp-extract-*.part` (from a
+  hard kill) is swept before a successful extraction.
 - `TestExtractFilesGracefulDegradation`: end-to-end through
   `ExtractorMixin.extractFiles` with a minimal fake Renamer double —
   confirms exactly **one** warning is logged across two archives when no

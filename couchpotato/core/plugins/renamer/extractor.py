@@ -10,6 +10,7 @@ install one per OS) and the archive is left untouched -- the release is
 NOT tagged or failed, it is simply retried on a later scan once a tool is
 available.
 """
+import glob
 import os
 import re
 import tempfile
@@ -32,11 +33,20 @@ log = CPLog(__name__)
 # rare and IO-bound, so a single coarse lock is fine.
 _extract_lock = threading.Lock()
 
+# Naming for the atomic-extract temp files. Kept as recognizable module
+# constants so both the writer (tempfile.mkstemp) and the leftover-sweep use
+# the exact same pattern. A hard kill (SIGKILL/OOM/power-loss) mid-extraction
+# can orphan one of these; the sweep self-heals it on the next scan.
+_TEMP_PREFIX = '.cp-extract-'
+_TEMP_SUFFIX = '.part'
+_TEMP_GLOB = _TEMP_PREFIX + '*' + _TEMP_SUFFIX
+
 # rarfile's default extractor-tool name, captured at import before any custom
 # path is applied. Used to restore auto-detection when the user clears the
 # "Custom path to unrar bin" setting (rarfile.UNRAR_TOOL is a module global and
-# otherwise stays pinned to the stale custom path forever).
-DEFAULT_UNRAR_TOOL = getattr(rarfile, 'ORIG_UNRAR_TOOL', rarfile.UNRAR_TOOL)
+# otherwise stays pinned to the stale custom path forever). rarfile has no
+# public "original tool" constant, so we snapshot UNRAR_TOOL at import time.
+DEFAULT_UNRAR_TOOL = rarfile.UNRAR_TOOL
 
 # Shown once per scan when no external extractor tool is available for
 # rarfile to shell out to.
@@ -226,6 +236,11 @@ class ExtractorMixin:
                 rarfile.UNRAR_TOOL = DEFAULT_UNRAR_TOOL
                 rarfile.tool_setup(force=True)
 
+            # Self-heal: a prior run hard-killed mid-extraction can leave a
+            # stray .cp-extract-*.part in this dir, which would make
+            # deleteEmptyFolder's rmdir fail with ENOTEMPTY forever. Sweep it.
+            self._sweepStrayTempFiles(extr_path)
+
             extracted = []
             rar_handle = rarfile.RarFile(rar_path)
             try:
@@ -246,12 +261,24 @@ class ExtractorMixin:
         return extracted
 
     @staticmethod
+    def _sweepStrayTempFiles(extr_path):
+        """Remove any leftover atomic-extract temp files in extr_path. These
+        can only survive a hard kill (the normal error path unlinks them); a
+        stray one blocks empty-folder cleanup (rmdir -> ENOTEMPTY) forever."""
+        for stray in glob.glob(os.path.join(extr_path, _TEMP_GLOB)):
+            try:
+                os.unlink(stray)
+                log.debug('Removed stray extract temp file %s', stray)
+            except OSError:
+                pass
+
+    @staticmethod
     def _extractOneAtomic(rar_handle, info, extr_file_path, extr_path):
         """Stream a single archive entry to a temp file in extr_path, then
         atomically ``os.replace`` it into extr_file_path. On ANY error the
         temp file is removed so no partial output survives at the real path."""
         # Temp file in the SAME directory so os.replace is atomic (same fs).
-        fd, tmp_path = tempfile.mkstemp(dir=extr_path, prefix='.cp-extract-', suffix='.part')
+        fd, tmp_path = tempfile.mkstemp(dir=extr_path, prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX)
         try:
             # fdopen first so the fd is always owned/closed by the `with`, even
             # if rar_handle.open(info) raises before we start reading.
