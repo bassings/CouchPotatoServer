@@ -50,11 +50,12 @@ RAR-extraction is **not a hard dependency**. When no extractor tool is
 available on the host:
 
 - `rarfile.RarFile.open()`/`.extract()` raises `rarfile.RarCannotExec`.
-- `ExtractorMixin.extractFiles` catches this **once per scan** (a local
-  `warned_no_tool` flag scoped to the `extractFiles` call, not a global/
-  process-lifetime flag) and logs a single `log.warning(...)` naming the
-  missing tool and giving per-OS install hints
-  (`NO_EXTRACTOR_TOOL_MESSAGE` in `extractor.py`).
+- `ExtractorMixin.extractFiles` catches this and logs a single
+  `log.warning(...)` **once per scan** (guarded by the `self._warned_no_tool`
+  instance attribute that `Renamer.scan()` resets at the start of each scan —
+  shared across the per-group `extractFiles` calls, not a call-local flag, and
+  not a process-lifetime flag) naming the missing tool and giving per-OS
+  install hints (`NO_EXTRACTOR_TOOL_MESSAGE` in `extractor.py`).
 - The archive is **skipped, not failed**: it is not tagged as `extracted`,
   its constituent files are left on disk untouched, and it will simply be
   picked up again on the next scan once a tool becomes available. This
@@ -83,14 +84,32 @@ available on the host:
   `unrar2.RarFile(...)` + manual `.extract()` loop; the surrounding
   archive-discovery, `.partNN.rar` handling, date-check, and leftover-file
   move logic is unchanged.
-- `unrar_modify_date` (existing setting) now applies `os.utime` to every
-  file the call returned, not just the last one iterated (a latent bug in
-  the old code, which reused a loop variable from a `for` loop that could be
-  stale/empty after the loop for this purpose).
+- `unrar_modify_date` (existing setting) applies `os.utime` per extracted
+  file. In the old code `os.utime` was already inside the per-file loop, so
+  that part was correct; the new code iterates the returned `extracted` list
+  instead.
+- Latent bug fixed in the release-**tagging** logic: the old code decided
+  whether to tag the release as `extracted` by testing the loop variable
+  `extr_file_path` *after* the `for` loop finished — so it keyed off whatever
+  the last-iterated entry happened to be (which could be a directory or a
+  skipped/already-existing file), meaning tagging could silently not fire for
+  a genuinely-extracted release (or the variable could be undefined for an
+  empty archive). The new code tags based on the non-empty `extracted` list
+  returned by `extractArchive`, so tagging fires exactly when at least one
+  file was actually extracted.
+- The "no extractor tool" warning is scoped to the whole scan, not to a
+  single `extractFiles` call: `Renamer.scan()` resets `self._warned_no_tool
+  = False` at the start of every scan, and `extractFiles` reads/sets that
+  shared instance attribute. Because `scan()` calls `extractFiles` once per
+  movie group (via `_processGroup`), a call-local flag would emit one warning
+  per group; the instance-scoped flag collapses them to one per scan.
 - If `unrar_path` (existing "Custom path to unrar bin" setting) is set, it
   is applied via `rarfile.UNRAR_TOOL = custom_tool_path` followed by
   `rarfile.tool_setup(force=True)` to force `rarfile` to re-probe using that
-  path first.
+  path first. When the setting is later cleared, `extractArchive` restores
+  `rarfile.UNRAR_TOOL` to its captured default (`DEFAULT_UNRAR_TOOL`) and
+  re-probes, so auto-detection is not left pinned to the stale custom path
+  (`rarfile.UNRAR_TOOL` is a module global).
 
 ## Binaries deleted
 

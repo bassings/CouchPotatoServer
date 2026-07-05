@@ -14,6 +14,7 @@ import pytest
 import rarfile
 
 from couchpotato.core.plugins.renamer.extractor import (
+    DEFAULT_UNRAR_TOOL,
     NO_EXTRACTOR_TOOL_MESSAGE,
     ExtractorMixin,
 )
@@ -111,14 +112,21 @@ class TestExtractArchive:
         assert existing.read_bytes() == b'already-here'
         handle.open.assert_not_called()
 
-    def test_no_extractor_tool_raises_rarcannotexec(self, tmp_path):
+    def test_no_extractor_tool_raises_rarcannotexec_from_open(self, tmp_path):
+        # rarfile raises RarCannotExec from open() (which shells out to the
+        # external tool), NOT from infolist() -- header parsing is pure-Python
+        # and never touches a tool. Model the real seam, and confirm no partial
+        # output file is left behind when the tool is missing.
+        infos = [_make_info('movie.mkv')]
         handle = MagicMock()
-        handle.infolist.side_effect = rarfile.RarCannotExec('Cannot find working tool')
+        handle.infolist.return_value = infos
+        handle.open.side_effect = rarfile.RarCannotExec('Cannot find working tool')
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
             with pytest.raises(rarfile.RarCannotExec):
                 _Extractor().extractArchive('archive.rar', str(tmp_path))
 
+        assert list(tmp_path.iterdir()) == []
         handle.close.assert_called_once()
 
     def test_bad_rar_file_propagates_as_rarfile_error(self, tmp_path):
@@ -140,6 +148,22 @@ class TestExtractArchive:
 
         assert rarfile.UNRAR_TOOL == '/usr/local/bin/unrar'
         mock_tool_setup.assert_called_once_with(force=True)
+
+    def test_clearing_custom_tool_path_restores_default_auto_detect(self, tmp_path):
+        # rarfile.UNRAR_TOOL is a module-global; once a custom path is set it
+        # must be reset to the default when the setting is cleared, otherwise
+        # auto-detection stays pinned to the stale path forever.
+        handle = _make_rar_handle([], {})
+        with patch(
+            'couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle
+        ), patch('couchpotato.core.plugins.renamer.extractor.rarfile.tool_setup'):
+            ext = _Extractor()
+            ext.extractArchive('a.rar', str(tmp_path), custom_tool_path='/usr/local/bin/unrar')
+            assert rarfile.UNRAR_TOOL == '/usr/local/bin/unrar'
+
+            # Setting cleared: next call passes no custom path.
+            ext.extractArchive('b.rar', str(tmp_path))
+            assert rarfile.UNRAR_TOOL == DEFAULT_UNRAR_TOOL
 
 
 class _FakeRenamer(ExtractorMixin):
@@ -229,6 +253,114 @@ class TestExtractFilesGracefulDegradation:
         assert fake.tagged == []
         errors = [r for r in caplog.records if r.levelno == logging.ERROR]
         assert len(errors) == 1
+
+
+class TestScanScopedWarning:
+    """The 'no extractor tool' warning must be emitted at most once per whole
+    scan, not once per movie group. Renamer.scan() may call extractFiles once
+    per group (via _processGroup), so the warn-once flag must be reset in
+    scan() and shared across those calls."""
+
+    def _build_renamer(self):
+        """Construct a real Renamer bypassing Plugin.__new__ (which registers
+        events), then stub only the collaborators that touch external state."""
+        from couchpotato.core.plugins.renamer.main import Renamer
+
+        renamer = object.__new__(Renamer)
+        renamer.renaming_started = False
+        return renamer
+
+    def test_two_groups_in_one_scan_log_a_single_warning(self, tmp_path, caplog):
+        from couchpotato.core.plugins.renamer import main as renamer_main
+
+        from_folder = tmp_path / 'from'
+        to_folder = tmp_path / 'to'
+        from_folder.mkdir()
+        to_folder.mkdir()
+
+        # Two distinct movie folders, each containing a single .rar archive.
+        groups = {}
+        for name in ('MovieOne', 'MovieTwo'):
+            group_dir = from_folder / name
+            group_dir.mkdir()
+            (group_dir / f'{name}.rar').write_bytes(b'not-a-real-rar')
+            groups[name] = {
+                'media': {'info': {'title': name}},
+                'dirname': str(group_dir),
+            }
+
+        conf_values = {
+            'from': str(from_folder),
+            'to': str(to_folder),
+            'unrar': True,
+            'unrar_path': None,
+            'unrar_modify_date': False,
+        }
+
+        renamer = self._build_renamer()
+        renamer.conf = lambda attr, value=None, default=None, section=None: conf_values.get(attr, default)
+        renamer.shuttingDown = lambda value=None: False
+        renamer.hastagRelease = lambda release_download, tag='': False
+        renamer.checkFilesChanged = lambda files, unchanged_for=60: (False, None)
+        renamer.tagRelease = lambda *a, **k: None
+        renamer.makeDir = lambda path: os.makedirs(path, exist_ok=True)
+        # Inject the missing-tool condition at the extractArchive seam so both
+        # groups hit RarCannotExec inside a single scan().
+        extract_calls = []
+
+        def _raise_no_tool(rar_path, extr_path, custom_tool_path=None):
+            extract_calls.append(rar_path)
+            raise rarfile.RarCannotExec('no tool')
+
+        renamer.extractArchive = _raise_no_tool
+
+        with patch.object(renamer_main, 'fireEvent', return_value=groups), \
+             caplog.at_level(logging.WARNING, logger='couchpotato.core.plugins.renamer.extractor'):
+            renamer.scan()
+
+        # Both groups were processed (two extractFiles -> two extractArchive
+        # calls), but only ONE warning was logged for the whole scan.
+        assert len(extract_calls) == 2
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and NO_EXTRACTOR_TOOL_MESSAGE in r.getMessage()]
+        assert len(warnings) == 1
+
+    def test_flag_reset_between_scans(self, tmp_path, caplog):
+        """A fresh scan re-arms the warning (the flag is per-scan, not
+        per-process): two separate scans each warn once."""
+        from couchpotato.core.plugins.renamer import main as renamer_main
+
+        from_folder = tmp_path / 'from'
+        to_folder = tmp_path / 'to'
+        from_folder.mkdir()
+        to_folder.mkdir()
+        group_dir = from_folder / 'MovieOne'
+        group_dir.mkdir()
+        (group_dir / 'MovieOne.rar').write_bytes(b'not-a-real-rar')
+        groups = {'MovieOne': {'media': {'info': {'title': 'MovieOne'}}, 'dirname': str(group_dir)}}
+
+        conf_values = {
+            'from': str(from_folder), 'to': str(to_folder), 'unrar': True,
+            'unrar_path': None, 'unrar_modify_date': False,
+        }
+
+        renamer = self._build_renamer()
+        renamer.conf = lambda attr, value=None, default=None, section=None: conf_values.get(attr, default)
+        renamer.shuttingDown = lambda value=None: False
+        renamer.hastagRelease = lambda release_download, tag='': False
+        renamer.checkFilesChanged = lambda files, unchanged_for=60: (False, None)
+        renamer.tagRelease = lambda *a, **k: None
+        renamer.makeDir = lambda path: os.makedirs(path, exist_ok=True)
+        renamer.extractArchive = MagicMock(side_effect=rarfile.RarCannotExec('no tool'))
+
+        with patch.object(renamer_main, 'fireEvent', return_value=groups), \
+             caplog.at_level(logging.WARNING, logger='couchpotato.core.plugins.renamer.extractor'):
+            renamer.scan()
+            renamer.scan()
+
+        warnings = [r for r in caplog.records if r.levelno == logging.WARNING
+                    and NO_EXTRACTOR_TOOL_MESSAGE in r.getMessage()]
+        assert len(warnings) == 2
 
 
 class TestNoExtractorToolMessage:

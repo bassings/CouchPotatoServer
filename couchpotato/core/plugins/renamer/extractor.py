@@ -21,6 +21,12 @@ from couchpotato.core.logger import CPLog
 
 log = CPLog(__name__)
 
+# rarfile's default extractor-tool name, captured at import before any custom
+# path is applied. Used to restore auto-detection when the user clears the
+# "Custom path to unrar bin" setting (rarfile.UNRAR_TOOL is a module global and
+# otherwise stays pinned to the stale custom path forever).
+DEFAULT_UNRAR_TOOL = getattr(rarfile, 'ORIG_UNRAR_TOOL', rarfile.UNRAR_TOOL)
+
 # Shown once per scan when no external extractor tool is available for
 # rarfile to shell out to.
 NO_EXTRACTOR_TOOL_MESSAGE = (
@@ -44,7 +50,6 @@ class ExtractorMixin:
         archive_regex = r'(?P<file>^(?P<base>(?:(?!\.part\d+\.rar$).)*)\.(?:(?:part0*1\.)?rar)$)'
         restfile_regex = r'(^%s\.(?:part(?!0*1\.rar$)\d+\.rar$|[rstuvw]\d+$))'
         extr_files = []
-        warned_no_tool = False
 
         from_folder = sp(self.conf('from'))
 
@@ -88,9 +93,13 @@ class ExtractorMixin:
             try:
                 extracted = self.extractArchive(archive['file'], extr_path, custom_tool_path=unrar_path)
             except rarfile.RarCannotExec:
-                if not warned_no_tool:
+                # Warn at most once per scan. Renamer.scan() resets
+                # self._warned_no_tool at the start of every scan; a scan can
+                # invoke extractFiles once per movie folder, so a local flag
+                # would warn once per group instead of once per scan.
+                if not getattr(self, '_warned_no_tool', False):
                     log.warning(NO_EXTRACTOR_TOOL_MESSAGE)
-                    warned_no_tool = True
+                    self._warned_no_tool = True
                 continue
             except rarfile.Error as e:
                 log.error('Failed to extract %s: %s %s', archive['file'], e, traceback.format_exc())
@@ -171,7 +180,15 @@ class ExtractorMixin:
         failure -- the caller (``extractFiles``) does exactly that.
         """
         if custom_tool_path:
-            rarfile.UNRAR_TOOL = custom_tool_path
+            # Pin rarfile to the user-provided binary and force it to re-probe.
+            if rarfile.UNRAR_TOOL != custom_tool_path:
+                rarfile.UNRAR_TOOL = custom_tool_path
+                rarfile.tool_setup(force=True)
+        elif rarfile.UNRAR_TOOL != DEFAULT_UNRAR_TOOL:
+            # A previous call pinned a custom path; the setting has since been
+            # cleared. Restore rarfile's default auto-detection (UNRAR_TOOL is
+            # a module-global, so it would otherwise stay stale forever).
+            rarfile.UNRAR_TOOL = DEFAULT_UNRAR_TOOL
             rarfile.tool_setup(force=True)
 
         extracted = []
