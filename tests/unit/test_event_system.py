@@ -243,6 +243,49 @@ class TestErrorHandling:
         assert 'good' in result
 
 
+class TestBeforeAfterCall:
+    """REG-003 item 6: addEvent's createHandle used to detect a bound-method
+    handler via `hasattr(handler, 'im_self')` -- the Python 2 attribute name
+    for a bound method's owning instance. On Python 3 this is always False
+    (the attribute is `__self__`), so `Plugin.beforeCall`/`afterCall` never
+    ran for any plugin event handler, `Plugin._running` never got entries,
+    and `Core.initShutdown`'s wait loop (`fireEvent('plugin.running',
+    merge=True)`) was a silent no-op -- shutdown/restart never actually
+    waited for in-flight plugin work.
+    """
+
+    def test_bound_method_handler_populates_running_during_call(self):
+        from couchpotato.core.event import addEvent, fireEvent, events
+        from couchpotato.core.plugins.base import Plugin
+
+        events.clear()
+        try:
+            class FakePlugin(Plugin):
+                def __init__(self):
+                    self.observed_running = None
+
+                def work(self):
+                    # Snapshot _running from *inside* the call, since
+                    # afterCall clears it again once the handler returns.
+                    self.observed_running = list(self.isRunning())
+                    return 'done'
+
+            plugin = FakePlugin()
+            addEvent('test.reg003.before_after_call', plugin.work)
+
+            result = fireEvent('test.reg003.before_after_call', single=True)
+
+            assert result == 'done'
+            assert plugin.observed_running == ['FakePlugin.work'], (
+                'beforeCall never populated Plugin._running during the call'
+            )
+            assert plugin.isRunning() == [], (
+                'afterCall never cleared Plugin._running after the call'
+            )
+        finally:
+            events.clear()
+
+
 class TestGetEvent:
     def test_get_event(self):
         from couchpotato.core.event import addEvent, getEvent

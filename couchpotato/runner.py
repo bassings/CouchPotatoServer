@@ -252,6 +252,22 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     fireEventAsync('app.load')
 
     # Run with uvicorn
+    try:
+        _run_uvicorn(application, config, debug)
+    except Exception as e:
+        log.error('Failed starting: %s', traceback.format_exc())
+        if hasattr(e, 'errno') and e.errno == 48:
+            log.info('Port (%s) is already in use', config.get('port'))
+
+
+def _run_uvicorn(application, config, debug):
+    """Start the uvicorn ASGI server for `application`.
+
+    `access_log=False` keeps request paths -- which embed the URL-based
+    api_key (see CLAUDE.md "Known Technical Debt") -- out of uvicorn's
+    access log, which would otherwise land in stdout/`docker logs` on every
+    request. REG-003 item 3.
+    """
     import uvicorn
 
     ssl_kwargs = {}
@@ -261,16 +277,12 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
             'ssl_keyfile': config['ssl_key'],
         }
 
-    try:
-        uvicorn.run(
-            application,
-            host=config['host'],
-            port=config['port'],
-            reload=config['use_reloader'],
-            log_level='debug' if debug else 'info',
-            **ssl_kwargs
-        )
-    except Exception as e:
-        log.error('Failed starting: %s', traceback.format_exc())
-        if hasattr(e, 'errno') and e.errno == 48:
-            log.info('Port (%s) is already in use', config.get('port'))
+    uvicorn.run(
+        application,
+        host=config['host'],
+        port=config['port'],
+        reload=config['use_reloader'],
+        log_level='debug' if debug else 'info',
+        access_log=False,
+        **ssl_kwargs
+    )

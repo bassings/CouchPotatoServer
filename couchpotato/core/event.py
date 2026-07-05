@@ -34,7 +34,13 @@ def addEvent(name, handler, priority=100):
     def createHandle(*args, **kwargs):
         h = None
         try:
-            has_parent = hasattr(handler, 'im_self')
+            # `__self__` is the Python 3 attribute holding a bound method's
+            # owning instance (the Python 2 name was `im_self`, which is
+            # always absent on Python 3 -- see REG-003 item 6). Detecting
+            # it correctly is what lets beforeCall/afterCall populate
+            # Plugin._running, which Core.initShutdown's wait loop depends
+            # on to know when it's safe to shut down.
+            has_parent = hasattr(handler, '__self__')
             parent = None
             if has_parent:
                 parent = handler.__self__

@@ -51,12 +51,9 @@ class FolderScannerMixin:
         leftovers = []
 
         if not files:
+            files = []
             try:
-                files = []
-                for root, dirs, walk_files in os.walk(folder, followlinks=True):
-                    files.extend([sp(os.path.join(sp(root), sp(filename))) for filename in walk_files])
-                    if self.shuttingDown():
-                        break
+                files = self._gatherFiles(folder)
             except Exception:
                 log.error('Failed getting files from %s: %s', folder, traceback.format_exc())
 
@@ -300,6 +297,46 @@ class FolderScannerMixin:
             log.debug('Found no movies in the folder %s', folder)
 
         return processed_movies
+
+    def _gatherFiles(self, folder):
+        """Walk `folder` and return every file found inside it.
+
+        Any entry (whether reached directly or via a symlinked directory)
+        whose real path resolves outside `folder` is skipped. Without this,
+        a symlink planted inside a release folder can point at an arbitrary
+        file elsewhere on disk (e.g. a large host file); once "scanned" as
+        a movie file, the renamer would move/delete the real target instead
+        of the symlink. `os.walk`'s `followlinks` flag does not help here --
+        it only controls recursion into symlinked *directories*, symlinked
+        *files* are listed regardless of that flag -- so containment has to
+        be checked per file. REG-003 item 2.
+        """
+        real_folder = os.path.realpath(folder)
+
+        found_files = []
+        for root, dirs, walk_files in os.walk(folder, followlinks=True):
+            for filename in walk_files:
+                file_path = sp(os.path.join(sp(root), sp(filename)))
+
+                if not self._isWithinFolder(file_path, real_folder):
+                    log.debug('Skipping file that resolves outside the scanned folder (symlink escape): %s', file_path)
+                    continue
+
+                found_files.append(file_path)
+
+            if self.shuttingDown():
+                break
+
+        return found_files
+
+    @staticmethod
+    def _isWithinFolder(file_path, real_folder):
+        try:
+            real_path = os.path.realpath(file_path)
+            return os.path.commonpath([real_folder, real_path]) == real_folder
+        except ValueError:
+            # e.g. paths on different drives on Windows
+            return False
 
     def determineMedia(self, group, release_download=None):
         imdb_id = release_download and release_download.get('imdb_id')

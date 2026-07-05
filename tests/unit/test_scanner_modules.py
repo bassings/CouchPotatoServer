@@ -268,6 +268,59 @@ class TestGetCPImdb:
         assert scanner.getCPImdb('movie.mkv') is False
 
 
+class FakeScannerWithShutdown(FolderScannerMixin):
+    """FolderScannerMixin needs `shuttingDown()` from Plugin; stub it here so
+    `_gatherFiles`/`scan` can be exercised without instantiating the full
+    Scanner plugin (which needs Env/loader wiring)."""
+
+    def shuttingDown(self):
+        return False
+
+
+class TestGatherFilesSymlinkContainment:
+    """REG-003 item 2: a symlink inside the scanned folder that resolves to a
+    location outside it must never be handed back as a scannable file --
+    otherwise the renamer will move/delete the real target."""
+
+    def test_symlink_to_external_file_is_excluded(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_file = tmp_path / 'secret.mkv'
+        outside_file.write_bytes(b'\0' * 1024)
+        link = scan_dir / 'link.mkv'
+        link.symlink_to(outside_file)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert str(link) not in files
+
+    def test_symlink_to_external_directory_is_excluded(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        outside_dir = tmp_path / 'outside'
+        outside_dir.mkdir()
+        (outside_dir / 'movie.mkv').write_bytes(b'\0' * 1024)
+        linked_dir = scan_dir / 'linked'
+        linked_dir.symlink_to(outside_dir)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert not any('movie.mkv' in f for f in files)
+
+    def test_regular_file_inside_scan_folder_is_included(self, tmp_path):
+        scanner = FakeScannerWithShutdown()
+        scan_dir = tmp_path / 'scan'
+        scan_dir.mkdir()
+        regular = scan_dir / 'movie.mkv'
+        regular.write_bytes(b'\0' * 1024)
+
+        files = scanner._gatherFiles(str(scan_dir))
+
+        assert str(regular) in files
+
+
 class TestGetReleaseNameYear:
     def test_basic(self, scanner):
         result = scanner.getReleaseNameYear('The.Movie.2023.720p.BluRay')

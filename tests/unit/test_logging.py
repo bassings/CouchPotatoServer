@@ -1,4 +1,5 @@
 """Tests for the modernized logging system."""
+import io
 import logging
 import os
 import tempfile
@@ -6,6 +7,7 @@ import tempfile
 import pytest
 
 from couchpotato.core.logger import CPLog, ColorFormatter, PrivacyFilter, INFO2, setup_logging
+from couchpotato.environment import Env
 
 
 class TestCPLog:
@@ -190,4 +192,86 @@ class TestSetupLogging:
 
     def test_info2_level_registered(self):
         assert logging.getLevelName(INFO2) == 'INFO'
-        assert INFO2 == 19
+        assert INFO2 == 21
+
+    def test_info2_visible_in_production_level(self):
+        """REG-003 item 4: INFO2 used to be 19 (below the default INFO=20
+        root level), so log.info2(...) -- release-rejection reasons,
+        provider circuit-breaker trips -- was silently dropped in
+        production. INFO2 must be above INFO so it's visible at the
+        default (non-debug) level.
+
+        Deliberately avoids caplog.at_level(), which sets the *logger's*
+        own level directly and would mask the bug (it bypasses the
+        root-level threshold this test needs to exercise). Uses a plain
+        handler on the real root logger instead.
+        """
+        root = logging.getLogger()
+        old_handlers = root.handlers[:]
+        old_filters = root.filters[:]
+        old_level = root.level
+        try:
+            root.handlers.clear()
+            root.filters.clear()
+            setup_logging(console=False, debug=False)
+
+            assert root.level == logging.INFO
+            assert INFO2 > logging.INFO
+
+            records = []
+
+            class ListHandler(logging.Handler):
+                def emit(self, record):
+                    records.append(record)
+
+            handler = ListHandler()
+            handler.setLevel(0)
+            root.addHandler(handler)
+
+            log = CPLog('test.info2.visibility')
+            log.info2('provider circuit breaker tripped')
+
+            assert any('provider circuit breaker tripped' in r.getMessage() for r in records)
+        finally:
+            root.handlers = old_handlers
+            root.filters = old_filters
+            root.level = old_level
+
+    def test_privacy_filter_applied_via_child_logger(self, monkeypatch):
+        """REG-003 item 5: setup_logging attached PrivacyFilter to the ROOT
+        LOGGER (`logger.addFilter(...)`). Per stdlib semantics, a Logger's
+        own `.filters` only run for records that *originate* on that
+        logger -- not for records propagated up from a child logger's
+        `callHandlers()`. CPLog always logs through a named child logger
+        (`logging.getLogger(context)`), so the filter never actually ran
+        for a real log record and secrets (api_key, passkey, ...) in
+        logged URLs were never redacted. The filter must be attached to
+        the HANDLERS instead, since Handler.handle() re-checks its own
+        filters for every record it emits regardless of origin.
+        """
+        root = logging.getLogger()
+        old_handlers = root.handlers[:]
+        old_filters = root.filters[:]
+        old_level = root.level
+        try:
+            root.handlers.clear()
+            root.filters.clear()
+            monkeypatch.setattr(Env, '_dev', False)
+
+            setup_logging(console=True, debug=False)
+
+            stream_handler = next(h for h in root.handlers if isinstance(h, logging.StreamHandler))
+            buffer = io.StringIO()
+            stream_handler.stream = buffer
+
+            log = CPLog('test.privacy.child')
+            log.info('request failed: /api/xxx?api_key=SECRETVALUE&other=1')
+
+            output = buffer.getvalue()
+            assert output, 'expected the handler to emit a record'
+            assert 'SECRETVALUE' not in output
+            assert 'api_key=xxx' in output
+        finally:
+            root.handlers = old_handlers
+            root.filters = old_filters
+            root.level = old_level
