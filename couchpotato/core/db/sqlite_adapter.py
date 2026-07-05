@@ -64,19 +64,29 @@ class SQLiteAdapter(DatabaseInterface):
             schema_sql = f.read()
         try:
             self._conn.executescript(schema_sql)
-        except (sqlite3.IntegrityError, sqlite3.OperationalError):
-            # Fail-safe: create() ran against a path that already holds data
-            # with duplicate (provider, identifier) rows, so the UNIQUE index
-            # in schema.sql can't be built. Fall back to the non-unique index
-            # so the rest of the schema still initializes and startup never
-            # bricks. Every schema statement uses IF NOT EXISTS, so re-running
-            # the (downgraded) script is idempotent.
-            log.warning(
-                'Could not apply the full schema (likely duplicate media '
-                'identifiers): retrying without the UNIQUE identifier index. '
-                'Running with in-process-lock duplicate protection only; run '
-                'the dedup migration to enable the DB-level backstop (REG-004).'
-            )
+        except (sqlite3.IntegrityError, sqlite3.OperationalError) as schema_error:
+            # Fail-safe: the full schema (with its UNIQUE identifier index)
+            # could not be applied -- fall back to the non-unique index so the
+            # rest of the schema still initializes and startup never bricks.
+            # Every schema statement uses IF NOT EXISTS, so re-running the
+            # (downgraded) script is idempotent. Only an IntegrityError actually
+            # implies duplicate rows; an OperationalError (locked DB, I/O, an
+            # unrelated schema statement) does not -- keep the diagnosis honest
+            # so on-call isn't sent to the dedup migration for a lock error.
+            if isinstance(schema_error, sqlite3.IntegrityError):
+                log.warning(
+                    'Could not apply the full schema (likely duplicate media '
+                    'identifiers): retrying without the UNIQUE identifier index. '
+                    'Running with in-process-lock duplicate protection only; run '
+                    'the dedup migration to enable the DB-level backstop (REG-004).'
+                )
+            else:
+                log.warning(
+                    'Could not apply the full schema (%s): retrying without the '
+                    'UNIQUE identifier index. This is likely a locked database or '
+                    'an unrelated schema error rather than duplicate identifiers '
+                    '(REG-004).', schema_error
+                )
             safe_sql = schema_sql.replace(
                 'CREATE UNIQUE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
                 'CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup',
@@ -151,10 +161,12 @@ class SQLiteAdapter(DatabaseInterface):
                             conn.commit()
                     except sqlite3.Error:
                         pass
-                if isinstance(create_error, (sqlite3.IntegrityError, sqlite3.OperationalError)):
+                if isinstance(create_error, sqlite3.IntegrityError):
                     # Expected case: duplicate (provider, identifier) rows already
                     # exist (the exact state the prod incident left behind), so the
-                    # DB-level backstop can't be enabled yet.
+                    # DB-level backstop can't be enabled yet. Only an IntegrityError
+                    # implies duplicates -- an OperationalError (locked DB, I/O) does
+                    # not, so it takes the generic message below.
                     log.warning(
                         'Duplicate media identifiers present in the database: could '
                         'not create the UNIQUE (provider, identifier) index. Running '
