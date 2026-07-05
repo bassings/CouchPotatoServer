@@ -6,7 +6,6 @@ Uses unittest.mock to avoid real network calls.
 """
 import datetime
 import json
-import qbittorrentapi
 import os
 import sys
 import pytest
@@ -801,7 +800,7 @@ class TestQBittorrent:
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = False
-            mock_client.auth_log_in.side_effect = qbittorrentapi.LoginFailed('bad creds')
+            mock_client.auth_log_in.side_effect = qbt_main.qbittorrentapi.LoginFailed('bad creds')
 
             result = qbt.connect()
 
@@ -814,7 +813,7 @@ class TestQBittorrent:
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = False
-            mock_client.auth_log_in.side_effect = qbittorrentapi.Forbidden403Error('banned')
+            mock_client.auth_log_in.side_effect = qbt_main.qbittorrentapi.Forbidden403Error('banned')
 
             result = qbt.connect()
 
@@ -831,7 +830,7 @@ class TestQBittorrent:
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             type(mock_client).is_logged_in = PropertyMock(
-                side_effect = qbittorrentapi.APIConnectionError('unreachable'))
+                side_effect = qbt_main.qbittorrentapi.APIConnectionError('unreachable'))
 
             result = qbt.connect()
 
@@ -864,7 +863,7 @@ class TestQBittorrent:
         import couchpotato.core.downloaders.qbittorrent_ as qbt_main
 
         old_client = MagicMock()
-        old_client.auth_log_out.side_effect = qbittorrentapi.APIConnectionError('gone')
+        old_client.auth_log_out.side_effect = qbt_main.qbittorrentapi.APIConnectionError('gone')
         qbt.qb = old_client
 
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
@@ -953,7 +952,7 @@ class TestQBittorrent:
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
-            mock_client.torrents_add.side_effect = qbittorrentapi.Conflict409Error('already added')
+            mock_client.torrents_add.side_effect = qbt_main.qbittorrentapi.Conflict409Error('already added')
 
             result = qbt.download(data={
                 'name': 'Some.Movie', 'protocol': 'torrent_magnet',
@@ -1008,7 +1007,66 @@ class TestQBittorrent:
         assert result['downloader'] == 'qBittorrent'
         assert result['id'] == expected_hash
 
-    def test_download_file_without_filedata_fails_before_connecting(self):
+    def test_download_corrupt_torrent_file_returns_false_with_specific_error(self):
+        """A genuinely corrupt/malformed .torrent (invalid bencoding) must fail
+        with a specific, logged error and a falsy return — NOT an uncaught
+        BencodeDecodingError bubbling up to fireEvent's blanket handler. The
+        decode/hash-computation block is guarded, mirroring the magnet no-hash
+        guard, so torrents_add() is never reached."""
+        qbt = self._make_qbittorrent({
+            'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
+        })
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
+             patch.object(qbt_main.log, 'error') as mock_log_error:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            # No BencodeDecodingError should escape — a corrupt file is a
+            # handled failure.
+            result = qbt.download(
+                data={'name': 'Some.Movie', 'protocol': 'torrent'},
+                filedata=b'not-a-torrent',
+            )
+
+        assert result is False
+        # The torrent is never sent to qBittorrent when the file can't be decoded.
+        mock_client.torrents_add.assert_not_called()
+        # The specific corrupt-file message is logged (not a generic traceback).
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+    def test_download_torrent_file_missing_info_dict_returns_false(self):
+        """A validly-bencoded file that lacks the b'info' key raises KeyError
+        in the decode block; the guard must turn that into a clean False +
+        specific log rather than an uncaught KeyError."""
+        from bencodepy import encode as bencode
+
+        qbt = self._make_qbittorrent({
+            'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
+        })
+        import couchpotato.core.downloaders.qbittorrent_ as qbt_main
+
+        # Valid bencoding, but no b'info' key.
+        filedata = bencode({b'announce': b'http://tracker.example.com/announce'})
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
+             patch.object(qbt_main.log, 'error') as mock_log_error:
+            mock_client = mock_client_cls.return_value
+            mock_client.is_logged_in = True
+
+            result = qbt.download(data={'name': 'Some.Movie', 'protocol': 'torrent'}, filedata=filedata)
+
+        assert result is False
+        mock_client.torrents_add.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+    def test_download_file_without_filedata_returns_false(self):
+        # download() calls self.connect() BEFORE checking filedata, so a
+        # missing filedata fails AFTER connecting, not before — the missing
+        # data is caught by the `not filedata and protocol == 'torrent'` guard.
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
         import couchpotato.core.downloaders.qbittorrent_ as qbt_main
 
@@ -1018,6 +1076,8 @@ class TestQBittorrent:
             result = qbt.download(data={'name': 'Some.Movie', 'protocol': 'torrent'}, filedata=None)
 
         assert result is False
+        # never attempted the add — bailed on the missing-filedata guard
+        mock_client_cls.return_value.torrents_add.assert_not_called()
 
     def test_download_returns_false_when_connect_fails(self):
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})
@@ -1025,7 +1085,7 @@ class TestQBittorrent:
 
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client_cls.return_value.is_logged_in = False
-            mock_client_cls.return_value.auth_log_in.side_effect = qbittorrentapi.LoginFailed()
+            mock_client_cls.return_value.auth_log_in.side_effect = qbt_main.qbittorrentapi.LoginFailed()
 
             result = qbt.download(data={
                 'name': 'Some.Movie', 'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:aa',
@@ -1135,7 +1195,7 @@ class TestQBittorrent:
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
-            mock_client.torrents_info.side_effect = qbittorrentapi.APIConnectionError('down')
+            mock_client.torrents_info.side_effect = qbt_main.qbittorrentapi.APIConnectionError('down')
 
             result = qbt.getAllDownloadStatus(['ABC123'])
 
@@ -1147,7 +1207,7 @@ class TestQBittorrent:
 
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client_cls.return_value.is_logged_in = False
-            mock_client_cls.return_value.auth_log_in.side_effect = qbittorrentapi.LoginFailed()
+            mock_client_cls.return_value.auth_log_in.side_effect = qbt_main.qbittorrentapi.LoginFailed()
 
             result = qbt.getAllDownloadStatus(['ABC123'])
 
@@ -1210,7 +1270,7 @@ class TestQBittorrent:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
             mock_client.torrents_info.return_value = [{'hash': 'ABC123'}]
-            mock_client.torrents_pause.side_effect = qbittorrentapi.APIConnectionError('down')
+            mock_client.torrents_pause.side_effect = qbt_main.qbittorrentapi.APIConnectionError('down')
 
             result = qbt.pause({'id': 'ABC123'})
 
@@ -1222,7 +1282,7 @@ class TestQBittorrent:
 
         with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client_cls.return_value.is_logged_in = False
-            mock_client_cls.return_value.auth_log_in.side_effect = qbittorrentapi.LoginFailed()
+            mock_client_cls.return_value.auth_log_in.side_effect = qbt_main.qbittorrentapi.LoginFailed()
 
             result = qbt.pause({'id': 'ABC123'})
 
@@ -1283,7 +1343,7 @@ class TestQBittorrent:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
             mock_client.torrents_info.return_value = [{'hash': 'ABC123'}]
-            mock_client.torrents_delete.side_effect = qbittorrentapi.APIConnectionError('down')
+            mock_client.torrents_delete.side_effect = qbt_main.qbittorrentapi.APIConnectionError('down')
 
             result = qbt.processComplete({'id': 'ABC123', 'name': 'Some.Movie'}, delete_files=True)
 

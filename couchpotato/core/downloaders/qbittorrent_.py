@@ -6,6 +6,7 @@ import re
 
 import qbittorrentapi
 from bencodepy import encode as bencode, decode as bdecode
+from bencodepy.exceptions import DecodingError as BencodeDecodingError
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import sp
 from couchpotato.core.helpers.variable import cleanHost
@@ -139,17 +140,28 @@ class qBittorrent(DownloaderBase):
                 return False
 
         if data.get('protocol')  == 'torrent':
+             # Compute the info-hash from the raw .torrent bytes BEFORE the
+             # API-error try block so a corrupt/malformed file fails with a
+             # specific, logged error rather than an uncaught
+             # DecodingError/KeyError/binascii.Error bubbling up to
+             # fireEvent's blanket handler (mirrors the magnet no-hash guard).
+             #
              # bencodepy.decode() returns a dict keyed by BYTES, so the info
-             # dict lives under b'info', not the string 'info' (a string key
-             # raises KeyError on every real .torrent file). Re-bencoding the
-             # bytes-keyed info dict and sha1'ing it yields the correct
+             # dict lives under b'info', not the string 'info'. Re-bencoding
+             # the bytes-keyed info dict and sha1'ing it yields the correct
              # info-hash.
-             info = bdecode(filedata)[b"info"]
-             torrent_hash = sha1(bencode(info)).hexdigest()
+             try:
+                info = bdecode(filedata)[b"info"]
+                torrent_hash = sha1(bencode(info)).hexdigest()
 
-             # Convert base 32 to hex
-             if len(torrent_hash) == 32:
-                torrent_hash = b16encode(b32decode(torrent_hash))
+                # Convert base 32 to hex
+                if len(torrent_hash) == 32:
+                   torrent_hash = b16encode(b32decode(torrent_hash))
+             # ValueError covers binascii.Error (bad base32 in the b32decode
+             # branch), which is a ValueError subclass.
+             except (BencodeDecodingError, KeyError, ValueError) as e:
+                log.error('Invalid/corrupt torrent file, cannot add to qBittorrent: %s', e)
+                return False
 
              # Send request to qBittorrent. A genuine add failure surfaces as
              # a typed qbittorrentapi.APIError, caught below.
