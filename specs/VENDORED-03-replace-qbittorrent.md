@@ -66,10 +66,14 @@ The vendored client also:
 | `.pause(hash)` / `.resume(hash)` | `.torrents_pause(torrent_hashes=hash)` / `.torrents_resume(torrent_hashes=hash)` | These are aliases for `torrents_stop`/`torrents_start` and internally pick the right WebUI endpoint name (`pause`/`stop`, `resume`/`start`) based on the connected qBittorrent's Web API version — no CP-side version branching needed |
 | `.delete(hash)` / `.delete_permanently(hash)` | `.torrents_delete(delete_files=False, torrent_hashes=hash)` / `.torrents_delete(delete_files=True, torrent_hashes=hash)` | |
 
-No behavior change was needed to the torrent-hash computation
-(`bencodepy`/`sha1` logic) or to `getTorrentStatus()`'s ratio/progress
-reading — those operate on the same raw qBittorrent WebUI field values
-either way.
+The torrent-hash computation for **file** adds (`bencodepy`/`sha1` logic)
+carried a latent bug that only became reachable once qBittorrent actually
+worked: `bdecode(filedata)["info"]` used a **string** key, but
+`bencedepy.decode()` returns a dict keyed by **bytes**, so it raised
+`KeyError` on every real `.torrent` file. Fixed to `bdecode(filedata)[b"info"]`
+(magnet adds never hit this path). `getTorrentStatus()`'s ratio/progress
+reading needed no change — it operates on the same raw qBittorrent WebUI
+field values either way.
 
 ## Behavior deltas (new library vs. vendored v1 client)
 
@@ -162,7 +166,12 @@ needed:
   `torrents_add()`, rather than raising an uncaught `IndexError` from
   `re.findall(...)[0]`),
   `test_download_magnet_returns_false_on_api_error`,
-  `test_download_file_sends_torrent_files_and_category`,
+  `test_download_file_sends_torrent_files_and_computes_info_hash` (uses a REAL
+  bencodepy round-trip — bencode a torrent dict, feed it as `filedata`, assert
+  the add is sent and `id` equals the sha1 of the re-bencoded info dict;
+  `bdecode`/`bencode` are deliberately NOT mocked, since a mock returning a
+  string-keyed dict is exactly what hid the `bdecode(filedata)["info"]`
+  bytes-vs-string KeyError bug),
   `test_download_file_without_filedata_fails_before_connecting`,
   `test_download_returns_false_when_connect_fails`.
 - `getTorrentStatus()`: parametrized over all seeding states including

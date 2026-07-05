@@ -563,23 +563,43 @@ class TestQBittorrent:
 
         assert result is False
 
-    def test_download_file_sends_torrent_files_and_category(self):
-        """The torrent-hash computation from the raw .torrent bytes
-        (bdecode/bencode/sha1) is pre-existing logic untouched by the
-        qbittorrent-api migration; it's stubbed out here so this test stays
-        focused on what changed: the torrents_add() call itself."""
+    def test_download_file_sends_torrent_files_and_computes_info_hash(self):
+        """A torrent-FILE add uses a REAL bencodepy round-trip: build a
+        torrent dict, bencode() it to bytes, feed it as filedata, and assert
+        the add is sent and the info-hash is the sha1 of the re-bencoded info
+        dict.
+
+        bdecode/bencode are NOT mocked here on purpose: bencodepy.decode()
+        returns a dict keyed by BYTES (b'info'), so accessing it with the
+        string key 'info' raises KeyError on every real .torrent file. This
+        test fails against `bdecode(filedata)["info"]` and passes against
+        `bdecode(filedata)[b"info"]`.
+        """
+        from bencodepy import encode as bencode, decode as bdecode
+        from hashlib import sha1
+
         qbt = self._make_qbittorrent({
             'host': 'http://localhost:8080/', 'label': 'couchpotato', 'paused': False,
         })
         import couchpotato.core.downloaders.qbittorrent_ as qbt_main
 
-        filedata = b'd8:announce...e'  # opaque bytes; bdecode is stubbed below
+        info = {
+            b'name': b'Some.Movie.mkv',
+            b'piece length': 16384,
+            b'length': 12345,
+            b'pieces': b'\x01' * 20,
+        }
+        filedata = bencode({
+            b'announce': b'http://tracker.example.com/announce',
+            b'info': info,
+        })
 
-        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls, \
-             patch.object(qbt_main, 'bdecode', return_value={'info': {'name': 'Some.Movie'}}):
+        # The info-hash CP must compute: sha1 of the re-bencoded info dict.
+        expected_hash = sha1(bencode(bdecode(filedata)[b'info'])).hexdigest()
+
+        with patch.object(qbt_main.qbittorrentapi, 'Client') as mock_client_cls:
             mock_client = mock_client_cls.return_value
             mock_client.is_logged_in = True
-            mock_client.torrents_add.return_value = 'Ok.'
 
             result = qbt.download(data={'name': 'Some.Movie', 'protocol': 'torrent'}, filedata=filedata)
 
@@ -587,7 +607,7 @@ class TestQBittorrent:
             torrent_files=filedata, category='couchpotato', is_stopped=False,
         )
         assert result['downloader'] == 'qBittorrent'
-        assert result['id']  # sha1 hash of the (stubbed) bencoded info dict
+        assert result['id'] == expected_hash
 
     def test_download_file_without_filedata_fails_before_connecting(self):
         qbt = self._make_qbittorrent({'host': 'http://localhost:8080/'})

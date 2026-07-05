@@ -136,7 +136,12 @@ class qBittorrent(DownloaderBase):
                 return False
 
         if data.get('protocol')  == 'torrent':
-             info = bdecode(filedata)["info"]
+             # bencodepy.decode() returns a dict keyed by BYTES, so the info
+             # dict lives under b'info', not the string 'info' (a string key
+             # raises KeyError on every real .torrent file). Re-bencoding the
+             # bytes-keyed info dict and sha1'ing it yields the correct
+             # info-hash.
+             info = bdecode(filedata)[b"info"]
              torrent_hash = sha1(bencode(info)).hexdigest()
 
              # Convert base 32 to hex
