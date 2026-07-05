@@ -30,7 +30,7 @@ bencodepy==0.9.5
 subliminal==2.6.0
 babelfish==0.6.1
 dogpile.cache==1.5.0
-stevedore==5.9.0
+stevedore==5.8.0  # 5.9.0 dropped Python 3.10 (CP supports 3.10+)
 pysubs2==1.8.1
 pymediainfo==7.0.1
 knowit==0.5.11
