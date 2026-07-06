@@ -9,6 +9,7 @@ quality for all releases with names available.
 Example: A release named "Avatar.2025.2160p.BluRay" was incorrectly
 stored as "720p" if the profile searched for 720p first.
 """
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import fireEvent
 from couchpotato.core.logger import CPLog
 
@@ -91,7 +92,12 @@ def fix_release_quality(db):
                         log.debug('Fixed quality: %s -> %s for "%s"',
                                  old_quality, detected_quality, release_name[:40])
 
-            except (RecordNotFound, KeyError, TypeError) as e:
+            except (RecordNotFound, KeyError, TypeError, ConflictError) as e:
+                # ConflictError means a concurrent writer changed this
+                # release's _rev between our read and this db.update()
+                # call (a real CAS race, not a migration bug) -- skip just
+                # this release and keep processing the rest of the batch
+                # rather than aborting the whole scan.
                 log.debug('Skipped release: %s', e)
                 continue
 

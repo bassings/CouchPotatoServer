@@ -8,7 +8,7 @@ import uuid
 from contextlib import contextmanager
 from hashlib import md5
 from string import ascii_letters
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 from collections.abc import Iterator
 
 from couchpotato.core.db.interface import DatabaseInterface
@@ -408,6 +408,20 @@ class SQLiteAdapter(DatabaseInterface):
                         # different _rev (lost the CAS race). Distinguish
                         # the two so callers get KeyError only for genuine
                         # absence, matching prior semantics.
+                        #
+                        # This classification (the follow-up SELECT below)
+                        # is race-safe only because the entire update() body
+                        # runs under `self._write_lock`, and this adapter is
+                        # used from a single process over a single
+                        # connection -- no other writer can slip a change in
+                        # between the failed CAS UPDATE above and this
+                        # SELECT. If this ever changes (multiprocessing,
+                        # multiple DB connections/processes writing to the
+                        # same file, or this classification logic moving
+                        # outside `self._write_lock`), this SELECT-based
+                        # missing-vs-conflict distinction must be revisited,
+                        # since another writer could then delete/insert the
+                        # row between the two statements.
                         if self._transaction_depth == 0:
                             conn.rollback()
                         current = conn.execute(
@@ -446,7 +460,7 @@ class SQLiteAdapter(DatabaseInterface):
 
             return {'_id': doc_id, '_rev': doc_rev}
 
-    def update_with_retry(self, mutator, doc_id: str, retries: int = 3) -> dict:
+    def update_with_retry(self, mutator, doc_id: str, retries: int = 3) -> dict | None:
         """Safely perform a read-modify-write update with CAS retry.
 
         This is the safe primitive for read-modify-write callers: it
@@ -461,6 +475,20 @@ class SQLiteAdapter(DatabaseInterface):
         Any other return value (including `None`) means "write the
         mutated document".
 
+        Return contract:
+            - If a write happened (this call, or a retry after losing a
+              CAS race, actually persisted a change): returns the updated
+              document dict, with its freshly-bumped `_rev`.
+            - If the mutator returned `False` on any attempt (including a
+              retry attempt after a conflict, where the re-read doc turned
+              out to already be at the desired state): returns `None` and
+              performs **no** write at all. Callers must use this `None`
+              vs. non-`None` distinction to tell "this call actually wrote"
+              apart from "this call was a no-op" -- e.g. to decide whether
+              to fire a notification, so a losing race followed by a
+              no-op retry doesn't produce a spurious duplicate notify for
+              a write the winning writer already announced.
+
         Raises:
             KeyError: if the document does not exist.
             ConflictError: if `retries` attempts are all lost to concurrent
@@ -470,7 +498,7 @@ class SQLiteAdapter(DatabaseInterface):
         for _attempt in range(retries):
             doc = self.get('id', doc_id)
             if mutator(doc) is False:
-                return doc
+                return None
             try:
                 result = self.update(doc)
                 doc['_rev'] = result['_rev']

@@ -522,12 +522,14 @@ class Release(Plugin):
         # status-transition paths (search/snatch/download/ignore all funnel
         # through it) and previously had no CAS or lock protection, so a
         # concurrent status change could be silently lost. Route it through
-        # the CAS retry helper; `changed` (closed over by the mutator) tells
-        # us afterwards whether a write actually happened, so we only fire
-        # the notify event when the status genuinely transitioned -- same
-        # as the original "only touch the doc if status changed" behaviour.
-        changed = {'value': False}
-
+        # the CAS retry helper: it returns the updated doc if this call
+        # actually wrote, or None if the mutator short-circuited (already
+        # at the target status -- whether on the first read, or on a retry
+        # after this call lost the CAS race and re-read a doc a concurrent
+        # writer already landed at the same target status). Gate the
+        # notify strictly on "this call wrote" so a conflict-then-skip
+        # retry never fires a spurious duplicate of the notification the
+        # winning writer already sent.
         def _mutate(rel):
             if rel.get('status') == status:
                 return False
@@ -546,15 +548,14 @@ class Release(Plugin):
             log.debug('Marking release %s as %s', release_name, status)
             rel['status'] = status
             rel['last_edit'] = int(time.time())
-            changed['value'] = True
 
         try:
             db = get_db()
-            rel = db.update_with_retry(_mutate, release_id)
+            wrote = db.update_with_retry(_mutate, release_id)
 
-            if changed['value']:
+            if wrote is not None:
                 #Update all movie info as there is no release update function
-                fireEvent('notify.frontend', type = 'release.update_status', data = rel)
+                fireEvent('notify.frontend', type = 'release.update_status', data = wrote)
 
             return True
         except Exception:

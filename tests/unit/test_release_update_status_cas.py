@@ -25,11 +25,14 @@ def make_release(release_id, status='available', files=None, info=None):
 
 def make_update_with_retry(doc):
     """Mimic SQLiteAdapter.update_with_retry(mutator, doc_id): apply the
-    mutator to `doc` in place and return it, matching the real adapter's
-    "skip write if mutator returns False" contract."""
+    mutator to `doc` in place and return it if the mutator wrote, or None
+    if the mutator signalled "no change needed" by returning False --
+    matching the real adapter's return contract (None means no write
+    happened, so callers must not treat this call as having written)."""
     def _fake(mutator, doc_id, retries=3):
         assert doc_id == doc['_id']
-        mutator(doc)
+        if mutator(doc) is False:
+            return None
         return doc
     return _fake
 
@@ -119,4 +122,61 @@ def test_update_status_survives_a_transient_conflict_via_retry_helper():
             assert final['status'] == 'snatched'
             fire_event.assert_called_once()
         finally:
+            db.close()
+
+
+def test_update_status_lost_race_then_already_at_target_does_not_notify():
+    """If attempt 1 loses the CAS race (a concurrent writer wins and takes
+    the release straight to the target status first) and the retry's
+    re-read then finds the release already at the target status, the
+    mutator short-circuits (returns False) and update_with_retry returns
+    None without writing. updateStatus must NOT fire notify.frontend in
+    that case -- the winning writer already fired its own notification for
+    the same transition, so firing again here would be a spurious
+    duplicate. This exercises the real update_with_retry conflict-then-skip
+    code path against a real adapter, not a mock that always writes."""
+    from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
+
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_path:
+        db = SQLiteAdapter()
+        db.create(tmp_path)
+        real_update = db.update
+        try:
+            inserted = db.insert(make_release('unused', status='available'))
+            release_id = inserted['_id']
+
+            calls = {'count': 0}
+
+            def flaky_update(data):
+                calls['count'] += 1
+                if calls['count'] == 1:
+                    # A concurrent writer wins the race: it takes the
+                    # release straight to the target status before this
+                    # call's own (stale-rev) write lands.
+                    concurrent = db.get('id', release_id)
+                    concurrent['status'] = 'snatched'
+                    real_update(concurrent)
+                return real_update(data)
+
+            db.update = flaky_update
+
+            plugin = Release.__new__(Release)
+            with patch('couchpotato.core.plugins.release.main.get_db', return_value=db), \
+                 patch('couchpotato.core.plugins.release.main.fireEvent') as fire_event:
+                result = plugin.updateStatus(release_id, status='snatched')
+
+            db.update = real_update
+
+            assert result is True
+            # Attempt 1 raised ConflictError inside flaky_update (one call);
+            # attempt 2's mutator returns False (already at target) so
+            # update_with_retry skips the write entirely -- no second call.
+            assert calls['count'] == 1
+            fire_event.assert_not_called()
+
+            final = db.get('id', release_id)
+            assert final['status'] == 'snatched'
+        finally:
+            db.update = real_update
             db.close()

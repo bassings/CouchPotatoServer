@@ -80,10 +80,27 @@ New adapter method: re-`get()`s the doc, calls `mutator(doc)` (mutate in
 place), then `update()`s. On `ConflictError` it re-reads and re-applies the
 mutator, up to `retries` attempts, then re-raises the last `ConflictError`.
 `mutator` may return `False` to mean "no change needed" -- `update_with_retry`
-then skips the write entirely and returns the unmodified doc, with no
-retry. Any other return value means "write it". This lets callers express
-"only write if something actually changed" (e.g. a status that's already
-at the target value) without a spurious rev bump.
+then skips the write entirely, with no retry. Any other return value means
+"write it". This lets callers express "only write if something actually
+changed" (e.g. a status that's already at the target value) without a
+spurious rev bump.
+
+**Return contract:** `update_with_retry` returns the *updated* document
+dict (carrying its freshly-bumped `_rev`) when a write actually happened,
+or **`None`** when the mutator returned `False` on any attempt -- including
+a retry attempt after this call lost the CAS race and re-read a document
+that turned out to already be at the desired state. Callers must key
+side effects (e.g. firing a notification) off this `None` vs. non-`None`
+distinction, not off whatever the mutator closure did on its *first*
+attempt: if attempt 1 mutates the in-memory doc but then loses the write
+race, and the retry's re-read finds the doc already at the target state
+(because the winning concurrent writer got there first), the mutator
+returns `False` on the retry and no write happens on this call at all --
+yet a flag captured only from attempt 1 would still say "changed",
+producing a spurious duplicate notification for a write this call never
+made. (This exact bug existed in `Release.updateStatus` before it was
+fixed to gate on the return value instead of an accumulating closure
+flag -- see "Callers converted" below.)
 
 `KeyError` (missing doc) propagates immediately, un-retried, since retrying
 a nonexistent document can never converge.
@@ -110,8 +127,15 @@ Two clear, unlocked read-modify-write hotspots were converted to
   audit's concern. The mutator returns `False` (skip write) when the
   release is already at the target status, matching the original "only
   touch the doc if status changed" short-circuit -- so `updateStatus`'s
-  `fireEvent('notify.frontend', ...)` still only fires on a genuine
-  transition, not on every no-op call.
+  `fireEvent('notify.frontend', ...)` fires strictly on `update_with_retry`
+  returning non-`None` (i.e. this call actually wrote), not on every no-op
+  call. (An earlier revision of this conversion instead tracked "did the
+  mutator run its write branch" via a closure flag set on the *first*
+  attempt; that flag stayed `True` even when a later retry attempt's
+  mutator short-circuited after losing the CAS race, causing a spurious
+  duplicate `notify.frontend` for a write this call never made. Fixed by
+  gating on `update_with_retry`'s return value instead -- see its return
+  contract above.)
 
 ### 5. Callers deliberately left for follow-up (not converted)
 
@@ -161,6 +185,20 @@ None of the above were modified in this change; `db.update()`'s CAS
 contract still protects them at the storage layer (a concurrent write will
 now raise instead of being silently lost) -- they just don't yet retry
 automatically on conflict.
+
+### 5a. `couchpotato/core/migration/fix_release_quality.py` — gap closed
+
+This migration's per-release loop does a plain `db.update(doc)` (not
+`update_with_retry`) under a per-release `except (RecordNotFound, KeyError,
+TypeError)`. Since `db.update()` can now raise `ConflictError` for any doc
+carrying a `_rev` (which every doc loaded via `get_many(..., with_doc=True)`
+does), a real CAS conflict on one release used to fall through that narrow
+except tuple, propagate out of the whole scan loop, get caught by the
+migration's outer catch-all, and abort processing of *every remaining*
+release in the batch -- not just the one that conflicted. Fixed by adding
+`ConflictError` to the per-release except tuple, so a conflict now just
+skips that one release (logged at debug, same as the other skip reasons)
+and the loop continues with the rest of the batch.
 
 ### 6. Explicitly out of scope
 

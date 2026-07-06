@@ -333,6 +333,53 @@ class TestSQLiteAdapterUpdateWithRetry:
         with pytest.raises(KeyError):
             db.update_with_retry(mutator, 'nonexistent-id')
 
+    def test_mutator_skip_returns_none_and_performs_no_write(self, db, sample_media):
+        """Contract: when the mutator signals 'no change needed' (returns
+        False), update_with_retry must not call adapter.update() at all,
+        must leave the stored document's _rev untouched, and must return
+        None -- so callers can tell "this call wrote" apart from "this call
+        was a no-op" (e.g. to avoid firing a duplicate notification on a
+        conflict-then-skip retry, see Release.updateStatus)."""
+        inserted = db.insert(sample_media)
+        before = db.get('id', inserted['_id'])
+
+        real_update = db.update
+        update_calls = {'count': 0}
+
+        def counting_update(data):
+            update_calls['count'] += 1
+            return real_update(data)
+
+        db.update = counting_update
+        try:
+            def mutator(doc):
+                return False
+
+            result = db.update_with_retry(mutator, inserted['_id'])
+        finally:
+            db.update = real_update
+
+        assert result is None
+        assert update_calls['count'] == 0
+
+        after = db.get('id', inserted['_id'])
+        assert after['_rev'] == before['_rev']
+
+    def test_mutator_write_returns_the_updated_doc_dict(self, db, sample_media):
+        """Contract: when the mutator performs a write (any return value
+        other than False), update_with_retry returns the updated document
+        dict (carrying its bumped _rev), not None."""
+        inserted = db.insert(sample_media)
+
+        def mutator(doc):
+            doc['status'] = 'done'
+
+        result = db.update_with_retry(mutator, inserted['_id'])
+
+        assert result is not None
+        assert result['status'] == 'done'
+        assert result['_rev'] != inserted['_rev']
+
 
 class TestSQLiteAdapterIndexQueries:
     def test_media_status_query(self, db, sample_media):
