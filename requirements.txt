@@ -34,7 +34,7 @@ stevedore==5.8.0  # 5.9.0 dropped Python 3.10 (CP supports 3.10+)
 pysubs2==1.8.1
 pymediainfo==7.0.1
 knowit==0.5.11
-rebulk==3.2.0
+rebulk==6.0.1
 srt==3.5.3
 tomlkit==0.15.0
 click-option-group==0.5.9
