@@ -720,7 +720,14 @@ class MediaPlugin(MediaBase):
                 previous_status = m['status']
 
                 log.debug('Changing status for %s', getTitle(m))
-                if not m['profile_id']:
+                if previous_status == 'downloaded':
+                    # 'downloaded' is the manual-review gate (workflow phase 1):
+                    # a movie awaiting review is terminal for search purposes.
+                    # Don't demote it back to 'active' or auto-promote it to
+                    # 'done' here; phase 2 owns the done/downloaded routing
+                    # decision (via the per-profile manual_confirmation toggle).
+                    m['status'] = 'downloaded'
+                elif not m['profile_id']:
                     m['status'] = 'done'
                 else:
                     m['status'] = 'active'

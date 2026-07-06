@@ -469,6 +469,53 @@ class TestTemplateRendering:
         assert 'data-has-releases="false"' in resp.text
         assert 'data-has-releases="true"' in resp.text
 
+    def test_movie_card_labels_downloaded_status_as_review_gate(self, client):
+        """A movie in the 'downloaded' review-gate status (workflow phase 1)
+        must render a distinct 'downloaded / review' badge on the card grid,
+        not fall through to the generic done/wanted branches."""
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ['Awaiting Review']}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert 'downloaded / review' in resp.text
+        assert 'data-status="downloaded"' in resp.text
+
+    def test_movie_detail_labels_downloaded_status_as_review_gate(self, client):
+        """Same review-gate label on the movie detail partial."""
+        def media_get_handler(**kwargs):
+            return {'media': {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ['Awaiting Review']}, 'releases': []}}
+
+        old_handler = api.get('media.get')
+        api['media.get'] = media_get_handler
+        api_locks['media.get'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movie/m1')
+        finally:
+            if old_handler:
+                api['media.get'] = old_handler
+            else:
+                api.pop('media.get', None)
+
+        assert resp.status_code == 200
+        assert 'downloaded / review' in resp.text
+
 
 # --- FastAPI App Creation Tests ---
 

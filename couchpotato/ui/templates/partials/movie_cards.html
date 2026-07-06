@@ -70,6 +70,8 @@
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-blue/20 text-cp-blue backdrop-blur-sm">wanted</span>
         {% elif status == 'done' %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success backdrop-blur-sm">done</span>
+        {% elif status == 'downloaded' %}
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning backdrop-blur-sm">downloaded / review</span>
         {% else %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
