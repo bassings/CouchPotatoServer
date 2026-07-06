@@ -1,0 +1,281 @@
+# VENDORED-07 — Replace vendored `unrar2` with `rarfile` + graceful degradation
+
+## Problem
+
+`couchpotato/lib/unrar2` is a vendored, Python-2-era fork of Jimmy
+Retzlaff/Konstantin Yegupov's `UnRAR2` bindings. It ships three committed
+binaries directly in the repo:
+
+- `couchpotato/lib/unrar2/unrar` (macOS executable, 234,984 bytes)
+- `couchpotato/lib/unrar2/unrar.dll` (Windows 32-bit DLL, 165,376 bytes)
+- `couchpotato/lib/unrar2/unrar64.dll` (Windows 64-bit DLL, 191,488 bytes)
+
+plus `unix.py` / `windows.py` / `rar_exceptions.py` / `__init__.py`, which
+shell out to a bundled or system `unrar` binary via `ctypes`/ `subprocess`.
+This is effectively dead on Python 3 (untested, unmaintained, and the
+platform-detection/`ctypes` bindings target Python 2 idioms), and shipping
+prebuilt binaries in source control is both a supply-chain and Trivy/CodeQL
+concern.
+
+The sole consumer was `ExtractorMixin.extractFiles` in
+`couchpotato/core/plugins/renamer/extractor.py` (~25 lines): given a `.rar`
+archive it opened it with `unrar2.RarFile(path, custom_path=unrar_path)` and
+iterated `.infolist()` to extract each entry to the target folder, flattened
+to its basename.
+
+RAR is a proprietary format — there is no pure-Python decoder — so any
+replacement still needs an external extractor binary for the actual
+decompression step. CouchPotato must keep running via a bare
+`python CouchPotato.py` on Windows/macOS/Linux, not only inside the Docker
+image, so we cannot assume a tool is present.
+
+## Chosen replacement
+
+**`rarfile` (PyPI), pinned at `4.2`** (latest at time of writing, confirmed via
+`pip index versions rarfile`).
+
+- **License:** ISC (permissive, GPL-3 compatible).
+- Pure-Python for archive **listing** (`RarFile()` / `.infolist()` parse the
+  RAR header format directly, no external tool needed).
+- **Extraction** (`.open()` / `.extract()`) shells out to whichever of
+  `unrar`, `unar`, `7z`/`7zz`, or `bsdtar` it finds on `PATH` (`rarfile`'s own
+  `tool_setup()` auto-detection, tried in that order) — configurable via the
+  module-level `rarfile.UNRAR_TOOL` for a custom path.
+- Actively maintained, widely used (Sonarr/Radarr-adjacent ecosystem), no
+  compiled extension (no musllinux/cross-arch build concern).
+
+## Graceful degradation (product decision)
+
+RAR-extraction is **not a hard dependency**. When no extractor tool is
+available on the host:
+
+- `rarfile.RarFile.open()`/`.extract()` raises `rarfile.RarCannotExec`.
+- `ExtractorMixin.extractFiles` catches this and logs a single
+  `log.warning(...)` **once per scan** (guarded by the `self._warned_no_tool`
+  instance attribute that `Renamer.scan()` resets at the start of each scan —
+  shared across the per-group `extractFiles` calls, not a call-local flag, and
+  not a process-lifetime flag) naming the missing tool and giving per-OS
+  install hints (`NO_EXTRACTOR_TOOL_MESSAGE` in `extractor.py`).
+- The archive is **skipped, not failed**: it is not tagged as `extracted`,
+  its constituent files are left on disk untouched, and it will simply be
+  picked up again on the next scan once a tool becomes available. This
+  matches the existing "files too new, ignoring for now" pattern already
+  used elsewhere in `extractFiles`.
+- Other `rarfile.Error` subclasses (`BadRarFile`, `NotRarFile`, wrong
+  password, etc.) are caught per-archive, logged at `error` level, and that
+  one archive is skipped — the scan continues with the remaining archives.
+- In effect, the RAR-extraction feature (`unrar` setting, default `False`
+  already) defaults to a no-op until an extractor tool is installed.
+
+## Implementation
+
+`couchpotato/core/plugins/renamer/extractor.py`:
+
+- New `ExtractorMixin.extractArchive(rar_path, extr_path,
+  custom_tool_path=None)`: opens the archive with `rarfile.RarFile`, iterates
+  `.infolist()`, skips directories (`info.isdir()`), and for each file streams
+  it in 1 MiB chunks — unless a file already exists at the flattened
+  destination, in which case the re-write I/O is skipped. Returns **all**
+  target files present at the destination after the call (newly written OR
+  already present), so the list is empty only for a genuinely
+  empty/all-directory archive. This is deliberate for idempotency: if a
+  crash/restart lands between writing the files and persisting the `extracted`
+  tag, the next scan finds every target already on disk; returning them (not
+  `[]`) lets `extractFiles` still tag and clean up the release instead of
+  retrying it forever. Raises `rarfile.Error` subclasses (including
+  `RarCannotExec`) to the caller rather than swallowing them, so
+  `extractFiles` can apply the shared warn-once-and-skip / log-and-skip policy
+  above (on those failures it returns nothing/raises, so the archive is
+  skipped without tagging).
+- **Atomic per-file write** (`ExtractorMixin._extractOneAtomic`): each entry
+  streams to a `tempfile.mkstemp` temp file in the **same** destination
+  directory and is only `os.replace`-d into the real path once the full
+  read/write succeeds; on ANY exception the temp file is unlinked (guarded)
+  before re-raising, so no partial/truncated file is ever left at the real
+  destination. Without this, a transient mid-stream failure (disk full,
+  permission revoked, CRC error) would leave a truncated file that the *next*
+  scan's `os.path.isfile` check would accept as "already extracted" — silently
+  tagging the release and moving corrupt data into the media library. The
+  temp file shares the destination directory so `os.replace` is a same-fs
+  atomic rename.
+- **Stray-temp self-heal** (`ExtractorMixin._sweepStrayTempFiles`): the
+  guarded unlink above cannot run on a *hard* kill (SIGKILL/OOM/power-loss),
+  which can orphan a `.cp-extract-*.part` temp file. A leftover one makes
+  `deleteEmptyFolder`'s `rmdir` fail with `ENOTEMPTY` (swallowed + logged) on
+  every later scan, so the folder is never cleaned. `extractArchive` therefore
+  globs the target dir for `.cp-extract-*.part` and unlinks any matches
+  (guarded, debug-logged) before extracting, so a crashed prior run self-heals
+  on the next scan. The temp name (`_TEMP_PREFIX`/`_TEMP_SUFFIX`/`_TEMP_GLOB`
+  module constants) is shared between the `mkstemp` writer and the sweep so
+  the pattern can never drift.
+- **Configured file permission** (`os.chmod(tmp, Env.getPermission('file'))`
+  before the atomic rename): `tempfile.mkstemp` always creates its file `0600`
+  (owner-only) regardless of umask, and `os.replace` preserves that mode — so
+  without an explicit chmod every extracted media file would be unreadable by
+  Plex/Kodi/other users and broken under the Docker PUID/PGID drop-privilege
+  setup. The chmod matches the pattern used everywhere else this plugin writes
+  into the library (`renamer/mover.py`, `downloaders/blackhole.py`,
+  `providers/metadata/base.py`), applying the same configurable
+  `permission_file` setting. Applied to the temp file *before* `os.replace` so
+  the final file appears atomically with the correct mode.
+- **Tool-path concurrency lock** (`_extract_lock`, a module-level
+  `threading.Lock`): `rarfile` selects the extractor via the process-global
+  `rarfile.UNRAR_TOOL` (no per-call parameter), so `extractArchive` now
+  mutates shared state. The lock is held across the `UNRAR_TOOL` mutation +
+  `tool_setup()` + the whole `RarFile` open/extraction, so overlapping renamer
+  scans (e.g. a manual `renamer.scan` API trigger racing the scheduled one —
+  `Renamer.scan()`'s `renaming_started` guard is a check-then-set TOCTOU)
+  cannot flip the tool out from under an in-flight extraction. One coarse lock
+  is sufficient since extraction is rare and IO-bound.
+- `extractFiles` now calls `self.extractArchive(...)` instead of the old
+  `unrar2.RarFile(...)` + manual `.extract()` loop; the surrounding
+  archive-discovery, `.partNN.rar` handling, date-check, and leftover-file
+  move logic is unchanged.
+- `unrar_modify_date` (existing setting) applies `os.utime` per extracted
+  file. In the old code `os.utime` was already inside the per-file loop, so
+  that part was correct; the new code iterates the returned `extracted` list
+  instead.
+- Latent bug fixed in the release-**tagging** logic: the old code decided
+  whether to tag the release as `extracted` by testing the loop variable
+  `extr_file_path` *after* the `for` loop finished — so it keyed off whatever
+  the last-iterated entry happened to be (which could be a directory or a
+  skipped/already-existing file), meaning tagging could silently not fire for
+  a genuinely-extracted release (or the variable could be undefined for an
+  empty archive). The new code tags based on the non-empty `extracted` list
+  returned by `extractArchive`, so tagging fires exactly when at least one
+  file was actually extracted.
+- The "no extractor tool" warning is scoped to the whole scan, not to a
+  single `extractFiles` call: `Renamer.scan()` resets `self._warned_no_tool
+  = False` at the start of every scan, and `extractFiles` reads/sets that
+  shared instance attribute. Because `scan()` calls `extractFiles` once per
+  movie group (via `_processGroup`), a call-local flag would emit one warning
+  per group; the instance-scoped flag collapses them to one per scan.
+- If `unrar_path` (existing "Custom path to unrar bin" setting) is set, it
+  is applied via `rarfile.UNRAR_TOOL = custom_tool_path` followed by
+  `rarfile.tool_setup(force=True)` to force `rarfile` to re-probe using that
+  path first. When the setting is later cleared, `extractArchive` restores
+  `rarfile.UNRAR_TOOL` to its captured default (`DEFAULT_UNRAR_TOOL`) and
+  re-probes, so auto-detection is not left pinned to the stale custom path
+  (`rarfile.UNRAR_TOOL` is a module global).
+
+## Binaries deleted
+
+`git rm -r couchpotato/lib/unrar2`, removing:
+
+- `couchpotato/lib/unrar2/unrar` (macOS binary)
+- `couchpotato/lib/unrar2/unrar.dll` (Windows 32-bit)
+- `couchpotato/lib/unrar2/unrar64.dll` (Windows 64-bit)
+- `couchpotato/lib/unrar2/__init__.py`, `unix.py`, `windows.py`,
+  `rar_exceptions.py`
+
+`couchpotato/lib/__init__.py` (the shared vendored-libs `sys.path` shim) is
+kept — other vendored libraries (`rtorrent`, `subliminal`, `caper`'s
+successor, etc.) still rely on it.
+
+## Dockerfile
+
+Added `7zip` to the runtime-stage `apk add` line in `Dockerfile` — Alpine's
+`7zip` package provides `7zz`, one of `rarfile`'s auto-detected tools — so
+the official container image can extract RAR archives out of the box with
+no additional user setup, same as before (the old vendored binary only
+covered macOS/Windows; Docker/Linux previously had no bundled extractor at
+all, so this is a net new capability there, not a regression).
+
+## Per-OS setup docs
+
+The `unrar` and `unrar_path` settings descriptions in
+`couchpotato/core/plugins/renamer/api.py` now document how to obtain a tool:
+
+- **Windows:** install UnRAR.exe or 7-Zip and add it to `PATH`.
+- **macOS:** `brew install unar` (or `brew install rar`).
+- **Linux:** install the distro's `unrar` or `unar` package.
+- **Alpine/Docker:** `apk add 7zip` (already included in the official
+  image).
+
+The same per-OS guidance is embedded in `NO_EXTRACTOR_TOOL_MESSAGE`, the
+warning logged at runtime when no tool is found.
+
+## Tests
+
+`tests/unit/test_extractor.py` (new), TDD against a mocked `rarfile.RarFile`
+(no extractor tool is installed in the dev/CI sandbox, so a real `.rar`
+fixture can't be produced without one — mocking the library boundary is the
+practical alternative):
+
+- `TestExtractArchive`: successful extraction flattens nested paths to
+  basename, skips directory entries, does **not** re-write files that already
+  exist at the destination but still reports their paths, propagates
+  `rarfile.RarCannotExec` (raised from `open()`, the real seam) and
+  `rarfile.BadRarFile` to the caller, and applies/clears a custom tool path
+  via `rarfile.UNRAR_TOOL` + `tool_setup(force=True)`.
+- `TestExtractArchiveAtomicWrite`: a mid-stream read/write failure leaves no
+  partial file (and no leftover temp/`.part` file) at the destination, and a
+  subsequent scan does not mistake a leftover partial for "already extracted"
+  — the retry actually extracts the file and only then tags the release. Also
+  covers the stray-temp self-heal: a pre-existing `.cp-extract-*.part` (from a
+  hard kill) is swept before a successful extraction; and the extracted file
+  gets the configured `Env.getPermission('file')` mode (not mkstemp's `0600`).
+- `TestRarfileApiSignatureGuard`: a `pytest.importorskip('rarfile')` guard
+  pinning the REAL installed `rarfile==4.2` surface CP depends on
+  (`RarFile.open`/`infolist`/`close`, `RarInfo.isdir` callable, the
+  `RarCannotExec`/`BadRarFile`/`Error` hierarchy, `UNRAR_TOOL`, `tool_setup`)
+  so a future dependency bump that drifts the API fails loudly instead of
+  silently passing every mocked test.
+- `TestExtractFilesGracefulDegradation`: end-to-end through
+  `ExtractorMixin.extractFiles` with a minimal fake Renamer double —
+  confirms exactly **one** warning is logged across two archives when no
+  tool is available, that the release is **not tagged**, and that a
+  `BadRarFile` on a single archive logs an error and is skipped without
+  raising.
+- `TestExtractFilesAlreadyExtractedIdempotency`: an archive whose target
+  files are all already on disk (crash-between-write-and-tag) is still
+  tagged `extracted` (cleanup=False) and its source archive still cleaned up
+  (cleanup=True) — i.e. the release is not stuck retrying forever — while the
+  existing files are not re-written.
+- `TestScanScopedWarning`: the no-tool warning is emitted once per whole
+  `scan()` across multiple groups, and re-armed on the next scan.
+- `TestNoExtractorToolMessage`: the warning text names every supported tool
+  (including `bsdtar`) and gives install hints for all four OS families.
+
+## Acceptance criteria
+
+- [x] `rarfile==4.2` pinned in `requirements.txt`, importable in the shared
+      `.venv`.
+- [x] `couchpotato/lib/unrar2/` (all 7 files, including the 3 binaries)
+      deleted via `git rm`.
+- [x] `Dockerfile` runtime stage installs `7zip`.
+- [x] `ExtractorMixin.extractArchive` extracts via `rarfile`, flattening to
+      basename and skipping already-extracted files.
+- [x] Missing extractor tool: exactly one warning per scan, archive
+      skipped, release not tagged/failed.
+- [x] Other archive errors (`BadRarFile`, etc.): logged per-archive, that
+      archive skipped, scan continues.
+- [x] Per-OS install instructions present in both the settings description
+      and the runtime warning message.
+- [x] `tests/unit/test_extractor.py` covers success, no-tool degradation,
+      and bad-archive skip.
+- [x] Extracted files get the configured `permission_file` mode, not
+      mkstemp's `0600`.
+- [x] `pytest tests/unit/ -q` green (870 passed), `ruff check .` clean.
+- [x] `couchpotato.core.plugins.renamer.extractor` and
+      `couchpotato.core.plugins.renamer.main` (`Renamer`) import cleanly.
+
+## Follow-ups (not blocking)
+
+- **Real `.rar` smoke test:** the unit tests mock `rarfile.RarFile`, and
+  `TestRarfileApiSignatureGuard` pins the real API *shape* but not real
+  extraction *behavior*. A full smoke test against a committed tiny `.rar`
+  fixture (list + extract + verify bytes/permission) would catch behavioral
+  drift, but requires an external extractor tool (unrar/unar/7z/bsdtar) in the
+  CI image. Consider adding `7zip` to the test image and a
+  `@pytest.mark.skipif(no tool on PATH)` smoke test.
+
+## Files
+
+- `couchpotato/core/plugins/renamer/extractor.py` (rewritten)
+- `couchpotato/core/plugins/renamer/api.py` (settings descriptions updated)
+- `requirements.txt` (`rarfile==4.2` added)
+- `Dockerfile` (`7zip` added to runtime `apk add`)
+- `couchpotato/lib/unrar2/` (deleted: `__init__.py`, `unix.py`, `windows.py`,
+  `rar_exceptions.py`, `unrar`, `unrar.dll`, `unrar64.dll`)
+- `tests/unit/test_extractor.py` (new)

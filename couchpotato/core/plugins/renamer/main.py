@@ -77,6 +77,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return
 
         self.renaming_started = True
+        # Reset per-scan state: the "no RAR extractor tool" warning is emitted
+        # at most once across the whole scan, not once per group (scan may call
+        # extractFiles once per movie folder via _processGroup).
+        self._warned_no_tool = False
         scan_folder = base_folder or sp(self.conf('from'))
 
         try:
