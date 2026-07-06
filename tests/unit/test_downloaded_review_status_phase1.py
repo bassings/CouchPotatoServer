@@ -123,6 +123,12 @@ class TestSingleGatesOnDownloadedStatus:
             for e, kw in events
         ), "a downloaded movie must never start a search"
 
+    # NOTE: this test documents the manual=True override precedent only. It does
+    # NOT by itself prove 'downloaded' is in the gating tuple, since
+    # `status in (...) and not manual` short-circuits to False whenever
+    # manual=True regardless of the tuple's contents. That gating is proven by
+    # the sibling test `test_skips_downloaded_movie_when_not_manual` above,
+    # which would fail if 'downloaded' were removed from the tuple.
     def test_manual_true_overrides_the_downloaded_gate(self):
         """A manual/forced search (manual=True) must still be able to act on
         a 'downloaded' movie -- mirrors the existing 'done' + manual=True

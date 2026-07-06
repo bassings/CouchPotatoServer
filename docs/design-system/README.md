@@ -137,7 +137,7 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 **Settings row layout:** label + hint on the left, control right-aligned; rows divided by `border-white/[0.04]`.
 
 ### Status & quality badges
-Pill `px-1.5 py-0.5 rounded text-[9px] font-medium`: wanted `bg-cp-blue/20 text-cp-blue` · done `bg-cp-success/20 text-cp-success` · snatched `bg-cp-warning/20 text-cp-warning` · quality `bg-white/10 text-white/80 backdrop-blur-sm`.
+Pill `px-1.5 py-0.5 rounded text-[9px] font-medium`: wanted `bg-cp-blue/20 text-cp-blue` · done `bg-cp-success/20 text-cp-success` · snatched `bg-cp-warning/20 text-cp-warning` · quality `bg-white/10 text-white/80 backdrop-blur-sm` · downloaded/review `bg-cp-warning/20 text-cp-warning`.
 
 ### Toasts
 Global Alpine `toast(msg, type, duration)` queue, top-right, `aria-live="polite"`. `bg-green-600`/`bg-red-600`/`bg-cp-accent text-cp-bg` for success/error/info. Auto-dismiss (default 3000ms) + manual close.
