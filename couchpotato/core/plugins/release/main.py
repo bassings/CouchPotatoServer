@@ -5,6 +5,7 @@ import traceback
 
 from CodernityDB.database import RecordDeleted, RecordNotFound
 from couchpotato import md5, get_db
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
@@ -558,6 +559,8 @@ class Release(Plugin):
                 fireEvent('notify.frontend', type = 'release.update_status', data = wrote)
 
             return True
+        except ConflictError:
+            log.warning('Gave up updating release %s status after retries due to persistent contention', release_id)
         except Exception:
             log.error('Failed: %s', traceback.format_exc())
 

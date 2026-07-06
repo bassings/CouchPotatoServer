@@ -4,8 +4,10 @@ unprotected read-modify-write race on release status transitions (the
 hottest status-transition path: search/snatch/download/ignore all funnel
 through it).
 """
+import logging
 from unittest.mock import MagicMock, patch
 
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.plugins.release.main import Release
 
 
@@ -92,6 +94,30 @@ def test_update_status_missing_release_returns_false():
         result = plugin.updateStatus('rel-missing', status='done')
 
     assert result is False
+
+
+def test_update_status_conflict_error_after_retries_returns_false_and_logs_warning(caplog):
+    """When update_with_retry exhausts its retries under persistent write
+    contention it raises ConflictError. This is an expected, distinguishable
+    condition (not a code defect), so updateStatus must log it at WARNING --
+    not fall through to the generic 'except Exception' branch that logs a
+    full ERROR traceback -- while still returning the exact same failure
+    value (`False`) that the generic-exception path returns."""
+    plugin = Release.__new__(Release)
+    db = MagicMock()
+    db.update_with_retry.side_effect = ConflictError('rel-1')
+
+    with patch('couchpotato.core.plugins.release.main.get_db', return_value=db), \
+         caplog.at_level(logging.WARNING, logger='couchpotato.core.plugins.release'):
+        result = plugin.updateStatus('rel-1', status='snatched')
+
+    assert result is False
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(warning_records) == 1
+    assert 'rel-1' in warning_records[0].getMessage()
+    assert error_records == []
 
 
 def test_update_status_survives_a_transient_conflict_via_retry_helper():

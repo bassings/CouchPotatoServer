@@ -6,6 +6,7 @@ from string import ascii_lowercase
 
 from CodernityDB.database import RecordNotFound, RecordDeleted
 from couchpotato import tryInt, get_db
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, fireEventAsync, addEvent
 from couchpotato.core.helpers.encoding import toUnicode
@@ -639,6 +640,9 @@ class MediaPlugin(MediaBase):
             media = db.update_with_retry(_mark_watched, id)
         except (RecordNotFound, RecordDeleted, KeyError):
             return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s watched after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
         except Exception:
             log.error('Unexpected error marking media %s watched: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}
@@ -660,6 +664,9 @@ class MediaPlugin(MediaBase):
             media = db.update_with_retry(_mark_unwatched, id)
         except (RecordNotFound, RecordDeleted, KeyError):
             return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s unwatched after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
         except Exception:
             log.error('Unexpected error marking media %s unwatched: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}

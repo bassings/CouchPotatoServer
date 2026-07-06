@@ -1,7 +1,9 @@
 """Unit tests for media watch history behaviour."""
+import logging
 import tempfile
 from unittest.mock import MagicMock, patch
 
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.media._base.media.main import MediaPlugin
 
 
@@ -92,6 +94,56 @@ def test_mark_watched_returns_not_found_when_media_missing():
 
     assert result == {'success': False, 'error': 'Media not found'}
     fire_event.assert_not_called()
+
+
+def test_mark_watched_conflict_error_after_retries_returns_failure_and_logs_warning(caplog):
+    """When update_with_retry exhausts its retries under persistent write
+    contention it raises ConflictError -- an expected, distinguishable
+    condition, not a code defect. markWatched must log it at WARNING (not
+    fall through to the generic 'except Exception' ERROR-with-traceback
+    branch) while still returning the same {'success': False, 'error': ...}
+    shape the generic-exception path returns."""
+    plugin = MediaPlugin.__new__(MediaPlugin)
+    db = MagicMock()
+    db.update_with_retry.side_effect = ConflictError('movie-1')
+
+    with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
+         patch('couchpotato.core.media._base.media.main.fireEvent') as fire_event, \
+         caplog.at_level(logging.WARNING, logger='couchpotato.core.media._base.media'):
+        result = plugin.markWatched(id='movie-1', watched_by='Scott')
+
+    assert result['success'] is False
+    assert isinstance(result['error'], str) and result['error']
+    fire_event.assert_not_called()
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(warning_records) == 1
+    assert 'movie-1' in warning_records[0].getMessage()
+    assert error_records == []
+
+
+def test_mark_unwatched_conflict_error_after_retries_returns_failure_and_logs_warning(caplog):
+    """Same proof as test_mark_watched_conflict_error_after_retries_returns_failure_and_logs_warning
+    but for markUnwatched."""
+    plugin = MediaPlugin.__new__(MediaPlugin)
+    db = MagicMock()
+    db.update_with_retry.side_effect = ConflictError('movie-1')
+
+    with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
+         patch('couchpotato.core.media._base.media.main.fireEvent') as fire_event, \
+         caplog.at_level(logging.WARNING, logger='couchpotato.core.media._base.media'):
+        result = plugin.markUnwatched(id='movie-1')
+
+    assert result['success'] is False
+    assert isinstance(result['error'], str) and result['error']
+    fire_event.assert_not_called()
+
+    warning_records = [r for r in caplog.records if r.levelno == logging.WARNING]
+    error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(warning_records) == 1
+    assert 'movie-1' in warning_records[0].getMessage()
+    assert error_records == []
 
 
 def test_mark_watched_survives_concurrent_write_via_real_adapter_retry_loop():
