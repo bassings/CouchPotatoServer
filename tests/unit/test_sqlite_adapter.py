@@ -380,6 +380,20 @@ class TestSQLiteAdapterUpdateWithRetry:
         assert result['status'] == 'done'
         assert result['_rev'] != inserted['_rev']
 
+    def test_retries_less_than_one_raises_value_error(self, db, sample_media):
+        """retries=0 (or negative) means the `for _attempt in range(retries)`
+        loop body never executes, so `last_error` stays None and the old code
+        did `raise None` -- which blows up with `TypeError: exceptions must
+        derive from BaseException` instead of a sensible error. Guard against
+        retries < 1 up front and raise ValueError instead."""
+        inserted = db.insert(sample_media)
+
+        def mutator(doc):
+            doc['status'] = 'done'
+
+        with pytest.raises(ValueError, match="retries"):
+            db.update_with_retry(mutator, inserted['_id'], retries=0)
+
 
 class TestSQLiteAdapterIndexQueries:
     def test_media_status_query(self, db, sample_media):

@@ -490,10 +490,19 @@ class SQLiteAdapter(DatabaseInterface):
               a write the winning writer already announced.
 
         Raises:
+            ValueError: if `retries` is less than 1 -- a `retries <= 0` value
+                would make the retry loop body never execute at all, leaving
+                no attempt (and no `ConflictError`) to raise, which used to
+                surface as a confusing `TypeError: exceptions must derive
+                from BaseException` from `raise None`. Callers must pass
+                `retries >= 1`.
             KeyError: if the document does not exist.
             ConflictError: if `retries` attempts are all lost to concurrent
                 writers (persistent contention on this document).
         """
+        if retries < 1:
+            raise ValueError("retries must be >= 1")
+
         last_error: ConflictError | None = None
         for _attempt in range(retries):
             doc = self.get('id', doc_id)
