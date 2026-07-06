@@ -9,7 +9,7 @@ import time
 
 import pytest
 
-from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
+from couchpotato.core.db.sqlite_adapter import ConflictError, SQLiteAdapter
 
 
 @pytest.fixture
@@ -171,6 +171,167 @@ class TestSQLiteAdapterCRUD:
     def test_get_nonexistent(self, db):
         with pytest.raises(KeyError):
             db.get('id', 'nonexistent')
+
+
+class TestSQLiteAdapterCompareAndSwap:
+    """Tests for optimistic-concurrency (CAS on `_rev`) in update().
+
+    Closes the read-modify-write race flagged in the 2026-07 audit: two
+    concurrent read-modify-write cycles on the same document must not
+    silently clobber each other (lost update).
+    """
+
+    def test_update_with_correct_rev_succeeds_and_bumps_rev(self, db, sample_media):
+        inserted = db.insert(sample_media)
+        doc = db.get('id', inserted['_id'])
+        assert doc['_rev'] == inserted['_rev']
+
+        doc['status'] = 'done'
+        update_result = db.update(doc)
+
+        assert update_result['_rev'] != inserted['_rev']
+        updated = db.get('id', inserted['_id'])
+        assert updated['status'] == 'done'
+        assert updated['_rev'] == update_result['_rev']
+
+    def test_stale_rev_raises_conflict_and_does_not_clobber(self, db, sample_media):
+        inserted = db.insert(sample_media)
+
+        # Two readers both fetch the same doc at rev A.
+        reader_a = db.get('id', inserted['_id'])
+        reader_b = db.get('id', inserted['_id'])
+        assert reader_a['_rev'] == reader_b['_rev'] == inserted['_rev']
+
+        # Reader B writes first (concurrent write), advancing to rev B.
+        reader_b['status'] = 'snatched'
+        winner_result = db.update(reader_b)
+        assert winner_result['_rev'] != inserted['_rev']
+
+        # Reader A, still holding the stale rev-A copy, tries to write.
+        reader_a['status'] = 'done'
+        with pytest.raises(ConflictError) as excinfo:
+            db.update(reader_a)
+        assert inserted['_id'] in str(excinfo.value)
+        assert excinfo.value._id == inserted['_id']
+
+        # The doc must retain reader B's (winning) value -- no clobber.
+        current = db.get('id', inserted['_id'])
+        assert current['status'] == 'snatched'
+        assert current['_rev'] == winner_result['_rev']
+
+    def test_update_missing_id_still_raises_keyerror(self, db):
+        with pytest.raises(KeyError):
+            db.update({'_id': 'nonexistent', '_t': 'media', 'title': 'X', '_rev': 'deadbeef'})
+
+    def test_update_without_rev_falls_back_to_unconditional_update(self, db, sample_media):
+        """Backward-compat: callers that build a fresh dict without a _rev
+        (no CAS context available) must still be able to update -- but the
+        write is unconditional (last-writer-wins), matching pre-CAS
+        behaviour, for compatibility with existing call sites."""
+        inserted = db.insert(sample_media)
+
+        # No `_rev` key at all -- simulates a caller-constructed dict.
+        stale_free_update = {'_id': inserted['_id'], '_t': 'media', 'title': 'The Matrix Reloaded'}
+        assert '_rev' not in stale_free_update
+
+        result = db.update(stale_free_update)
+        assert result['_rev'] != inserted['_rev']
+
+        updated = db.get('id', inserted['_id'])
+        assert updated['title'] == 'The Matrix Reloaded'
+
+    def test_update_without_rev_overwrites_concurrent_change_last_writer_wins(self, db, sample_media):
+        """Documents the deliberate trade-off: skipping `_rev` means no CAS
+        protection at all, so a concurrent change IS clobbered. This is why
+        callers should prefer passing `_rev` (via get()) or update_with_retry."""
+        inserted = db.insert(sample_media)
+
+        # Someone else updates the doc first.
+        concurrent = db.get('id', inserted['_id'])
+        concurrent['status'] = 'snatched'
+        db.update(concurrent)
+
+        # A caller without a _rev blindly overwrites.
+        db.update({'_id': inserted['_id'], '_t': 'media', 'title': 'Overwritten'})
+
+        final = db.get('id', inserted['_id'])
+        assert final['title'] == 'Overwritten'
+        assert final.get('status') is None  # clobbered -- no CAS guard without _rev
+
+
+class TestSQLiteAdapterUpdateWithRetry:
+    """Tests for the update_with_retry() safe read-modify-write helper."""
+
+    def test_converges_when_no_conflict(self, db, sample_media):
+        inserted = db.insert(sample_media)
+
+        def mutator(doc):
+            doc['status'] = 'done'
+
+        result = db.update_with_retry(mutator, inserted['_id'])
+
+        assert result['status'] == 'done'
+        assert result['_rev'] != inserted['_rev']
+
+    def test_converges_after_a_single_conflict(self, db, sample_media):
+        inserted = db.insert(sample_media)
+        attempts = {'count': 0}
+        real_update = db.update
+
+        def flaky_update(data):
+            attempts['count'] += 1
+            if attempts['count'] == 1:
+                # Simulate a concurrent writer sneaking in between the
+                # mutator's read and this update() call, on the first
+                # attempt only.
+                concurrent = db.get('id', inserted['_id'])
+                concurrent['status'] = 'snatched'
+                real_update(concurrent)
+            return real_update(data)
+
+        db.update = flaky_update
+        try:
+            def mutator(doc):
+                doc['status'] = 'done'
+
+            result = db.update_with_retry(mutator, inserted['_id'], retries=3)
+        finally:
+            db.update = real_update
+
+        assert result['status'] == 'done'
+        assert attempts['count'] == 2  # first attempt conflicted, second succeeded
+
+        final = db.get('id', inserted['_id'])
+        assert final['status'] == 'done'
+
+    def test_raises_conflict_after_exhausting_retries(self, db, sample_media):
+        inserted = db.insert(sample_media)
+        real_update = db.update
+
+        def always_conflicting_update(data):
+            # Every attempt: a concurrent writer changes the doc first,
+            # so the caller's rev is always stale by the time it writes.
+            concurrent = db.get('id', inserted['_id'])
+            concurrent['status'] = 'churning'
+            real_update(concurrent)
+            return real_update(data)
+
+        db.update = always_conflicting_update
+        try:
+            def mutator(doc):
+                doc['status'] = 'done'
+
+            with pytest.raises(ConflictError):
+                db.update_with_retry(mutator, inserted['_id'], retries=3)
+        finally:
+            db.update = real_update
+
+    def test_missing_document_raises_keyerror(self, db):
+        def mutator(doc):
+            doc['status'] = 'done'
+
+        with pytest.raises(KeyError):
+            db.update_with_retry(mutator, 'nonexistent-id')
 
 
 class TestSQLiteAdapterIndexQueries:

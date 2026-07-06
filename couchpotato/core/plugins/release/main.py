@@ -518,30 +518,41 @@ class Release(Plugin):
     def updateStatus(self, release_id, status = None):
         if not status: return False
 
+        # Read-modify-write on the release doc. This is one of the hottest
+        # status-transition paths (search/snatch/download/ignore all funnel
+        # through it) and previously had no CAS or lock protection, so a
+        # concurrent status change could be silently lost. Route it through
+        # the CAS retry helper; `changed` (closed over by the mutator) tells
+        # us afterwards whether a write actually happened, so we only fire
+        # the notify event when the status genuinely transitioned -- same
+        # as the original "only touch the doc if status changed" behaviour.
+        changed = {'value': False}
+
+        def _mutate(rel):
+            if rel.get('status') == status:
+                return False
+
+            release_name = None
+            if rel.get('files'):
+                for file_type in rel.get('files', {}):
+                    if file_type == 'movie':
+                        for release_file in rel['files'][file_type]:
+                            release_name = os.path.basename(release_file)
+                            break
+
+            if not release_name and rel.get('info'):
+                release_name = rel['info'].get('name')
+
+            log.debug('Marking release %s as %s', release_name, status)
+            rel['status'] = status
+            rel['last_edit'] = int(time.time())
+            changed['value'] = True
+
         try:
             db = get_db()
+            rel = db.update_with_retry(_mutate, release_id)
 
-            rel = db.get('id', release_id)
-            if rel and rel.get('status') != status:
-
-                release_name = None
-                if rel.get('files'):
-                    for file_type in rel.get('files', {}):
-                        if file_type == 'movie':
-                            for release_file in rel['files'][file_type]:
-                                release_name = os.path.basename(release_file)
-                                break
-
-                if not release_name and rel.get('info'):
-                    release_name = rel['info'].get('name')
-
-                #update status in Db
-                log.debug('Marking release %s as %s', release_name, status)
-                rel['status'] = status
-                rel['last_edit'] = int(time.time())
-
-                db.update(rel)
-
+            if changed['value']:
                 #Update all movie info as there is no release update function
                 fireEvent('notify.frontend', type = 'release.update_status', data = rel)
 

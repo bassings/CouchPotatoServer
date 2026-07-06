@@ -621,52 +621,51 @@ class MediaPlugin(MediaBase):
     def markWatched(self, id = None, watched_by = None, source = 'manual', **kwargs):
 
         db = get_db()
+        watched_at = kwargs.get('watched_at') or self._utcNow()
 
-        try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
-        except Exception:
-            log.error('Unexpected error fetching media %s in markWatched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
-
-        if media:
+        def _mark_watched(media):
             media['watched'] = True
-            media['watched_at'] = kwargs.get('watched_at') or self._utcNow()
+            media['watched_at'] = watched_at
             if watched_by:
                 media['watched_by'] = watched_by
             if source:
                 media['watched_source'] = source
 
-            db.update(media)
-            fireEvent('notify.frontend', type = 'movie.update', data = media)
-            return {'success': True, 'media': media}
+        # Read-modify-write on the same doc as other concurrent viewers /
+        # devices marking watched -- go through the CAS retry helper rather
+        # than a bare get()+update() so a lost update can't silently drop
+        # someone else's concurrent change to this media doc.
+        try:
+            media = db.update_with_retry(_mark_watched, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except Exception:
+            log.error('Unexpected error marking media %s watched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
 
-        return {'success': False, 'error': 'Media not found'}
+        fireEvent('notify.frontend', type = 'movie.update', data = media)
+        return {'success': True, 'media': media}
 
     def markUnwatched(self, id = None, **kwargs):
 
         db = get_db()
 
-        try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
-        except Exception:
-            log.error('Unexpected error fetching media %s in markUnwatched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
-
-        if media:
+        def _mark_unwatched(media):
             media['watched'] = False
             media.pop('watched_at', None)
             media.pop('watched_by', None)
             media.pop('watched_source', None)
 
-            db.update(media)
-            fireEvent('notify.frontend', type = 'movie.update', data = media)
-            return {'success': True, 'media': media}
+        try:
+            media = db.update_with_retry(_mark_unwatched, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except Exception:
+            log.error('Unexpected error marking media %s unwatched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
 
-        return {'success': False, 'error': 'Media not found'}
+        fireEvent('notify.frontend', type = 'movie.update', data = media)
+        return {'success': True, 'media': media}
 
     def watchHistory(self, type = 'movie', limit_offset = None, **kwargs):
 

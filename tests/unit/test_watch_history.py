@@ -24,12 +24,24 @@ def make_media(media_id, watched=False, status='done'):
     return media
 
 
+def make_update_with_retry(doc):
+    """Build a MagicMock side_effect that mimics
+    SQLiteAdapter.update_with_retry(mutator, doc_id) by applying the
+    mutator to `doc` and returning it -- used to test callers that were
+    converted to the CAS retry helper without depending on a real adapter."""
+    def _fake(mutator, doc_id, retries=3):
+        assert doc_id == doc['_id']
+        mutator(doc)
+        return doc
+    return _fake
+
+
 def test_mark_watched_records_watch_metadata_without_changing_media_status():
     """markWatched sets watch fields but preserves existing media status."""
     plugin = MediaPlugin.__new__(MediaPlugin)
     movie = make_media('movie-1', status='active')
     db = MagicMock()
-    db.get.return_value = movie
+    db.update_with_retry.side_effect = make_update_with_retry(movie)
 
     with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
          patch('couchpotato.core.media._base.media.main.fireEvent') as fire_event:
@@ -42,7 +54,7 @@ def test_mark_watched_records_watch_metadata_without_changing_media_status():
     assert movie['watched_by'] == 'Scott'
     assert movie['watched_source'] == 'manual'
     assert movie['watched_at'].endswith('Z')
-    db.update.assert_called_once_with(movie)
+    db.update_with_retry.assert_called_once()
     fire_event.assert_called_once_with('notify.frontend', type='movie.update', data=movie)
 
 
@@ -51,7 +63,7 @@ def test_mark_unwatched_clears_watch_metadata_without_changing_media_status():
     plugin = MediaPlugin.__new__(MediaPlugin)
     movie = make_media('movie-1', watched=True, status='done')
     db = MagicMock()
-    db.get.return_value = movie
+    db.update_with_retry.side_effect = make_update_with_retry(movie)
 
     with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
          patch('couchpotato.core.media._base.media.main.fireEvent'):
@@ -63,7 +75,22 @@ def test_mark_unwatched_clears_watch_metadata_without_changing_media_status():
     assert 'watched_at' not in movie
     assert 'watched_by' not in movie
     assert 'watched_source' not in movie
-    db.update.assert_called_once_with(movie)
+    db.update_with_retry.assert_called_once()
+
+
+def test_mark_watched_returns_not_found_when_media_missing():
+    """markWatched surfaces a not-found result when the media doc is gone,
+    matching the previous get()-based not-found behaviour."""
+    plugin = MediaPlugin.__new__(MediaPlugin)
+    db = MagicMock()
+    db.update_with_retry.side_effect = KeyError('missing-1')
+
+    with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
+         patch('couchpotato.core.media._base.media.main.fireEvent') as fire_event:
+        result = plugin.markWatched(id='missing-1')
+
+    assert result == {'success': False, 'error': 'Media not found'}
+    fire_event.assert_not_called()
 
 
 def test_list_can_filter_watched_movies():

@@ -18,6 +18,27 @@ from couchpotato.core.logger import CPLog
 log = CPLog(__name__)
 
 
+class ConflictError(Exception):
+    """Raised by SQLiteAdapter.update() when a compare-and-swap on `_rev`
+    fails because another writer updated the document first.
+
+    This is the lost-update signal for read-modify-write callers: the
+    caller's in-memory copy is stale (it was read at an older `_rev` than
+    what is currently stored), so blindly writing it would silently discard
+    the other writer's change. Callers should re-`get()` the document,
+    re-apply their change, and retry -- see `SQLiteAdapter.update_with_retry`
+    for a ready-made helper that does this.
+    """
+
+    def __init__(self, doc_id: str, message: str | None = None):
+        self._id = doc_id
+        super().__init__(
+            message or
+            f"Update conflict for document {doc_id!r}: _rev is stale "
+            "(document was modified by another writer). Re-read and retry."
+        )
+
+
 def _generate_id():
     return uuid.uuid4().hex
 
@@ -339,27 +360,77 @@ class SQLiteAdapter(DatabaseInterface):
             return {'_id': doc_id, '_rev': doc_rev}
 
     def update(self, data: dict) -> dict:
+        """Update an existing document.
+
+        Compare-and-swap: if `data` carries a `_rev` (the normal case --
+        every doc read via get()/query() has one), the UPDATE is conditioned
+        on that exact `_rev` still being current in the database. This
+        closes the read-modify-write race where two concurrent
+        read-modify-write cycles on the same document silently clobber each
+        other (lost update) -- the second writer's blind UPDATE used to
+        overwrite the first writer's change with no error and no trace.
+
+        If the CAS UPDATE affects zero rows, the row either no longer
+        exists (KeyError, same as before) or exists with a *different*
+        `_rev` -- meaning another writer updated it first. That second case
+        raises ConflictError so the caller can re-read, re-apply its
+        change, and retry (see `update_with_retry`).
+
+        Backward-compat fallback: if `data` has no `_rev` at all (some
+        callers construct a fresh dict rather than mutating a `get()`
+        result), there is no rev to condition on, so this falls back to the
+        previous unconditional last-writer-wins UPDATE. This preserves
+        existing callers that never carried a `_rev` -- converting them is
+        opportunistic follow-up work, not a requirement of this CAS
+        contract.
+        """
         with self._write_lock:
             conn = self._get_conn()
             doc_id = data.get('_id')
             if not doc_id:
                 raise ValueError("Document must have _id for update")
 
-            # Check exists
-            existing = conn.execute("SELECT _rev FROM documents WHERE _id = ?", (doc_id,)).fetchone()
-            if existing is None:
-                raise KeyError(f"Document not found: {doc_id}")
-
+            expected_rev = data.get('_rev')
             doc_rev = _generate_rev()
             doc_type = data.get('_t', '')
             now = time.time()
             json_data = self._doc_to_json(data)
 
             try:
-                conn.execute(
-                    "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
-                    (doc_rev, doc_type, json_data, now, doc_id)
-                )
+                if expected_rev is not None:
+                    cursor = conn.execute(
+                        "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? "
+                        "WHERE _id = ? AND _rev = ?",
+                        (doc_rev, doc_type, json_data, now, doc_id, expected_rev)
+                    )
+                    if cursor.rowcount == 0:
+                        # Either the doc doesn't exist, or it exists with a
+                        # different _rev (lost the CAS race). Distinguish
+                        # the two so callers get KeyError only for genuine
+                        # absence, matching prior semantics.
+                        if self._transaction_depth == 0:
+                            conn.rollback()
+                        current = conn.execute(
+                            "SELECT _rev FROM documents WHERE _id = ?", (doc_id,)
+                        ).fetchone()
+                        if current is None:
+                            raise KeyError(f"Document not found: {doc_id}")
+                        raise ConflictError(doc_id)
+                else:
+                    log.debug(
+                        'update() called without a _rev for document %s -- '
+                        'skipping CAS, falling back to an unconditional '
+                        '(last-writer-wins) update.', doc_id
+                    )
+                    existing = conn.execute(
+                        "SELECT _rev FROM documents WHERE _id = ?", (doc_id,)
+                    ).fetchone()
+                    if existing is None:
+                        raise KeyError(f"Document not found: {doc_id}")
+                    conn.execute(
+                        "UPDATE documents SET _rev = ?, _t = ?, data = ?, updated_at = ? WHERE _id = ?",
+                        (doc_rev, doc_type, json_data, now, doc_id)
+                    )
 
                 # Update denormalized tables
                 self._update_denormalized(doc_id, data)
@@ -374,6 +445,40 @@ class SQLiteAdapter(DatabaseInterface):
             self._commit_if_not_transaction()
 
             return {'_id': doc_id, '_rev': doc_rev}
+
+    def update_with_retry(self, mutator, doc_id: str, retries: int = 3) -> dict:
+        """Safely perform a read-modify-write update with CAS retry.
+
+        This is the safe primitive for read-modify-write callers: it
+        re-`get()`s the current document, applies `mutator(doc)` (which
+        should mutate `doc` in place), and `update()`s it. If the write
+        loses the compare-and-swap race (ConflictError), the document is
+        re-read and the mutator re-applied, up to `retries` attempts total.
+
+        `mutator` may return `False` to signal "no change needed" (e.g. the
+        document is already in the desired state) -- in that case the
+        document is returned as-is without writing, and no retry occurs.
+        Any other return value (including `None`) means "write the
+        mutated document".
+
+        Raises:
+            KeyError: if the document does not exist.
+            ConflictError: if `retries` attempts are all lost to concurrent
+                writers (persistent contention on this document).
+        """
+        last_error: ConflictError | None = None
+        for _attempt in range(retries):
+            doc = self.get('id', doc_id)
+            if mutator(doc) is False:
+                return doc
+            try:
+                result = self.update(doc)
+                doc['_rev'] = result['_rev']
+                return doc
+            except ConflictError as exc:
+                last_error = exc
+                continue
+        raise last_error
 
     def delete(self, data: dict) -> bool:
         with self._write_lock:
