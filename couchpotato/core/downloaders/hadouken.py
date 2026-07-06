@@ -16,6 +16,7 @@ from couchpotato.core.helpers.encoding import isInt, sp
 from couchpotato.core.helpers.variable import cleanHost
 from couchpotato.core.logger import CPLog
 from bencodepy import encode as benc, decode as bdecode
+from bencodepy.exceptions import DecodingError as BencodeDecodingError
 
 
 log = CPLog(__name__)
@@ -101,9 +102,18 @@ class Hadouken(DownloaderBase):
             torrent_params['name'] = torrent_filename
         else:
             # bencodepy.decode() returns bytes keys, so the info dict must be
-            # looked up with a bytes key (b"info", not "info").
-            info = bdecode(filedata)[b'info']
-            torrent_hash = sha1(benc(info)).hexdigest().upper()
+            # looked up with a bytes key (b"info", not "info"). Guard the
+            # decode + info-hash computation the same way qBittorrent does
+            # (qbittorrent_.py): a corrupt/malformed .torrent must fail with
+            # a specific, logged error and a clean False return, not an
+            # uncaught DecodingError/KeyError/TypeError bubbling out of
+            # download().
+            try:
+                info = bdecode(filedata)[b'info']
+                torrent_hash = sha1(benc(info)).hexdigest().upper()
+            except (BencodeDecodingError, KeyError, ValueError, TypeError) as e:
+                log.error('Invalid/corrupt torrent file, cannot add to Hadouken: %s', e)
+                return False
 
         # Convert base 32 to hex
         if len(torrent_hash) == 32:

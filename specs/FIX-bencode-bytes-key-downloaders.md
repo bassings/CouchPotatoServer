@@ -41,21 +41,38 @@ if `dict['info']` had ever actually worked. No other string-key access on a
 `bdecode()` result exists in any of the three files — each only does the one
 `['info']`/`["info"]` lookup before re-bencoding.
 
-### Error-handling: left as-is (matches existing per-file style)
+### Error-handling: follow-up — now guarded to match qBittorrent
 
-- **utorrent.py / hadouken.py**: the `bdecode()` call in `download()` is
-  **not** wrapped in a try/except in either file today, and the rTorrent fix
-  (closest structural sibling — same magnet-vs-file branch, same
-  `info = bdecode(filedata)[b"info"]` shape) also left it unguarded rather
-  than adding new exception handling. Matching that precedent, no new guard
-  was added here — keeps the change minimal and consistent with the file's
-  existing (unguarded) style.
-- **deluge.py**: `DelugeRPC._check_torrent()` (where the bdecode call lives)
-  is only ever invoked from inside `add_torrent_file()` /
-  `add_torrent_magnet()`, both of which already wrap the whole body in a
-  broad `try/except Exception as err: log.error(...)`. A decode failure is
-  therefore already caught and logged by the existing handler — no new
-  guarding needed.
+The initial version of this fix left the `bdecode()` call unguarded in all
+three files (see history below). A follow-up round of review asked for
+consistency with qBittorrent's handling
+(`couchpotato/core/downloaders/qbittorrent_.py:173-182`), which wraps its
+`bdecode(filedata)[b"info"]` + `sha1(bencode(info))` computation in
+`try/except (BencodeDecodingError, KeyError, ValueError, TypeError) as e:` and
+turns a corrupt/malformed `.torrent` into a specific logged error
+(`'Invalid/corrupt torrent file, cannot add to qBittorrent: %s'`) plus a clean
+`False` return, instead of letting the exception escape to `fireEvent`'s
+blanket handler. All three files now adopt the identical pattern, importing
+the same `from bencodepy.exceptions import DecodingError as
+BencodeDecodingError`:
+
+- **utorrent.py** (`download()`) and **hadouken.py** (`download()`): the
+  decode + info-hash computation is wrapped in the same
+  `try/except (BencodeDecodingError, KeyError, ValueError, TypeError)`,
+  logging `'Invalid/corrupt torrent file, cannot add to uTorrent/Hadouken:
+  %s'` and returning `False` — the add-file RPC (`add_torrent_file`/
+  `add_file`) is never reached on corrupt input.
+- **deluge.py** (`DelugeRPC._check_torrent()`): also wrapped with the same
+  exception tuple, logging `'Invalid/corrupt torrent file, cannot check with
+  Deluge: %s'` and returning `False`. This is belt-and-braces: the callers
+  (`add_torrent_file()`/`add_torrent_magnet()`) already wrap the whole body in
+  a broad `try/except Exception as err: log.error(...)`, so a decode failure
+  was already caught before this change — but it produced a generic traceback
+  log rather than a specific, actionable one. With the guard inside
+  `_check_torrent()`, corrupt input never reaches the outer handler at all:
+  `_check_torrent()` returns `False` cleanly, which the caller assigns to
+  `torrent_id`/`remote_torrent` and folds into its existing
+  "falsy → log + return False" path, so no caller behaviour changes.
 
 ## Tests (TDD)
 
@@ -91,13 +108,41 @@ Deluge fallback test, an assertion mismatch caused by the swallowed
 `KeyError`) against the pre-fix `['info']`/`["info"]` code, and passes once
 the lookup uses `[b'info']`/`[b"info"]`.
 
+### Follow-up: corrupt-input guard tests
+
+Added per downloader, feeding intentionally-corrupt bytes as
+`filedata`/`torrent` (`b'garbage'` — invalid bencoding, raises
+`BencodeDecodingError`; `b'i5e'` — valid bencode integer, decodes to a
+non-subscriptable tuple, raises `TypeError` on `[b'info']`). Each asserts the
+graceful-failure return (`False`), that the client's add method was **not**
+called, and that a single specific `log.error` call was made containing
+`'Invalid/corrupt torrent file'`. Every one of these new tests fails against
+the pre-guard code (the exception escapes `download()`/`_check_torrent()`
+uncaught) and passes once the guard is in place.
+
+- `TestUTorrentDownloadFile::test_download_corrupt_torrent_file_returns_false_without_raising`
+  (parametrized `invalid-bencoding` / `non-dict-bencode`)
+- `TestDelugeCheckTorrent::test_check_torrent_file_corrupt_returns_false_with_specific_error`
+  (parametrized, exercises `_check_torrent()` directly)
+- `TestDelugeCheckTorrent::test_add_torrent_file_returns_false_on_corrupt_torrent_without_raising`
+  (exercises the production `add_torrent_file()` entry point, confirming only
+  the specific message is logged — not a second generic traceback from the
+  outer `except Exception`)
+- `TestHadoukenDownloadFile::test_download_corrupt_torrent_file_returns_false_without_raising`
+  (parametrized `invalid-bencoding` / `non-dict-bencode`)
+
 ## Acceptance Criteria
 
 - [x] All three sites use the bytes key `[b'info']` / `[b"info"]`.
 - [x] No other string-key access on a `bdecode()` result remains in any of
       the three files.
 - [x] New tests fail against the pre-fix code (`KeyError`) and pass post-fix.
-- [x] `pytest tests/unit/ -q` fully green (1024 passed).
+- [x] `pytest tests/unit/ -q` fully green (1031 passed).
 - [x] `ruff check .` clean.
 - [x] `utorrent.py`, `deluge.py`, `hadouken.py` all import cleanly.
 - [x] CodernityDB untouched.
+- [x] Corrupt/malformed torrent input in `utorrent.py`, `deluge.py`, and
+      `hadouken.py` is now guarded identically to
+      `qbittorrent_.py` (`try/except (BencodeDecodingError, KeyError,
+      ValueError, TypeError)`, specific log message, clean `False`/falsy
+      return, no exception escapes).

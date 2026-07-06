@@ -6,6 +6,7 @@ import re
 import traceback
 
 from bencodepy import encode as benc, decode as bdecode
+from bencodepy.exceptions import DecodingError as BencodeDecodingError
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, sp
 from couchpotato.core.helpers.variable import tryFloat, cleanHost
@@ -321,9 +322,19 @@ class DelugeRPC:
             torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', torrent)[0]
         else:
             # bencodepy.decode() returns bytes keys, so the info dict must be
-            # looked up with a bytes key (b"info", not "info").
-            info = bdecode(torrent)[b"info"]
-            torrent_hash = sha1(benc(info)).hexdigest()
+            # looked up with a bytes key (b"info", not "info"). Guard the
+            # decode + info-hash computation the same way qBittorrent does
+            # (qbittorrent_.py): a corrupt/malformed .torrent must fail with
+            # a specific, logged error and a clean False return here, rather
+            # than relying on the broad `except Exception` in the callers
+            # (add_torrent_file/add_torrent_magnet) to mask it with a generic
+            # traceback log.
+            try:
+                info = bdecode(torrent)[b"info"]
+                torrent_hash = sha1(benc(info)).hexdigest()
+            except (BencodeDecodingError, KeyError, ValueError, TypeError) as e:
+                log.error('Invalid/corrupt torrent file, cannot check with Deluge: %s', e)
+                return False
 
         # Convert base 32 to hex
         if len(torrent_hash) == 32:
