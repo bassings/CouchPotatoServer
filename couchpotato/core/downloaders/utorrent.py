@@ -14,6 +14,7 @@ import urllib.request
 import urllib.error
 
 from bencodepy import encode as benc, decode as bdecode
+from bencodepy.exceptions import DecodingError as BencodeDecodingError
 from couchpotato.core._base.downloader.main import DownloaderBase, ReleaseDownloadList
 from couchpotato.core.helpers.encoding import isInt, ss, sp
 from couchpotato.core.helpers.variable import tryInt, tryFloat, cleanHost
@@ -88,8 +89,19 @@ class uTorrent(DownloaderBase):
             torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             torrent_params['trackers'] = '%0D%0A%0D%0A'.join(self.torrent_trackers)
         else:
-            info = bdecode(filedata)['info']
-            torrent_hash = sha1(benc(info)).hexdigest().upper()
+            # bencodepy.decode() returns bytes keys, so the info dict must be
+            # looked up with a bytes key (b"info", not "info"). Guard the
+            # decode + info-hash computation the same way qBittorrent does
+            # (qbittorrent_.py): a corrupt/malformed .torrent must fail with
+            # a specific, logged error and a clean False return, not an
+            # uncaught DecodingError/KeyError/TypeError bubbling out of
+            # download().
+            try:
+                info = bdecode(filedata)[b'info']
+                torrent_hash = sha1(benc(info)).hexdigest().upper()
+            except (BencodeDecodingError, KeyError, ValueError, TypeError) as e:
+                log.error('Invalid/corrupt torrent file, cannot add to uTorrent: %s', e)
+                return False
 
         torrent_filename = self.createFileName(data, filedata, media)
 

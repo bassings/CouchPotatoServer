@@ -2438,3 +2438,329 @@ class TestRTorrentDownloaderStatus:
 
         assert result is True
         mock_pc.assert_called_once_with({'id': 'ABC123', 'name': 'Movie'}, delete_files = True)
+
+
+# ===========================================================================
+# uTorrent / Deluge / Hadouken -- FIX-bencode-bytes-key-downloaders
+#
+# bencodepy.decode() (aliased bdecode) returns a dict keyed by BYTES
+# (b'info'), so the pre-fix string-key access `bdecode(...)["info"]` raised
+# KeyError on every real .torrent file (magnet adds were unaffected -- they
+# never go through bdecode). This mirrors the fix already applied to
+# qBittorrent/rTorrent. None of these tests mock bdecode/bencode: that is the
+# exact false-confidence pattern (a string-keyed mock return value) that
+# originally hid the bug, so each test does a genuine bencodepy round-trip.
+# ===========================================================================
+
+class TestUTorrentDownloadFile:
+    """Tests for uTorrent.download()'s torrent-FILE add path."""
+
+    def _make_utorrent(self, conf_values = None):
+        from couchpotato.core.downloaders.utorrent import uTorrent
+        conf_values = conf_values or {}
+        ut = uTorrent.__new__(uTorrent)
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        ut.conf = conf
+        return ut
+
+    def test_download_file_computes_info_hash_and_adds_file(self):
+        """Real bencode round-trip: builds a torrent dict, bencode()s it to
+        bytes, feeds it as filedata, and asserts uTorrent's add-file RPC is
+        called with the raw filedata and the correct sha1 info-hash.
+
+        Fails against `bdecode(filedata)['info']` (KeyError on every real
+        .torrent file) and passes against `bdecode(filedata)[b"info"]`.
+        """
+        import bencodepy
+        from hashlib import sha1
+
+        info = {
+            b'name': b'Some.Movie.mkv',
+            b'piece length': 16384,
+            b'length': 12345,
+            b'pieces': b'\x01' * 20,
+        }
+        filedata = bencodepy.encode({
+            b'announce': b'http://tracker.example.com/announce',
+            b'info': info,
+        })
+        expected_hash = sha1(
+            bencodepy.encode(bencodepy.decode(filedata)[b'info'])
+        ).hexdigest().upper()
+
+        ut = self._make_utorrent()
+        mock_api = MagicMock()
+        ut.utorrent_api = mock_api
+
+        with patch.object(ut, 'connect', return_value = mock_api), \
+             patch.object(ut, 'createFileName', return_value = 'Some.Movie.torrent'):
+            result = ut.download(
+                data = {'name': 'Some.Movie', 'protocol': 'torrent'},
+                filedata = filedata,
+            )
+
+        mock_api.add_torrent_file.assert_called_once_with('Some.Movie.torrent', filedata)
+        mock_api.set_torrent.assert_called_once_with(expected_hash, {})
+        mock_api.pause_torrent.assert_not_called()
+        assert result['id'] == expected_hash
+
+    def test_download_magnet_does_not_touch_bencode(self):
+        """Magnet adds never call bdecode -- confirms the two protocols stay
+        independent (a regression here would mean the fix leaked into the
+        magnet branch)."""
+        ut = self._make_utorrent()
+        mock_api = MagicMock()
+        ut.utorrent_api = mock_api
+
+        with patch.object(ut, 'connect', return_value = mock_api), \
+             patch.object(ut, 'createFileName', return_value = 'Some.Movie.torrent'):
+            result = ut.download(data = {
+                'name': 'Some.Movie', 'protocol': 'torrent_magnet',
+                'url': 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+            })
+
+        mock_api.add_torrent_uri.assert_called_once()
+        assert result['id'] == 'ABCDEF0123456789ABCDEF0123456789ABCDEF01'
+
+    @pytest.mark.parametrize('corrupt_filedata', [
+        b'garbage',   # invalid bencoding -> BencodeDecodingError
+        b'i5e',       # valid bencode integer, non-subscriptable -> TypeError
+    ], ids = ['invalid-bencoding', 'non-dict-bencode'])
+    def test_download_corrupt_torrent_file_returns_false_without_raising(self, corrupt_filedata):
+        """A corrupt/malformed .torrent must fail gracefully -- specific
+        logged error, False return, add-file RPC never called -- matching
+        qBittorrent's guard (qbittorrent_.py), instead of an uncaught
+        BencodeDecodingError/TypeError escaping download()."""
+        ut = self._make_utorrent()
+        mock_api = MagicMock()
+        ut.utorrent_api = mock_api
+        import couchpotato.core.downloaders.utorrent as ut_main
+
+        with patch.object(ut, 'connect', return_value = mock_api), \
+             patch.object(ut, 'createFileName', return_value = 'Some.Movie.torrent'), \
+             patch.object(ut_main.log, 'error') as mock_log_error:
+            result = ut.download(
+                data = {'name': 'Some.Movie', 'protocol': 'torrent'},
+                filedata = corrupt_filedata,
+            )
+
+        assert result is False
+        mock_api.add_torrent_file.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+
+class TestDelugeCheckTorrent:
+    """Tests for DelugeRPC._check_torrent()'s torrent-FILE info-hash path,
+    both in isolation and through the production add_torrent_file() fallback
+    that actually invokes it."""
+
+    def _make_drpc(self):
+        from couchpotato.core.downloaders.deluge import DelugeRPC
+        drpc = DelugeRPC.__new__(DelugeRPC)
+        drpc.client = MagicMock()
+        return drpc
+
+    @staticmethod
+    def _bencoded_torrent():
+        import bencodepy
+        from hashlib import sha1
+
+        info = {
+            b'name': b'Some.Movie.mkv',
+            b'piece length': 16384,
+            b'length': 12345,
+            b'pieces': b'\x01' * 20,
+        }
+        torrent_bytes = bencodepy.encode({
+            b'announce': b'http://tracker.example.com/announce',
+            b'info': info,
+        })
+        expected_hash = sha1(
+            bencodepy.encode(bencodepy.decode(torrent_bytes)[b'info'])
+        ).hexdigest()
+        return torrent_bytes, expected_hash
+
+    def test_check_torrent_file_computes_info_hash_when_known_to_deluge(self):
+        """Real bencode round-trip, isolated to _check_torrent(): fails
+        against `bdecode(torrent)["info"]` (KeyError) and passes against
+        `bdecode(torrent)[b"info"]`."""
+        torrent_bytes, expected_hash = self._bencoded_torrent()
+
+        drpc = self._make_drpc()
+        drpc.client.core.get_torrent_status.return_value = {'hash': expected_hash}
+
+        result = drpc._check_torrent(magnet = False, torrent = torrent_bytes)
+
+        drpc.client.core.get_torrent_status.assert_called_once_with(expected_hash, {})
+        assert result == expected_hash
+
+    def test_check_torrent_file_returns_false_when_not_found(self):
+        torrent_bytes, _ = self._bencoded_torrent()
+
+        drpc = self._make_drpc()
+        drpc.client.core.get_torrent_status.return_value = {'hash': None}
+
+        result = drpc._check_torrent(magnet = False, torrent = torrent_bytes)
+
+        assert result is False
+
+    def test_add_torrent_file_falls_back_to_check_torrent_when_id_missing(self):
+        """add_torrent_file() is the actual production call path: when
+        Deluge's add_torrent_file RPC returns no id (e.g. already added), it
+        falls back to _check_torrent() to derive the info-hash from the raw
+        torrent bytes -- the same real bencode round-trip, reached the way
+        production reaches it."""
+        torrent_bytes, expected_hash = self._bencoded_torrent()
+
+        drpc = self._make_drpc()
+        drpc.client.core.add_torrent_file.return_value = None
+        drpc.client.core.get_torrent_status.return_value = {'hash': expected_hash}
+
+        with patch.object(drpc, 'connect'):
+            result = drpc.add_torrent_file('movie.torrent', torrent_bytes, {'label': None})
+
+        assert result == expected_hash
+
+    @pytest.mark.parametrize('corrupt_torrent', [
+        b'garbage',   # invalid bencoding -> BencodeDecodingError
+        b'i5e',       # valid bencode integer, non-subscriptable -> TypeError
+    ], ids = ['invalid-bencoding', 'non-dict-bencode'])
+    def test_check_torrent_file_corrupt_returns_false_with_specific_error(self, corrupt_torrent):
+        """A corrupt/malformed .torrent must fail gracefully inside
+        _check_torrent() itself -- specific logged error, False return,
+        get_torrent_status never called -- matching qBittorrent's guard,
+        instead of an uncaught BencodeDecodingError/TypeError that would only
+        be caught (with a generic traceback log) by the broad `except
+        Exception` in the callers."""
+        drpc = self._make_drpc()
+        import couchpotato.core.downloaders.deluge as deluge_main
+
+        with patch.object(deluge_main.log, 'error') as mock_log_error:
+            result = drpc._check_torrent(magnet = False, torrent = corrupt_torrent)
+
+        assert result is False
+        drpc.client.core.get_torrent_status.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+    def test_add_torrent_file_returns_false_on_corrupt_torrent_without_raising(self):
+        """The production entry point (add_torrent_file) must not raise or
+        surface a generic traceback log when the fallback hits a corrupt
+        torrent -- the specific guard inside _check_torrent() handles it
+        before the outer `except Exception` ever sees it."""
+        drpc = self._make_drpc()
+        drpc.client.core.add_torrent_file.return_value = None
+        import couchpotato.core.downloaders.deluge as deluge_main
+
+        with patch.object(drpc, 'connect'), \
+             patch.object(deluge_main.log, 'error') as mock_log_error:
+            result = drpc.add_torrent_file('movie.torrent', b'garbage', {'label': None})
+
+        assert result is False
+        # Only the specific corrupt-file message, no generic traceback log
+        # from the outer except Exception in add_torrent_file.
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+
+class TestHadoukenDownloadFile:
+    """Tests for Hadouken.download()'s torrent-FILE add path."""
+
+    def _make_hadouken(self, conf_values = None):
+        from couchpotato.core.downloaders.hadouken import Hadouken
+        conf_values = conf_values or {}
+        hd = Hadouken.__new__(Hadouken)
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        hd.conf = conf
+        return hd
+
+    def test_download_file_computes_info_hash_and_adds_file(self):
+        """Real bencode round-trip: builds a torrent dict, bencode()s it to
+        bytes, feeds it as filedata, and asserts Hadouken's add_file RPC is
+        called with the raw filedata and the correct sha1 info-hash.
+
+        Fails against `bdecode(filedata)['info']` (KeyError on every real
+        .torrent file) and passes against `bdecode(filedata)[b"info"]`.
+        """
+        import bencodepy
+        from hashlib import sha1
+
+        info = {
+            b'name': b'Some.Movie.mkv',
+            b'piece length': 16384,
+            b'length': 12345,
+            b'pieces': b'\x01' * 20,
+        }
+        filedata = bencodepy.encode({
+            b'announce': b'http://tracker.example.com/announce',
+            b'info': info,
+        })
+        expected_hash = sha1(
+            bencodepy.encode(bencodepy.decode(filedata)[b'info'])
+        ).hexdigest().upper()
+
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+
+        with patch.object(hd, 'connect', return_value = True), \
+             patch.object(hd, 'createFileName', return_value = 'Some.Movie.torrent'):
+            result = hd.download(
+                data = {'name': 'Some.Movie', 'protocol': 'torrent'},
+                filedata = filedata,
+            )
+
+        mock_api.add_file.assert_called_once_with(filedata, {})
+        assert result['id'] == expected_hash
+
+    def test_download_magnet_does_not_touch_bencode(self):
+        """Magnet adds never call bdecode -- confirms the two protocols stay
+        independent (a regression here would mean the fix leaked into the
+        magnet branch)."""
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+
+        with patch.object(hd, 'connect', return_value = True), \
+             patch.object(hd, 'createFileName', return_value = 'Some.Movie.torrent'):
+            result = hd.download(data = {
+                'name': 'Some.Movie', 'protocol': 'torrent_magnet',
+                'url': 'magnet:?xt=urn:btih:ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+            })
+
+        mock_api.add_magnet_link.assert_called_once()
+        assert result['id'] == 'ABCDEF0123456789ABCDEF0123456789ABCDEF01'
+
+    @pytest.mark.parametrize('corrupt_filedata', [
+        b'garbage',   # invalid bencoding -> BencodeDecodingError
+        b'i5e',       # valid bencode integer, non-subscriptable -> TypeError
+    ], ids = ['invalid-bencoding', 'non-dict-bencode'])
+    def test_download_corrupt_torrent_file_returns_false_without_raising(self, corrupt_filedata):
+        """A corrupt/malformed .torrent must fail gracefully -- specific
+        logged error, False return, add_file RPC never called -- matching
+        qBittorrent's guard (qbittorrent_.py), instead of an uncaught
+        BencodeDecodingError/TypeError escaping download()."""
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+        import couchpotato.core.downloaders.hadouken as hadouken_main
+
+        with patch.object(hd, 'connect', return_value = True), \
+             patch.object(hd, 'createFileName', return_value = 'Some.Movie.torrent'), \
+             patch.object(hadouken_main.log, 'error') as mock_log_error:
+            result = hd.download(
+                data = {'name': 'Some.Movie', 'protocol': 'torrent'},
+                filedata = corrupt_filedata,
+            )
+
+        assert result is False
+        mock_api.add_file.assert_not_called()
+        assert mock_log_error.call_count == 1
+        assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
