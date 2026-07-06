@@ -200,6 +200,25 @@ release in the batch -- not just the one that conflicted. Fixed by adding
 skips that one release (logged at debug, same as the other skip reasons)
 and the loop continues with the rest of the batch.
 
+### 5b. `couchpotato/core/plugins/release/main.py` `createFromSearch()` — gap closed (review)
+
+`createFromSearch()` loops over `search_results` and calls a plain `db.update(rls)`
+per release (line ~505) to persist each upserted release doc, with the entire
+function body wrapped in one function-level `try/except Exception: ... return
+[]`. Since `db.update()` can now raise `ConflictError` for any doc carrying a
+`_rev`, a real CAS conflict on just one release -- plausible because
+`updateStatus()` elsewhere in this same file can concurrently mutate that same
+release doc via its own CAS retry path -- used to propagate out of the whole
+loop, get caught by the function-level catch-all, and discard every
+`found_releases` entry already accumulated for the *other* releases in the
+batch, not just the one that conflicted. Fixed the same way as 5a: the
+`db.update(rls)` call is now wrapped in its own per-iteration
+`try/except ConflictError`, which logs a warning (`'Skipped release %s due to
+a concurrent update: %s'`) and `continue`s to the next release, so the
+function still returns the partial `found_releases` list for the releases
+that updated successfully. The happy-path return contract (no conflicts ->
+same list as before) is unchanged.
+
 ### 6. Explicitly out of scope
 
 - `insert()`, `delete()`, `get()` semantics: unchanged.

@@ -502,7 +502,20 @@ class Release(Plugin):
                         except Exception:
                             log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
-                    db.update(rls)
+                    try:
+                        db.update(rls)
+                    except ConflictError as e:
+                        # A concurrent writer (e.g. updateStatus() on this
+                        # same release doc) won the CAS race between our
+                        # read and this write. This is a real, expected
+                        # contention outcome for just this one release --
+                        # not a code defect -- so skip only this release and
+                        # keep processing the rest of search_results, rather
+                        # than letting it propagate to the function-level
+                        # except below and discard every found_releases
+                        # entry already accumulated for the other releases.
+                        log.warning('Skipped release %s due to a concurrent update: %s', rel_identifier, e)
+                        continue
 
                     # Update release in search_results
                     rel['status'] = rls.get('status')
