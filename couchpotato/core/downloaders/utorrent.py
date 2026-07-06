@@ -88,7 +88,9 @@ class uTorrent(DownloaderBase):
             torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', data.get('url'))[0].upper()
             torrent_params['trackers'] = '%0D%0A%0D%0A'.join(self.torrent_trackers)
         else:
-            info = bdecode(filedata)['info']
+            # bencodepy.decode() returns bytes keys, so the info dict must be
+            # looked up with a bytes key (b"info", not "info").
+            info = bdecode(filedata)[b'info']
             torrent_hash = sha1(benc(info)).hexdigest().upper()
 
         torrent_filename = self.createFileName(data, filedata, media)

@@ -100,7 +100,9 @@ class Hadouken(DownloaderBase):
             torrent_params['trackers'] = self.torrent_trackers
             torrent_params['name'] = torrent_filename
         else:
-            info = bdecode(filedata)['info']
+            # bencodepy.decode() returns bytes keys, so the info dict must be
+            # looked up with a bytes key (b"info", not "info").
+            info = bdecode(filedata)[b'info']
             torrent_hash = sha1(benc(info)).hexdigest().upper()
 
         # Convert base 32 to hex

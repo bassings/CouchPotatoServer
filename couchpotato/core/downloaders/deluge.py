@@ -320,7 +320,9 @@ class DelugeRPC:
         if magnet:
             torrent_hash = re.findall(r'urn:btih:([\w]{32,40})', torrent)[0]
         else:
-            info = bdecode(torrent)["info"]
+            # bencodepy.decode() returns bytes keys, so the info dict must be
+            # looked up with a bytes key (b"info", not "info").
+            info = bdecode(torrent)[b"info"]
             torrent_hash = sha1(benc(info)).hexdigest()
 
         # Convert base 32 to hex
