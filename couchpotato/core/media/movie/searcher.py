@@ -122,8 +122,11 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         except SearchSetupError:
             return
 
-        if not movie['profile_id'] or (movie['status'] == 'done' and not manual):
-            log.debug('Movie doesn\'t have a profile or already done, assuming in manage tab.')
+        # 'downloaded' is the manual-review gate (workflow phase 1): treat it like
+        # 'done' for gating purposes so a movie awaiting review is never searched
+        # or upgraded, unless a manual/forced search explicitly overrides it.
+        if not movie['profile_id'] or (movie['status'] in ('done', 'downloaded') and not manual):
+            log.debug('Movie doesn\'t have a profile, is already done, or is awaiting review, assuming in manage tab.')
             fireEvent('media.restatus', movie['_id'], single = True)
             return
 
