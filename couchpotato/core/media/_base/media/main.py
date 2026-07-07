@@ -825,6 +825,19 @@ class MediaPlugin(MediaBase):
                     if tag_recent:
                         self.tag(media_id, 'recent', update_edited = True)
 
+                    # Workflow phase 4a: notify exactly once on a genuine
+                    # transition into the 'downloaded' manual-review gate
+                    # (mirrors the 'movie.snatched' notification path in
+                    # couchpotato/core/plugins/release/main.py rather than the
+                    # dead renamer.after chain). Guarded by both the
+                    # previous_status != m['status'] check above (so a
+                    # no-op restatus never fires) and this explicit
+                    # 'downloaded' check (so entering 'done' never fires it).
+                    if m['status'] == 'downloaded' and previous_status != 'downloaded':
+                        fireEvent('%s.downloaded' % m.get('type', 'movie'),
+                                  message = '%s downloaded — awaiting review' % getTitle(m),
+                                  data = m)
+
                 return m['status']
             except Exception:
                 log.error('Failed restatus: %s', traceback.format_exc())
