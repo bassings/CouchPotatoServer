@@ -186,6 +186,129 @@ def test_conflict_skip_sets_status_so_try_download_result_does_not_crash():
     }
 
 
+def _make_db_with_authoritative_reread(conflicting_identifier, existing_doc, authoritative_result):
+    """A db double for the "re-read authoritative status on conflict" fix.
+
+    Unlike `_make_db()` above (which always misses the `release_identifier`
+    lookup, forcing the insert path), this fixture makes that lookup HIT for
+    `conflicting_identifier` -- returning `existing_doc` (the STALE
+    pre-conflict copy, carrying whatever status the test wants to prove is
+    NOT used). `db.update()` then raises ConflictError for that same release,
+    exactly like a concurrent writer (e.g. updateStatus()) won the race.
+
+    `authoritative_result` controls what the post-conflict re-read
+    (`db.get('id', existing_doc['_id'])`) does:
+      - a dict -> returns that dict (the authoritative current doc)
+      - an Exception instance -> raises it (e.g. concurrent delete)
+    """
+    db = MagicMock()
+
+    def fake_get(index_name, key, with_doc=False):
+        if index_name == 'release_identifier':
+            if key == conflicting_identifier:
+                return {'doc': dict(existing_doc), '_id': existing_doc['_id']}
+            raise Exception('release_identifier not found')
+        if index_name == 'id':
+            if key == existing_doc['_id']:
+                if isinstance(authoritative_result, Exception):
+                    raise authoritative_result
+                return dict(authoritative_result)
+            raise KeyError(key)
+        raise AssertionError(f'unexpected index_name in test double: {index_name}')
+
+    db.get.side_effect = fake_get
+    db.insert.side_effect = lambda doc: dict(doc)
+
+    def fake_update(doc):
+        if doc.get('identifier') == conflicting_identifier:
+            raise ConflictError(doc['identifier'])
+        doc['_rev'] = 'v2'
+        return doc
+
+    db.update.side_effect = fake_update
+    return db
+
+
+def test_create_from_search_conflict_uses_authoritative_status_not_stale_copy():
+    """The core regression this fix closes: on ConflictError, the skip must
+    re-read the CURRENT (authoritative) doc from the DB rather than reusing
+    the stale pre-write copy (`rls`) -- the conflict happened precisely
+    because a concurrent writer (e.g. updateStatus(release_id, 'ignored'))
+    already changed this release's status in the DB. Using the stale copy
+    would silently stamp a just-ignored release back to 'available'.
+
+    The stale copy here carries status='available'; the authoritative doc
+    carries status='ignored' -- deliberately different values so the
+    assertion actually distinguishes stale-vs-authoritative. Against the
+    pre-fix code (`rel['status'] = rls.get('status', 'available')`), this
+    test fails because it would observe 'available' instead of 'ignored'.
+    """
+    conflicting_identifier = md5('http://example.com/b')
+    existing_doc = {
+        '_id': 'rel-existing-b',
+        '_t': 'release',
+        'identifier': conflicting_identifier,
+        'quality': '720p',
+        'status': 'available',  # STALE -- must NOT end up on rel['status']
+    }
+    authoritative_doc = {
+        '_id': 'rel-existing-b',
+        '_t': 'release',
+        'identifier': conflicting_identifier,
+        'quality': '720p',
+        'status': 'ignored',  # set by a concurrent updateStatus() call
+    }
+
+    search_results = [make_search_result('http://example.com/b', 'Movie.B.2025.720p.BluRay')]
+    db = _make_db_with_authoritative_reread(conflicting_identifier, existing_doc, authoritative_doc)
+    quality = {'identifier': '720p', 'custom': {'3d': False}}
+    media = {'_id': 'media-1'}
+
+    plugin = Release.__new__(Release)
+    with patch('couchpotato.core.plugins.release.main.get_db', return_value=db), \
+         patch('couchpotato.core.plugins.release.main.fireEvent',
+               return_value={'identifier': '720p', 'is_3d': False}):
+        plugin.createFromSearch(search_results, media, quality)
+
+    assert search_results[0]['status'] == 'ignored'
+    assert search_results[0]['status'] != existing_doc['status']
+
+
+def test_create_from_search_conflict_falls_back_to_available_on_concurrent_delete():
+    """If the release was deleted concurrently (not just status-changed),
+    the post-conflict re-read (`db.get('id', ...)`) raises the adapter's
+    "not found" exception (KeyError for SQLiteAdapter). This must not crash
+    createFromSearch() -- it should fall back to the harmless 'available'
+    placeholder, same as before any release existed."""
+    conflicting_identifier = md5('http://example.com/b')
+    existing_doc = {
+        '_id': 'rel-existing-b',
+        '_t': 'release',
+        'identifier': conflicting_identifier,
+        'quality': '720p',
+        'status': 'busy',  # any stale value; must not leak through either
+    }
+
+    search_results = [make_search_result('http://example.com/b', 'Movie.B.2025.720p.BluRay')]
+    db = _make_db_with_authoritative_reread(
+        conflicting_identifier, existing_doc,
+        KeyError(f"Document not found: {existing_doc['_id']}"),
+    )
+    quality = {'identifier': '720p', 'custom': {'3d': False}}
+    media = {'_id': 'media-1'}
+
+    plugin = Release.__new__(Release)
+    with patch('couchpotato.core.plugins.release.main.get_db', return_value=db), \
+         patch('couchpotato.core.plugins.release.main.fireEvent',
+               return_value={'identifier': '720p', 'is_3d': False}):
+        # Must not raise.
+        found_releases = plugin.createFromSearch(search_results, media, quality)
+
+    assert search_results[0]['status'] == 'available'
+    assert found_releases == []  # 'available' status alone isn't enough here --
+    # the release was skipped via `continue`, never appended.
+
+
 def test_try_download_result_missing_status_key_does_not_crash():
     """Minimal, direct proof of the defensive consumer fix: a result dict
     with NO 'status' key at all (as any raw provider result looks before

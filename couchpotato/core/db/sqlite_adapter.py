@@ -31,7 +31,7 @@ class ConflictError(Exception):
     """
 
     def __init__(self, doc_id: str, message: str | None = None):
-        self._id = doc_id
+        self.doc_id = doc_id
         super().__init__(
             message or
             f"Update conflict for document {doc_id!r}: _rev is stale "

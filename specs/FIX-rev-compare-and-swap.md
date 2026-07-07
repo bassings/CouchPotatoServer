@@ -49,7 +49,7 @@ causes with a follow-up `SELECT _rev FROM documents WHERE _id = ?`:
 
 - **Row doesn't exist at all** -> `KeyError` (unchanged from before).
 - **Row exists but with a different `_rev`** -> a new `ConflictError`
-  (defined in `sqlite_adapter.py`, subclasses `Exception`, carries `._id`
+  (defined in `sqlite_adapter.py`, subclasses `Exception`, carries `.doc_id`
   and a descriptive message). This is the lost-update signal: the caller's
   in-memory copy is stale.
 
@@ -257,6 +257,23 @@ concurrent `updateStatus()` call winning a race on some unrelated release
 could silently prevent an otherwise perfectly downloadable release from
 ever being downloaded.
 
+**Follow-up (review): the skip now re-reads the authoritative status
+instead of reusing the stale pre-conflict copy.** The `rel['status'] =
+rls.get('status', 'available')` fallback above used `rls`, but `rls` is the
+STALE pre-write copy whose `db.update(rls)` just lost the CAS race --
+precisely *because* another writer (e.g. a concurrent `updateStatus(release_id,
+'ignored')`) already changed this release's status in the DB. Reusing `rls`'s
+stale status meant a release that had just been marked `'ignored'` (or any
+other status) by the winning writer got stamped back to its old value, and
+`tryDownloadResult()` would then wrongly consider it for download. Fixed by
+re-`db.get('id', rls['_id'])`-ing the current, authoritative doc on conflict
+and using its `status` instead. The re-read doc may itself be gone by the
+time we look it up (the release was deleted concurrently, not just
+status-changed) -- that's handled by catching `(RecordNotFound, KeyError)`
+around the re-read (mirroring the same tuple `withStatus()` already catches
+around its own `db.get('id', ...)` call elsewhere in this file) and falling
+back to the harmless `'available'` placeholder rather than crashing.
+
 Fixed with two changes, both surgical (no broader refactor; the
 skip-and-log trade-off for the conflict itself still stands):
 
@@ -357,7 +374,7 @@ call site is wired correctly).
 
 - [x] `update(data)` performs a CAS UPDATE (`WHERE _id=? AND _rev=?`) when
       `data` contains a `_rev`.
-- [x] A lost CAS race raises `ConflictError` (carrying `_id`) rather than
+- [x] A lost CAS race raises `ConflictError` (carrying `.doc_id`) rather than
       silently overwriting; the document's stored value is unaffected by
       the losing write (proven by test).
 - [x] A genuinely missing document still raises `KeyError` (both with and

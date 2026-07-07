@@ -212,7 +212,7 @@ class TestSQLiteAdapterCompareAndSwap:
         with pytest.raises(ConflictError) as excinfo:
             db.update(reader_a)
         assert inserted['_id'] in str(excinfo.value)
-        assert excinfo.value._id == inserted['_id']
+        assert excinfo.value.doc_id == inserted['_id']
 
         # The doc must retain reader B's (winning) value -- no clobber.
         current = db.get('id', inserted['_id'])

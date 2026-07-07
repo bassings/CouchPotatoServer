@@ -516,9 +516,18 @@ class Release(Plugin):
                         # entry already accumulated for the other releases.
                         # This `continue` skips the happy-path `rel['status']
                         # = rls.get('status')` refresh below, so we set it
-                        # here explicitly (same source expression, defaulting
-                        # to 'available' if that's falsy) -- the caller-owned
-                        # `rel` entry in `search_results` is reused as-is by
+                        # here explicitly -- but `rls` is the STALE
+                        # pre-write copy whose CAS write just lost the race,
+                        # precisely BECAUSE another writer already changed
+                        # this release's status in the DB (e.g. updateStatus()
+                        # concurrently setting it to 'ignored'). Using rls's
+                        # stale status would stamp the just-changed release
+                        # back to its old value, so re-read the authoritative
+                        # current doc from the DB instead and use its status.
+                        # If the release was deleted concurrently, fall back
+                        # to a harmless 'available' placeholder rather than
+                        # crashing -- the caller-owned `rel` entry in
+                        # `search_results` is reused as-is by
                         # release.try_download_result right after this event
                         # fires (see searcher.py), and that path used to do
                         # an unguarded `rel['status']` lookup that would
@@ -527,7 +536,11 @@ class Release(Plugin):
                         # resolved: this is a crash-prevention fix, not
                         # merely a documented staleness trade-off.
                         log.warning('Skipped release %s due to a concurrent update: %s', rel_identifier, e)
-                        rel['status'] = rls.get('status', 'available')
+                        try:
+                            current = db.get('id', rls['_id'])
+                        except (RecordNotFound, KeyError):
+                            current = None
+                        rel['status'] = current.get('status', 'available') if current else 'available'
                         continue
 
                     # Update release in search_results
