@@ -547,6 +547,26 @@ class MediaPlugin(MediaBase):
 
                             db.delete(media)
                             deleted = True
+                        elif media.get('status') == 'downloaded' and delete_from in ['wanted', 'snatched', 'late', 'manage']:
+                            # A 'downloaded' movie (workflow phase 2 review gate) must
+                            # survive a wanted/snatched/late/manage delete entirely
+                            # untouched. The generic path below would force it to 'done'
+                            # and null its profile_id (via `new_media_status = 'done'`),
+                            # or -- for delete_from='late' -- delete the movie outright via
+                            # the post-loop `not new_media_status and delete_from == 'late'`
+                            # clause, or -- for a zero-release delete_from='manage' -- delete
+                            # it via the post-loop `total_releases == 0 and not
+                            # new_media_status` clause. This is reachable (not theoretical):
+                            # wanted.html bulkDelete() hardcodes delete_from='wanted' with no
+                            # status check (a stale selection can complete to 'downloaded' in
+                            # the background between select and click), and the public
+                            # movie.delete API accepts any delete_from for any id. Treat it
+                            # as a no-op and just recompute status, leaving the review gate,
+                            # its releases, and its profile_id intact. (The manage-branch
+                            # guard inside the loop below is now redundant for a 'downloaded'
+                            # movie, since this top-level branch catches 'manage' first; it's
+                            # kept as harmless defense-in-depth.)
+                            fireEvent('media.restatus', media.get('_id'), single = True)
                         else:
 
                             total_releases = len(media_releases)
@@ -560,7 +580,12 @@ class MediaPlugin(MediaBase):
                                         total_deleted += 1
                                     new_media_status = 'done'
                                 elif delete_from == 'manage':
-                                    if release.get('status') == 'done' or media.get('status') == 'done':
+                                    # A 'downloaded' movie (workflow phase 2 review gate) has
+                                    # a 'done' release by design while it awaits manual review.
+                                    # Guard it out so the manage-tab bulk delete doesn't sweep
+                                    # its release out from under an in-progress review; a
+                                    # genuinely 'done' movie is unaffected by this check.
+                                    if media.get('status') != 'downloaded' and (release.get('status') == 'done' or media.get('status') == 'done'):
                                         db.delete(release)
                                         total_deleted += 1
 
@@ -754,7 +779,19 @@ class MediaPlugin(MediaBase):
                             # Check if we are finished with the media
                             for release in done_releases:
                                 if fireEvent('quality.isfinish', {'identifier': release['quality'], 'is_3d': release.get('is_3d', False)}, profile, timedelta(seconds = time.time() - release['last_edit']).days, single = True):
-                                    m['status'] = 'done'
+                                    # Workflow phase 2: a profile with manual_confirmation
+                                    # ON routes a *genuinely new* completion (previous_status
+                                    # wasn't already 'done') to the 'downloaded' review gate
+                                    # instead of 'done'. A movie that's already 'done' (e.g. a
+                                    # later upgrade re-check, or one confirmed via the future
+                                    # "Mark Done" action) stays 'done' -- this never demotes it
+                                    # back to 'downloaded'. A movie already in 'downloaded'
+                                    # never reaches this branch at all: it's handled by the
+                                    # top-level preservation check above.
+                                    if profile.get('manual_confirmation') and previous_status != 'done':
+                                        m['status'] = 'downloaded'
+                                    else:
+                                        m['status'] = 'done'
                                     break
 
                         elif previous_status == 'done':
