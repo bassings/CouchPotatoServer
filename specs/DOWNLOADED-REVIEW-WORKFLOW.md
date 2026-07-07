@@ -248,26 +248,39 @@ feature's completion-path change rather than a separate reconstruction.
      wanted/snatched/late behavior is unchanged.
 3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
    Mark-failed (release); immediate re-search on Fail. Tests + E2E.
-   **Also fold in here — the re-add guard (deferred from Phase 2, found in the
-   round-3 completeness sweep):** `MovieBase.add()` defaults `force_readd=True`,
+   **Re-add guard — IMPLEMENTED (Phase 3a):** `MovieBase.add()`
+   (`couchpotato/core/media/movie/_base/main.py`) defaults `force_readd=True`,
    and the live "Add" buttons (`ui/templates/partials/search_results.html`,
-   `movie_info_modal.html`) call `movie.add` with no `force_readd`, so re-adding
-   an already-present movie hits the `elif force_readd:` branch — it deletes the
-   movie's completed release (`['downloaded','snatched','seeding','done']`),
-   nulls `profile_id`/`category_id`/`tags`, resets `status` to `active`, and
-   re-searches. For a `downloaded` (review-gated) movie a single stray "Add"
-   click thus destroys the confirmed copy and the gate. **Important scope note:**
-   this is *not* a Phase-2 regression — the exact same destruction already
-   happens to a `done` movie today (all existing `done` movies share it), because
-   Phase 2 never touched `add()`; it is a pre-existing, app-wide property of the
-   `force_readd` default + an ungated Add button. The correct fix is therefore
-   app-wide, not `downloaded`-only (guarding only `downloaded` would create a
-   confusing asymmetry with `done`): treat re-adding an already-*completed*
-   movie (`done` **or** `downloaded`) as a no-op or require explicit
-   confirmation, so a naked "Add" can't silently wipe a completed/under-review
-   copy. Belongs with the UI actions since the real fix is UI-level (the Add
-   surface should reflect "already in library / under review" state). Tests
-   mirroring `TestWantedDeleteExemptsDownloadedMovies`.
+   `movie_info_modal.html`) call `movie.add` with no `force_readd`, so
+   re-adding an already-present movie used to hit the `elif force_readd:`
+   branch — it deleted the movie's completed release
+   (`['downloaded','snatched','seeding','done']`), nulled
+   `profile_id`/`category_id`/`tags`, reset `status` to `active`, and
+   re-searched. For a `downloaded` (review-gated) movie a single stray "Add"
+   click thus destroyed the confirmed copy and the gate; the exact same
+   destruction already happened to a `done` movie (pre-existing, app-wide —
+   Phase 2 never touched `add()`).
+
+   Fixed app-wide (not `downloaded`-only, which would create a confusing
+   asymmetry with `done`): `add()` now tracks the pre-existing movie's
+   `previous_status` (captured before `m.update(media)` overwrites it) and
+   whether `force_readd` was **explicitly** requested by the caller
+   (`force_readd_explicit = 'force_readd' in params`, e.g. the API's
+   `force_readd=1`) versus left at the default. When `previous_status` is
+   `done` or `downloaded` **and** `force_readd` was not explicit, the
+   destructive branch is skipped entirely — no release wipe, no
+   profile/category/tags reset, no persisted status change (`db.update` is
+   never called, so the confirmed/review-gated doc is untouched), no
+   re-search — identical to the pre-existing non-force_readd no-op branch. An
+   **explicit** `force_readd` still runs the full destructive re-add
+   unchanged (regression-locked). A non-completed existing movie (`active`,
+   `wanted`, etc.) and a brand-new movie are both unaffected and keep
+   force-readding by default exactly as before.
+   Tests: `tests/unit/test_readd_guard_completed_movies.py` — implicit re-add
+   of `done`/`downloaded` is a no-op (no wipe, no re-search); explicit
+   `force_readd` on a `done` movie still wipes + resets (regression lock); an
+   `active` movie is still destructively re-added by default (guard doesn't
+   broaden); a brand-new movie is unaffected.
    **Minor (defense-in-depth) — fixed in Phase 2:** a `downloaded` movie with
    **zero** releases + `delete_from='manage'` used to fall to the full
    `db.delete(media)` via the generic loop's post-loop `total_releases == 0 and
