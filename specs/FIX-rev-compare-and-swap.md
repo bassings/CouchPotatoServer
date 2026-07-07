@@ -234,14 +234,53 @@ function still returns the partial `found_releases` list for the releases
 that updated successfully. The happy-path return contract (no conflicts ->
 same list as before) is unchanged.
 
-A clarifying comment (review) was added at the `continue` itself: skipping
-a release this way also skips the `rel['status'] = rls.get('status')`
-refresh a few lines below, so the caller-owned `rel` entry in
-`search_results` keeps whatever `status` it had *before* this write
-attempt -- `rel['status']` is therefore not authoritative for a release
-that hit this branch. This is a comment-only change with no behavior
-difference; the partial-`found_releases` contract above already covers the
-observable effect.
+**Follow-up (review): the skipped `rel['status']` refresh was a live crash,
+not just documented staleness -- now resolved.** `search_results` is not a
+throwaway list local to `createFromSearch()`: `searcher.py` fires
+`release.create_from_search` and then immediately fires
+`release.try_download_result` over the *same* `results` list object
+(`couchpotato/core/media/movie/searcher.py`, the `found_releases +=
+fireEvent('release.create_from_search', results, ...)` call followed a few
+lines later by `fireEvent('release.try_download_result', results, ...)`).
+`tryDownloadResult()` (`release/main.py`) did an unguarded `rel['status']`
+lookup. Raw provider results never carry a `'status'` key at all (see
+`BaseProvider.fillResult()` in
+`couchpotato/core/media/_base/providers/base.py`, whose `defaults` dict has
+no `'status'` entry) -- that key is populated *only* by the `rel['status']
+= rls.get('status')` line in `createFromSearch()`'s happy path. Because the
+`continue` in the `ConflictError` branch skipped that assignment, a release
+that lost the CAS race reached `tryDownloadResult()` with no `'status'` key
+at all, and `rel['status'] in [...]` raised a raw `KeyError`. That exception
+propagated out of `tryDownloadResult()` entirely, aborting processing of
+*every other release in the batch* -- not just the conflicted one -- so a
+concurrent `updateStatus()` call winning a race on some unrelated release
+could silently prevent an otherwise perfectly downloadable release from
+ever being downloaded.
+
+Fixed with two changes, both surgical (no broader refactor; the
+skip-and-log trade-off for the conflict itself still stands):
+
+1. **Source fix** -- the `ConflictError` branch in `createFromSearch()` now
+   sets `rel['status'] = rls.get('status', 'available')` (same source
+   expression as the happy path, with an `'available'` default) *before*
+   the `continue`, so the caller-owned `rel` entry in `search_results`
+   always carries a `status` key by the time `try_download_result` fires
+   over it.
+2. **Defensive consumer fix** -- `tryDownloadResult()`'s filter loop now
+   uses `rel.get('status')` instead of `rel['status']`, so a genuinely
+   missing (or `None`) status is treated as "not ignored/failed" -- a
+   normal downloadable candidate -- rather than crashing, preserving
+   existing behavior exactly when the key is present with a normal string
+   value.
+
+Covered by `tests/unit/test_release_create_from_search_cas.py`:
+`test_conflict_skip_sets_status_so_try_download_result_does_not_crash`
+(end-to-end: conflict in `createFromSearch()` -> same list fed into
+`tryDownloadResult()` -> no `KeyError`, all releases including the
+previously-conflicted one processed normally) and
+`test_try_download_result_missing_status_key_does_not_crash` (minimal,
+direct proof of the `.get()` guard on a result dict with no `status` key
+at all).
 
 ### 6. Explicitly out of scope
 

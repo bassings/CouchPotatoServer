@@ -109,3 +109,97 @@ def test_create_from_search_returns_all_releases_when_no_conflict():
     expected_b = md5('http://example.com/b')
     assert found_releases == [expected_a, expected_b]
     assert db.update.call_count == 2
+
+
+def make_full_search_result(url, name, age=1, score=100, size=1000):
+    """A search-result dict shaped like what tryDownloadResult() expects
+    (score/size present, as a real provider's fillResult() would supply),
+    but deliberately WITHOUT a 'status' key -- exactly like a fresh
+    provider result before createFromSearch() has (or hasn't, in the
+    conflict case) stamped one on."""
+    result = make_search_result(url, name, age=age)
+    result['score'] = score
+    result['size'] = size
+    return result
+
+
+def test_conflict_skip_sets_status_so_try_download_result_does_not_crash():
+    """End-to-end reproduction of the bug: createFromSearch() hits a
+    ConflictError for one release in the batch, then the SAME
+    search_results list (mutated in place -- these are the caller's dict
+    objects, not copies) is fed into tryDownloadResult(), exactly as
+    searcher.py does by firing 'release.create_from_search' and then
+    'release.try_download_result' over the same `results` list.
+
+    Before the fix, the conflicted release never got a 'status' key
+    (the `continue` skipped the assignment), so tryDownloadResult()'s
+    unguarded `rel['status']` raised KeyError on it -- aborting processing
+    of the ENTIRE batch, including the other, perfectly downloadable
+    releases that come after it in the list.
+    """
+    search_results = [
+        make_full_search_result('http://example.com/a', 'Movie.A.2025.720p.BluRay'),
+        make_full_search_result('http://example.com/b', 'Movie.B.2025.720p.BluRay'),
+        make_full_search_result('http://example.com/c', 'Movie.C.2025.720p.BluRay'),
+    ]
+    conflicting_identifier = md5('http://example.com/b')
+
+    db = _make_db(conflicting_identifier)
+    quality = {'identifier': '720p', 'custom': {'3d': False}}
+    quality_custom = {'minimum_score': 0}
+    media = {'_id': 'media-1'}
+
+    plugin = Release.__new__(Release)
+    with patch('couchpotato.core.plugins.release.main.get_db', return_value=db), \
+         patch('couchpotato.core.plugins.release.main.fireEvent',
+               return_value={'identifier': '720p', 'is_3d': False}):
+        plugin.createFromSearch(search_results, media, quality)
+
+    # The conflicted release ('b') must have a 'status' key -- not missing.
+    conflicted_rel = next(r for r in search_results if md5(r['url']) == conflicting_identifier)
+    assert 'status' in conflicted_rel
+    assert conflicted_rel['status'] == 'available'
+
+    # Now feed the SAME list into tryDownloadResult, as searcher.py does.
+    download_calls = []
+
+    def fake_fire_event(event_name, *args, **kwargs):
+        if event_name == 'release.download':
+            download_calls.append(kwargs.get('data'))
+            return 'try_next'
+        return None
+
+    with patch('couchpotato.core.plugins.release.main.fireEvent', side_effect=fake_fire_event), \
+         patch('couchpotato.core.plugins.release.main.Env.setting', return_value=1):
+        # No KeyError raised -- this is the crash the fix prevents.
+        result = plugin.tryDownloadResult(search_results, media, quality_custom)
+
+    assert result is False  # nothing "waited for", none returned True
+    # All three releases -- including the previously-conflicted one --
+    # were processed normally, not silently dropped by an aborted batch.
+    assert len(download_calls) == 3
+    downloaded_urls = {rel['url'] for rel in download_calls}
+    assert downloaded_urls == {
+        'http://example.com/a',
+        'http://example.com/b',
+        'http://example.com/c',
+    }
+
+
+def test_try_download_result_missing_status_key_does_not_crash():
+    """Minimal, direct proof of the defensive consumer fix: a result dict
+    with NO 'status' key at all (as any raw provider result looks before
+    createFromSearch() ever runs) must not raise KeyError -- it should be
+    treated like a normal, non-ignored/failed candidate."""
+    rel = make_full_search_result('http://example.com/only', 'Movie.Only.2025.720p.BluRay')
+    assert 'status' not in rel
+
+    quality_custom = {'minimum_score': 0}
+    media = {'_id': 'media-1'}
+
+    with patch('couchpotato.core.plugins.release.main.fireEvent', return_value=True), \
+         patch('couchpotato.core.plugins.release.main.Env.setting', return_value=1):
+        plugin = Release.__new__(Release)
+        result = plugin.tryDownloadResult([rel], media, quality_custom)
+
+    assert result is True

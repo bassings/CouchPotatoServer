@@ -393,7 +393,7 @@ class Release(Plugin):
         # Filter out ignored and other releases we don't want
         for rel in results:
 
-            if rel['status'] in ['ignored', 'failed']:
+            if rel.get('status') in ['ignored', 'failed']:
                 log.info('Ignored: %s', rel['name'])
                 continue
 
@@ -514,12 +514,20 @@ class Release(Plugin):
                         # than letting it propagate to the function-level
                         # except below and discard every found_releases
                         # entry already accumulated for the other releases.
-                        # Note: this `continue` skips the `rel['status'] =
-                        # rls.get('status')` refresh below, so the
-                        # caller-owned `rel` entry in `search_results` keeps
-                        # whatever `status` it had before this write attempt
-                        # -- it is not authoritative for this release.
+                        # This `continue` skips the happy-path `rel['status']
+                        # = rls.get('status')` refresh below, so we set it
+                        # here explicitly (same source expression, defaulting
+                        # to 'available' if that's falsy) -- the caller-owned
+                        # `rel` entry in `search_results` is reused as-is by
+                        # release.try_download_result right after this event
+                        # fires (see searcher.py), and that path used to do
+                        # an unguarded `rel['status']` lookup that would
+                        # raise KeyError on a rel that never got a status,
+                        # aborting the whole try_download_result batch. Now
+                        # resolved: this is a crash-prevention fix, not
+                        # merely a documented staleness trade-off.
                         log.warning('Skipped release %s due to a concurrent update: %s', rel_identifier, e)
+                        rel['status'] = rls.get('status', 'available')
                         continue
 
                     # Update release in search_results
