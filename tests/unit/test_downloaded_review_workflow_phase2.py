@@ -48,6 +48,11 @@ class TestRestatusManualConfirmationRouting:
                 return releases
             if event == 'quality.isfinish':
                 return True
+            # Phase 4a: restatus() fires 'movie.downloaded' on a genuine
+            # transition into the review gate. This suite only cares about
+            # the done/downloaded routing decision, so just record it.
+            if event == 'movie.downloaded':
+                return None
             raise AssertionError('Unexpected fireEvent call: %r' % (event,))
 
         with (
@@ -619,6 +624,10 @@ class TestManualConfirmationRoutingGatesSearcher:
                 return releases
             if event == 'quality.isfinish':
                 return True
+            # Phase 4a: restatus() fires 'movie.downloaded' on this genuine
+            # active -> downloaded transition; not this test's concern.
+            if event == 'movie.downloaded':
+                return None
             raise AssertionError('Unexpected fireEvent call: %r' % (event,))
 
         with (

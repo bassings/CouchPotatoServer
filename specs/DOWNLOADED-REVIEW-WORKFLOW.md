@@ -176,21 +176,89 @@ wiring, unit/mutation tests, and any conformance/E2E touch-up) is left for a
 Phase 3 follow-up rather than folded into this phase. Until then the toggle
 is settable only via the `profile.save` API directly.
 
-### Notification
+### Notification — Phase 4a: DONE
 
-On entering `downloaded`, fire `notify.frontend` (and the configured
-notification providers) with a "‹title› downloaded — awaiting review" message.
-This rides on the renamer-completion hook.
+On entering `downloaded`, fire a `movie.downloaded` event (mirroring the
+proven `movie.snatched` notification path,
+`couchpotato/core/plugins/release/main.py:387`
+`fireEvent('%s.snatched' % data['type'], message = snatch_message, data =
+media)` — **not** the dead `renamer.after` chain, see Phase 4b below) with a
+"‹title› downloaded — awaiting review" message.
 
-### Ties into renamer #13 (enrichment)
+Fire site: `MediaPlugin.restatus()`
+(`couchpotato/core/media/_base/media/main.py`), inside the existing
+"only update when status has changed" guard (`if previous_status !=
+m['status'] and (not allowed_restatus or m['status'] in allowed_restatus):`),
+immediately after the successful `db.update(m)`. Conditioned on `m['status']
+== 'downloaded' and previous_status != 'downloaded'`, so it fires exactly
+once, only on a genuine transition into the review gate, and only when the
+status change was actually persisted (a caller-supplied `allowed_restatus`
+that excludes `'downloaded'` skips both the write and the notification).
+`restatus()` is called repeatedly and from multiple call sites
+(`searcher.py`, `release/main.py`), so this two-part guard (persisted status
+change AND explicit `'downloaded'` check) is what prevents a re-fire on every
+subsequent no-op restatus of an already-`downloaded` movie:
+
+```python
+fireEvent('%s.downloaded' % m.get('type', 'movie'),
+          message = '%s downloaded — awaiting review' % getTitle(m),
+          data = m)
+```
+
+Registered on both notification `listen_to` lists so configured providers
+*and* the core (DB-persisted) notifier pick it up, exactly like
+`movie.snatched`:
+
+- `couchpotato/core/notifications/base.py` `Notification.listen_to` (fans out
+  to every configured provider).
+- `couchpotato/core/notifications/core/main.py` `CoreNotifier.listen_to`
+  (persists a `notification` DB row, queryable via `notification.list`, and
+  pushes `notify.frontend` to the legacy long-poll listener).
+
+**Known gap (in scope, not a bug):** the new htmx/Alpine UI does not consume
+the `notify.frontend` long-poll stream, so this reaches configured providers
++ the persisted DB notification + the legacy long-poll surface, but not a
+new-UI live toast — that's separate work, not folded into this phase.
+
+Tests: `tests/unit/test_downloaded_review_notify.py` — manual-confirmation
+completion fires `movie.downloaded` exactly once with a message containing
+the title and `data` equal to the persisted media doc; a second `restatus()`
+call on an already-`downloaded` movie does not re-fire (idempotency); an auto
+profile routing to `done` does not fire; a no-transition call (status
+unchanged) does not fire; both `listen_to` lists carry `'movie.downloaded'`.
+
+### Ties into renamer #13 (enrichment) — Phase 4b: DEFERRED
 
 The dead `renamer.before`/`renamer.after` chain (subtitles, trailers,
-notifications, metadata — see `specs/RENAMER-EVENT-CHAIN.md`) should fire at the
-**completion/`downloaded`** point, NOT at an auto-`done`. Since production shows
-**no stuck backlog** (0 releases moved-but-unfinalized), the feared
-"storm on upgrade" is moot — enrichment fires only for genuinely-new
-completions going forward. Wiring the enrichment events is folded into this
-feature's completion-path change rather than a separate reconstruction.
+notifications, metadata — see `specs/RENAMER-EVENT-CHAIN.md`) should, in
+principle, fire at the **completion/`downloaded`** point, NOT at an
+auto-`done`. Since production shows **no stuck backlog** (0 releases
+moved-but-unfinalized), the feared "storm on upgrade" is moot — enrichment
+would only fire for genuinely-new completions going forward.
+
+**Deferred, not wired up in Phase 4a.** This is a large reconstruction
+coupled to the separate `specs/RENAMER-EVENT-CHAIN.md` project, and must
+**not** be naively wired into the review-gate completion point:
+
+- `manage.py`'s `after_rename → release.add()` path finalizes a release
+  straight to `done` as a side effect of the rename-completion flow — wiring
+  `renamer.after` into the `downloaded` transition without first
+  reconciling that path would let a "completion" enrichment call flip the
+  release (and, via `restatus()`, the movie) past the review gate it's
+  supposed to be waiting behind, defeating the whole point of Phase
+  1–3's gating work.
+- The file-touching listeners (subtitles/trailers/metadata/library-rescan
+  providers on `renamer.after`) expect payload keys like `destination_dir`,
+  `filename`, and `renamed_files` that the current, unported rename flow
+  (see the `renamer-event-chain-unported` gotcha — the event chain was never
+  reconnected during the FastAPI migration) no longer produces. Firing the
+  event today would call real subtitle/trailer/metadata providers with an
+  incomplete or stale payload shape rather than a controlled no-op.
+
+Pending a prod-backlog decision on `specs/RENAMER-EVENT-CHAIN.md` and a
+config gate (default **off**) so enrichment can be turned on deliberately
+once the rename flow and its payload are reconciled, rather than firing
+unconditionally the moment a movie enters `downloaded`.
 
 ## Rollout / safety
 
@@ -368,10 +436,24 @@ feature's completion-path change rather than a separate reconstruction.
    `downloaded` movie (the top-level branch catches `manage` first) but is kept
    as harmless defense-in-depth. Locked by
    `TestManageDeleteExemptsDownloadedMovies.test_downloaded_movie_with_zero_releases_survives_manage_delete`.
-4. **Notification + renamer enrichment hook:** fire notify + `renamer.after`
-   enrichment on entering `downloaded`; wire the dead listeners
-   (per `specs/RENAMER-EVENT-CHAIN.md`). Tests: listeners fire once, only on
-   genuine completion.
+4. **Notification + renamer enrichment hook:**
+   - ✅ **DONE (Phase 4a).** Fire the `movie.downloaded` notification event
+     exactly once on entering `downloaded`, via the proven `movie.snatched`
+     path (see "Notification" above). Tests:
+     `tests/unit/test_downloaded_review_notify.py` — fires once on a genuine
+     transition, does not re-fire on a subsequent no-op restatus, does not
+     fire when routed to `done` or when status is unchanged, and both
+     `listen_to` lists register the event.
+   - ⏸️ **DEFERRED (Phase 4b).** Wiring the dead `renamer.after` enrichment
+     chain (subtitles/trailers/metadata/library rescans) into the
+     `downloaded` transition (see "Ties into renamer #13 (enrichment)"
+     above for why: it's coupled to the separate reconstruction in
+     `specs/RENAMER-EVENT-CHAIN.md`, `manage.py`'s `after_rename →
+     release.add()` path would finalize releases to `done` and defeat the
+     gate, and the listeners' expected payload keys
+     (`destination_dir`/`filename`/`renamed_files`) aren't produced by the
+     unported rename flow). Pending a prod-backlog decision + a config gate
+     (default off).
 5. **Docs + beta + prod-copy validation**, then release.
 
 ## Acceptance criteria

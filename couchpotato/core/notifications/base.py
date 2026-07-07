@@ -16,7 +16,7 @@ class Notification(Provider):
 
     listen_to = [
         'media.available',
-        'renamer.after', 'movie.snatched',
+        'renamer.after', 'movie.snatched', 'movie.downloaded',
         'updater.available', 'updater.updated',
         'core.message.important',
     ]
