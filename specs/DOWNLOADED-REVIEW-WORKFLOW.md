@@ -80,12 +80,50 @@ scanner completion path):
 accordingly, and must treat `downloaded` as a terminal-for-search state (don't
 demote it back to `active`).
 
-### User actions (backend) — Phase 3b: DONE
+### User actions (backend) — Phase 3b: DONE. UI — Phase 3c: DONE
 
 The three API views below (all `addApiView`, so reachable at `/api/<route>`)
 are implemented and unit-tested
-(`tests/unit/test_review_actions_backend.py`); wiring the UI buttons + htmx
-endpoints + E2E coverage is the remaining Phase-3 piece (a separate PR).
+(`tests/unit/test_review_actions_backend.py`). Phase 3c wires the UI buttons
+that call them (`couchpotato/ui/templates/partials/movie_detail.html`):
+
+- **Mark Done** (movie, shown only when `status == 'downloaded'`) — single
+  click, `fetch('/media.done/?id=<movie_id>')`, toasts "Marked done" and
+  reloads on success. Non-destructive, no confirmation.
+- **Mark Failed & Re-search** (movie, shown only when `status ==
+  'downloaded'`) — `confirm()`-gated (destructive: discards the landed
+  copy), then `fetch('/movie.searcher.mark_failed/?media_id=<movie_id>')`,
+  toasts "Marked failed — searching for another copy" and reloads on
+  success.
+- **Mark failed** (per release, shown only for a release row with `status ==
+  'downloaded'`) — `confirm()`-gated, then `fetch('/release.failed/?id=<release_id>')`,
+  toasts and reloads on success. Sits alongside the pre-existing Skip/Ignore
+  button (`release.ignore`, reused unchanged — it already handles the "hide a
+  bad release from future searches" case).
+
+All three follow the file's existing Alpine.js `fetch().then(r => r.json())`
+pattern (mirroring the pre-existing "Mark as Done"/"Delete" buttons), use
+inline Heroicons-outline SVGs (24×24, `stroke-width="1.5"`, per
+`docs/design-system/CONFORMANCE.md`) rather than emoji, and reuse the shared
+`toast()` helper defined on `appShell()` in `base.html` (reachable from the
+nested `x-data` scopes via Alpine's parent-scope chaining). Each success
+branch delays the `location.reload()` by 900ms (`setTimeout`) so the success
+toast can paint before the full-page reload begins — the loading flag stays
+set through the delay so the button can't be re-submitted before the reload
+lands. The gating logic (which button shows for which status) is locked by a
+Jinja render unit test, `tests/unit/test_review_actions_ui_template.py`, which
+renders the actual partial with fabricated `movie` dicts and asserts:
+`downloaded` → all three review buttons render and the generic "Mark as Done"
+does not; `done`/`active` → the review buttons are absent (and `active` keeps
+the generic "Mark as Done" — no regression); and the per-release "Mark failed"
+keys off the *release* status, not the movie's. E2E coverage is in
+`tests/e2e/movie-detail.spec.ts` — see the coverage-gap note there: there is
+no fixture / test-only API to seed a `downloaded`-status movie (CI/local e2e
+always start from a fresh, empty data dir), so the E2E suite asserts the
+buttons are **absent** for a non-downloaded movie and exercises the
+confirm-dialog behavior only when a `downloaded` movie happens to be present,
+rather than faking one — the render test above is what deterministically
+locks the "buttons ARE shown when downloaded" side that E2E can't reach.
 
 Per-movie (when in `downloaded`):
 - **Mark Done** → `media.done` (existing route,
@@ -268,14 +306,23 @@ feature's completion-path change rather than a separate reconstruction.
      falsy makes the post-loop `late` clause fire — the top-level branch
      sidesteps that entirely. A genuinely non-`downloaded` movie's
      wanted/snatched/late behavior is unchanged.
-3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
-   Mark-failed (release); immediate re-search on Fail. Tests + E2E.
+3. ✅ **DONE (3b + 3c).** **UI actions:** Mark Done / Mark Failed&re-search
+   (movie); Skip/Ignore & Mark-failed (release); immediate re-search on Fail.
+   Tests + E2E.
    **Phase 3b (backend API views) is DONE** — see "User actions (backend)"
    above for the three routes (`media.done` extended, new
    `movie.searcher.mark_failed`, new `release.failed`) and
-   `tests/unit/test_review_actions_backend.py`. **Still remaining for this
-   phase:** the UI buttons + htmx wiring that call these routes, and E2E
-   coverage — a separate PR.
+   `tests/unit/test_review_actions_backend.py`.
+   **Phase 3c (frontend UI actions) is DONE** — the buttons wiring those
+   routes into `movie_detail.html` (success toasts paint before a 900ms-
+   delayed reload), a Jinja render unit test
+   (`tests/unit/test_review_actions_ui_template.py`) that deterministically
+   locks the per-status button gating, plus `tests/e2e/movie-detail.spec.ts`
+   coverage (buttons absent for a non-downloaded movie; confirm-dialog
+   behavior exercised when a `downloaded` movie is present). See "User
+   actions (backend)" above for the button-by-button breakdown and the
+   E2E coverage-gap note (no fixture produces a `downloaded` movie in this
+   suite today — the render test covers the "shown when downloaded" side).
 
    **Re-add guard — IMPLEMENTED (Phase 3a):** `MovieBase.add()`
    (`couchpotato/core/media/movie/_base/main.py`) defaults `force_readd=True`,
