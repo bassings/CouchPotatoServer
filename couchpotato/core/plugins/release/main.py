@@ -5,6 +5,7 @@ import traceback
 
 from CodernityDB.database import RecordDeleted, RecordNotFound
 from couchpotato import md5, get_db
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
@@ -392,7 +393,7 @@ class Release(Plugin):
         # Filter out ignored and other releases we don't want
         for rel in results:
 
-            if rel['status'] in ['ignored', 'failed']:
+            if rel.get('status') in ['ignored', 'failed']:
                 log.info('Ignored: %s', rel['name'])
                 continue
 
@@ -501,7 +502,46 @@ class Release(Plugin):
                         except Exception:
                             log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
-                    db.update(rls)
+                    try:
+                        db.update(rls)
+                    except ConflictError as e:
+                        # A concurrent writer (e.g. updateStatus() on this
+                        # same release doc) won the CAS race between our
+                        # read and this write. This is a real, expected
+                        # contention outcome for just this one release --
+                        # not a code defect -- so skip only this release and
+                        # keep processing the rest of search_results, rather
+                        # than letting it propagate to the function-level
+                        # except below and discard every found_releases
+                        # entry already accumulated for the other releases.
+                        # This `continue` skips the happy-path `rel['status']
+                        # = rls.get('status')` refresh below, so we set it
+                        # here explicitly -- but `rls` is the STALE
+                        # pre-write copy whose CAS write just lost the race,
+                        # precisely BECAUSE another writer already changed
+                        # this release's status in the DB (e.g. updateStatus()
+                        # concurrently setting it to 'ignored'). Using rls's
+                        # stale status would stamp the just-changed release
+                        # back to its old value, so re-read the authoritative
+                        # current doc from the DB instead and use its status.
+                        # If the release was deleted concurrently, fall back
+                        # to a harmless 'available' placeholder rather than
+                        # crashing -- the caller-owned `rel` entry in
+                        # `search_results` is reused as-is by
+                        # release.try_download_result right after this event
+                        # fires (see searcher.py), and that path used to do
+                        # an unguarded `rel['status']` lookup that would
+                        # raise KeyError on a rel that never got a status,
+                        # aborting the whole try_download_result batch. Now
+                        # resolved: this is a crash-prevention fix, not
+                        # merely a documented staleness trade-off.
+                        log.warning('Skipped release %s due to a concurrent update: %s', rel_identifier, e)
+                        try:
+                            current = db.get('id', rls['_id'])
+                        except (RecordNotFound, KeyError):
+                            current = None
+                        rel['status'] = current.get('status', 'available') if current else 'available'
+                        continue
 
                     # Update release in search_results
                     rel['status'] = rls.get('status')
@@ -518,34 +558,48 @@ class Release(Plugin):
     def updateStatus(self, release_id, status = None):
         if not status: return False
 
+        # Read-modify-write on the release doc. This is one of the hottest
+        # status-transition paths (search/snatch/download/ignore all funnel
+        # through it) and previously had no CAS or lock protection, so a
+        # concurrent status change could be silently lost. Route it through
+        # the CAS retry helper: it returns the updated doc if this call
+        # actually wrote, or None if the mutator short-circuited (already
+        # at the target status -- whether on the first read, or on a retry
+        # after this call lost the CAS race and re-read a doc a concurrent
+        # writer already landed at the same target status). Gate the
+        # notify strictly on "this call wrote" so a conflict-then-skip
+        # retry never fires a spurious duplicate of the notification the
+        # winning writer already sent.
+        def _mutate(rel):
+            if rel.get('status') == status:
+                return False
+
+            release_name = None
+            if rel.get('files'):
+                for file_type in rel.get('files', {}):
+                    if file_type == 'movie':
+                        for release_file in rel['files'][file_type]:
+                            release_name = os.path.basename(release_file)
+                            break
+
+            if not release_name and rel.get('info'):
+                release_name = rel['info'].get('name')
+
+            log.debug('Marking release %s as %s', release_name, status)
+            rel['status'] = status
+            rel['last_edit'] = int(time.time())
+
         try:
             db = get_db()
+            wrote = db.update_with_retry(_mutate, release_id)
 
-            rel = db.get('id', release_id)
-            if rel and rel.get('status') != status:
-
-                release_name = None
-                if rel.get('files'):
-                    for file_type in rel.get('files', {}):
-                        if file_type == 'movie':
-                            for release_file in rel['files'][file_type]:
-                                release_name = os.path.basename(release_file)
-                                break
-
-                if not release_name and rel.get('info'):
-                    release_name = rel['info'].get('name')
-
-                #update status in Db
-                log.debug('Marking release %s as %s', release_name, status)
-                rel['status'] = status
-                rel['last_edit'] = int(time.time())
-
-                db.update(rel)
-
+            if wrote is not None:
                 #Update all movie info as there is no release update function
-                fireEvent('notify.frontend', type = 'release.update_status', data = rel)
+                fireEvent('notify.frontend', type = 'release.update_status', data = wrote)
 
             return True
+        except ConflictError:
+            log.warning('Gave up updating release %s status after retries due to persistent contention', release_id)
         except Exception:
             log.error('Failed: %s', traceback.format_exc())
 

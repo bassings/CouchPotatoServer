@@ -6,6 +6,7 @@ from string import ascii_lowercase
 
 from CodernityDB.database import RecordNotFound, RecordDeleted
 from couchpotato import tryInt, get_db
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, fireEventAsync, addEvent
 from couchpotato.core.helpers.encoding import toUnicode
@@ -600,20 +601,26 @@ class MediaPlugin(MediaBase):
 
         db = get_db()
 
+        def _mark_done(media):
+            media['status'] = 'done'
+
+        # Read-modify-write on the same doc other concurrent viewers /
+        # devices / status transitions may be touching -- go through the
+        # CAS retry helper rather than a bare get()+update() so a lost
+        # update can't silently drop someone else's concurrent change to
+        # this media doc (identical hotspot to markWatched/markUnwatched).
         try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
+            db.update_with_retry(_mark_done, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s done after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
         except Exception:
-            log.error('Unexpected error fetching media %s in markDone: %s', id, traceback.format_exc())
+            log.error('Unexpected error marking media %s done: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}
 
-        if media:
-            media['status'] = 'done'
-            db.update(media)
-            return {'success': True}
-
-        return {'success': False, 'error': 'Media not found'}
+        return {'success': True}
 
     def _utcNow(self):
         return datetime.now(timezone.utc).replace(microsecond = 0).isoformat().replace('+00:00', 'Z')
@@ -621,52 +628,57 @@ class MediaPlugin(MediaBase):
     def markWatched(self, id = None, watched_by = None, source = 'manual', **kwargs):
 
         db = get_db()
+        watched_at = kwargs.get('watched_at') or self._utcNow()
 
-        try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
-        except Exception:
-            log.error('Unexpected error fetching media %s in markWatched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
-
-        if media:
+        def _mark_watched(media):
             media['watched'] = True
-            media['watched_at'] = kwargs.get('watched_at') or self._utcNow()
+            media['watched_at'] = watched_at
             if watched_by:
                 media['watched_by'] = watched_by
             if source:
                 media['watched_source'] = source
 
-            db.update(media)
-            fireEvent('notify.frontend', type = 'movie.update', data = media)
-            return {'success': True, 'media': media}
+        # Read-modify-write on the same doc as other concurrent viewers /
+        # devices marking watched -- go through the CAS retry helper rather
+        # than a bare get()+update() so a lost update can't silently drop
+        # someone else's concurrent change to this media doc.
+        try:
+            media = db.update_with_retry(_mark_watched, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s watched after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
+        except Exception:
+            log.error('Unexpected error marking media %s watched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
 
-        return {'success': False, 'error': 'Media not found'}
+        fireEvent('notify.frontend', type = 'movie.update', data = media)
+        return {'success': True, 'media': media}
 
     def markUnwatched(self, id = None, **kwargs):
 
         db = get_db()
 
-        try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
-        except Exception:
-            log.error('Unexpected error fetching media %s in markUnwatched: %s', id, traceback.format_exc())
-            return {'success': False, 'error': 'Database error'}
-
-        if media:
+        def _mark_unwatched(media):
             media['watched'] = False
             media.pop('watched_at', None)
             media.pop('watched_by', None)
             media.pop('watched_source', None)
 
-            db.update(media)
-            fireEvent('notify.frontend', type = 'movie.update', data = media)
-            return {'success': True, 'media': media}
+        try:
+            media = db.update_with_retry(_mark_unwatched, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s unwatched after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
+        except Exception:
+            log.error('Unexpected error marking media %s unwatched: %s', id, traceback.format_exc())
+            return {'success': False, 'error': 'Database error'}
 
-        return {'success': False, 'error': 'Media not found'}
+        fireEvent('notify.frontend', type = 'movie.update', data = media)
+        return {'success': True, 'media': media}
 
     def watchHistory(self, type = 'movie', limit_offset = None, **kwargs):
 

@@ -120,3 +120,56 @@ class TestFixReleaseQuality:
 
             assert fixed == 1
             mock_fire.assert_called_once()
+
+    def test_continues_past_conflict_error_on_one_release(self):
+        """A ConflictError raised by db.update() on one release (a genuine
+        concurrent-writer race, e.g. another process/thread touched the same
+        release between this migration's read and write) must only skip
+        that release, not abort the whole scan -- the remaining releases in
+        the batch should still be checked/fixed."""
+        from couchpotato.core.migration.fix_release_quality import fix_release_quality
+        from couchpotato.core.db.sqlite_adapter import ConflictError
+
+        mock_db = MagicMock()
+        release_a = {
+            'doc': {
+                '_t': 'release',
+                '_id': 'release-a',
+                '_rev': '001',
+                'quality': '720p',
+                'info': {'name': 'Movie.A.2025.2160p.BluRay'},
+            }
+        }
+        release_b = {
+            'doc': {
+                '_t': 'release',
+                '_id': 'release-b',
+                '_rev': '001',
+                'quality': '720p',
+                'info': {'name': 'Movie.B.2025.2160p.BluRay'},
+            }
+        }
+
+        def get_many_side_effect(index_name, key, with_doc=False):
+            if key == 'available':
+                return [release_a, release_b]
+            return []
+        mock_db.get_many.side_effect = get_many_side_effect
+
+        # First release's write loses a CAS race; second release's write
+        # succeeds normally.
+        mock_db.update.side_effect = [
+            ConflictError('release-a'),
+            {'_id': 'release-b', '_rev': '002'},
+        ]
+
+        with patch('couchpotato.core.migration.fix_release_quality.fireEvent') as mock_fire:
+            mock_fire.return_value = {'identifier': '2160p', 'is_3d': False}
+
+            fixed, checked = fix_release_quality(mock_db)
+
+            # Both releases were checked -- the conflict on release-a did
+            # not abort the scan of release-b.
+            assert checked == 2
+            assert fixed == 1
+            assert mock_db.update.call_count == 2
