@@ -61,6 +61,27 @@ make setup → code → make verify → LOCAL agent review (must pass) → push/
   cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
 ```
 
+> **The rule, stated plainly — never skip it: any push that needs the gate does
+> not happen until its clean-agent local review is clean.** ("Needs the gate" =
+> any code change, or a change touching `CLAUDE.md`/`AGENTS.md` or a `specs/**`
+> file; **pure docs-only prose may skip** — see the carve-out in the bullet just
+> below.) For a gated push the loop is: run the local review → fix every real
+> finding → re-verify → **re-run the local review** → repeat **until it comes
+> back clean**, and only *then* `git push`. Running the review agents *is* the
+> gate — self-verifying the diff yourself does **not** substitute for it. This
+> governs **every** gated push, not just the first:
+> - the **initial** PR push;
+> - **every fix commit** pushed in response to a cloud `claude-review` finding —
+>   fix → local review again until clean → push; never fix-and-push without
+>   re-reviewing. (But apply the **Exit condition** below for a genuine false
+>   alarm / marginal nit: reject it with evidence and stop — don't chase forever.)
+> - any push touching `CLAUDE.md`/`AGENTS.md` or a `specs/**` file.
+>
+> Pushing before the local review is clean defeats the point: the cloud reviewer
+> is stateless per push, so it dribbles out — one push at a time — the findings a
+> single local pass would have surfaced together (Rationale in the gate bullet
+> below).
+
 - **Local agent review gate (MANDATORY for code changes, before every push to the
   cloud review; docs-only changes may skip it and push directly):**
   *"Docs-only"* means the diff touches **only** documentation prose — `*.md`

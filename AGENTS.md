@@ -55,3 +55,7 @@ docker build -t couchpotato:test .
 ```
 
 For release or dependency changes, also run the repository's release-quality checks and audit commands where available. For browser-facing workflow changes, add or update Playwright coverage where practical and verify the affected flow on a mobile-sized viewport.
+
+## Local Review Gate (before pushing)
+
+Passing the checks above is necessary but **not sufficient**. A change is not pushed until a **clean-agent local review is clean**: spawn ≥2 independent `general-purpose` review agents against the branch diff (vs `master`), applying the Review Guidelines above, and **iterate locally — fix every real finding, re-verify, re-review — until the review comes back clean. Only then push.** Running the review agents *is* the gate; self-verifying the diff yourself is not a substitute. This holds for every push: the initial PR, **each fix commit** made in response to a cloud `claude-review` finding (fix → local review again until clean → push), and policy-doc (`CLAUDE.md`/`AGENTS.md`) or `specs/**` changes. See CLAUDE.md → *Path to Production* for the full flow and rationale (the cloud reviewer is stateless per push, so pushing before the local review is clean just dribbles the findings out one round at a time).
