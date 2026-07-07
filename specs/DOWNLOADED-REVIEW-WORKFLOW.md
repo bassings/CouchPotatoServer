@@ -268,13 +268,17 @@ feature's completion-path change rather than a separate reconstruction.
    copy. Belongs with the UI actions since the real fix is UI-level (the Add
    surface should reflect "already in library / under review" state). Tests
    mirroring `TestWantedDeleteExemptsDownloadedMovies`.
-   **Minor (defense-in-depth, note for this phase):** a `downloaded` movie with
-   **zero** releases + `delete_from='manage'` would still fall to the full
-   `db.delete(media)` (the Phase-2 top-level `wanted/snatched/late` guard covers
-   it regardless of release count, but the `manage` path relies on the
-   "≥1 release" invariant). No reachable live caller sends `delete_from='manage'`
-   post-#148, and the invariant holds in practice; widen the top-level guard to
-   include `manage` for symmetry when convenient.
+   **Minor (defense-in-depth) — fixed in Phase 2:** a `downloaded` movie with
+   **zero** releases + `delete_from='manage'` used to fall to the full
+   `db.delete(media)` via the generic loop's post-loop `total_releases == 0 and
+   not new_media_status` clause (the top-level guard originally covered only
+   `wanted/snatched/late`). The cloud review flagged it; the top-level guard now
+   includes `manage` (`delete_from in ['wanted','snatched','late','manage']`), so
+   a `downloaded` movie is a no-op restatus regardless of release count and the
+   zero-release case is covered. The in-loop manage guard is now redundant for a
+   `downloaded` movie (the top-level branch catches `manage` first) but is kept
+   as harmless defense-in-depth. Locked by
+   `TestManageDeleteExemptsDownloadedMovies.test_downloaded_movie_with_zero_releases_survives_manage_delete`.
 4. **Notification + renamer enrichment hook:** fire notify + `renamer.after`
    enrichment on entering `downloaded`; wire the dead listeners
    (per `specs/RENAMER-EVENT-CHAIN.md`). Tests: listeners fire once, only on

@@ -455,6 +455,21 @@ class TestManageDeleteExemptsDownloadedMovies:
         assert 'release-2' in deleted_ids
         assert 'movie-2' in deleted_ids
 
+    def test_downloaded_movie_with_zero_releases_survives_manage_delete(self):
+        """Defense-in-depth hole flagged by the cloud review: a 'downloaded'
+        movie with NO releases + delete_from='manage'. Before the top-level
+        guard included 'manage', this flowed to the generic loop where the
+        post-loop `total_releases == 0 and not new_media_status` clause did a
+        full `db.delete(media)` -- purging a review-gated movie. The movie doc
+        must survive and stay 'downloaded'."""
+        movie = {'_id': 'movie-3', 'status': 'downloaded', 'profile_id': 'profile-1'}
+        releases = []
+
+        db_deletes, db_updates = self._run_delete(movie, releases)
+
+        assert db_deletes == [], "a review-gated movie must not be purged"
+        assert db_updates == [], "status/profile_id must not be rewritten"
+
 
 class TestWantedDeleteExemptsDownloadedMovies:
     """BLOCKING gap (phase 2 re-review): the SIBLING branch
