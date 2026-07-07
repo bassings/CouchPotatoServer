@@ -13,7 +13,7 @@ class Homey(Notification):
 
     listen_to = [
         'media.available',
-        'renamer.after', 'movie.snatched',
+        'renamer.after', 'movie.snatched', 'movie.downloaded',
     ]
 
     def notify(self, message = '', data = None, listener = None):

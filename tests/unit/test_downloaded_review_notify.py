@@ -24,6 +24,9 @@ from unittest.mock import patch
 from couchpotato.core.media._base.media.main import MediaPlugin
 from couchpotato.core.notifications.base import Notification
 from couchpotato.core.notifications.core.main import CoreNotifier
+from couchpotato.core.notifications.homey import Homey
+from couchpotato.core.notifications.trakt import Trakt
+from couchpotato.core.notifications.xbmc import XBMC
 
 
 def _run_restatus(media_doc, profile_doc, releases):
@@ -88,7 +91,11 @@ class TestNotifyOnEnteringDownloadedGate:
 
         event, args, kwargs = downloaded_events[0]
         assert 'Predestination' in kwargs['message']
-        assert kwargs['data'] == updated[0]
+        # The payload must carry the RIGHT movie, in its review state --
+        # assert on the fields directly rather than object identity with the
+        # recorded snapshot (which would be true almost by construction).
+        assert kwargs['data']['_id'] == 'movie-1'
+        assert kwargs['data']['status'] == 'downloaded'
 
     def test_idempotent_second_restatus_on_already_downloaded_movie_does_not_refire(self):
         """Calling restatus again on a movie that's already 'downloaded'
@@ -143,3 +150,21 @@ class TestMovieDownloadedRegisteredWithNotificationListeners:
 
     def test_registered_in_core_notifier_listen_to(self):
         assert 'movie.downloaded' in CoreNotifier.listen_to
+
+    def test_registered_in_providers_that_override_listen_to(self):
+        """Two providers OVERRIDE the base listen_to (rather than inheriting
+        it), so adding 'movie.downloaded' to base.py alone silently misses
+        them -- they'd get 'movie.snatched' but not the review-gate entry.
+        Both must carry it explicitly."""
+        assert 'movie.snatched' in XBMC.listen_to  # sanity: it does override
+        assert 'movie.downloaded' in XBMC.listen_to
+        assert 'movie.snatched' in Homey.listen_to
+        assert 'movie.downloaded' in Homey.listen_to
+
+    def test_not_added_to_trakt_which_should_not_fire_on_review_gate(self):
+        """Trakt overrides listen_to with ['renamer.after'] only (no
+        'movie.snatched') -- it's a library-add scrobbler and must NOT fire
+        on a review-gate entry, since the movie isn't confirmed yet. Guard
+        against a future well-meaning 'add it everywhere' edit."""
+        assert 'movie.snatched' not in Trakt.listen_to
+        assert 'movie.downloaded' not in Trakt.listen_to

@@ -19,7 +19,7 @@ autoload = 'XBMC'
 
 class XBMC(Notification):
 
-    listen_to = ['renamer.after', 'movie.snatched']
+    listen_to = ['renamer.after', 'movie.snatched', 'movie.downloaded']
     use_json_notifications = {}
     http_time_between_calls = 0
 
