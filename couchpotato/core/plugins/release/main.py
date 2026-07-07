@@ -48,6 +48,12 @@ class Release(Plugin):
                 'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
             }
         })
+        addApiView('release.failed', self.failedView, docs = {
+            'desc': 'Mark a release as failed (Downloaded/review workflow per-release "Mark failed" action)',
+            'params': {
+                'id': {'type': 'id', 'desc': 'ID of the release object in release-table'}
+            }
+        })
 
         addEvent('release.add', self.add)
         addEvent('release.download', self.download)
@@ -266,6 +272,28 @@ class Release(Plugin):
 
             return {
                 'success': True
+            }
+        except Exception:
+            log.error('Failed: %s', traceback.format_exc())
+
+        return {
+            'success': False
+        }
+
+    def failedView(self, id = None, **kwargs):
+        """Downloaded/review workflow per-release "Mark failed" action
+        (specs/DOWNLOADED-REVIEW-WORKFLOW.md): exposes updateStatus() as an
+        API view for a specific bad release/link, mirroring ignore()'s
+        shape. Unlike ignore(), which always reports success once no
+        exception is raised, this surfaces updateStatus()'s own True/False
+        return value -- updateStatus() already swallows a persistent CAS
+        conflict internally and returns False rather than raising, so a
+        contended write is reported as {'success': False} instead of a
+        false positive.
+        """
+        try:
+            return {
+                'success': bool(id) and self.updateStatus(id, 'failed')
             }
         except Exception:
             log.error('Failed: %s', traceback.format_exc())

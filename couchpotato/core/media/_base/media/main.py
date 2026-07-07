@@ -645,6 +645,22 @@ class MediaPlugin(MediaBase):
             log.error('Unexpected error marking media %s done: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}
 
+        # Workflow Phase 3 "Mark Done" (specs/DOWNLOADED-REVIEW-WORKFLOW.md):
+        # a movie in the 'downloaded' review gate has a landed-but-not-yet-
+        # finalized release (status 'downloaded'/'snatched'/'seeding'). Now
+        # that the movie itself is confirmed 'done', complete that release
+        # too so it doesn't linger behind the movie. Already-terminal
+        # releases ('done'/'available'/'failed'/'ignored') are left alone.
+        # Best-effort: the movie write already succeeded above, so a failure
+        # here (e.g. release lookup error) must not turn this into an
+        # overall failure response.
+        try:
+            for rel in fireEvent('release.for_media', id, single = True) or []:
+                if rel.get('status') in ('downloaded', 'snatched', 'seeding'):
+                    fireEvent('release.update_status', rel.get('_id'), status = 'done', single = True)
+        except Exception:
+            log.error('Failed completing landed release for media %s after marking done: %s', id, traceback.format_exc())
+
         return {'success': True}
 
     def _utcNow(self):
