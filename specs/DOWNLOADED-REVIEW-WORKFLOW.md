@@ -104,6 +104,18 @@ Add to the profile model/editor a boolean, e.g.
 (default **off** = current auto-upgrade behavior). Surfaced in the profile
 editor UI. `media.restatus` / searcher read it via the movie's `profile_id`.
 
+**Phase 2 status:** the field exists, persists (`ProfilePlugin.save()`,
+`couchpotato/core/plugins/profile/main.py`), defaults `False` for profiles
+that don't set it, and is read by `restatus()` for completion routing.
+**UI exposure deferred:** the new-UI profile editor
+(`couchpotato/ui/templates/partials/settings/profiles.html` +
+`couchpotato/static/scripts/ui/profile-editor.js`) is a large, 100%-mutation-
+tested surface (`TEST-001`) with its own a11y-parity follow-up already
+tracked; adding a checkbox there (plus the matching Alpine state, save-payload
+wiring, unit/mutation tests, and any conformance/E2E touch-up) is left for a
+Phase 3 follow-up rather than folded into this phase. Until then the toggle
+is settable only via the `profile.save` API directly.
+
 ### Notification
 
 On entering `downloaded`, fire `notify.frontend` (and the configured
@@ -131,21 +143,66 @@ feature's completion-path change rather than a separate reconstruction.
 
 ## Phased plan (each its own reviewed PR)
 
-1. **Status + gating (no behavior change yet):** register the `downloaded` movie
-   status + label/filter; make the searcher gate on it (skip like `done`).
-   Tests: searcher does not select/act on a `downloaded` movie.
-2. **Per-profile toggle + completion routing:** add `manual_confirmation` to the
-   profile; teach `media.restatus`/completion to route release+movie to
-   `downloaded` vs `done` by the toggle. Tests: auto profile → `done` (unchanged);
-   manual profile → `downloaded` + no further search.
-   **Forward-looking (found in Phase 1 review — must handle here):** two call
-   sites key off a fixed movie-status list and would silently *exclude* a
-   `downloaded` movie once this phase starts producing them —
-   `couchpotato/core/plugins/release/main.py:117`
-   (`media.with_status(['done','active'])`, the weekly stale-release cleanup) and
-   `couchpotato/core/plugins/profile/main.py:53` (`media.with_status('active')`).
-   Audit these (and any other hardcoded status lists) and include `downloaded`
-   where a review-gated movie should still be considered.
+1. ✅ **DONE (#168).** **Status + gating (no behavior change yet):** register
+   the `downloaded` movie status + label/filter; make the searcher gate on it
+   (skip like `done`). Tests: searcher does not select/act on a `downloaded`
+   movie.
+2. ✅ **DONE.** **Per-profile toggle + completion routing:** add
+   `manual_confirmation` to the profile; teach `media.restatus`/completion to
+   route release+movie to `downloaded` vs `done` by the toggle. Tests: auto
+   profile → `done` (unchanged); manual profile → `downloaded` + no further
+   search.
+
+   **Completion-path decision point (traced for this phase):** a completed
+   release drives `couchpotato/core/plugins/release/main.py`'s `download()`
+   (renamer-disabled path, ~line 361-372) or `renamer/scanner.py`'s
+   `checkSnatched()` to set the *release* to `done`/`downloaded`/etc., which
+   then calls `fireEvent('media.restatus', ...)`. `MediaPlugin.restatus()`
+   (`couchpotato/core/media/_base/media/main.py`) is the single funnel that
+   decides the *movie* status: the one insertion point is the branch where a
+   `done` release satisfies `quality.isfinish` and the movie was about to be
+   set to `done` (~line 757). That branch now checks
+   `profile.get('manual_confirmation')` and, only for a genuinely new
+   completion (`previous_status != 'done'`), sets the movie to `downloaded`
+   instead. The Phase-1 top-level preservation check
+   (`previous_status == 'downloaded'` stays `downloaded`) runs first and is
+   untouched, so an already-gated movie never reaches the new branch and is
+   never auto-advanced to `done`. Release-level status is unchanged by this
+   phase (the release itself still ends up `done`); only the movie's status
+   field is routed differently. Scope note: this phase only touches
+   `restatus()`'s existing decision point, not the full per-release
+   `downloaded` routing sketched in the Design section above — that nuance
+   (if still wanted) is Phase 3/4 territory.
+
+   **Status-list sites fixed (found in Phase 1 review):**
+   - `couchpotato/core/plugins/release/main.py:118` (weekly stale-release
+     cleanup): `media.with_status(['done','active'])` →
+     `media.with_status(['done','active','downloaded'])` — a review-gated
+     movie's stale/duplicate releases still get cleaned up like a `done`
+     movie's would.
+   - `couchpotato/core/plugins/profile/main.py:53` (`forceDefaults()` orphan
+     profile-reference repair): `media.with_status('active')` →
+     `media.with_status(['active','downloaded'])` — a `downloaded` movie still
+     depends on a working `profile_id` (read by every `restatus()` call, and
+     by the future "mark failed & re-search" action), so a dangling reference
+     needs the same repair-to-default an `active` movie gets.
+   - Audited and **left unchanged** (each is a deliberate exclusion, not an
+     oversight): `couchpotato/core/plugins/dashboard.py:48`
+     (`media.with_status('active', ...)` for the "Coming Soon" widget — a
+     `downloaded` movie isn't coming soon, it already landed); the searcher's
+     own `media.with_status('active', ...)` batch-search selects
+     (`movie/searcher.py:80`, `profile/main.py`'s `dashboard`-adjacent uses —
+     these are exactly the Phase-1 gating points and must keep excluding
+     `downloaded`); `couchpotato/core/plugins/manage.py:139`
+     (`status='done', release_status='done'` cleanup-scan deletion of
+     library movies whose files vanished from disk) — deliberately **not**
+     extended to `downloaded`, since that path does a full `delete_from='all'`
+     removal and a movie mid-review shouldn't be silently purged just because
+     on-disk state doesn't match; `release/main.py:196`
+     (`allowed_restatus=['done']` in the library-scan `release.add()` path) —
+     unreachable for `downloaded` since that path always adds movies with
+     `profile_id=None`, which `restatus()` routes to `done` regardless of any
+     profile toggle.
 3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
    Mark-failed (release); immediate re-search on Fail. Tests + E2E.
 4. **Notification + renamer enrichment hook:** fire notify + `renamer.after`

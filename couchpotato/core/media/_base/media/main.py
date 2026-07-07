@@ -754,7 +754,19 @@ class MediaPlugin(MediaBase):
                             # Check if we are finished with the media
                             for release in done_releases:
                                 if fireEvent('quality.isfinish', {'identifier': release['quality'], 'is_3d': release.get('is_3d', False)}, profile, timedelta(seconds = time.time() - release['last_edit']).days, single = True):
-                                    m['status'] = 'done'
+                                    # Workflow phase 2: a profile with manual_confirmation
+                                    # ON routes a *genuinely new* completion (previous_status
+                                    # wasn't already 'done') to the 'downloaded' review gate
+                                    # instead of 'done'. A movie that's already 'done' (e.g. a
+                                    # later upgrade re-check, or one confirmed via the future
+                                    # "Mark Done" action) stays 'done' -- this never demotes it
+                                    # back to 'downloaded'. A movie already in 'downloaded'
+                                    # never reaches this branch at all: it's handled by the
+                                    # top-level preservation check above.
+                                    if profile.get('manual_confirmation') and previous_status != 'done':
+                                        m['status'] = 'downloaded'
+                                    else:
+                                        m['status'] = 'done'
                                     break
 
                         elif previous_status == 'done':

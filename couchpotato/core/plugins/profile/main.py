@@ -48,9 +48,14 @@ class ProfilePlugin(Plugin):
 
             self.fill()
 
-        # Get all active movies without profile
+        # Get all active (or review-gated) movies without a valid profile.
+        # 'downloaded' (workflow phase 2) movies still carry a profile_id that
+        # restatus() and the future "mark failed & re-search" action depend
+        # on, so a dangling reference needs the same repair-to-default an
+        # 'active' movie gets -- otherwise a review-gated movie whose profile
+        # was deleted would be stuck with an unusable profile_id forever.
         try:
-            medias = fireEvent('media.with_status', 'active', single = True)
+            medias = fireEvent('media.with_status', ['active', 'downloaded'], single = True)
 
             profile_ids = [x.get('_id') for x in self.all()]
             default_id = profile_ids[0]
@@ -99,6 +104,13 @@ class ProfilePlugin(Plugin):
                 'order': tryInt(kwargs.get('order', 999)),
                 'core': kwargs.get('core', False),
                 'minimum_score': tryInt(kwargs.get('minimum_score', 1)),
+                # Workflow phase 2 (specs/DOWNLOADED-REVIEW-WORKFLOW.md): when
+                # truthy, a completing download for a movie on this profile is
+                # routed to the 'downloaded' review gate instead of 'done'
+                # (see MediaPlugin.restatus). Defaults False so existing/legacy
+                # profiles (and every caller that doesn't mention the field)
+                # keep today's auto-upgrade-to-done behavior unchanged.
+                'manual_confirmation': tryInt(kwargs.get('manual_confirmation', 0)) == 1,
                 'qualities': [],
                 'wait_for': [],
                 'stop_after': [],

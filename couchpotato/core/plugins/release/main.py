@@ -115,7 +115,11 @@ class Release(Plugin):
         del media_exist
 
         # get movies last_edit more than a week ago
-        medias = fireEvent('media.with_status', ['done', 'active'], single = True)
+        # 'downloaded' (workflow phase 2 review gate) is included so a
+        # review-gated movie's stale/duplicate releases still get cleaned up
+        # like a 'done' movie's would -- it's not being searched, but it's
+        # not exempt from this stale-release hygiene pass either.
+        medias = fireEvent('media.with_status', ['done', 'active', 'downloaded'], single = True)
 
         for media in medias:
             if media.get('last_edit', 0) > (now - week):
