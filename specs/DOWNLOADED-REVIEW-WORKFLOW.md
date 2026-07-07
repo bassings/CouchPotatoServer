@@ -80,22 +80,44 @@ scanner completion path):
 accordingly, and must treat `downloaded` as a terminal-for-search state (don't
 demote it back to `active`).
 
-### User actions (UI)
+### User actions (backend) — Phase 3b: DONE
+
+The three API views below (all `addApiView`, so reachable at `/api/<route>`)
+are implemented and unit-tested
+(`tests/unit/test_review_actions_backend.py`); wiring the UI buttons + htmx
+endpoints + E2E coverage is the remaining Phase-3 piece (a separate PR).
 
 Per-movie (when in `downloaded`):
-- **Mark Done** → movie `done`, owning release `done`. Terminal.
-- **Mark Failed & re-search** → current release `failed`; movie back to
-  `active`; **immediately** trigger `searcher.single(movie, manual=True)` so it
-  finds the next candidate (the `failed` release is already excluded by
-  `searcher.py:188`).
+- **Mark Done** → `media.done` (existing route,
+  `MediaPlugin.markDone`, `couchpotato/core/media/_base/media/main.py`) —
+  extended so that after the movie CAS-updates to `done`, it also fires
+  `release.update_status(rel_id, status='done')` for each of the movie's
+  releases currently `downloaded`/`snatched`/`seeding` (the landed-but-not-
+  yet-finalized copy). Already-`done`/`available`/`failed`/`ignored`
+  releases, and the no-release case, are left alone; the release-completion
+  step is best-effort and never turns an already-successful movie update
+  into a failure response.
+- **Mark Failed & re-search** → new `movie.searcher.mark_failed` route
+  (`MovieSearcher.markFailedView` / `.markFailedAndResearch`,
+  `couchpotato/core/media/movie/searcher.py`). For each of the movie's
+  releases currently `downloaded`/`snatched`/`seeding`/`done`, fires
+  `release.update_status(rel_id, status='failed')` (a stronger signal than
+  the pre-existing `movie.searcher.try_next`'s `'ignored'`); resets the
+  movie to `active` via the CAS `update_with_retry` helper (same pattern as
+  `markDone`/`markWatched`); then immediately fires
+  `fireEvent('movie.searcher.single', media, manual=True)` so the searcher
+  finds the next candidate right away rather than waiting for the next
+  cycle (the `failed` release is already excluded by the has-better-quality
+  check at `searcher.py:~191`).
 
 Per-release / link (in the releases panel):
-- **Skip / Ignore link** → `release.update_status(id, 'ignored')` (already
-  excluded from future grabs).
-- **Mark failed** → `release.update_status(id, 'failed')`.
-
-These call existing `release.update_status`; the work is exposing buttons +
-htmx endpoints + wiring the immediate re-search.
+- **Skip / Ignore link** → existing `release.ignore` route
+  (`release.update_status(id, 'ignored')`, already excluded from future
+  grabs) — unchanged.
+- **Mark failed** → new `release.failed` route (`Release.failedView`,
+  `couchpotato/core/plugins/release/main.py`), calling
+  `self.updateStatus(id, 'failed')` and mirroring `release.ignore`'s
+  request/response shape.
 
 ### Per-profile setting
 
@@ -248,6 +270,13 @@ feature's completion-path change rather than a separate reconstruction.
      wanted/snatched/late behavior is unchanged.
 3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
    Mark-failed (release); immediate re-search on Fail. Tests + E2E.
+   **Phase 3b (backend API views) is DONE** — see "User actions (backend)"
+   above for the three routes (`media.done` extended, new
+   `movie.searcher.mark_failed`, new `release.failed`) and
+   `tests/unit/test_review_actions_backend.py`. **Still remaining for this
+   phase:** the UI buttons + htmx wiring that call these routes, and E2E
+   coverage — a separate PR.
+
    **Re-add guard — IMPLEMENTED (Phase 3a):** `MovieBase.add()`
    (`couchpotato/core/media/movie/_base/main.py`) defaults `force_readd=True`,
    and the live "Add" buttons (`ui/templates/partials/search_results.html`,

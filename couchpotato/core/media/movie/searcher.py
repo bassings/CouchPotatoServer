@@ -5,8 +5,11 @@ import threading
 import time
 import traceback
 
+from CodernityDB.database import RecordDeleted, RecordNotFound
+
 from couchpotato import get_db
 from couchpotato.api import addApiView
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.helpers.variable import getTitle, possibleTitles, getImdb, getIdentifier, tryInt
@@ -40,6 +43,15 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         addApiView('movie.searcher.try_next', self.tryNextReleaseView, docs = {
             'desc': 'Marks the snatched results as ignored and try the next best release',
+            'params': {
+                'media_id': {'desc': 'The id of the media'},
+            },
+        })
+
+        addApiView('movie.searcher.mark_failed', self.markFailedView, docs = {
+            'desc': "Downloaded/review workflow 'Mark Failed & re-search': marks the "
+                    "movie's landed release as failed, resets the movie to active, and "
+                    "immediately triggers a manual re-search.",
             'params': {
                 'media_id': {'desc': 'The id of the media'},
             },
@@ -411,6 +423,67 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return False
         except Exception:
             log.error('Failed searching for next release: %s', traceback.format_exc())
+            return False
+
+    def markFailedView(self, media_id = None, **kwargs):
+
+        success = self.markFailedAndResearch(media_id)
+
+        return {
+            'success': success
+        }
+
+    def markFailedAndResearch(self, media_id):
+        """Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md)
+        "Mark Failed & re-search" action: the user rejected the copy that
+        landed for a movie awaiting review. Mark that landed release
+        'failed' (distinct from tryNextRelease's 'ignored' -- a review-gate
+        rejection is a stronger signal than a routine "try the next
+        candidate"), reset the movie back to 'active' so the searcher will
+        consider it again, and immediately trigger a manual re-search rather
+        than waiting for the next scheduled cycle. The 'failed' release is
+        already excluded from re-grabbing by the has-better-quality check in
+        single() (searcher.py:~191).
+        """
+        try:
+            db = get_db()
+
+            rels = fireEvent('release.for_media', media_id, single = True) or []
+            for rel in rels:
+                if rel.get('status') in ('downloaded', 'snatched', 'seeding', 'done'):
+                    fireEvent('release.update_status', rel.get('_id'), status = 'failed', single = True)
+
+            # Read-modify-write on the movie doc -- route through the CAS
+            # retry helper (same pattern as MediaPlugin.markDone/markWatched)
+            # rather than a bare get()+update() so a lost update can't
+            # silently drop a concurrent change to this media doc.
+            def _reset_active(media):
+                if media.get('status') == 'active':
+                    return False
+                media['status'] = 'active'
+
+            try:
+                db.update_with_retry(_reset_active, media_id)
+            except (RecordNotFound, RecordDeleted, KeyError):
+                log.error('Media not found while resetting to active for re-search: %s', media_id)
+                return False
+            except ConflictError:
+                log.warning('Gave up resetting media %s to active after retries due to persistent contention', media_id)
+                return False
+
+            # Re-fetch the fully-enriched doc (with 'releases' attached) via
+            # the same event tryNextRelease uses, so single() sees the
+            # just-updated 'failed' status and 'active' movie status.
+            media = fireEvent('media.get', media_id, single = True)
+            if not media:
+                return False
+
+            log.info('Marked failed release(s) for %s, triggering immediate re-search', getTitle(media))
+            fireEvent('movie.searcher.single', media, manual = True, single = True)
+
+            return True
+        except Exception:
+            log.error('Failed marking media %s failed for re-search: %s', media_id, traceback.format_exc())
             return False
 
     def getSearchTitle(self, media):
