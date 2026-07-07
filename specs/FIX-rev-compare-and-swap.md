@@ -107,7 +107,7 @@ a nonexistent document can never converge.
 
 ### 4. Callers converted
 
-Two clear, unlocked read-modify-write hotspots were converted to
+Three clear, unlocked read-modify-write hotspots were converted to
 `update_with_retry`:
 
 - **`couchpotato/core/media/_base/media/main.py`: `markWatched` /
@@ -119,6 +119,21 @@ Two clear, unlocked read-modify-write hotspots were converted to
   is caught identically to the prior `RecordNotFound`/`KeyError` handling
   around the old `db.get()` call, preserving the `{'success': False,
   'error': 'Media not found'}` contract.
+- **`couchpotato/core/media/_base/media/main.py`: `markDone`** (review).
+  Same shape as `markWatched`/`markUnwatched` -- a bare `db.get()` + set
+  `status = 'done'` + `db.update(media)` with **no exception handling on
+  the update at all**, so a `ConflictError` from a concurrent writer (e.g.
+  `updateStatus`/`markWatched` touching the same media doc) could
+  previously propagate uncaught out of the API view. Converted to the
+  identical `update_with_retry` pattern: the mutator only sets
+  `status = 'done'`, the not-found path (`RecordNotFound`/`RecordDeleted`/
+  `KeyError`) preserves the existing `{'success': False, 'error': 'Media
+  not found'}` contract, and a persistent `ConflictError` after retries is
+  caught and logged at `WARNING` (not the generic `Exception` `ERROR`
+  branch), returning `{'success': False, 'error': 'Database busy, please
+  retry'}`. `markDone` has no side effect to keep outside the retry loop
+  (unlike `markWatched`'s `fireEvent('notify.frontend', ...)`) -- its
+  success path is unchanged: `{'success': True}`, no `media` key.
 - **`couchpotato/core/plugins/release/main.py`: `updateStatus`.** The
   single most-repeated release status-transition function -- called from
   search, snatch, download, ignore, and clean paths -- with **no lock**
@@ -219,6 +234,15 @@ function still returns the partial `found_releases` list for the releases
 that updated successfully. The happy-path return contract (no conflicts ->
 same list as before) is unchanged.
 
+A clarifying comment (review) was added at the `continue` itself: skipping
+a release this way also skips the `rel['status'] = rls.get('status')`
+refresh a few lines below, so the caller-owned `rel` entry in
+`search_results` keeps whatever `status` it had *before* this write
+attempt -- `rel['status']` is therefore not authoritative for a release
+that hit this branch. This is a comment-only change with no behavior
+difference; the partial-`found_releases` contract above already covers the
+observable effect.
+
 ### 6. Explicitly out of scope
 
 - `insert()`, `delete()`, `get()` semantics: unchanged.
@@ -267,6 +291,17 @@ test fixture, mirroring the real adapter's contract) instead of
 `test_mark_watched_returns_not_found_when_media_missing` for the
 not-found path through the new call site.
 
+`tests/unit/test_mark_done.py` (review) -- updated for the `markDone`
+conversion: `test_mark_done_sets_status_to_done` and
+`test_mark_done_returns_error_when_media_missing` now mock
+`db.update_with_retry` instead of `db.get`/`db.update`, mirroring
+`test_watch_history.py`'s pattern; added
+`test_mark_done_conflict_error_after_retries_returns_failure_and_logs_warning`
+proving a persistent `ConflictError` logs exactly one `WARNING` and zero
+`ERROR` records and returns a tailored `{'success': False, ...}` result,
+matching the same proof already established for `markWatched`/
+`markUnwatched`.
+
 `tests/unit/test_release_update_status_cas.py` (new) -- covers the
 converted `Release.updateStatus()`:
 `test_update_status_changes_status_and_notifies`,
@@ -293,13 +328,14 @@ call site is wired correctly).
 - [x] `update_with_retry(mutator, doc_id, retries=3)` exists, retries on
       `ConflictError`, supports a mutator-signalled no-op skip, and raises
       after exhausting retries.
-- [x] `markWatched`/`markUnwatched` (media) and `updateStatus` (release)
-      converted to `update_with_retry`; their existing observable
+- [x] `markWatched`/`markUnwatched`/`markDone` (media) and `updateStatus`
+      (release) converted to `update_with_retry`; their existing observable
       behavior/tests preserved (extended, not weakened).
 - [x] `insert`/`delete`/`get`/`_generate_rev` unchanged; `couchpotato/lib/`
       and `libs/` (CodernityDB) untouched.
-- [x] Full suite green: `pytest tests/unit/ -q` -- 1032 passed (was 1026
-      before this change; +6 net from the new/extended test files).
+- [x] Full suite green: `pytest tests/unit/ -q` -- 1045 passed (+1 net from
+      the new `markDone` `ConflictError`/retry test, on top of the prior
+      1032/1026 counts recorded above from earlier review passes).
 - [x] `ruff check .` clean.
 
 ## Follow-up (not done here)

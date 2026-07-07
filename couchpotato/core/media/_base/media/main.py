@@ -601,20 +601,26 @@ class MediaPlugin(MediaBase):
 
         db = get_db()
 
+        def _mark_done(media):
+            media['status'] = 'done'
+
+        # Read-modify-write on the same doc other concurrent viewers /
+        # devices / status transitions may be touching -- go through the
+        # CAS retry helper rather than a bare get()+update() so a lost
+        # update can't silently drop someone else's concurrent change to
+        # this media doc (identical hotspot to markWatched/markUnwatched).
         try:
-            media = db.get('id', id)
-        except (RecordNotFound, RecordDeleted):
-            media = None
+            db.update_with_retry(_mark_done, id)
+        except (RecordNotFound, RecordDeleted, KeyError):
+            return {'success': False, 'error': 'Media not found'}
+        except ConflictError:
+            log.warning('Gave up marking media %s done after retries due to persistent contention', id)
+            return {'success': False, 'error': 'Database busy, please retry'}
         except Exception:
-            log.error('Unexpected error fetching media %s in markDone: %s', id, traceback.format_exc())
+            log.error('Unexpected error marking media %s done: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}
 
-        if media:
-            media['status'] = 'done'
-            db.update(media)
-            return {'success': True}
-
-        return {'success': False, 'error': 'Media not found'}
+        return {'success': True}
 
     def _utcNow(self):
         return datetime.now(timezone.utc).replace(microsecond = 0).isoformat().replace('+00:00', 'Z')

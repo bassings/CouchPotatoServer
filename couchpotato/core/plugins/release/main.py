@@ -514,6 +514,11 @@ class Release(Plugin):
                         # than letting it propagate to the function-level
                         # except below and discard every found_releases
                         # entry already accumulated for the other releases.
+                        # Note: this `continue` skips the `rel['status'] =
+                        # rls.get('status')` refresh below, so the
+                        # caller-owned `rel` entry in `search_results` keeps
+                        # whatever `status` it had before this write attempt
+                        # -- it is not authoritative for this release.
                         log.warning('Skipped release %s due to a concurrent update: %s', rel_identifier, e)
                         continue
 
