@@ -100,7 +100,23 @@ class MovieBase(MovieTypeBase):
             info = fireEvent('movie.info', merge = True, extended = False, identifier = params.get('identifier'))
 
         # Allow force re-add overwrite from param
-        if 'force_readd' in params:
+        # Tracked separately from the resolved `force_readd` bool: this records
+        # whether the CALLER explicitly asked for a (re-)add via params (e.g.
+        # the API's force_readd=1), as opposed to the default. Used below to
+        # protect an already-completed movie from an implicit re-add (a naked
+        # "Add" button click, which never sends force_readd) while still
+        # honoring a deliberate, explicit one.
+        # NB: "explicit" here means the caller passed force_readd through the
+        # params/API surface. An INTERNAL Python caller that passes
+        # force_readd=True as a keyword arg (not via params) against a
+        # done/downloaded movie would still hit the no-op guard below, because
+        # this only inspects params. No such caller exists today (every
+        # keyword-arg caller passes force_readd=False or only runs on the
+        # new-movie path), but a future contributor adding an internal
+        # force-readd of a completed movie must pass it via params (or the
+        # guard will silently no-op their call).
+        force_readd_explicit = 'force_readd' in params
+        if force_readd_explicit:
             fra = params.get('force_readd')
             force_readd = fra.lower() not in ['0', '-1'] if not isinstance(fra, bool) else fra
 
@@ -177,6 +193,12 @@ class MovieBase(MovieTypeBase):
                         previous_profile = self.existingProfileId(db, m)
                         previous_category = m.get('category_id')
 
+            # Capture the pre-existing movie's status BEFORE m.update(media)
+            # overwrites it (media['status'] defaults to 'active' above) --
+            # needed by the completed-movie re-add guard below. Meaningless
+            # (and unused) for a brand-new movie.
+            previous_status = m.get('status')
+
             # Update dict to be usable
             m.update(media)
 
@@ -189,6 +211,25 @@ class MovieBase(MovieTypeBase):
                 if search_after:
                     onComplete = self.createOnComplete(m['_id'])
                 search_after = False
+            elif force_readd and previous_status in ['done', 'downloaded'] and not force_readd_explicit:
+                # Guard (app-wide, not just for the 'downloaded' review gate):
+                # a movie that is already complete (done) or awaiting review
+                # (downloaded) must not be destructively re-added by an
+                # IMPLICIT force_readd -- the live "Add" buttons
+                # (search_results.html, movie_info_modal.html) call movie.add
+                # with no force_readd at all, defaulting True, so a single
+                # stray click used to wipe the completed release(s), reset
+                # profile_id/category_id/tags, and reset status to 'active'.
+                # Treat this exactly like the non-force_readd no-op below:
+                # don't touch releases, don't persist m (db.update is never
+                # called), don't re-search. An EXPLICIT force_readd (e.g. the
+                # API's force_readd=1) still falls through to the destructive
+                # branch and is honored -- this only protects the default.
+                log.info(
+                    'Movie already complete (%s), not re-adding to protect the existing copy; '
+                    'use Mark Failed & re-search to replace it', previous_status
+                )
+                added = False
             elif force_readd:
 
                 # Clean snatched history
