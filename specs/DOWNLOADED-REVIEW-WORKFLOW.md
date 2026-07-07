@@ -222,8 +222,59 @@ feature's completion-path change rather than a separate reconstruction.
      the manage-delete release loop adds `media.get('status') != 'downloaded'`
      to its condition so a review-gated movie's release is never swept up by
      that path. Neither guard changes behavior for a genuinely `done` movie.
+   - **Second blocking gap in `MediaPlugin.delete`, found in the phase-2
+     re-review, now fixed:** the sibling branch `if delete_from in
+     ['wanted','snatched','late']` was also unguarded. For a `downloaded`
+     movie with a `done` release (the feature's steady state) the release
+     survives (`status == 'done'`), but that iteration unconditionally set
+     `new_media_status = 'done'`; after the loop `total_releases(1) !=
+     total_deleted(0)` fell to `elif new_media_status:`, which overwrote
+     `media['status']` to `done` **and** nulled `profile_id` — silently
+     bypassing the review gate. For `delete_from='late'` it was worse: the
+     post-loop `(not new_media_status and delete_from == 'late')` clause would
+     delete the movie doc outright. Reachable (not theoretical):
+     `couchpotato/ui/templates/wanted.html` `bulkDelete()` hardcodes
+     `delete_from='wanted'` with no status check (stale-selection race — a
+     movie can complete to `downloaded` in the background between select and
+     click), and the documented public API `movie.delete?delete_from=wanted`
+     reaches it directly. Fixed by adding a top-level branch **before** the
+     generic release loop: `elif media.get('status') == 'downloaded' and
+     delete_from in ['wanted','snatched','late']:` → treat as a no-op that
+     only calls `media.restatus`, leaving the movie in `downloaded` with its
+     releases and `profile_id` intact. A guard inside the loop (a `continue`)
+     would have been insufficient for `late`, since `new_media_status` staying
+     falsy makes the post-loop `late` clause fire — the top-level branch
+     sidesteps that entirely. A genuinely non-`downloaded` movie's
+     wanted/snatched/late behavior is unchanged.
 3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
    Mark-failed (release); immediate re-search on Fail. Tests + E2E.
+   **Also fold in here — the re-add guard (deferred from Phase 2, found in the
+   round-3 completeness sweep):** `MovieBase.add()` defaults `force_readd=True`,
+   and the live "Add" buttons (`ui/templates/partials/search_results.html`,
+   `movie_info_modal.html`) call `movie.add` with no `force_readd`, so re-adding
+   an already-present movie hits the `elif force_readd:` branch — it deletes the
+   movie's completed release (`['downloaded','snatched','seeding','done']`),
+   nulls `profile_id`/`category_id`/`tags`, resets `status` to `active`, and
+   re-searches. For a `downloaded` (review-gated) movie a single stray "Add"
+   click thus destroys the confirmed copy and the gate. **Important scope note:**
+   this is *not* a Phase-2 regression — the exact same destruction already
+   happens to a `done` movie today (all existing `done` movies share it), because
+   Phase 2 never touched `add()`; it is a pre-existing, app-wide property of the
+   `force_readd` default + an ungated Add button. The correct fix is therefore
+   app-wide, not `downloaded`-only (guarding only `downloaded` would create a
+   confusing asymmetry with `done`): treat re-adding an already-*completed*
+   movie (`done` **or** `downloaded`) as a no-op or require explicit
+   confirmation, so a naked "Add" can't silently wipe a completed/under-review
+   copy. Belongs with the UI actions since the real fix is UI-level (the Add
+   surface should reflect "already in library / under review" state). Tests
+   mirroring `TestWantedDeleteExemptsDownloadedMovies`.
+   **Minor (defense-in-depth, note for this phase):** a `downloaded` movie with
+   **zero** releases + `delete_from='manage'` would still fall to the full
+   `db.delete(media)` (the Phase-2 top-level `wanted/snatched/late` guard covers
+   it regardless of release count, but the `manage` path relies on the
+   "≥1 release" invariant). No reachable live caller sends `delete_from='manage'`
+   post-#148, and the invariant holds in practice; widen the top-level guard to
+   include `manage` for symmetry when convenient.
 4. **Notification + renamer enrichment hook:** fire notify + `renamer.after`
    enrichment on entering `downloaded`; wire the dead listeners
    (per `specs/RENAMER-EVENT-CHAIN.md`). Tests: listeners fire once, only on

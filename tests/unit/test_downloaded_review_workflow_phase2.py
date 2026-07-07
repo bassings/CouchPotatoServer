@@ -456,6 +456,123 @@ class TestManageDeleteExemptsDownloadedMovies:
         assert 'movie-2' in deleted_ids
 
 
+class TestWantedDeleteExemptsDownloadedMovies:
+    """BLOCKING gap (phase 2 re-review): the SIBLING branch
+    `if delete_from in ['wanted','snatched','late']` in MediaPlugin.delete()
+    was unguarded. For a 'downloaded' movie with a 'done' release (the
+    feature's steady state), the release survives but `new_media_status =
+    'done'` was set that iteration, so the post-loop `elif new_media_status:`
+    overwrote the movie status to 'done' AND nulled profile_id -- silently
+    bypassing the review gate. Reachable via wanted.html bulkDelete()
+    (hardcodes delete_from='wanted', stale-selection race) and the public
+    movie.delete?delete_from=wanted API. For delete_from='late' the post-loop
+    `(not new_media_status and delete_from == 'late')` clause would even
+    delete the movie outright."""
+
+    def _run_delete(self, media, releases, delete_from):
+        plugin = MediaPlugin.__new__(MediaPlugin)
+
+        db_deletes = []
+        db_updates = []
+        restatus_calls = []
+
+        class FakeDB:
+            def get(self, index, key, **kwargs):
+                if index == 'id' and key == media['_id']:
+                    return dict(media)
+                raise AssertionError('Unexpected db.get call: %r %r' % (index, key))
+
+            def delete(self, doc):
+                db_deletes.append(dict(doc))
+
+            def update(self, doc):
+                db_updates.append(dict(doc))
+                return doc
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.for_media':
+                return [dict(r) for r in releases]
+            if event == 'media.restatus':
+                restatus_calls.append(args)
+                return media.get('status')
+            if event in ('media.untag', 'notify.frontend'):
+                return None
+            raise AssertionError('Unexpected fireEvent call: %r' % (event,))
+
+        with (
+            patch('couchpotato.core.media._base.media.main.get_db', return_value=FakeDB()),
+            patch('couchpotato.core.media._base.media.main.fireEvent', side_effect=fake_fire_event),
+        ):
+            plugin.delete(media['_id'], delete_from=delete_from)
+
+        return db_deletes, db_updates, restatus_calls
+
+    def test_downloaded_movie_survives_wanted_delete_untouched(self):
+        """A review-gated movie deleted via delete_from='wanted' must stay
+        'downloaded' with profile_id intact and its 'done' release NOT
+        deleted -- the movie doc must not be written to 'done' nor purged."""
+        movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-1', 'status': 'done'}]
+
+        db_deletes, db_updates, restatus_calls = self._run_delete(movie, releases, 'wanted')
+
+        assert db_deletes == [], "no release or media doc may be deleted"
+        assert db_updates == [], "movie status/profile_id must not be rewritten"
+        assert len(restatus_calls) == 1, "the movie is just restatus'd, left in place"
+
+    def test_downloaded_movie_survives_snatched_delete_untouched(self):
+        movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-1', 'status': 'done'}]
+
+        db_deletes, db_updates, _ = self._run_delete(movie, releases, 'snatched')
+
+        assert db_deletes == []
+        assert db_updates == []
+
+    def test_downloaded_movie_survives_late_delete_untouched(self):
+        """The 'late' case is the sharpest: the post-loop
+        `(not new_media_status and delete_from == 'late')` clause would
+        delete the movie doc outright if the branch weren't guarded."""
+        movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-1', 'status': 'done'}]
+
+        db_deletes, db_updates, _ = self._run_delete(movie, releases, 'late')
+
+        assert db_deletes == [], "a downloaded movie must not be purged by a late-delete"
+        assert db_updates == []
+
+    def test_active_movie_wanted_delete_behavior_unchanged(self):
+        """Over-exemption guard: a genuinely non-'downloaded' movie's
+        wanted-delete path is unchanged. An 'active' movie with a single
+        non-done release: the release is deleted (total_deleted == 1 ==
+        total_releases), so the movie doc is deleted too, exactly as before
+        the guard was added."""
+        movie = {'_id': 'movie-2', 'status': 'active', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-2', 'status': 'snatched'}]
+
+        db_deletes, db_updates, _ = self._run_delete(movie, releases, 'wanted')
+
+        deleted_ids = [d.get('_id') for d in db_deletes]
+        assert 'release-2' in deleted_ids
+        assert 'movie-2' in deleted_ids
+
+    def test_active_movie_with_done_release_wanted_delete_marks_done_unchanged(self):
+        """Over-exemption guard, second shape: an 'active' movie whose only
+        release is already 'done' -- the wanted-delete keeps the release
+        (status == 'done') and sets the movie to 'done' with profile_id
+        nulled. This is the exact behavior the 'downloaded' guard must NOT
+        trigger, verified here as still intact for a normal active movie."""
+        movie = {'_id': 'movie-3', 'status': 'active', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-3', 'status': 'done'}]
+
+        db_deletes, db_updates, _ = self._run_delete(movie, releases, 'wanted')
+
+        assert db_deletes == [], "the done release is kept"
+        assert len(db_updates) == 1
+        assert db_updates[0]['status'] == 'done'
+        assert db_updates[0]['profile_id'] is None
+
+
 # --- End-to-end composition: manual-confirmation routing + searcher gate --
 
 class TestManualConfirmationRoutingGatesSearcher:

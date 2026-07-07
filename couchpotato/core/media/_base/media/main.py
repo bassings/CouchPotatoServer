@@ -547,6 +547,21 @@ class MediaPlugin(MediaBase):
 
                             db.delete(media)
                             deleted = True
+                        elif media.get('status') == 'downloaded' and delete_from in ['wanted', 'snatched', 'late']:
+                            # A 'downloaded' movie (workflow phase 2 review gate) must
+                            # survive a wanted/snatched/late delete entirely untouched.
+                            # The generic path below would force it to 'done' and null
+                            # its profile_id (via `new_media_status = 'done'`), or -- for
+                            # delete_from='late' -- delete the movie outright via the
+                            # post-loop `not new_media_status and delete_from == 'late'`
+                            # clause. This is reachable (not theoretical): wanted.html
+                            # bulkDelete() hardcodes delete_from='wanted' with no status
+                            # check (a stale selection can complete to 'downloaded' in the
+                            # background between select and click), and the public
+                            # movie.delete API accepts any delete_from for any id. Treat it
+                            # as a no-op and just recompute status, leaving the review gate,
+                            # its releases, and its profile_id intact.
+                            fireEvent('media.restatus', media.get('_id'), single = True)
                         else:
 
                             total_releases = len(media_releases)
