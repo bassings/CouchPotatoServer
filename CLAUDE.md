@@ -205,15 +205,19 @@ db.get('release_identifier', '{imdb}.{audio}.{quality}', with_doc=True)
 > Refreshed 2026-07-07 — most of the old list was stale (verified against
 > `origin/master`). Kept as an accurate current-state snapshot.
 
-- **Bare `except:` clauses: 0** (the old "367" is stale — cleared). Broad
-  `except Exception:` handlers still remain in places and swallow errors; keep
-  ratcheting the ruff `S`/`BLE` codes into the blocking `lint`.
+- **Bare `except:` clauses: 0 in `couchpotato/`** (the old "367" is stale —
+  cleared). The vendored `libs/CodernityDB/` still has ~13 (it's imported by
+  `codernity_adapter.py` for the one-time CodernityDB→SQLite migration, so it's
+  live, not dead code — left as-is per the "don't remove CodernityDB" upgrade
+  path). Broad `except Exception:` handlers still remain in places and swallow
+  errors; keep ratcheting the ruff `S`/`BLE` codes into the blocking `lint`.
 - **Read-modify-write DB races: partially fixed.** `_rev` compare-and-swap +
-  `update_with_retry` added to `SQLiteAdapter.update()` (#167), and the two
-  hottest callers (`markWatched`/`markUnwatched`, `Release.updateStatus`) are
-  converted. ~30 other `get`→mutate→`update` callers now degrade to a *logged,
-  swallowed* conflict rather than a silent lost update — per-caller conversion
-  to `update_with_retry` is the remaining follow-up.
+  `update_with_retry` added to `SQLiteAdapter.update()` (#167), and the four
+  clear RMW hotspots (`markWatched`, `markUnwatched`, `markDone`,
+  `Release.updateStatus`) are converted. ~30 other `get`→mutate→`update` callers
+  now degrade to a *logged, swallowed* conflict rather than a silent lost
+  update — per-caller conversion to `update_with_retry` is the remaining
+  follow-up.
 - **CSRF protection absent.** (CORS middleware now exists —
   `couchpotato/__init__.py`; the old "no CORS" note is stale.)
 - Passwords bcrypt-hashed (was plaintext before PR #44).
