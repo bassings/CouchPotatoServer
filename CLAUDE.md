@@ -202,12 +202,40 @@ db.get('release_identifier', '{imdb}.{audio}.{quality}', with_doc=True)
 
 ### Known Technical Debt
 
-- 367 bare `except:` clauses
-- Race conditions in read-modify-write DB patterns (see `couchpotato/core/media/main.py`)
-- No CORS/CSRF protection
-- Passwords now bcrypt-hashed (was plaintext before PR #44)
-- API auth via URL key only, no rate limiting
-- `_locks` dict on `Plugin` is a class variable shared across all instances (thread safety bug)
+> Refreshed 2026-07-07 — most of the old list was stale (verified against
+> `origin/master`). Kept as an accurate current-state snapshot.
+
+- **Bare `except:` clauses: 0 in `couchpotato/`** (the old "367" is stale —
+  cleared). The vendored `libs/CodernityDB/` still has ~13 (it's imported by
+  `codernity_adapter.py` for the one-time CodernityDB→SQLite migration, so it's
+  live, not dead code — left as-is per the "don't remove CodernityDB" upgrade
+  path). Broad `except Exception:` handlers still remain in places and swallow
+  errors; keep ratcheting the ruff `S`/`BLE` codes into the blocking `lint`.
+- **Read-modify-write DB races: partially fixed.** `_rev` compare-and-swap +
+  `update_with_retry` added to `SQLiteAdapter.update()` (#167), and the four
+  clear RMW hotspots (`markWatched`, `markUnwatched`, `markDone`,
+  `Release.updateStatus`) are converted. ~30 other `get`→mutate→`update` callers
+  now degrade to a *logged, swallowed* conflict rather than a silent lost
+  update — per-caller conversion to `update_with_retry` is the remaining
+  follow-up.
+- **CSRF protection absent.** (CORS middleware now exists —
+  `couchpotato/__init__.py`; the old "no CORS" note is stale.)
+- Passwords bcrypt-hashed (was plaintext before PR #44).
+- **API auth via URL key.** Rate limiting now exists
+  (`couchpotato/core/rate_limit.py`; the old "no rate limiting" note is stale);
+  the api_key is still the URL-embedded bearer.
+- **`Plugin._locks` is per-instance now** (`couchpotato/core/plugins/base.py:47`)
+  — the shared-class-var thread-safety bug is fixed. The remaining class-level
+  `_cache_locks` is correctly guarded by its own `_cache_locks_lock`.
+- **Renamer post-processing gap** (pre-existing migration regression): the
+  `renamer.before`/`renamer.after` event chain is dead (subtitles/trailers/
+  notifications/metadata don't auto-fire); being addressed by the
+  Downloaded/review workflow — see `specs/DOWNLOADED-REVIEW-WORKFLOW.md` +
+  `specs/RENAMER-EVENT-CHAIN.md`.
+- **Review + implement Dependabot dependency PRs** — keep the dependency
+  update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
+  merge if they predate a CI change — see Lessons Learned #7); don't let them
+  pile up.
 
 ---
 
