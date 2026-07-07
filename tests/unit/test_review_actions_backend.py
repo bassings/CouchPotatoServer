@@ -142,21 +142,46 @@ class TestMarkDoneCompletesLandedRelease:
 
 class TestMarkFailedAndResearch:
 
-    def _run(self, media_doc, releases, media_get_result=None, update_with_retry_result='write'):
+    def _run(self, media_doc, releases, update_with_retry_result='write', media_get_returns_none=False):
+        """Faithful harness for the movie-status CAS reset.
+
+        `FakeDB.update_with_retry` actually invokes the mutator on the stored
+        movie doc and *persists* the result (matching the real
+        SQLiteAdapter.update_with_retry contract: returns the updated doc on a
+        write, or None if the mutator returns False and no write happens).
+        This is deliberate: an earlier version discarded the mutated doc and
+        the production code re-read a hardcoded `media.get` fixture, which
+        meant gutting the reset mutator to a permanent no-op still passed --
+        a tautology. Persisting here lets a test assert the movie actually
+        became 'active', and lets a reverted guard/reset be *caught* (see the
+        revert-proof notes on each test).
+
+        Returns the FakeDB instance too so tests can inspect the persisted
+        movie doc (`fake_db.stored`).
+        """
         searcher = MovieSearcher.__new__(MovieSearcher)
 
         release_status_calls = []
         single_search_calls = []
 
         class FakeDB:
+            def __init__(self):
+                self.stored = dict(media_doc)
+
             def update_with_retry(self, mutator, doc_id, retries=3):
                 assert doc_id == media_doc['_id']
-                doc = dict(media_doc)
+                doc = dict(self.stored)
                 if mutator(doc) is False:
+                    # No write -- movie left exactly as stored.
                     return None
                 if update_with_retry_result == 'conflict':
+                    # Mutator wanted to write, but the CAS lost every retry;
+                    # nothing is persisted.
                     raise ConflictError(doc_id)
+                self.stored = doc
                 return doc
+
+        fake_db = FakeDB()
 
         def fake_fire_event(event, *args, **kwargs):
             if event == 'release.for_media':
@@ -166,19 +191,23 @@ class TestMarkFailedAndResearch:
                 release_status_calls.append((args[0], kwargs.get('status')))
                 return True
             if event == 'media.get':
-                return media_get_result
+                if media_get_returns_none:
+                    return None
+                enriched = dict(fake_db.stored)
+                enriched['releases'] = [dict(r) for r in releases]
+                return enriched
             if event == 'movie.searcher.single':
                 single_search_calls.append((args[0], kwargs.get('manual')))
                 return None
             raise AssertionError('Unexpected fireEvent call: %r' % (event,))
 
         with (
-            patch('couchpotato.core.media.movie.searcher.get_db', return_value=FakeDB()),
+            patch('couchpotato.core.media.movie.searcher.get_db', return_value=fake_db),
             patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire_event),
         ):
             result = searcher.markFailedAndResearch(media_doc['_id'])
 
-        return result, release_status_calls, single_search_calls
+        return result, release_status_calls, single_search_calls, fake_db
 
     def test_landed_release_marked_failed_not_ignored(self):
         """BLOCKING distinction from the pre-existing try_next/tryNextRelease
@@ -186,28 +215,28 @@ class TestMarkFailedAndResearch:
         bad copy to be marked 'failed' here instead."""
         movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
         releases = [{'_id': 'release-1', 'status': 'downloaded'}]
-        refreshed_movie = {'_id': 'movie-1', 'status': 'active', 'profile_id': 'profile-1', 'releases': releases}
 
-        result, release_status_calls, single_search_calls = self._run(
-            movie, releases, media_get_result=refreshed_movie,
-        )
+        result, release_status_calls, _, _ = self._run(movie, releases)
 
         assert result is True
         assert release_status_calls == [('release-1', 'failed')]
 
-    def test_movie_reset_to_active_and_research_triggered_exactly_once(self):
+    def test_movie_persisted_active_and_research_triggered_exactly_once(self):
+        """Locks the reset itself (BLOCKING 3): the persisted movie doc must
+        actually become 'active', and the enriched doc handed to the
+        re-search must reflect that. Revert-proof: gut `_reset_if_downloaded`
+        to a permanent no-op (or drop the `media['status'] = 'active'` line)
+        and `fake_db.stored['status']` stays 'downloaded' -> this fails."""
         movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
         releases = [{'_id': 'release-1', 'status': 'downloaded'}]
-        refreshed_movie = {'_id': 'movie-1', 'status': 'active', 'profile_id': 'profile-1', 'releases': releases}
 
-        result, _, single_search_calls = self._run(
-            movie, releases, media_get_result=refreshed_movie,
-        )
+        result, _, single_search_calls, fake_db = self._run(movie, releases)
 
         assert result is True
+        assert fake_db.stored['status'] == 'active', "movie must be persisted active"
         assert len(single_search_calls) == 1
         fired_media, fired_manual = single_search_calls[0]
-        assert fired_media == refreshed_movie
+        assert fired_media['status'] == 'active', "re-search must see the reset movie"
         assert fired_manual is True
 
     def test_snatched_seeding_and_done_landed_releases_are_all_marked_failed(self):
@@ -217,9 +246,8 @@ class TestMarkFailedAndResearch:
             {'_id': 'release-seeding', 'status': 'seeding'},
             {'_id': 'release-done', 'status': 'done'},
         ]
-        refreshed_movie = {'_id': 'movie-1', 'status': 'active', 'profile_id': 'profile-1'}
 
-        _, release_status_calls, _ = self._run(movie, releases, media_get_result=refreshed_movie)
+        _, release_status_calls, _, _ = self._run(movie, releases)
 
         assert ('release-snatched', 'failed') in release_status_calls
         assert ('release-seeding', 'failed') in release_status_calls
@@ -232,32 +260,97 @@ class TestMarkFailedAndResearch:
             {'_id': 'release-available', 'status': 'available'},
             {'_id': 'release-ignored', 'status': 'ignored'},
         ]
-        refreshed_movie = {'_id': 'movie-1', 'status': 'active', 'profile_id': 'profile-1'}
 
-        _, release_status_calls, _ = self._run(movie, releases, media_get_result=refreshed_movie)
+        _, release_status_calls, _, _ = self._run(movie, releases)
 
         assert release_status_calls == []
 
-    def test_conflict_resetting_movie_status_returns_false_without_searching(self):
-        """CAS conflict on the movie-status write must not crash, must
-        report failure, and must not kick off a search against a movie
-        whose status we couldn't confirm."""
+    def test_zero_releases_still_resets_and_researches(self):
+        """Parity case the reviewer flagged: a 'downloaded' movie with no
+        release rows must still be reset to 'active' and re-searched (the
+        release-failing loop is simply a no-op). Revert-proof: if the reset
+        were gated behind 'has a landed release', this movie would never
+        flip to active."""
+        movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
+
+        result, release_status_calls, single_search_calls, fake_db = self._run(movie, releases=[])
+
+        assert result is True
+        assert fake_db.stored['status'] == 'active'
+        assert release_status_calls == []
+        assert len(single_search_calls) == 1
+
+    def test_done_movie_is_a_noop_and_never_reopens(self):
+        """BLOCKING 2 lock: the action is spec-scoped to a 'downloaded'
+        (review-gated) movie. A stale-tab / double-submit / direct-API
+        mark_failed on an already-confirmed 'done' movie must be a hard
+        no-op -- its confirmed 'done' release must NOT be flipped to
+        'failed', its status must NOT be rewritten, and NO re-search may
+        fire (its profile_id is still set, so single()'s gate wouldn't block
+        it). Revert-proof: change the guard to accept any status (e.g.
+        `if media.get('status') == 'active'`) and this movie's release gets
+        failed + status flips to active + search fires -> every assertion
+        here breaks."""
+        movie = {'_id': 'movie-1', 'status': 'done', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-1', 'status': 'done'}]
+
+        result, release_status_calls, single_search_calls, fake_db = self._run(movie, releases)
+
+        assert result is False
+        assert release_status_calls == [], "a confirmed release must not be failed"
+        assert single_search_calls == [], "a confirmed movie must not be re-searched"
+        assert fake_db.stored['status'] == 'done', "status must be untouched"
+
+    def test_active_movie_is_a_noop(self):
+        """Guard also covers an already-'active' movie (nothing to reopen):
+        no release change, no search, no write. Revert-proof alongside the
+        'done' case -- with the old `== 'active' -> no-op, else flip` mutator
+        this specific movie happened to be a no-op too, so on its own it
+        wouldn't catch a broken guard; it's the 'done' test that does. Kept
+        for completeness of the guard's status matrix."""
+        movie = {'_id': 'movie-1', 'status': 'active', 'profile_id': 'profile-1'}
+        releases = [{'_id': 'release-1', 'status': 'snatched'}]
+
+        result, release_status_calls, single_search_calls, fake_db = self._run(movie, releases)
+
+        assert result is False
+        assert release_status_calls == []
+        assert single_search_calls == []
+        assert fake_db.stored['status'] == 'active'
+
+    def test_reset_failure_prevents_any_release_from_being_failed(self):
+        """BLOCKING 1 lock (ordering / no half-done state): when the movie
+        CAS reset can't land (persistent ConflictError), NOTHING downstream
+        may run -- no release may be marked 'failed' and no re-search may
+        fire. Otherwise the movie is stuck 'downloaded' with its only landed
+        release already 'failed' and no auto-recovery. Revert-proof: move the
+        release-failing loop back *before* the reset and `release_status_calls`
+        becomes non-empty here -> this fails."""
         movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
         releases = [{'_id': 'release-1', 'status': 'downloaded'}]
 
-        result, _, single_search_calls = self._run(
+        result, release_status_calls, single_search_calls, fake_db = self._run(
             movie, releases, update_with_retry_result='conflict',
         )
 
         assert result is False
+        assert release_status_calls == [], "no release may be failed if the reset didn't land"
         assert single_search_calls == []
+        assert fake_db.stored['status'] == 'downloaded', "movie must stay in the review gate"
 
-    def test_media_not_found_returns_false_without_searching(self):
+    def test_media_not_found_after_reset_returns_false_without_searching(self):
+        """If the enriched re-fetch comes back empty (movie deleted between
+        the reset and the re-fetch), report failure and don't fire a search
+        against a missing movie. The reset already landed and the release was
+        already failed by this point -- that's an acceptable degraded state
+        (movie is 'active', the next cron picks it up), NOT the half-done
+        state BLOCKING 1 guards against (there the movie was left
+        'downloaded')."""
         movie = {'_id': 'movie-1', 'status': 'downloaded', 'profile_id': 'profile-1'}
         releases = [{'_id': 'release-1', 'status': 'downloaded'}]
 
-        result, _, single_search_calls = self._run(
-            movie, releases, media_get_result=None,
+        result, _, single_search_calls, _ = self._run(
+            movie, releases, media_get_returns_none=True,
         )
 
         assert result is False

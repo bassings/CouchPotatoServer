@@ -436,40 +436,65 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
     def markFailedAndResearch(self, media_id):
         """Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md)
         "Mark Failed & re-search" action: the user rejected the copy that
-        landed for a movie awaiting review. Mark that landed release
+        landed for a movie awaiting review. Reset the movie back to 'active'
+        so the searcher will consider it again, mark the landed release(s)
         'failed' (distinct from tryNextRelease's 'ignored' -- a review-gate
         rejection is a stronger signal than a routine "try the next
-        candidate"), reset the movie back to 'active' so the searcher will
-        consider it again, and immediately trigger a manual re-search rather
-        than waiting for the next scheduled cycle. The 'failed' release is
-        already excluded from re-grabbing by the has-better-quality check in
-        single() (searcher.py:~191).
+        candidate"), and immediately trigger a manual re-search rather than
+        waiting for the next scheduled cycle. The 'failed' release is already
+        excluded from re-grabbing by the has-better-quality check in single()
+        (searcher.py:~191).
+
+        Ordering matters: the movie CAS reset happens FIRST and only its
+        success unlocks the release-failing step (mirrors
+        MediaPlugin.markDone, which updates the movie before touching
+        releases). If the reset were done last and failed, we'd be left in a
+        half-done state -- the landed release already marked 'failed' but the
+        movie still stuck in 'downloaded' with no landed copy and no
+        auto-recovery.
+
+        Scope guard: this action is spec-scoped to a movie *in the review
+        gate* ('downloaded'). The reset only proceeds when the current status
+        is 'downloaded'; any other status (incl. a confirmed 'done' movie
+        reached via a stale tab / double-submit / direct API call) is a
+        no-op -- so we never reopen and re-search a movie the user already
+        confirmed as finished, nor fail its confirmed release.
         """
         try:
             db = get_db()
 
-            rels = fireEvent('release.for_media', media_id, single = True) or []
-            for rel in rels:
-                if rel.get('status') in ('downloaded', 'snatched', 'seeding', 'done'):
-                    fireEvent('release.update_status', rel.get('_id'), status = 'failed', single = True)
-
             # Read-modify-write on the movie doc -- route through the CAS
             # retry helper (same pattern as MediaPlugin.markDone/markWatched)
             # rather than a bare get()+update() so a lost update can't
-            # silently drop a concurrent change to this media doc.
-            def _reset_active(media):
-                if media.get('status') == 'active':
+            # silently drop a concurrent change to this media doc. The
+            # mutator returns False (-> update_with_retry returns None, no
+            # write) for any non-'downloaded' movie, enforcing the scope
+            # guard atomically against the freshly re-read doc on every retry.
+            def _reset_if_downloaded(media):
+                if media.get('status') != 'downloaded':
                     return False
                 media['status'] = 'active'
+                return media
 
             try:
-                db.update_with_retry(_reset_active, media_id)
+                updated = db.update_with_retry(_reset_if_downloaded, media_id)
             except (RecordNotFound, RecordDeleted, KeyError):
                 log.error('Media not found while resetting to active for re-search: %s', media_id)
                 return False
             except ConflictError:
                 log.warning('Gave up resetting media %s to active after retries due to persistent contention', media_id)
                 return False
+
+            # None => the guard short-circuited (movie was not 'downloaded'):
+            # don't touch releases, don't search, report no-op.
+            if not updated:
+                return False
+
+            # Movie is now 'active'. NOW fail the landed release(s) -- only
+            # reached because the reset actually succeeded.
+            for rel in fireEvent('release.for_media', media_id, single = True) or []:
+                if rel.get('status') in ('downloaded', 'snatched', 'seeding', 'done'):
+                    fireEvent('release.update_status', rel.get('_id'), status = 'failed', single = True)
 
             # Re-fetch the fully-enriched doc (with 'releases' attached) via
             # the same event tryNextRelease uses, so single() sees the
