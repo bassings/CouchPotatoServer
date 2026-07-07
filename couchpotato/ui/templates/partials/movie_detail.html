@@ -123,19 +123,41 @@
       {% endif %}
 
       <!-- Actions -->
-      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false }">
+      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false, markingReviewDone: false, markingReviewFailed: false }">
         <button @click="refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; location.reload(); })"
                 class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="refreshing">
           <span x-show="!refreshing">Refresh</span>
           <span x-show="refreshing">Refreshing…</span>
         </button>
-        {% if status != 'done' %}
+        {% if status != 'done' and status != 'downloaded' %}
         <button @click="markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { location.reload(); } else { markingDone = false; } }).catch(() => { markingDone = false; })"
                 class="px-3.5 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="markingDone">
           <span x-show="!markingDone">Mark as Done</span>
           <span x-show="markingDone">Marking…</span>
+        </button>
+        {% endif %}
+        {% if status == 'downloaded' %}
+        <!-- Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md phase 3c):
+             non-destructive confirmation that the landed copy is good. Calls the
+             existing media.done route (movie -> done, owning release -> done). -->
+        <button @click="markingReviewDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked done', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewDone = false; toast('Failed to mark as done', 'error'); } }).catch(() => { markingReviewDone = false; toast('Failed to mark as done', 'error'); })"
+                class="px-3.5 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                :disabled="markingReviewDone">
+          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          <span x-show="!markingReviewDone">Mark Done</span>
+          <span x-show="markingReviewDone">Marking…</span>
+        </button>
+        <!-- Destructive: discards the landed copy and re-searches immediately, so
+             confirm() first (mirrors the Delete button's confirm below). Calls
+             movie.searcher.mark_failed (param media_id, per searcher.py:428). -->
+        <button @click="if(confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingReviewFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked failed — searching for another copy', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); } }).catch(() => { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); }); }"
+                class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                :disabled="markingReviewFailed">
+          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+          <span x-show="!markingReviewFailed">Mark Failed &amp; Re-search</span>
+          <span x-show="markingReviewFailed">Re-searching…</span>
         </button>
         {% endif %}
         {% if imdb_id %}
@@ -271,7 +293,8 @@
               {% endif %}
             </td>
             <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_age|int }}d</td>
-            <td class="px-4 py-2.5 space-x-1">
+            <td class="px-4 py-2.5">
+              <div class="flex flex-wrap items-center gap-1">
               {% if r.get('status', '') == 'available' %}
               <button @click="downloadRelease('{{ r_id }}')"
                       class="px-2 py-1 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20 transition-colors disabled:opacity-50"
@@ -296,7 +319,23 @@
                 <span x-show="!ignoring['{{ r_id }}']">↩ Un-skip</span>
                 <span x-show="ignoring['{{ r_id }}']">...</span>
               </button>
+              {% elif r.get('status', '') == 'downloaded' %}
+              <!-- Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md phase 3c):
+                   per-release rejection of the landed copy, distinct from the
+                   movie-level Mark Failed action above. Calls release.failed
+                   (param id, per release/main.py:283) directly -- unlike
+                   ignore(), this is a one-way transition (no toggle-back), so it
+                   is gated behind confirm() like the movie-level action. -->
+              <button @click="if(confirm('Mark this release as failed? This excludes it from future searches and cannot be undone.')) { markingReleaseFailed['{{ r_id }}'] = true; fetch(CP.apiBase + '/release.failed/?id={{ r_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Release marked failed', 'success'); setTimeout(() => location.reload(), 900); } else { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); } }).catch(() => { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); }); }"
+                      class="px-2 py-1 rounded text-[9px] font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+                      :disabled="markingReleaseFailed['{{ r_id }}']"
+                      title="Mark this release as failed (exclude it from future searches)">
+                <svg aria-hidden="true" class="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+                <span x-show="!markingReleaseFailed['{{ r_id }}']">Mark failed</span>
+                <span x-show="markingReleaseFailed['{{ r_id }}']">...</span>
+              </button>
               {% endif %}
+              </div>
             </td>
           </tr>
           {% endfor %}
@@ -363,7 +402,8 @@ function releaseDownloader() {
     downloading: {},
     downloadErrors: {},
     ignoring: {},
-    
+    markingReleaseFailed: {},
+
     init() {},
     
     async downloadRelease(releaseId) {
