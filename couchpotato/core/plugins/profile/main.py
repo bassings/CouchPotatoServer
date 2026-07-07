@@ -132,6 +132,12 @@ class ProfilePlugin(Plugin):
             try:
                 p = db.get('id', id)
                 profile['order'] = tryInt(kwargs.get('order', p.get('order', 999)))
+                # Fall back to the persisted value when the key is omitted, same
+                # idiom as 'order' above. Without this, editing an existing
+                # profile without resending manual_confirmation (as the live
+                # profile editor always does today) silently resets it to False
+                # on every save -- a blocking bug (workflow phase 2 review).
+                profile['manual_confirmation'] = tryInt(kwargs.get('manual_confirmation', 1 if p.get('manual_confirmation') else 0)) == 1
             except Exception:
                 p = db.insert(profile)
 

@@ -193,16 +193,35 @@ feature's completion-path change rather than a separate reconstruction.
      own `media.with_status('active', ...)` batch-search selects
      (`movie/searcher.py:80`, `profile/main.py`'s `dashboard`-adjacent uses —
      these are exactly the Phase-1 gating points and must keep excluding
-     `downloaded`); `couchpotato/core/plugins/manage.py:139`
-     (`status='done', release_status='done'` cleanup-scan deletion of
-     library movies whose files vanished from disk) — deliberately **not**
-     extended to `downloaded`, since that path does a full `delete_from='all'`
-     removal and a movie mid-review shouldn't be silently purged just because
-     on-disk state doesn't match; `release/main.py:196`
-     (`allowed_restatus=['done']` in the library-scan `release.add()` path) —
-     unreachable for `downloaded` since that path always adds movies with
-     `profile_id=None`, which `restatus()` routes to `done` regardless of any
-     profile toggle.
+     `downloaded`); `release/main.py:196` (`allowed_restatus=['done']` in the
+     library-scan `release.add()` path) — mostly moot for `downloaded` since
+     that path adds a *brand-new* movie with `profile_id=None` (routed to
+     `done` regardless of any profile toggle), but it is reachable for a
+     **pre-existing** movie already carrying a `manual_confirmation` profile
+     (a rescan hits the "release already tracked" branch and keeps the
+     existing `profile_id`); in that case the `allowed_restatus=['done']`
+     filter simply skips persisting the `db.update(m)` write when `restatus()`
+     computes `'downloaded'` — harmless (the in-memory return value isn't used
+     by this caller) and not a regression introduced by this phase, so left
+     as-is.
+   - **Blocking finding from the phase-2 local review, now fixed (not left
+     safe as originally audited):** `couchpotato/core/plugins/manage.py:139`
+     (`fireEvent('media.list', status='done', release_status='done',
+     status_or=True, ...)`) is an **OR union** (`status_or=True` in
+     `MediaPlugin.list()`), so a `downloaded` movie whose release is `done`
+     (the normal state for a movie awaiting review) was landing in
+     `done_movies` and could be silently `fireEvent('media.delete', ...,
+     delete_from='all')`-ed by a routine full library scan (`cleanup` config
+     defaults on). The same OR-exposure existed in
+     `MediaPlugin.delete(delete_from='manage')`
+     (`couchpotato/core/media/_base/media/main.py`), which deletes a release
+     when `release.status == 'done' OR media.status == 'done'` — a
+     `downloaded` movie's `done` release qualified via the first arm. Both are
+     now guarded: the manage cleanup loop `continue`s past any `done_movie`
+     whose `status == 'downloaded'` before the deletion/dedup logic runs, and
+     the manage-delete release loop adds `media.get('status') != 'downloaded'`
+     to its condition so a review-gated movie's release is never swept up by
+     that path. Neither guard changes behavior for a genuinely `done` movie.
 3. **UI actions:** Mark Done / Mark Failed&re-search (movie); Skip/Ignore &
    Mark-failed (release); immediate re-search on Fail. Tests + E2E.
 4. **Notification + renamer enrichment hook:** fire notify + `renamer.after`

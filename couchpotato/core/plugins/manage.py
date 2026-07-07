@@ -140,6 +140,15 @@ class Manage(Plugin):
 
                 deleted_releases = []
                 for done_movie in done_movies:
+                    # A 'downloaded' movie (workflow phase 2 review gate) can land
+                    # here via the status_or union above: its *release* is 'done'
+                    # even though the *movie* is still awaiting manual review.
+                    # Exempt it from the cleanup scan entirely -- it's mid-review,
+                    # not offline/missing, and must never be silently purged by a
+                    # normal full library scan.
+                    if done_movie.get('status') == 'downloaded':
+                        continue
+
                     if getIdentifier(done_movie) not in added_identifiers:
                         fireEvent('media.delete', media_id = done_movie['_id'], delete_from = 'all')
                     else:

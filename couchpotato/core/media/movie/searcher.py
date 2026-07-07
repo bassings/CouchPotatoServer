@@ -137,8 +137,11 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return
 
         # Update media status and check if it is still not done (due to the stop searching after feature
-        if fireEvent('media.restatus', movie['_id'], single = True) == 'done':
+        restatus_result = fireEvent('media.restatus', movie['_id'], single = True)
+        if restatus_result == 'done':
             log.debug('No better quality found, marking movie %s as done.', default_title)
+        elif restatus_result == 'downloaded':
+            log.debug('Movie %s is awaiting manual review, holding at "downloaded".', default_title)
 
         pre_releases = fireEvent('quality.pre_releases', single = True)
         release_dates = fireEvent('movie.update_release_dates', movie['_id'], merge = True)

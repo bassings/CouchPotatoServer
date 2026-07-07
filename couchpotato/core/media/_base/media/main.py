@@ -560,7 +560,12 @@ class MediaPlugin(MediaBase):
                                         total_deleted += 1
                                     new_media_status = 'done'
                                 elif delete_from == 'manage':
-                                    if release.get('status') == 'done' or media.get('status') == 'done':
+                                    # A 'downloaded' movie (workflow phase 2 review gate) has
+                                    # a 'done' release by design while it awaits manual review.
+                                    # Guard it out so the manage-tab bulk delete doesn't sweep
+                                    # its release out from under an in-progress review; a
+                                    # genuinely 'done' movie is unaffected by this check.
+                                    if media.get('status') != 'downloaded' and (release.get('status') == 'done' or media.get('status') == 'done'):
                                         db.delete(release)
                                         total_deleted += 1
 
