@@ -4,7 +4,7 @@
 > authoritative description of the push/review/deploy process. `CLAUDE.md` holds
 > the short version; when in doubt, this file governs.
 
-## The full flow
+## Path to Production (full flow)
 
 ```
 make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →

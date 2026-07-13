@@ -229,7 +229,7 @@ that `renamer.after`'s primary listener (`manage.py` → `release.add`) depends
 on to be meaningful. Neither is safe alone: (a) without (b) fires
 notifications/metadata for releases that never reach `done` (repeats forever);
 (b) without (a) is unreachable. Recommend a phased project, each phase
-TDD'd and reviewed independently per `CLAUDE.md`'s Path to Production:
+TDD'd and reviewed independently per `docs/development-process.md`'s Path to Production (full flow):
 
 **Phase 0 — Test harness first (prerequisite for everything else).**
 Write an integration test that drives `Renamer.scan()` end-to-end against a
@@ -294,7 +294,7 @@ status before deciding (`sqlite3 .../couchpotato.db "select status, count(*)
 from release group by status"` against a backup, never the live file).
 
 **Phase 5 — E2E/UI check.**
-Per `CLAUDE.md` §1a, check whether any `tests/e2e/*.spec.ts` assert on
+Per `docs/development-process.md`'s "E2E tests" section, check whether any `tests/e2e/*.spec.ts` assert on
 release/notification state that this change touches (unlikely, since this is
 backend-only, but the dashboard "recently downloaded" UI reads release status
 and could newly show items) — confirm and update if so.
