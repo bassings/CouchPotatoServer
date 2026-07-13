@@ -41,7 +41,7 @@ click-option-group==0.5.9
 defusedxml==0.7.1
 trakit==0.2.5
 decorator==5.3.1
-rarfile==4.2
+rarfile==4.3
 
 # Downloaders
 deluge-client==1.10.2
