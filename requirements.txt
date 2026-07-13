@@ -21,7 +21,7 @@ chardet==7.4.3
 
 # Parsing
 beautifulsoup4==4.15.0
-guessit==3.8.0
+guessit==4.1.0
 lxml==6.1.1
 
 # Media
