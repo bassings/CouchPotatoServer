@@ -48,12 +48,16 @@ ENV PYTHONUNBUFFERED=1 \
 # - 7zip provides `7zz`, rarfile's preferred external tool for extracting
 #   RAR archives (VENDORED-07: replaces the vendored unrar2 binaries) so RAR
 #   extraction works out of the box in the container without extra setup.
+# - c-ares is pulled in transitively; pin it to the patched version to clear
+#   CVE-2026-33630 (HIGH, use-after-free/double-free) which fails the Trivy gate.
+#   Drop this explicit pin once the base image ships c-ares >= 1.34.8-r0.
 RUN apk add --no-cache \
         ca-certificates \
         su-exec \
         mediainfo \
         libstdc++ \
-        7zip
+        7zip \
+        "c-ares>=1.34.8-r0"
 
 # Create app user
 ARG PUID=1000
