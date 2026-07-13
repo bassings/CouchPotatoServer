@@ -11,6 +11,19 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
+    ignore:
+      # guessit 4.x requires rebulk>=6, but the subtitle stack caps rebulk<4:
+      # subliminal (hard dep) -> knowit -> trakit==0.2.5 (latest) requires
+      # rebulk<4. trakit and knowit are unmaintained (~1yr, no rebulk-6 work),
+      # and the whole ecosystem — including Bazarr — is pinned at guessit 3.8.0 /
+      # rebulk 3.2.0 for the same reason. We don't even use knowit/trakit (the
+      # metadata refiner is never invoked). Ignoring the major bumps so they stop
+      # reopening. Revisit when trakit/knowit support rebulk 6, or when subliminal
+      # makes knowit an optional extra. See closed PR #183 for the full analysis.
+      - dependency-name: "guessit"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rebulk"
+        update-types: ["version-update:semver-major"]
 
   # Node.js dependencies
   - package-ecosystem: "npm"
