@@ -12,7 +12,7 @@ blinker==1.9.0
 pydantic==2.13.4
 apscheduler==3.11.3
 tenacity==9.1.4
-dulwich==1.2.8
+dulwich==1.2.10
 
 # Network
 requests==2.34.2
