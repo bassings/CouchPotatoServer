@@ -46,7 +46,7 @@ rarfile==4.2
 # Downloaders
 deluge-client==1.10.2
 putio.py==8.8.0
-qbittorrent-api==2026.6.1
+qbittorrent-api==2026.7.0
 rtorrent-rpc==0.9.7
 
 # Notifications
