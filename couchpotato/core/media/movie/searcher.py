@@ -375,7 +375,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
             if is_pre_release:
                 # Prerelease 1 week before theaters
-                if dates.get('theater') - 604800 < now:
+                if dates.get('theater') > 0 and dates.get('theater') - 604800 < now:
                     return True
             else:
                 # 12 weeks after theater release
