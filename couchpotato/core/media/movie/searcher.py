@@ -226,7 +226,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # Extend quality with profile customs
             quality['custom'] = quality_custom
 
-            results = fireEvent('searcher.search', search_protocols, movie, quality, single = True) or []
+            results = fireEvent('searcher.search', search_protocols, movie, quality, manual = manual, single = True) or []
 
             # Check if movie isn't deleted while searching
             if not fireEvent('media.get', movie.get('_id'), single = True):

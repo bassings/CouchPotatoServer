@@ -45,7 +45,7 @@ class Base(TorrentProvider):
             'return': {'type': 'object', 'example': '{"success": true, "indexers": [...]}'}
         })
 
-    def search(self, media, quality):
+    def search(self, media, quality, manual = False):
         hosts = self.getHosts()
 
         # Don't trust imdb_results=True - many indexers ignore IMDB ID and just search by title
@@ -56,15 +56,22 @@ class Base(TorrentProvider):
             if self.isDisabled(host):
                 continue
 
-            self._searchOnHost(host, media, quality, results)
+            self._searchOnHost(host, media, quality, results, manual = manual)
 
         return results
 
-    def _searchOnHost(self, host, media, quality, results):
+    def _searchOnHost(self, host, media, quality, results, manual = False):
         url = self.buildUrl(media, host)
 
+        # Manual/user-triggered searches bypass the 30-minute cache so a
+        # refresh isn't served a stale result from a recent automatic sweep.
+        # cache_timeout <= 0 forces a live fetch that isn't stored back into
+        # the cache (see Plugin.getCache), so the next automatic search still
+        # fetches and caches its own copy.
+        cache_timeout = -1 if manual else 1800
+
         try:
-            torrents = self.getJsonData(url, cache_timeout=1800)
+            torrents = self.getJsonData(url, cache_timeout=cache_timeout)
         except HTTPError as e:
             # Handle 400 Bad Request gracefully - common for TV/Anime-only indexers
             if hasattr(e, 'response') and e.response is not None and e.response.status_code == 400:

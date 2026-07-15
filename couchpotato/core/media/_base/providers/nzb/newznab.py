@@ -29,7 +29,7 @@ class Base(NZBProvider, RSS):
 
     http_time_between_calls = 2  # Seconds
 
-    def search(self, media, quality):
+    def search(self, media, quality, manual = False):
         hosts = self.getHosts()
 
         # Don't trust imdb_results=True - providers may not filter by IMDB
@@ -39,15 +39,22 @@ class Base(NZBProvider, RSS):
             if self.isDisabled(host):
                 continue
 
-            self._searchOnHost(host, media, quality, results)
+            self._searchOnHost(host, media, quality, results, manual = manual)
 
         return results
 
-    def _searchOnHost(self, host, media, quality, results):
+    def _searchOnHost(self, host, media, quality, results, manual = False):
+
+        # Manual/user-triggered searches bypass the 30-minute cache so a
+        # refresh isn't served a stale result from a recent automatic sweep.
+        # cache_timeout <= 0 forces a live fetch that isn't stored back into
+        # the cache (see Plugin.getCache), so the next automatic search still
+        # fetches and caches its own copy.
+        cache_timeout = -1 if manual else 1800
 
         query = self.buildUrl(media, host)
         url = '%s%s' % (self.getUrl(host['host']), query)
-        nzbs = self.getRSSData(url, cache_timeout = 1800, headers = {'User-Agent': Env.getIdentifier()})
+        nzbs = self.getRSSData(url, cache_timeout = cache_timeout, headers = {'User-Agent': Env.getIdentifier()})
 
         for nzb in nzbs:
 
@@ -97,7 +104,7 @@ class Base(NZBProvider, RSS):
                     # Get details for extended description to retrieve passwords
                     query = self.buildDetailsUrl(nzb_id, host['api_key'])
                     url = '%s%s' % (self.getUrl(host['host']), query)
-                    nzb_details = self.getRSSData(url, cache_timeout = 1800, headers = {'User-Agent': Env.getIdentifier()})[0]
+                    nzb_details = self.getRSSData(url, cache_timeout = cache_timeout, headers = {'User-Agent': Env.getIdentifier()})[0]
 
                     description = self.getTextElement(nzb_details, 'description')
 

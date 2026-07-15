@@ -224,7 +224,7 @@ class YarrProvider(Provider):
 
         return 'try_next'
 
-    def search(self, media, quality):
+    def search(self, media, quality, manual = False):
 
         if self.isDisabled():
             return []

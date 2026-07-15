@@ -233,8 +233,21 @@ class Plugin:
 
         use_cache = not len(kwargs.get('data', {})) > 0 and not kwargs.get('files')
 
-        if use_cache:
-            cache_key_md5 = md5(cache_key)
+        # BUG-015: a manual/user-triggered search passes cache_timeout <= 0 to
+        # force a live fetch. `_fetch_and_cache`'s `cache_timeout > 0` gate
+        # already stops the fresh result from being stored, but that alone
+        # doesn't help -- without this, a cache_timeout <= 0 call would still
+        # be handed a *pre-existing* cache entry below (e.g. one a recent
+        # automatic search wrote with its 1800s timeout), because the read
+        # path never looked at cache_timeout at all. Treat cache_timeout <= 0
+        # as "skip any existing cache read too", so a manual search always
+        # does a live fetch.
+        cache_timeout = kwargs.get('cache_timeout')
+        skip_cache_read = cache_timeout is not None and cache_timeout <= 0
+
+        cache_key_md5 = md5(cache_key) if use_cache else None
+
+        if use_cache and not skip_cache_read:
             cache = Env.get('cache').get(cache_key_md5)
             if cache:
                 if not Env.get('dev'): log.debug('Getting cache %s', cache_key)
@@ -246,10 +259,11 @@ class Plugin:
                 lock = self._get_cache_lock(cache_key_md5)
                 lock.acquire()
                 try:
-                    # Double-check: another thread may have populated the cache
-                    cache = Env.get('cache').get(cache_key_md5)
-                    if cache:
-                        return cache
+                    if not skip_cache_read:
+                        # Double-check: another thread may have populated the cache
+                        cache = Env.get('cache').get(cache_key_md5)
+                        if cache:
+                            return cache
                     return self._fetch_and_cache(url, cache_key, cache_key_md5, use_cache, **kwargs)
                 finally:
                     lock.release()

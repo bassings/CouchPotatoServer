@@ -142,3 +142,69 @@ class TestCacheStampedePrevention:
         assert result == b'post_result'
         # Cache should not be checked or set
         mock_cache.get.assert_not_called()
+
+
+class TestManualCacheBypass:
+    """BUG-015: a manual/user-triggered search must not be served a stale
+    value from a previous automatic search's cache entry.
+
+    Passing cache_timeout <= 0 alone (as `_fetch_and_cache` already supports)
+    only prevents the *fresh* fetch from being stored -- it does NOT stop
+    `getCache` from returning an *existing* cache entry that a prior
+    automatic search wrote with a 1800s timeout. These tests pin down the
+    deviation from the sentinel described in the spec: `getCache` itself must
+    treat cache_timeout <= 0 as "skip any existing cache read, do a live
+    fetch", not just "don't store after fetching".
+    """
+
+    def test_negative_cache_timeout_bypasses_existing_stale_cache_entry(self, plugin_with_cache):
+        """A pre-existing cache entry (e.g. from an automatic search 10
+        minutes ago, still valid for another 20 of its 1800s) must NOT be
+        returned to a manual search that passes cache_timeout=-1; a live
+        fetch must happen instead."""
+        plugin, mock_cache, mock_env = plugin_with_cache
+        mock_cache.get.return_value = b'stale_automatic_result'
+        plugin.urlopen = lambda url, **kw: b'fresh_manual_result'
+
+        result = plugin.getCache('search_key', url='http://example.com', cache_timeout=-1)
+
+        assert result == b'fresh_manual_result'
+
+    def test_negative_cache_timeout_does_not_store_fresh_result(self, plugin_with_cache):
+        """The live fetch triggered by cache_timeout=-1 must not be written
+        back into the cache -- otherwise the next automatic search would
+        reuse the manual search's result set instead of fetching its own."""
+        plugin, mock_cache, mock_env = plugin_with_cache
+        mock_cache.get.return_value = None  # cache miss
+        plugin.urlopen = lambda url, **kw: b'fresh_manual_result'
+
+        result = plugin.getCache('search_key', url='http://example.com', cache_timeout=-1)
+
+        assert result == b'fresh_manual_result'
+        mock_cache.set.assert_not_called()
+
+    def test_positive_cache_timeout_still_uses_existing_cache(self, plugin_with_cache):
+        """Regression guard: automatic searches (cache_timeout=1800) must
+        keep serving the existing cache entry within its TTL -- the manual
+        bypass must not weaken this."""
+        plugin, mock_cache, mock_env = plugin_with_cache
+        mock_cache.get.return_value = b'cached_automatic_result'
+
+        result = plugin.getCache('search_key', url='http://example.com', cache_timeout=1800)
+
+        assert result == b'cached_automatic_result'
+        plugin._http_client.request.assert_not_called()
+
+    def test_positive_cache_timeout_still_stores_fresh_result(self, plugin_with_cache):
+        """Regression guard: a fresh automatic-search fetch is still stored
+        with its 1800s timeout."""
+        plugin, mock_cache, mock_env = plugin_with_cache
+        mock_cache.get.return_value = None  # cache miss
+        plugin.urlopen = lambda url, **kw: b'fresh_automatic_result'
+
+        result = plugin.getCache('search_key', url='http://example.com', cache_timeout=1800)
+
+        assert result == b'fresh_automatic_result'
+        mock_cache.set.assert_called_once()
+        _, kwargs = mock_cache.set.call_args
+        assert kwargs.get('expire') == 1800
