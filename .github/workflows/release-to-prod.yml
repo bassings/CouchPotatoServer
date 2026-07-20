@@ -18,6 +18,11 @@ permissions:
   contents: write   # create the stable tag + release
   packages: write   # re-tag in GHCR
 
+# Only one promotion at a time; never cancel one mid-flight.
+concurrency:
+  group: release-to-prod
+  cancel-in-progress: false
+
 env:
   GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
 
@@ -37,10 +42,13 @@ jobs:
         id: resolve
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env (never interpolated into the script body) so a
+          # crafted dispatch input cannot inject shell — GitHub hardening rule.
+          BETA_TAG_INPUT: ${{ github.event.inputs.beta_tag }}
         run: |
           set -euo pipefail
           git fetch --tags --force
-          BETA="${{ github.event.inputs.beta_tag }}"
+          BETA="$BETA_TAG_INPUT"
           if [ -z "$BETA" ]; then
             # Newest prerelease created by the beta channel.
             BETA="$(gh release list --limit 50 --json tagName,isPrerelease \
@@ -49,6 +57,11 @@ jobs:
           if [ -z "$BETA" ] || [ "$BETA" = "null" ]; then
             echo "::error::No beta prerelease found to promote."; exit 1
           fi
+          # Validate shape before it flows anywhere else (vX.Y.Z or vX.Y.Z-beta.N).
+          case "$BETA" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::beta_tag '$BETA' is not a vX.Y.Z[-beta.N] tag"; exit 1 ;;
+          esac
           # Commit the beta was built from — the stable tag points here, not at
           # whatever master HEAD happens to be at dispatch time.
           BETA_SHA="$(git rev-list -n1 "$BETA" 2>/dev/null || echo '')"
@@ -134,9 +147,9 @@ jobs:
           fi
           echo "last_stable=${LAST_STABLE}" >> "$GITHUB_OUTPUT"
           {
-            echo "changes<<EOF"
+            echo "changes<<CHANGELOG_EOF"
             echo "$CHANGES"
-            echo "EOF"
+            echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create stable release

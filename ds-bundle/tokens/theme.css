@@ -1,0 +1,92 @@
+/* ==========================================================================
+   CouchPotato Design System — theme tokens
+   Drop into the htmx UI (load after the Tailwind CDN + tailwind.config).
+   Dark is default; add class="light" on <html> to switch. Persist to
+   localStorage['cp-theme']. Mirrors couchpotato/ui/templates/base.html.
+   ========================================================================== */
+
+:root {
+  --cp-bg: #0d0d0d;
+  --cp-surface: #111113;
+  --cp-card: #161618;
+  --cp-border: #1e1e22;
+  --cp-text: #e0e0e4;
+  --cp-muted: #9b9ba8;
+}
+
+:root.light {
+  --cp-bg: #f5f5f7;
+  --cp-surface: #fafafa;
+  --cp-card: #ffffff;
+  --cp-border: #e0e0e4;
+  --cp-text: #1a1a1a;
+  --cp-muted: #666666;
+}
+
+/* Fixed brand + semantic colours (same in both themes) ---------------------
+   accent #35c5f4 · accentHover #4dd4ff
+   success #3ddc84 · warning #e5a00d · danger #f04848
+   These live in tailwind.config under colors.cp.* — kept here for reference. */
+
+/* Light-mode contrast + translucent-layer overrides ------------------------ */
+:root.light .text-cp-accent { color: #0e7490; }            /* AA on light tints */
+:root.light .bg-black\/80   { background-color: rgba(255,255,255,0.9); }
+:root.light .bg-black\/60   { background-color: rgba(255,255,255,0.8); }
+:root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
+:root.light .border-white\/\[0\.04\],
+:root.light .border-white\/\[0\.05\],
+:root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08); }
+:root.light .text-white\/80,
+:root.light .text-white\/90,
+:root.light .text-white { color: var(--cp-text); }
+
+/* Global type tightening --------------------------------------------------- */
+* { letter-spacing: -0.01em; }
+
+/* Scrollbars --------------------------------------------------------------- */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--cp-bg); }
+::-webkit-scrollbar-thumb { background: var(--cp-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #2a2a30; }
+:root.light ::-webkit-scrollbar-track { background: #f0f0f0; }
+:root.light ::-webkit-scrollbar-thumb { background: #c0c0c0; }
+:root.light ::-webkit-scrollbar-thumb:hover { background: #a0a0a0; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+
+/* Poster card hover glow --------------------------------------------------- */
+.poster-card { transition: border-color 0.2s ease, box-shadow 0.2s ease; }
+.poster-card:hover { border-color: rgba(53,197,244,0.15); box-shadow: 0 0 20px rgba(53,197,244,0.06); }
+:root.light .poster-card:hover { border-color: rgba(53,197,244,0.3); box-shadow: 0 0 20px rgba(53,197,244,0.1); }
+
+/* Content fade-in (htmx swaps) --------------------------------------------- */
+.fade-in { animation: fadeIn 0.2s ease-out; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+
+/* htmx loading indicator --------------------------------------------------- */
+.htmx-indicator { display: none !important; }
+.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { display: flex !important; }
+
+/* Accessibility ------------------------------------------------------------ */
+:focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+:focus:not(:focus-visible) { outline: none; }
+
+.skip-link { position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden; z-index: 9999; }
+.skip-link:focus { position: fixed; top: 1rem; left: 1rem; width: auto; height: auto; padding: 0.75rem 1.5rem;
+  background: #35c5f4; color: #0d0d0d; font-weight: 600; border-radius: 0.5rem; text-decoration: none; }
+
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+[x-cloak] { display: none !important; }
+
+/* Reduced motion ----------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  .fade-in { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -20,6 +20,13 @@ permissions:
   contents: write   # create the beta tag + prerelease
   packages: write   # push to GHCR
 
+# Serialize beta builds so two near-simultaneous master pushes can't compute
+# the same version and clobber each other's :beta / immutable tag. Never
+# cancel an in-flight publish — queue it.
+concurrency:
+  group: beta-build
+  cancel-in-progress: false
+
 env:
   GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
 
@@ -29,7 +36,6 @@ jobs:
     permissions:
       contents: write
       packages: write
-      actions: write
     env:
       HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
 
@@ -136,9 +142,9 @@ jobs:
           fi
           echo "last_tag=${LAST_TAG}" >> "$GITHUB_OUTPUT"
           {
-            echo "changes<<EOF"
+            echo "changes<<CHANGELOG_EOF"
             echo "$CHANGES"
-            echo "EOF"
+            echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
 
       - name: Create beta prerelease

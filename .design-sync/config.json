@@ -1,0 +1,12 @@
+{
+  "projectId": "37a6c3fc-d40d-426c-ac6c-696d8902a252",
+  "projectName": "CouchPotato Design System",
+  "shape": "tokens-only",
+  "readmeHeader": ".design-sync/conventions.md",
+  "localDir": "ds-bundle",
+  "note": "Off-script sync. CouchPotatoServer is a server-rendered htmx+Alpine+Tailwind app, NOT a React component library, so there is no compiled component bundle. This project carries design TOKENS (docs/design-system/theme.css surface/text vars + materialised brand colours) and GUIDELINES (docs/design-system/README.md + CONFORMANCE.md + screenshots) only. No _ds_bundle.js / components / _ds_sync.json. Re-sync: rebuild ds-bundle/ from docs/design-system/, then re-upload (no anchor, so it always re-uploads).",
+  "source": {
+    "tokens": "docs/design-system/theme.css",
+    "guidelines": "docs/design-system/README.md, docs/design-system/CONFORMANCE.md, docs/design-system/screenshots/"
+  }
+}

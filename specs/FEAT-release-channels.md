@@ -31,9 +31,12 @@ Two fully separate channels:
 
 - **Beta versioning: minor bump per commit.** Every `master` push increments
   the minor version and publishes `vX.(minor+1).0-beta.1` as a GitHub
-  **prerelease**. Minor numbers climb quickly by design; the beta suffix is
-  `-beta.1` normally and only increments (`-beta.2`, …) if the *same* version
-  is rebuilt (workflow re-run on an unchanged tag).
+  **prerelease**. The bump is computed from the highest minor across **all**
+  existing tags (stable *and* beta), so each build is strictly higher than the
+  last: `3.10.0-beta.1` → next commit → `3.11.0-beta.1` → `3.12.0-beta.1`. The
+  beta suffix is **always `.1`**; minor numbers climb quickly by design (as
+  chosen). A workflow re-run on an unchanged HEAD simply bumps the minor
+  again — a harmless "wasted" minor, never a collision.
 - **Release trigger: manual button** (`workflow_dispatch`). Promotion re-tags
   the current beta's multi-arch digest — **no rebuild** — so production ships
   the exact bytes that were tested in beta.
@@ -103,23 +106,26 @@ YAML glue that call it).
 on argv/stdin for tests), print the next beta version string (no leading `v`)
 to stdout, e.g. `3.10.0-beta.1`.
 
-**Algorithm:**
+**Algorithm (minor bump per commit — every build is strictly higher):**
 1. Parse every tag matching `v?MAJOR.MINOR.PATCH(-beta.N)?`; ignore
    non-conforming tags.
 2. `max_major` = highest MAJOR across all parsed tags.
-3. Among tags with `MAJOR == max_major`, `max_minor` = highest MINOR.
-4. `next = (max_major, max_minor + 1, 0)`.
-5. If a tag for `vMAJOR.(max_minor+1).0-beta.N` already exists (workflow
-   re-run on an unchanged HEAD), emit `-beta.(maxN+1)`; otherwise `-beta.1`.
-6. If no conforming tags exist at all, emit `0.1.0-beta.1`.
+3. Among tags with `MAJOR == max_major`, `max_minor` = highest MINOR across
+   **all** such tags — stable *and* beta. (A beta already occupies its minor,
+   so the next build must go past it. This is what makes every commit strictly
+   higher than the last and is the reason "wasted" minors on a re-run are
+   acceptable, per the chosen model.)
+4. `next = (max_major, max_minor + 1, 0)`; suffix always `-beta.1`.
+5. If no conforming tags exist at all, emit `0.1.0-beta.1`.
 
 **Acceptance criteria (tests):**
 - AC1: tags `[v3.9.1]` → `3.10.0-beta.1`.
-- AC2: tags `[v3.9.0, v3.9.0-beta.1, v3.9.1]` → `3.10.0-beta.1` (stable and
-  beta of a lower minor don't change the bump).
-- AC3: tags `[v3.9.1, v3.10.0-beta.1]` → `3.10.0-beta.2` (re-run: same minor
-  already has a beta → increment the suffix, don't jump the minor).
-- AC4: tags `[v3.9.1, v3.10.0-beta.1, v3.10.0-beta.2]` → `3.10.0-beta.3`.
+- AC2: tags `[v3.9.0, v3.9.0-beta.1, v3.9.1]` → `3.10.0-beta.1` (lower-minor
+  stable/beta don't change the bump).
+- AC3: tags `[v3.9.1, v3.10.0-beta.1]` → `3.11.0-beta.1` (an existing beta
+  advances the target — every commit is a new minor).
+- AC4: chain `[v3.9.1, v3.10.0-beta.1, v3.11.0-beta.1]` → `3.12.0-beta.1`
+  (successive commits keep climbing).
 - AC5: a patch release is respected — `[v3.8.1, v3.9.1]` → `3.10.0-beta.1`
   (bump the max minor, not max patch).
 - AC6: mixed/garbage tags are ignored — `[foo, v3.9.1, nightly]` →
@@ -128,6 +134,9 @@ to stdout, e.g. `3.10.0-beta.1`.
 - AC8: multi-major — `[v3.9.1, v4.0.0]` → `4.1.0-beta.1` (bump within the
   highest major only).
 - AC9: the emitted string has no leading `v` and a single trailing newline.
+- AC10: a lone beta with no stable — `[v3.10.0-beta.1]` → `3.11.0-beta.1`.
+- AC11: a stable already at the bumped minor — `[v3.9.1, v3.10.0]` →
+  `3.11.0-beta.1` (never emit a version that collides with an existing tag).
 
 ## Component 2 — `docker.yml` (reworked into the beta builder)
 

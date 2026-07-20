@@ -1,0 +1,26 @@
+/* ==========================================================================
+   CouchPotato Design System — brand & semantic colour tokens
+   These values live in the app's tailwind.config (colors.cp.*) as fixed hex,
+   the SAME in dark and light. Materialised here as CSS custom properties so
+   designs can consume them as var(--cp-*) without the Tailwind config.
+   ========================================================================== */
+
+:root {
+  /* Brand accent (cyan) */
+  --cp-accent: #35c5f4;
+  --cp-accent-hover: #4dd4ff;
+
+  /* Semantic (fixed across themes) */
+  --cp-success: #3ddc84;
+  --cp-warning: #e5a00d;
+  --cp-danger: #f04848;
+
+  /* Accent used as text — readable on the dark surfaces */
+  --cp-accent-text: #35c5f4;
+}
+
+/* In light mode, cyan text fails AA on light tints — same hue, more contrast.
+   Mirrors base.html's `:root.light .text-cp-accent { color:#0e7490 }`. */
+:root.light {
+  --cp-accent-text: #0e7490;
+}
