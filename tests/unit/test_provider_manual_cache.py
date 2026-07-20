@@ -15,6 +15,7 @@ Covers the acceptance criteria in specs/BUG-015-manual-search-cache-bypass.md:
 No network calls are made anywhere in this file -- getRSSData/getJsonData/
 fireEvent are all patched.
 """
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -336,6 +337,141 @@ class TestMovieSearcherSingleThreadsManual:
 
     def test_manual_false_explicit(self):
         calls = self._run_single({'manual': False})
+
+        search_calls = [c for c in calls if c[0] == 'searcher.search']
+        assert len(search_calls) == 1
+        assert search_calls[0][2].get('manual') is False
+
+    def test_manual_true_bypass_cache_false_threads_manual_false(self):
+        """BUG-015 follow-up: single(movie, manual=True, bypass_cache=False)
+        must thread manual=False into 'searcher.search' -- this is the knob
+        searchAll() uses to keep manual's status-gating/ignore_eta semantics
+        while opting the per-movie provider call out of the cache bypass."""
+        calls = self._run_single({'manual': True, 'bypass_cache': False})
+
+        search_calls = [c for c in calls if c[0] == 'searcher.search']
+        assert len(search_calls) == 1
+        assert search_calls[0][2].get('manual') is False
+
+    def test_bypass_cache_none_defaults_to_manual_value(self):
+        """bypass_cache defaults to None, which resolves to manual's value --
+        existing single-movie manual entry points (Refresh, tryNextRelease,
+        markFailedView) keep bypassing the cache with no caller changes."""
+        calls = self._run_single({'manual': True, 'bypass_cache': None})
+
+        search_calls = [c for c in calls if c[0] == 'searcher.search']
+        assert len(search_calls) == 1
+        assert search_calls[0][2].get('manual') is True
+
+
+# ---------------------------------------------------------------------------
+# BUG-015 follow-up: searchAll() must NOT bypass the provider cache
+#
+# searchAllView() fires 'movie.searcher.all' with manual=True, and searchAll()
+# calls self.single(media, ..., manual=manual) for EVERY active movie in the
+# library. If manual=True bypassed the cache unconditionally, clicking
+# "Search All" would force a live uncached fetch against every configured
+# indexer for the whole library -- defeating the 30-minute cache's purpose of
+# protecting against indexer rate-limiting/bans. The cache bypass must be
+# scoped to genuinely single-movie manual searches (per-movie Refresh,
+# tryNextRelease, markFailedView), not the full sweep. manual's OTHER
+# semantics inside single() (status-gating override, ignore_eta) must still
+# apply for searchAll.
+# ---------------------------------------------------------------------------
+
+class TestMovieSearcherSearchAllCacheScoping:
+
+    def _movie(self, media_id = 'movie1'):
+        return {
+            '_id': media_id,
+            'profile_id': 'profile1',
+            'status': 'active',
+            'info': {'year': 2000, 'titles': ['Test Movie']},
+            'releases': [],
+        }
+
+    def _make_searcher(self):
+        from couchpotato.core.media.movie.searcher import MovieSearcher
+
+        searcher = MovieSearcher.__new__(MovieSearcher)
+        searcher._progress_lock = threading.Lock()
+        return searcher
+
+    def test_search_all_manual_calls_single_with_manual_true_bypass_cache_false(self):
+        """searchAll(manual=True) must call single() with manual=True (so
+        status-gating/ignore_eta still behave like a manual search) but
+        bypass_cache=False (so the per-movie provider call does NOT bypass
+        the cache during a full-library sweep)."""
+        searcher = self._make_searcher()
+        movie = self._movie()
+
+        def fake_fire_event(name, *args, **kwargs):
+            if name == 'media.with_status':
+                return [{'_id': movie['_id']}]
+            if name == 'searcher.protocols':
+                return ['nzb']
+            if name == 'media.get':
+                return movie
+            return None
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire_event), \
+             patch.object(searcher, 'single') as mock_single, \
+             patch.object(searcher, 'shuttingDown', return_value=False):
+            searcher.searchAll(manual=True)
+
+        assert mock_single.called
+        call = mock_single.call_args
+        assert call.kwargs.get('manual') is True
+        assert call.kwargs.get('bypass_cache') is False
+
+    def test_search_all_manual_does_not_bypass_provider_cache(self):
+        """End-to-end through the real single(): searchAll(manual=True) must
+        result in the 'searcher.search' fireEvent receiving manual=False, so
+        the provider HTTP cache is NOT bypassed for the full sweep."""
+        searcher = self._make_searcher()
+        movie = self._movie()
+        profile = {
+            'qualities': ['720p'],
+            'finish': [True],
+            'wait_for': [0],
+            '3d': False,
+            'minimum_score': 1,
+        }
+
+        calls = []
+
+        def fake_fire_event(name, *args, **kwargs):
+            calls.append((name, args, kwargs))
+            if name == 'media.with_status':
+                return [{'_id': movie['_id']}]
+            if name == 'searcher.protocols':
+                return ['nzb']
+            if name == 'media.get':
+                return movie
+            if name == 'media.restatus':
+                return 'active'
+            if name == 'quality.pre_releases':
+                return []
+            if name == 'movie.update_release_dates':
+                return {}
+            if name == 'quality.single':
+                return {'identifier': kwargs.get('identifier', '720p'), 'label': '720p'}
+            if name == 'searcher.search':
+                return []
+            if name == 'release.create_from_search':
+                return []
+            if name == 'release.try_download_result':
+                return False
+            return None
+
+        mock_db = MagicMock()
+        mock_db.get.return_value = profile
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire_event), \
+             patch('couchpotato.core.media.movie.searcher.get_db', return_value=mock_db), \
+             patch.object(searcher, 'conf', return_value=True), \
+             patch.object(searcher, 'shuttingDown', return_value=False):
+            searcher.searchAll(manual=True)
 
         search_calls = [c for c in calls if c[0] == 'searcher.search']
         assert len(search_calls) == 1

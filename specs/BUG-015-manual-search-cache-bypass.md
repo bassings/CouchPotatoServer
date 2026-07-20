@@ -95,3 +95,51 @@ is out of scope for this fix.
 - This is a behaviour change to a hot path; keep the diff tight and rely on the
   default `manual=False` everywhere so the automatic sweep is byte-for-byte
   unchanged.
+
+## Follow-up: cache bypass must NOT apply to the full-library "Search All" sweep
+
+Review found a design gap in the original threading above: `searchAllView()`
+fires `movie.searcher.all` with `manual=True`, and `searchAll()` called
+`self.single(media, search_protocols, manual = manual)` for **every** active
+movie in the library. Once `manual=True` bypassed the provider cache
+end-to-end, clicking "Search All" would force a live, uncached HTTP fetch
+against every configured indexer for the *entire* library in one pass — the
+opposite of what the 30-minute cache exists to prevent (indexer rate-limiting
+and IP bans from CouchPotato hammering it). Only genuinely single-movie manual
+searches (per-movie Refresh button, `tryNextRelease`, `markFailedView`) are
+supposed to get the live fetch.
+
+### Fix: `bypass_cache` — decoupled from `manual`
+
+`manual` inside `single()` has two independent jobs: (a) status-gating
+override + `ignore_eta` (must still apply for `searchAll`, so a full sweep
+still searches movies it would otherwise skip/throttle), and (b) whether the
+provider HTTP cache is bypassed (must NOT apply for `searchAll`). A new
+`bypass_cache` keyword decouples (b) from (a):
+
+- `MovieSearcher.single(self, movie, search_protocols = None, manual = False, force_download = False, bypass_cache = None)`.
+  Inside: `if bypass_cache is None: bypass_cache = manual`. So every existing
+  single-movie manual caller (the `movie.searcher.single` event, `tryNextRelease`,
+  `markFailedView`) is unchanged — no caller edits needed, cache bypass still
+  follows `manual`.
+- `searchAll()` calls `self.single(media, search_protocols, manual = manual, bypass_cache = False)` —
+  the sweep still searches with manual's status-gating/`ignore_eta` semantics,
+  but the resolved `bypass_cache` is pinned to `False`, so the provider cache
+  is never bypassed for the full-library sweep.
+- The provider search call becomes
+  `fireEvent('searcher.search', search_protocols, movie, quality, manual = bypass_cache, single = True)` —
+  i.e. `Searcher.search`/providers keep seeing a single `manual` flag (no
+  signature changes downstream); `single()` just resolves which value that
+  flag carries before firing it.
+
+### Tests
+
+`tests/unit/test_provider_manual_cache.py`:
+- `TestMovieSearcherSingleThreadsManual.test_manual_true_bypass_cache_false_threads_manual_false` —
+  `single(movie, manual=True, bypass_cache=False)` → `searcher.search` receives `manual=False`.
+- `TestMovieSearcherSingleThreadsManual.test_bypass_cache_none_defaults_to_manual_value` —
+  `single(movie, manual=True)` (bypass_cache omitted) → `searcher.search` still receives `manual=True`.
+- `TestMovieSearcherSearchAllCacheScoping.test_search_all_manual_calls_single_with_manual_true_bypass_cache_false` —
+  `searchAll(manual=True)` calls `single()` with `manual=True, bypass_cache=False`.
+- `TestMovieSearcherSearchAllCacheScoping.test_search_all_manual_does_not_bypass_provider_cache` —
+  end-to-end through the real `single()`: `searchAll(manual=True)` results in `searcher.search` receiving `manual=False`.

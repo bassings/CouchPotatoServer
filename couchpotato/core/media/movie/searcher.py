@@ -107,7 +107,14 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 if not media: continue
 
                 try:
-                    self.single(media, search_protocols, manual = manual)
+                    # BUG-015 follow-up: manual=True keeps the status-gating /
+                    # ignore_eta semantics of a manual search (see single()),
+                    # but bypass_cache=False keeps the full-library sweep on
+                    # the normal 30-minute provider cache -- otherwise
+                    # "Search All" would force a live uncached fetch against
+                    # every configured indexer for every movie in the
+                    # library, defeating the cache's rate-limit protection.
+                    self.single(media, search_protocols, manual = manual, bypass_cache = False)
                 except IndexError:
                     log.error('Forcing library update for %s, if you see this often, please report: %s', getIdentifier(media), traceback.format_exc())
                     fireEvent('movie.update', media_id)
@@ -125,7 +132,18 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         self.in_progress = False
 
-    def single(self, movie, search_protocols = None, manual = False, force_download = False):
+    def single(self, movie, search_protocols = None, manual = False, force_download = False, bypass_cache = None):
+
+        # BUG-015 follow-up: bypass_cache controls whether the provider HTTP
+        # cache (30-minute newznab/torrentpotato cache) is bypassed for this
+        # search. It defaults to manual's value, so existing single-movie
+        # manual entry points (movie.searcher.single event, tryNextRelease,
+        # markFailedView) keep bypassing the cache with no caller changes.
+        # searchAll() explicitly passes bypass_cache=False so the full-library
+        # sweep never bypasses the cache, even though it still searches with
+        # manual=True for the status-gating/ignore_eta behaviour below.
+        if bypass_cache is None:
+            bypass_cache = manual
 
         # Find out search type
         try:
@@ -226,7 +244,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # Extend quality with profile customs
             quality['custom'] = quality_custom
 
-            results = fireEvent('searcher.search', search_protocols, movie, quality, manual = manual, single = True) or []
+            results = fireEvent('searcher.search', search_protocols, movie, quality, manual = bypass_cache, single = True) or []
 
             # Check if movie isn't deleted while searching
             if not fireEvent('media.get', movie.get('_id'), single = True):
