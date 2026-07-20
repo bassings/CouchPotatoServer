@@ -48,11 +48,11 @@ class Searcher(SearcherBase):
         progress = fireEvent('searcher.progress', merge = True)
         return progress
 
-    def search(self, protocols, media, quality):
+    def search(self, protocols, media, quality, manual = False):
         results = []
 
         for search_protocol in protocols:
-            protocol_results = fireEvent('provider.search.%s.%s' % (search_protocol, media.get('type')), media, quality, merge = True)
+            protocol_results = fireEvent('provider.search.%s.%s' % (search_protocol, media.get('type')), media, quality, manual = manual, merge = True)
             if protocol_results:
                 results += protocol_results
 
