@@ -1,0 +1,165 @@
+name: Release to Prod
+
+# Production channel: promote the current beta image to production.
+# Manual only. Re-tags the tested beta image byte-for-byte (no rebuild) to
+# :latest + semver, and cuts a STABLE GitHub Release (drops -beta).
+# This is the ONLY workflow that writes :latest.
+# See specs/FEAT-release-channels.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_tag:
+        description: 'Beta tag to promote (e.g. v3.10.0-beta.1). Blank = newest prerelease.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # create the stable tag + release
+  packages: write   # re-tag in GHCR
+
+env:
+  GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve beta tag and versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          BETA="${{ github.event.inputs.beta_tag }}"
+          if [ -z "$BETA" ]; then
+            # Newest prerelease created by the beta channel.
+            BETA="$(gh release list --limit 50 --json tagName,isPrerelease \
+                     --jq '[.[] | select(.isPrerelease)] | .[0].tagName')"
+          fi
+          if [ -z "$BETA" ] || [ "$BETA" = "null" ]; then
+            echo "::error::No beta prerelease found to promote."; exit 1
+          fi
+          # Commit the beta was built from — the stable tag points here, not at
+          # whatever master HEAD happens to be at dispatch time.
+          BETA_SHA="$(git rev-list -n1 "$BETA" 2>/dev/null || echo '')"
+          if [ -z "$BETA_SHA" ]; then
+            echo "::error::Cannot resolve commit for beta tag $BETA"; exit 1
+          fi
+          FULL="${BETA#v}"                 # 3.10.0-beta.1
+          BASE="${FULL%%-beta*}"           # 3.10.0
+          case "$BASE" in
+            *[!0-9.]*|"") echo "::error::Resolved base version '$BASE' is not X.Y.Z"; exit 1;;
+          esac
+          MAJOR="${BASE%%.*}"
+          MINOR="${BASE#*.}"; MINOR="${MINOR%%.*}"
+          # Guard: refuse to overwrite an already-shipped stable release.
+          if git rev-parse -q --verify "refs/tags/v${BASE}" >/dev/null; then
+            echo "::error::Stable tag v${BASE} already exists — refusing to re-promote."; exit 1
+          fi
+          {
+            echo "beta_tag=${BETA}"
+            echo "beta_sha=${BETA_SHA}"
+            echo "full=${FULL}"
+            echo "base=${BASE}"
+            echo "major=${MAJOR}"
+            echo "minor=${MAJOR}.${MINOR}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Promoting ${BETA} (${BETA_SHA}) -> stable v${BASE}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source beta image exists
+        id: src
+        run: |
+          set -euo pipefail
+          SRC="${GHCR_IMAGE}:${{ steps.resolve.outputs.full }}"
+          DIGEST="$(docker buildx imagetools inspect "$SRC" \
+                     --format '{{.Manifest.Digest}}')"
+          if [ -z "$DIGEST" ]; then
+            echo "::error::Could not resolve digest for $SRC"; exit 1
+          fi
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Source $SRC @ ${DIGEST}"
+
+      - name: Promote image (re-tag digest, no rebuild)
+        run: |
+          set -euo pipefail
+          SRCREF="${GHCR_IMAGE}@${{ steps.src.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "${GHCR_IMAGE}:latest" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.base }}" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.minor }}" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.major }}" \
+            "$SRCREF"
+          echo "Promoted $SRCREF to :latest :${{ steps.resolve.outputs.base }} :${{ steps.resolve.outputs.minor }} :${{ steps.resolve.outputs.major }}"
+
+      - name: Build source archives
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.resolve.outputs.base }}"
+          mkdir -p dist/CouchPotatoServer
+          cp -r couchpotato libs CouchPotato.py requirements.txt README.md Dockerfile dist/CouchPotatoServer/
+          cp license.txt dist/CouchPotatoServer/ 2>/dev/null || true
+          cp docker-compose.yml dist/CouchPotatoServer/ 2>/dev/null || true
+          ( cd dist && tar -czf "CouchPotatoServer-v${BASE}.tar.gz" CouchPotatoServer/ \
+                    && zip -qr "CouchPotatoServer-v${BASE}.zip" CouchPotatoServer/ )
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          set -euo pipefail
+          LAST_STABLE="$(git tag --list 'v*' --sort=-v:refname \
+                          | grep -vi -e '-beta' -e '-alpha' -e '-rc' -e '-dev' \
+                          | head -n1 || true)"
+          if [ -n "$LAST_STABLE" ]; then
+            CHANGES="$(git log --oneline --no-merges "${LAST_STABLE}..HEAD")"
+          else
+            CHANGES="First stable release on the new promotion flow."
+            LAST_STABLE="(none)"
+          fi
+          echo "last_stable=${LAST_STABLE}" >> "$GITHUB_OUTPUT"
+          {
+            echo "changes<<EOF"
+            echo "$CHANGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create stable release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.resolve.outputs.base }}
+          name: v${{ steps.resolve.outputs.base }}
+          prerelease: false
+          target_commitish: ${{ steps.resolve.outputs.beta_sha }}
+          body: |
+            ## CouchPotato Server v${{ steps.resolve.outputs.base }}
+
+            Promoted from beta ${{ steps.resolve.outputs.beta_tag }} — the exact
+            image tested on the beta channel, re-tagged without rebuild.
+
+            **Docker (recommended):**
+            ```bash
+            docker pull ${{ env.GHCR_IMAGE }}:latest
+            # or pin: ${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.base }}
+            ```
+
+            ### Changes since ${{ steps.changelog.outputs.last_stable }}
+            ${{ steps.changelog.outputs.changes }}
+          files: |
+            dist/CouchPotatoServer-v${{ steps.resolve.outputs.base }}.tar.gz
+            dist/CouchPotatoServer-v${{ steps.resolve.outputs.base }}.zip

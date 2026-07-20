@@ -1,110 +1,158 @@
-name: Docker
+name: Beta Build
+
+# Beta channel: every push to master publishes a new opt-in beta build.
+# - Version: minor bump per commit (see scripts/release/next_beta_version.py).
+# - Image: pushed to :beta (moving) + :<full-beta-version> (immutable) + :sha-<short>.
+#          NEVER :latest — :latest is written only by release-to-prod.yml.
+# - Baked CP_VERSION is the BASE version (e.g. 3.10.0, no -beta suffix) so the
+#   promoted-to-prod image reports a clean version; the -beta.N identity lives
+#   only on the git tag and the GitHub prerelease.
+# See specs/FEAT-release-channels.md.
 
 on:
   push:
     branches: [ master ]
-    tags: [ 'v*' ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
 
 permissions:
-  contents: read
-  packages: write
+  contents: write   # create the beta tag + prerelease
+  packages: write   # push to GHCR
+
+env:
+  GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
 
 jobs:
-  docker-build:
+  beta-build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
       actions: write
     env:
       HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
 
     steps:
-    - uses: actions/checkout@v7
-      with:
-        fetch-depth: 0  # Full history needed for git describe --tags
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # full history + tags for version compute and changelog
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
 
-    - name: Login to Docker Hub
-      if: env.HAS_DOCKER_CREDS == 'true'
-      uses: docker/login-action@v4
-      with:
-        username: ${{ secrets.DOCKER_USERNAME }}
-        password: ${{ secrets.DOCKER_PASSWORD }}
+      # --- Build once (single-arch, loaded) and smoke-test before publishing ---
+      - name: Build test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: couchpotato:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Build and test Docker image
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        load: true
-        tags: bassings/couchpotato:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Smoke-test image
+        run: |
+          docker run -d --name cp-test -p 5051:5050 couchpotato:test
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:5051/ >/dev/null 2>&1; then ok=1; break; fi
+            sleep 2
+          done
+          docker logs cp-test
+          docker rm -f cp-test
+          test "${ok:-0}" = "1" || { echo "::error::image did not become healthy"; exit 1; }
 
-    - name: Test Docker image
-      run: |
-        docker run -d --name couchpotato-test -p 5051:5050 bassings/couchpotato:test
-        sleep 30
-        curl -f http://localhost:5051/ || (docker logs couchpotato-test && exit 1)
-        docker logs couchpotato-test
-        docker stop couchpotato-test
-        docker rm couchpotato-test
+      # --- Compute the beta version (minor bump per commit) ---
+      - name: Compute beta version
+        id: ver
+        run: |
+          FULL="$(python3 scripts/release/next_beta_version.py)"
+          BASE="${FULL%%-beta*}"
+          SHORT="$(git rev-parse --short HEAD)"
+          {
+            echo "full=${FULL}"
+            echo "base=${BASE}"
+            echo "short=${SHORT}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Beta version: v${FULL} (baked CP_VERSION=${BASE}, sha ${SHORT})"
 
-    - name: Get version info
-      id: vars
-      run: |
-        echo "sha_short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-        # On a tag push (v*), use the tag directly so the released image is
-        # versioned correctly — the tag is created after the merge to master,
-        # so a master-push build would otherwise embed the *previous* version.
-        # On a branch push, fall back to the nearest tag.
-        if [ "${{ github.ref_type }}" = "tag" ]; then
-          BASE_TAG="${{ github.ref_name }}"
-        else
-          BASE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-        fi
-        BASE_TAG="${BASE_TAG#v}"  # strip leading 'v'
-        BASE_TAG="${BASE_TAG:-dev}"  # fallback to 'dev' if empty
-        echo "base_version=${BASE_TAG}" >> $GITHUB_OUTPUT
+      # --- Publish beta image to GHCR (multi-arch). NEVER :latest. ---
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Build and push to Docker Hub
-      if: env.HAS_DOCKER_CREDS == 'true'
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        push: true
-        tags: |
-          bassings/couchpotato:latest
-          bassings/couchpotato:develop
-        platforms: linux/amd64,linux/arm64
-        build-args: |
-          CP_VERSION=${{ steps.vars.outputs.base_version }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Build and push beta image to GHCR
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.GHCR_IMAGE }}:beta
+            ${{ env.GHCR_IMAGE }}:${{ steps.ver.outputs.full }}
+            ${{ env.GHCR_IMAGE }}:sha-${{ steps.ver.outputs.short }}
+          build-args: |
+            CP_VERSION=${{ steps.ver.outputs.base }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v4
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      # --- Optional Docker Hub beta mirror (only if creds configured) ---
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
 
-    - name: Build and push to GHCR
-      uses: docker/build-push-action@v7
-      with:
-        context: .
-        push: true
-        tags: |
-          ghcr.io/bassings/couchpotatoserver:latest
-          ghcr.io/bassings/couchpotatoserver:develop
-          ghcr.io/bassings/couchpotatoserver:${{ github.sha }}
-        platforms: linux/amd64,linux/arm64
-        build-args: |
-          CP_VERSION=${{ steps.vars.outputs.base_version }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
+      - name: Build and push beta image to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            bassings/couchpotato:beta
+            bassings/couchpotato:${{ steps.ver.outputs.full }}
+          build-args: |
+            CP_VERSION=${{ steps.ver.outputs.base }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # --- Tag + GitHub prerelease (marks it pre-release so :latest users'
+      #     updater, which reads /releases/latest, never sees it) ---
+      - name: Generate changelog
+        id: changelog
+        run: |
+          LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          if [ -n "$LAST_TAG" ]; then
+            CHANGES="$(git log --oneline --no-merges "${LAST_TAG}..HEAD")"
+          else
+            CHANGES="Initial beta build."
+            LAST_TAG="(none)"
+          fi
+          echo "last_tag=${LAST_TAG}" >> "$GITHUB_OUTPUT"
+          {
+            echo "changes<<EOF"
+            echo "$CHANGES"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create beta prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.ver.outputs.full }}
+          name: v${{ steps.ver.outputs.full }}
+          prerelease: true
+          body: |
+            ## Beta build v${{ steps.ver.outputs.full }}
+
+            Opt-in pre-release. Pull `${{ env.GHCR_IMAGE }}:beta` and enable
+            **Include Beta Releases** in Updater settings to track this channel.
+            `:latest` users are unaffected.
+
+            ### Changes since ${{ steps.changelog.outputs.last_tag }}
+            ${{ steps.changelog.outputs.changes }}
