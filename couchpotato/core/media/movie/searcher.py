@@ -375,21 +375,21 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
             if is_pre_release:
                 # Prerelease 1 week before theaters
-                if dates.get('theater') > 0 and dates.get('theater') - 604800 < now:
+                if dates.get('theater', 0) > 0 and dates.get('theater', 0) - 604800 < now:
                     return True
             else:
                 # 12 weeks after theater release
-                if dates.get('theater') > 0 and dates.get('theater') + 7257600 < now:
+                if dates.get('theater', 0) > 0 and dates.get('theater', 0) + 7257600 < now:
                     return True
 
-                if dates.get('dvd') > 0:
+                if dates.get('dvd', 0) > 0:
 
                     # 4 weeks before dvd release
-                    if dates.get('dvd') - 2419200 < now:
+                    if dates.get('dvd', 0) - 2419200 < now:
                         return True
 
                     # Dvd should be released
-                    if dates.get('dvd') < now:
+                    if dates.get('dvd', 0) < now:
                         return True
 
 

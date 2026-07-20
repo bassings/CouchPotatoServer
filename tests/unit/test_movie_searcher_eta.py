@@ -43,9 +43,10 @@ class TestCouldBeReleasedPreReleaseGuard:
         )
 
     def test_pre_release_with_unknown_theater_and_known_dvd_returns_false(self, searcher):
-        """AC2: a known dvd date must not leak into the pre-release branch
-        either — that branch only ever consults 'theater', so with theater
-        unknown the whole pre-release check should stay closed."""
+        """Regression guard, not a numbered AC: a known dvd date must not
+        leak into the pre-release branch either — that branch only ever
+        consults 'theater', so with theater unknown the whole pre-release
+        check should stay closed."""
         now = int(time.time())
         result = searcher.couldBeReleased(
             True,
@@ -55,7 +56,7 @@ class TestCouldBeReleasedPreReleaseGuard:
         assert result is False
 
     def test_pre_release_within_week_of_theater_returns_true(self, searcher):
-        """AC3 (regression guard): a known theater date within the next week
+        """AC2 (regression guard): a known theater date within the next week
         is the legitimate pre-release case and must still return True after
         the fix."""
         now = int(time.time())
@@ -68,7 +69,7 @@ class TestCouldBeReleasedPreReleaseGuard:
         assert result is True
 
     def test_pre_release_far_before_theater_returns_false(self, searcher):
-        """AC4 (regression guard): a known theater date far in the future
+        """AC3 (regression guard): a known theater date far in the future
         (outside the 1-week pre-release window) must still return False,
         unaffected by the fix."""
         now = int(time.time())
@@ -81,7 +82,7 @@ class TestCouldBeReleasedPreReleaseGuard:
         assert result is False
 
     def test_non_pre_release_with_unknown_dates_returns_false(self, searcher):
-        """AC5 (sibling branch untouched): the non-pre-release branch already
+        """AC4 (sibling branch untouched): the non-pre-release branch already
         guards on `dates.get('theater') > 0` / `dates.get('dvd') > 0`, so
         fully unknown dates must keep returning False both before and after
         the fix (the fix touches only the is_pre_release branch)."""
@@ -93,8 +94,8 @@ class TestCouldBeReleasedPreReleaseGuard:
         assert result is False
 
     def test_pre_1972_sentinel_still_returns_true_regardless_of_pre_release(self, searcher):
-        """AC6 (boundary untouched): a negative theater date is the
-        pre-1972/no-data sentinel handled earlier in the method and must
+        """Regression guard, not a numbered AC: a negative theater date is
+        the pre-1972/no-data sentinel handled earlier in the method and must
         keep short-circuiting to True before the is_pre_release branch is
         ever reached."""
         result = searcher.couldBeReleased(
@@ -129,3 +130,47 @@ class TestCouldBeReleasedPreReleaseGuard:
             True, {'theater': frozen_now + one_week - 1, 'dvd': 0}, year=year,
         )
         assert just_inside is True, "one second inside the window is releasable"
+
+    @pytest.mark.parametrize('is_pre_release', [True, False])
+    def test_old_movie_with_unknown_dates_assumed_released(self, searcher, is_pre_release):
+        """AC5: an old movie (year two years in the past) with fully unknown
+        dates must hit the top-of-method 'no dates known, old movie' heuristic
+        and return True regardless of is_pre_release — that early-return path
+        is intentional and must not be affected by the is_pre_release guard
+        fix (see spec 'Fix Required' notes)."""
+        old_year = time.gmtime().tm_year - 2
+        result = searcher.couldBeReleased(
+            is_pre_release,
+            {'theater': 0, 'dvd': 0},
+            year=old_year,
+        )
+        assert result is True
+
+
+class TestCouldBeReleasedMissingDateKeys:
+    """Latent TypeError hardening: `dates.get('theater')` / `dates.get('dvd')`
+    without an explicit default return None for a dict that has other keys
+    but is missing that particular one, and `None > 0` raises TypeError in
+    Python 3. couldBeReleased() must tolerate partial `dates` dicts and
+    return False rather than raising."""
+
+    def test_pre_release_with_missing_theater_key_returns_false(self, searcher):
+        """is_pre_release branch: 'theater' key absent (only 'dvd' present)
+        must not raise and must return False, since an unknown theater date
+        can never satisfy the 1-week-before-theater window."""
+        result = searcher.couldBeReleased(
+            True,
+            {'dvd': 0},
+            year=time.gmtime().tm_year,
+        )
+        assert result is False
+
+    def test_non_pre_release_with_missing_dvd_key_returns_false(self, searcher):
+        """Non-pre-release branch: 'dvd' key absent (only 'theater' present,
+        and known-zero) must not raise and must return False."""
+        result = searcher.couldBeReleased(
+            False,
+            {'theater': 0},
+            year=time.gmtime().tm_year,
+        )
+        assert result is False
