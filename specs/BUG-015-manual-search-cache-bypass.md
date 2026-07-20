@@ -188,7 +188,7 @@ action, not a background sweep. Verified during review:
 - **What actually protects the indexers:** the per-host `HttpClient` rate
   limiter (`couchpotato/core/http_client.py`, `_wait_for_rate_limit`), wired
   from each provider's `http_time_between_calls` (newznab: 2s, torrentpotato:
-  1s, default: 10s — see `couchpotato/core/plugins/base.py`). This is a real,
+  1s, default: 10s — see `couchpotato/core/media/_base/providers/base.py`). This is a real,
   enforced FIFO/blocking limiter per host, so concurrent manual searches
   hitting the *same* indexer still get serialized there; only searches
   spread across *different* indexers run truly in parallel. For a selection
