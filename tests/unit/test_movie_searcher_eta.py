@@ -8,9 +8,11 @@ report that a pre-release could already be released, purely because the
 theater date hadn't been scraped yet, rather than because it was actually
 within a week of release.
 
-The fix adds a `dates.get('theater') > 0` guard to the is_pre_release branch
-only, mirroring the guard already present in the sibling non-pre-release
-branch a few lines below. See specs/BUG-014-prerelease-eta-guard.md.
+The fix adds a `dates.get('theater') > 0` guard to the is_pre_release branch,
+mirroring the guard already present in the sibling non-pre-release branch a
+few lines below, and additionally hardens all `dates.get()` calls in both
+branches with explicit `0` defaults so partial dicts missing a key return
+False instead of raising TypeError. See specs/BUG-014-prerelease-eta-guard.md.
 """
 
 import time

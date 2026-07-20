@@ -78,3 +78,7 @@ apply).
   Prefer computing dates relative to `int(time.time())` at test time.
 - Keep the diff minimal and match surrounding style (this file uses
   `dates.get('theater')`, spaces around operators as shown).
+- Addendum (review follow-up): all `dates.get('theater')`/`dates.get('dvd')`
+  calls in the is_pre_release branch and its sibling now carry explicit `0`
+  defaults, so a partial `dates` dict missing a key returns False instead of
+  raising `TypeError` (latent-fragility hardening flagged in PR review).
