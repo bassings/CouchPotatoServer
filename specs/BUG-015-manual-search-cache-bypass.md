@@ -84,14 +84,31 @@ is out of scope for this fix.
 - `couchpotato/core/media/_base/providers/base.py`
 - `couchpotato/core/media/_base/providers/nzb/newznab.py`
 - `couchpotato/core/media/_base/providers/torrent/torrentpotato.py`
+- `couchpotato/core/plugins/base.py` (`getCache`/`_fetch_and_cache` —
+  `cache_timeout <= 0` gating; no signature change, verified/documented, see Notes)
 - `tests/unit/` (new tests for the cache-timeout threading)
 
 ## Notes
-- Verify `_fetch_and_cache` in `couchpotato/core/plugins/base.py`: a negative
-  `cache_timeout` currently means "fetch but don't store" (`data and
-  cache_timeout > 0 and use_cache` gates the `setCache`). Confirm this holds so
-  `-1` gives a live, un-stored fetch. If instead a different sentinel is needed,
-  adjust the spec — but do not weaken the 1800s automatic-search caching.
+- `couchpotato/core/plugins/base.py` `getCache` (not just the store path) is
+  what actually implements the `cache_timeout <= 0` contract this fix relies
+  on. `getCache` computes `skip_cache_read = cache_timeout is not None and
+  cache_timeout <= 0` and uses that single flag twice: it gates the pre-lock
+  cache read (`if use_cache and not skip_cache_read: ...Env.get('cache').get(...)`),
+  and it gates the post-lock double-check inside the stampede-prevention
+  section (`if not skip_cache_read: # Double-check...`). The
+  stampede-protection lock itself (`self._get_cache_lock(cache_key_md5)`) is
+  still always acquired whenever `use_cache` is true and a `url` was given —
+  it is gated on `use_cache`, not on `cache_timeout` — so concurrent fetches
+  for the same key are still serialized even for a manual/`cache_timeout=-1`
+  request. Once the lock is held (or skipped because `use_cache` is false),
+  the call always reaches `_fetch_and_cache`, which performs the real
+  `urlopen` and only then applies the *separate* store-path gate: `if data and
+  cache_timeout > 0 and use_cache: self.setCache(...)`. Net effect for
+  `cache_timeout = -1`: no stale cache entry (even one written moments ago by
+  an automatic search) can satisfy the read at any point — before or after
+  the lock — while the lock still cooperates with other in-flight fetches for
+  the same key, and the fresh result is never written back, so the next
+  automatic search still fetches and caches its own copy.
 - This is a behaviour change to a hot path; keep the diff tight and rely on the
   default `manual=False` everywhere so the automatic sweep is byte-for-byte
   unchanged.
@@ -143,3 +160,47 @@ provider HTTP cache is bypassed (must NOT apply for `searchAll`). A new
   `searchAll(manual=True)` calls `single()` with `manual=True, bypass_cache=False`.
 - `TestMovieSearcherSearchAllCacheScoping.test_search_all_manual_does_not_bypass_provider_cache` —
   end-to-end through the real `single()`: `searchAll(manual=True)` results in `searcher.search` receiving `manual=False`.
+
+## Decision record: bulk Refresh (wanted.html `bulkRefresh`) is accepted as-is, unscoped
+
+The new UI's bulk Refresh action (`bulkRefresh` in `couchpotato/ui/templates/wanted.html`)
+fires one `movie.refresh` request per selected movie (`Promise.all(ids.map(id =>
+fetch(...)))`). Each of those independently flows through
+`MediaPlugin.refresh` → metadata update → `fireEventAsync('movie.searcher.single',
+media, manual=True)`, so every selected movie's search resolves
+`bypass_cache = manual = True` — i.e. bulk Refresh bypasses the provider cache
+for every movie the user selected, same as a single-movie Refresh.
+
+This is a **conscious decision, not an oversight**: unlike `searchAll()`
+(which sweeps the entire library unconditionally), bulk Refresh's blast
+radius is bounded by the user's explicit selection — a deliberate, visible
+action, not a background sweep. Verified during review:
+- **Bounded scope:** load scales with how many movies the user selected, not
+  library size.
+- **No cross-request queue serialization:** `bulkRefresh`'s `Promise.all`
+  sends the selected movies' refresh requests concurrently, and each request
+  spawns its own `fireEventAsync`/`schedule.queue` thread — `schedule.queue`
+  only serializes handlers *within* one request, it does not serialize the N
+  concurrent per-movie refreshes against each other. (Earlier drafts of this
+  note assumed `schedule.queue` provided that cross-request serialization; it
+  does not — corrected here after checking `couchpotato/core/_base/scheduler.py`
+  and `couchpotato/core/event.py`.)
+- **What actually protects the indexers:** the per-host `HttpClient` rate
+  limiter (`couchpotato/core/http_client.py`, `_wait_for_rate_limit`), wired
+  from each provider's `http_time_between_calls` (newznab: 2s, torrentpotato:
+  1s, default: 10s — see `couchpotato/core/plugins/base.py`). This is a real,
+  enforced FIFO/blocking limiter per host, so concurrent manual searches
+  hitting the *same* indexer still get serialized there; only searches
+  spread across *different* indexers run truly in parallel. For a selection
+  of a realistic size (tens of movies, not thousands), the per-host throttle
+  keeps request pacing to any single indexer sane even with the cache
+  bypassed.
+
+If bulk Refresh proves problematic in practice (e.g. users routinely
+select hundreds of movies at once), a follow-up could thread
+`bypass_cache = False` for bulk-originated refreshes specifically — most
+directly by having `bulkRefresh`/`MediaPlugin.refresh` pass a
+`bulk = True` flag down to `movie.searcher.single`, which `single()` could
+use to force `bypass_cache = False` the same way `searchAll()` does today —
+without touching the per-movie manual entry points (single Refresh,
+`tryNextRelease`, `markFailedView`) that must keep bypassing the cache.

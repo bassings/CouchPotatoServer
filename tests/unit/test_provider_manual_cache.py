@@ -16,6 +16,7 @@ No network calls are made anywhere in this file -- getRSSData/getJsonData/
 fireEvent are all patched.
 """
 import threading
+import xml.etree.ElementTree as ET
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -38,6 +39,69 @@ class TestNewznabManualCache:
             'api_key': 'testkey',
             'extra_score': 0,
         }
+
+    def _search_item_with_spot_details(self):
+        """An <item> whose guid resolves to an nzb_id containing '@spot.net'
+        -- the only condition under which _searchOnHost takes the SECOND
+        getRSSData call (the details/password fetch)."""
+        item = ET.Element('item')
+        title = ET.SubElement(item, 'title')
+        title.text = 'Some.Movie.2020.720p'
+        guid = ET.SubElement(item, 'guid')
+        guid.text = 'http://example.com/details/abc123@spot.net'
+        pubdate = ET.SubElement(item, 'pubDate')
+        pubdate.text = 'Mon, 01 Jan 2024 00:00:00 +0000'
+        enclosure = ET.SubElement(item, 'enclosure')
+        enclosure.set('url', 'http://example.com/download/abc123')
+        enclosure.set('length', '123456789')
+        return item
+
+    def _detail_item(self):
+        item = ET.Element('item')
+        description = ET.SubElement(item, 'description')
+        description.text = 'password: secret123'
+        return item
+
+    def test_manual_search_details_fetch_uses_negative_cache_timeout(self):
+        """Test-gap fix: newznab has a SECOND getRSSData call site (the
+        '@spot.net' details/password fetch, ~line 107) that shares the same
+        `cache_timeout` variable as the search fetch (~line 57). Every other
+        test in this file mocks getRSSData to return [], so the details
+        branch never executes and a mutation reverting its cache_timeout back
+        to a literal 1800 survives the whole suite undetected. Drive an nzb
+        result whose guid contains '@spot.net' so _searchOnHost takes the
+        details-fetch branch, and assert the SECOND getRSSData call also
+        receives cache_timeout=-1 when manual=True."""
+        p = self._make_provider()
+        results = []
+        search_item = self._search_item_with_spot_details()
+        detail_item = self._detail_item()
+
+        with patch.object(p, 'getRSSData', side_effect=[[search_item], [detail_item]]) as mock_get, \
+             patch.object(p, 'buildUrl', return_value='?q=test'), \
+             patch.object(p, 'buildDetailsUrl', return_value='?t=details'):
+            p._searchOnHost(self._host(), {}, {}, results, manual=True)
+
+        assert mock_get.call_count == 2
+        second_call_kwargs = mock_get.call_args_list[1].kwargs
+        assert second_call_kwargs.get('cache_timeout') == -1
+
+    def test_automatic_search_details_fetch_uses_1800_cache_timeout(self):
+        """Mirror of the above for the automatic (manual=False) path: the
+        details-fetch call site must still use the 1800s cache."""
+        p = self._make_provider()
+        results = []
+        search_item = self._search_item_with_spot_details()
+        detail_item = self._detail_item()
+
+        with patch.object(p, 'getRSSData', side_effect=[[search_item], [detail_item]]) as mock_get, \
+             patch.object(p, 'buildUrl', return_value='?q=test'), \
+             patch.object(p, 'buildDetailsUrl', return_value='?t=details'):
+            p._searchOnHost(self._host(), {}, {}, results)
+
+        assert mock_get.call_count == 2
+        second_call_kwargs = mock_get.call_args_list[1].kwargs
+        assert second_call_kwargs.get('cache_timeout') == 1800
 
     def test_manual_search_uses_negative_cache_timeout(self):
         """Acceptance 1: manual=True -> getRSSData called with cache_timeout=-1."""
