@@ -70,8 +70,15 @@ jobs:
           fi
           FULL="${BETA#v}"                 # 3.10.0-beta.1
           BASE="${FULL%%-beta*}"           # 3.10.0
+          # Tight validation: BASE must be digits-and-dots only, and the
+          # remainder (if any) must be exactly -beta.<digits>.
           case "$BASE" in
             *[!0-9.]*|"") echo "::error::Resolved base version '$BASE' is not X.Y.Z"; exit 1;;
+          esac
+          SUFFIX="${FULL#"$BASE"}"
+          case "$SUFFIX" in
+            ""|-beta.[0-9]*) : ;;
+            *) echo "::error::Unexpected version suffix '$SUFFIX' in '$BETA'"; exit 1;;
           esac
           MAJOR="${BASE%%.*}"
           MINOR="${BASE#*.}"; MINOR="${MINOR%%.*}"
@@ -121,16 +128,19 @@ jobs:
             "$SRCREF"
           echo "Promoted $SRCREF to :latest :${{ steps.resolve.outputs.base }} :${{ steps.resolve.outputs.minor }} :${{ steps.resolve.outputs.major }}"
 
-      - name: Build source archives
+      - name: Build source archives (from the promoted beta commit)
         run: |
           set -euo pipefail
           BASE="${{ steps.resolve.outputs.base }}"
-          mkdir -p dist/CouchPotatoServer
-          cp -r couchpotato libs CouchPotato.py requirements.txt README.md Dockerfile dist/CouchPotatoServer/
-          cp license.txt dist/CouchPotatoServer/ 2>/dev/null || true
-          cp docker-compose.yml dist/CouchPotatoServer/ 2>/dev/null || true
-          ( cd dist && tar -czf "CouchPotatoServer-v${BASE}.tar.gz" CouchPotatoServer/ \
-                    && zip -qr "CouchPotatoServer-v${BASE}.zip" CouchPotatoServer/ )
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
+          mkdir -p dist
+          # Archive the exact commit the promoted image was built from, so the
+          # source tarball can never drift from the image or the release tag
+          # (which is also created at beta_sha).
+          git archive --format=tar.gz --prefix="CouchPotatoServer/" \
+            -o "dist/CouchPotatoServer-v${BASE}.tar.gz" "$SHA"
+          git archive --format=zip --prefix="CouchPotatoServer/" \
+            -o "dist/CouchPotatoServer-v${BASE}.zip" "$SHA"
 
       - name: Generate changelog
         id: changelog
