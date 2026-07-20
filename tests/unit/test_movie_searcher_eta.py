@@ -114,7 +114,16 @@ class TestCouldBeReleasedPreReleaseGuard:
         Time is frozen so the sub-second gap between the test clock and the
         method's own `time.time()` can't make this flaky. `theater` is
         non-zero, so the top-of-method 'no dates' heuristic never applies
-        regardless of `year`."""
+        regardless of `year`.
+
+        Note for reviewers: the monkeypatch target `searcher.time.time`
+        resolves to the shared `time` MODULE's `time` attribute (searcher
+        imports the module, not the function), and CPython's
+        `datetime.date.today()` calls `time.time()` internally — so the
+        method's `date.today()` future-year guard is frozen to 2027 along
+        with the clock, and `year=2027` never trips it. Verified
+        empirically: with this patch active, `date.today()` returns
+        2027-01-15 regardless of the real system date."""
         frozen_now = 1_800_000_000  # fixed reference timestamp
         monkeypatch.setattr(
             'couchpotato.core.media.movie.searcher.time.time',
