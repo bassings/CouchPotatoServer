@@ -41,9 +41,14 @@ jobs:
       - name: Run mutmut
         env:
           PYTHONPATH: ${{ github.workspace }}/libs
+          # Via env (not inline interpolation) so a crafted dispatch input can't
+          # inject shell; left unquoted below so multiple space-separated paths
+          # still word-split as intended.
+          MUTMUT_PATHS: ${{ github.event.inputs.paths }}
         # Never fail the job on surviving mutants — this is a report, not a gate.
         run: |
-          mutmut run ${{ github.event.inputs.paths }} || true
+          # shellcheck disable=SC2086  # intentional word-split of MUTMUT_PATHS
+          mutmut run $MUTMUT_PATHS || true
           echo '## Python mutation results' >> "$GITHUB_STEP_SUMMARY"
           mutmut results >> "$GITHUB_STEP_SUMMARY" 2>&1 || true
 

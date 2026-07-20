@@ -8,8 +8,13 @@
 
 ```
 make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →
-  cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
+  cloud claude-review → (findings? fix → LOCAL review again → push) → merge →
+  auto beta build (:beta, per-commit) → manual promote to prod (:latest) → deploy
 ```
+
+> Merging does **not** ship to production. Every merge auto-publishes a *beta*
+> image only; production is a deliberate, manual promotion of a tested beta
+> (**Actions → Release to Prod**). See "Release & production deployment" below.
 
 > **The rule, stated plainly — never skip it: any push that needs the gate does
 > not happen until its clean-agent local review is clean.** ("Needs the gate" =
@@ -170,12 +175,20 @@ promotion). Full design: `specs/FEAT-release-channels.md`.
 
 1. Every push to `master` triggers `.github/workflows/docker.yml` — build,
    smoke-test, publish. No action needed.
-2. Version: minor bump per commit
-   (`scripts/release/next_beta_version.py`), published as `vX.Y.0-beta.1`
-   (`-beta.2`, … only if the same commit is rebuilt).
+2. Version: **minor bump on every commit**
+   (`scripts/release/next_beta_version.py`) — the next version is the highest
+   minor across all existing tags (stable *and* beta) plus one, always
+   `-beta.1`. So the beta line climbs `v3.10.0-beta.1 → v3.11.0-beta.1 →
+   v3.12.0-beta.1 …`; minor numbers rise quickly by design, and a re-run on an
+   unchanged commit simply wastes a minor rather than colliding.
 3. GHCR tags written: `:beta` (moving), the immutable `:X.Y.0-beta.1`, and
    `:sha-<short>`, plus a GitHub **prerelease** with an auto-generated
    changelog. `:latest` is never touched.
+4. The image bakes `CP_VERSION` as the **base** version (`X.Y.0`, no `-beta`)
+   — so a promoted image reports a clean version and the updater keeps
+   notifying stable users. The `-beta.N` identity lives only on the git tag /
+   prerelease, not inside the image. (Don't "fix" the image to report `-beta`;
+   it would silence stable-channel update checks — see the spec.)
 
 ### Prod channel (manual promotion)
 
