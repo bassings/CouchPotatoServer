@@ -72,7 +72,10 @@ Then run:
 docker compose up -d
 ```
 
-Available tags: `latest`, `3`, `3.0`, `3.0.1`
+Available tags: `latest`, `3`, `3.0`, `3.0.1`. `:latest` is the stable
+production release; `:beta` is an opt-in pre-release channel published on
+every commit to `master` (enable **Updater → Include Beta Releases** to be
+notified of new betas).
 
 ### From Source
 

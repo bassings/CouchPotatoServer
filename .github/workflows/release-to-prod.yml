@@ -1,0 +1,256 @@
+name: Release to Prod
+
+# Production channel: promote the current beta image to production.
+# Manual only. Re-tags the tested beta image byte-for-byte (no rebuild) to
+# :latest + semver, and cuts a STABLE GitHub Release (drops -beta).
+# This is the ONLY workflow that writes :latest.
+# See specs/FEAT-release-channels.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_tag:
+        description: 'Beta tag to promote (e.g. v3.10.0-beta.1). Blank = newest prerelease.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # create the stable tag + release
+  packages: write   # re-tag in GHCR
+  actions: read     # read ci.yml run conclusions for the CI gate
+
+# Only one promotion at a time; never cancel one mid-flight.
+concurrency:
+  group: release-to-prod
+  cancel-in-progress: false
+
+env:
+  GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
+  DOCKERHUB_IMAGE: docker.io/bassings/couchpotato
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve beta tag and versions
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Passed via env (never interpolated into the script body) so a
+          # crafted dispatch input cannot inject shell — GitHub hardening rule.
+          BETA_TAG_INPUT: ${{ github.event.inputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          BETA="$BETA_TAG_INPUT"
+          if [ -z "$BETA" ]; then
+            # Newest prerelease created by the beta channel.
+            BETA="$(gh release list --limit 50 --json tagName,isPrerelease \
+                     --jq '[.[] | select(.isPrerelease)] | .[0].tagName')"
+          fi
+          if [ -z "$BETA" ] || [ "$BETA" = "null" ]; then
+            echo "::error::No beta prerelease found to promote."; exit 1
+          fi
+          # Validate shape before it flows anywhere else (vX.Y.Z or vX.Y.Z-beta.N).
+          case "$BETA" in
+            v[0-9]*.[0-9]*.[0-9]*) : ;;
+            *) echo "::error::beta_tag '$BETA' is not a vX.Y.Z[-beta.N] tag"; exit 1 ;;
+          esac
+          # Commit the beta was built from — the stable tag points here, not at
+          # whatever master HEAD happens to be at dispatch time.
+          BETA_SHA="$(git rev-list -n1 "$BETA" 2>/dev/null || echo '')"
+          if [ -z "$BETA_SHA" ]; then
+            echo "::error::Cannot resolve commit for beta tag $BETA"; exit 1
+          fi
+          FULL="${BETA#v}"                 # 3.10.0-beta.1
+          BASE="${FULL%%-beta*}"           # 3.10.0
+          # Tight validation: BASE must be digits-and-dots only, and the
+          # remainder (if any) must be exactly -beta.<digits>.
+          # Exactly three dot-separated, all-digit components — a charset-only
+          # check would accept malformed values like "3..0" or "3.1.2.4".
+          case "$BASE" in
+            *.*.*.*) echo "::error::Base version '$BASE' has too many components"; exit 1;;
+            *.*.*)   : ;;   # exactly two dots — the required X.Y.Z shape
+            *)       echo "::error::Base version '$BASE' is not X.Y.Z"; exit 1;;
+          esac
+          V_MAJOR="${BASE%%.*}"; V_REST="${BASE#*.}"
+          V_MINOR="${V_REST%%.*}"; V_PATCH="${V_REST#*.}"
+          for part in "$V_MAJOR" "$V_MINOR" "$V_PATCH"; do
+            case "$part" in
+              ''|*[!0-9]*) echo "::error::Base version '$BASE' is not X.Y.Z"; exit 1;;
+            esac
+          done
+          SUFFIX="${FULL#"$BASE"}"
+          case "$SUFFIX" in
+            "") : ;;
+            -beta.*)
+              # All-digits check: a bare `-beta.[0-9]*` glob would also accept
+              # trailing junk like "-beta.1abc".
+              N="${SUFFIX#-beta.}"
+              case "$N" in
+                ''|*[!0-9]*) echo "::error::Bad beta suffix '$SUFFIX' in '$BETA'"; exit 1;;
+              esac
+              ;;
+            *) echo "::error::Unexpected version suffix '$SUFFIX' in '$BETA'"; exit 1;;
+          esac
+          MAJOR="${BASE%%.*}"
+          MINOR="${BASE#*.}"; MINOR="${MINOR%%.*}"
+          # Guard: refuse to overwrite an already-shipped stable release.
+          if git rev-parse -q --verify "refs/tags/v${BASE}" >/dev/null; then
+            echo "::error::Stable tag v${BASE} already exists — refusing to re-promote."; exit 1
+          fi
+          {
+            echo "beta_tag=${BETA}"
+            echo "beta_sha=${BETA_SHA}"
+            echo "full=${FULL}"
+            echo "base=${BASE}"
+            echo "major=${MAJOR}"
+            echo "minor=${MAJOR}.${MINOR}"
+          } >> "$GITHUB_OUTPUT"
+          echo "Promoting ${BETA} (${BETA_SHA}) -> stable v${BASE}"
+
+      # The beta builder only smoke-tests the image; the real test matrix
+      # (pytest 3.10-3.13, UI unit, E2E, a11y) runs in ci.yml on the same
+      # commit. The retired release.yml ran pytest before publishing stable,
+      # so gate promotion on that CI result to keep the guarantee.
+      - name: Require green CI on the beta commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
+          CONCLUSION="$(gh run list --workflow ci.yml --commit "$SHA" \
+                          --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI for beta commit ${SHA} is '${CONCLUSION:-not found}' (need 'success'). Refusing to promote."
+            exit 1
+          fi
+          echo "CI on ${SHA}: success"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify source beta image exists
+        id: src
+        run: |
+          set -euo pipefail
+          SRC="${GHCR_IMAGE}:${{ steps.resolve.outputs.full }}"
+          DIGEST="$(docker buildx imagetools inspect "$SRC" \
+                     --format '{{.Manifest.Digest}}')"
+          if [ -z "$DIGEST" ]; then
+            echo "::error::Could not resolve digest for $SRC"; exit 1
+          fi
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
+          echo "Source $SRC @ ${DIGEST}"
+
+      - name: Promote image (re-tag digest, no rebuild)
+        run: |
+          set -euo pipefail
+          SRCREF="${GHCR_IMAGE}@${{ steps.src.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "${GHCR_IMAGE}:latest" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.base }}" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.minor }}" \
+            --tag "${GHCR_IMAGE}:${{ steps.resolve.outputs.major }}" \
+            "$SRCREF"
+          echo "Promoted $SRCREF to :latest :${{ steps.resolve.outputs.base }} :${{ steps.resolve.outputs.minor }} :${{ steps.resolve.outputs.major }}"
+
+      # Docker Hub is a secondary mirror. The beta channel publishes there, so
+      # promotion must too — otherwise Docker Hub :latest would go stale and
+      # its users would silently stop receiving stable releases.
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Promote image to Docker Hub (same digest)
+        if: env.HAS_DOCKER_CREDS == 'true'
+        run: |
+          set -euo pipefail
+          SRCREF="${GHCR_IMAGE}@${{ steps.src.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "${DOCKERHUB_IMAGE}:latest" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.base }}" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.minor }}" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.major }}" \
+            "$SRCREF"
+          echo "Mirrored the promoted digest to ${DOCKERHUB_IMAGE}"
+
+      - name: Build source archives (from the promoted beta commit)
+        run: |
+          set -euo pipefail
+          BASE="${{ steps.resolve.outputs.base }}"
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
+          mkdir -p dist
+          # Archive the exact commit the promoted image was built from, so the
+          # source tarball can never drift from the image or the release tag
+          # (which is also created at beta_sha).
+          git archive --format=tar.gz --prefix="CouchPotatoServer/" \
+            -o "dist/CouchPotatoServer-v${BASE}.tar.gz" "$SHA"
+          git archive --format=zip --prefix="CouchPotatoServer/" \
+            -o "dist/CouchPotatoServer-v${BASE}.zip" "$SHA"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          set -euo pipefail
+          # Range ends at the PROMOTED commit, not the dispatch-time checkout,
+          # so the notes describe exactly what's in the image being shipped.
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
+          LAST_STABLE="$(git tag --list 'v*' --sort=-v:refname \
+                          | grep -vi -e '-beta' -e '-alpha' -e '-rc' -e '-dev' \
+                          | head -n1 || true)"
+          if [ -n "$LAST_STABLE" ]; then
+            CHANGES="$(git log --oneline --no-merges "${LAST_STABLE}..${SHA}")"
+          else
+            CHANGES="First stable release on the new promotion flow."
+            LAST_STABLE="(none)"
+          fi
+          echo "last_stable=${LAST_STABLE}" >> "$GITHUB_OUTPUT"
+          {
+            echo "changes<<CHANGELOG_EOF"
+            echo "$CHANGES"
+            echo "CHANGELOG_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create stable release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: v${{ steps.resolve.outputs.base }}
+          name: v${{ steps.resolve.outputs.base }}
+          prerelease: false
+          target_commitish: ${{ steps.resolve.outputs.beta_sha }}
+          body: |
+            ## CouchPotato Server v${{ steps.resolve.outputs.base }}
+
+            Promoted from beta ${{ steps.resolve.outputs.beta_tag }} — the exact
+            image tested on the beta channel, re-tagged without rebuild.
+
+            **Docker (recommended):**
+            ```bash
+            docker pull ${{ env.GHCR_IMAGE }}:latest
+            # or pin: ${{ env.GHCR_IMAGE }}:${{ steps.resolve.outputs.base }}
+            ```
+
+            ### Changes since ${{ steps.changelog.outputs.last_stable }}
+            ${{ steps.changelog.outputs.changes }}
+          files: |
+            dist/CouchPotatoServer-v${{ steps.resolve.outputs.base }}.tar.gz
+            dist/CouchPotatoServer-v${{ steps.resolve.outputs.base }}.zip

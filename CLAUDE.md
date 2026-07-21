@@ -43,8 +43,10 @@ the archived CouchPotato, fully modernised.
    pushes. Details: `docs/development-process.md`.
 5. **UI changes require E2E updates.** Check `tests/e2e/filters.spec.ts`,
    `navigation.spec.ts`, `interactions.e2e.spec.ts` — CI fails otherwise.
-6. **Versioning:** `-beta` suffix during development (`v3.2.0-beta.1`); drop it
-   only for production. **Never deploy to production until explicitly agreed.**
+6. **Versioning:** betas auto-publish per commit on `master` (minor bump,
+   `:beta` channel); production is a manual promotion that re-tags a tested
+   beta byte-for-byte to `:latest` (stable-only). **Never deploy to
+   production until explicitly agreed.**
 7. **Git hygiene:** conventional commits; never commit secrets or test data
    (`test_data/` is gitignored — keep local backups).
 8. **Dockerfile is Alpine:** use `apk`/`su-exec`/`adduser`, entrypoint is

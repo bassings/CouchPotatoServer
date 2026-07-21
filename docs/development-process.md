@@ -8,8 +8,13 @@
 
 ```
 make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →
-  cloud claude-review → (findings? fix → LOCAL review again → push) → merge → release → deploy
+  cloud claude-review → (findings? fix → LOCAL review again → push) → merge →
+  auto beta build (:beta, per-commit) → manual promote to prod (:latest) → deploy
 ```
+
+> Merging does **not** ship to production. Every merge auto-publishes a *beta*
+> image only; production is a deliberate, manual promotion of a tested beta
+> (**Actions → Release to Prod**). See "Release & production deployment" below.
 
 > **The rule, stated plainly — never skip it: any push that needs the gate does
 > not happen until its clean-agent local review is clean.** ("Needs the gate" =
@@ -163,13 +168,43 @@ Notes:
 
 ## Release & production deployment
 
-1. All local tests pass + lint clean.
-2. Push to master, wait for CI to pass.
-3. Tag with release version (`-beta` suffix during development:
-   `v3.2.0-beta.1`, `v3.2.0-beta.2`, …; drop `-beta` only when ready for
-   production), create GitHub Release with changelog.
-4. Never deploy to production until explicitly agreed.
-5. SSH to server, pull new image, restart:
+Two channels: **beta** (automatic, every push) and **prod** (manual
+promotion). Full design: `specs/FEAT-release-channels.md`.
+
+### Beta channel (automatic)
+
+1. Every push to `master` triggers `.github/workflows/docker.yml` — build,
+   smoke-test, publish. No action needed.
+2. Version: **minor bump on every commit**
+   (`scripts/release/next_beta_version.py`) — the next version is the highest
+   minor across all existing tags (stable *and* beta) plus one, always
+   `-beta.1`. So the beta line climbs `v3.10.0-beta.1 → v3.11.0-beta.1 →
+   v3.12.0-beta.1 …`; minor numbers rise quickly by design, and a re-run on an
+   unchanged commit simply wastes a minor rather than colliding.
+3. GHCR tags written: `:beta` (moving), the immutable `:X.Y.0-beta.1`, and
+   `:sha-<short>`, plus a GitHub **prerelease** with an auto-generated
+   changelog. `:latest` is never touched.
+4. The image bakes `CP_VERSION` as the **base** version (`X.Y.0`, no `-beta`)
+   — so a promoted image reports a clean version and the updater keeps
+   notifying stable users. The `-beta.N` identity lives only on the git tag /
+   prerelease, not inside the image. (Don't "fix" the image to report `-beta`;
+   it would silence stable-channel update checks — see the spec.)
+
+### Prod channel (manual promotion)
+
+1. Once a beta has been tested, go to **Actions → Release to Prod → Run
+   workflow**. Optionally name a specific beta tag (e.g. `v3.10.0-beta.1`);
+   blank promotes the newest prerelease.
+2. The workflow re-tags the tested beta image **byte-for-byte**
+   (`docker buildx imagetools create` — no rebuild) to `:latest`, `:X.Y.0`,
+   `:X.Y`, and `:X`, and cuts a **stable** GitHub Release (`vX.Y.0`, `-beta`
+   dropped).
+3. **Never deploy to production until explicitly agreed.**
+4. Scan the promoted image before deploying:
+   `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --scanners vuln ghcr.io/bassings/couchpotatoserver:latest`.
+   Target 0 CVEs. `.trivyignore` suppresses only the DS-0002 misconfig false
+   positive (gosu/su-exec privilege-drop pattern).
+5. SSH to server, pull the promoted image, restart:
    ```bash
    # SSH credentials in Openclaw memory (topics/couchpotato.md)
    cd /var/lib/plexmediaserver/CouchPotato
@@ -177,10 +212,16 @@ Notes:
    docker compose up -d
    docker logs couchpotato --tail=50
    ```
-6. Scan the image before release:
-   `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --scanners vuln <image>`.
-   Target 0 CVEs. `.trivyignore` suppresses only the DS-0002 misconfig false
-   positive (gosu/su-exec privilege-drop pattern).
+   Prod compose stays pinned to `:latest`, which is now guaranteed
+   stable-only — a `docker compose pull` there can never pick up an
+   untested beta.
+
+### Beta testers
+
+To track the beta channel instead of stable: point your compose file's
+image at `:beta` **and** enable **Updater → Include Beta Releases** in the
+app settings. `:latest` users never receive betas, regardless of that
+toggle.
 
 ## Test infrastructure
 
