@@ -80,7 +80,15 @@ jobs:
           esac
           SUFFIX="${FULL#"$BASE"}"
           case "$SUFFIX" in
-            ""|-beta.[0-9]*) : ;;
+            "") : ;;
+            -beta.*)
+              # All-digits check: a bare `-beta.[0-9]*` glob would also accept
+              # trailing junk like "-beta.1abc".
+              N="${SUFFIX#-beta.}"
+              case "$N" in
+                ''|*[!0-9]*) echo "::error::Bad beta suffix '$SUFFIX' in '$BETA'"; exit 1;;
+              esac
+              ;;
             *) echo "::error::Unexpected version suffix '$SUFFIX' in '$BETA'"; exit 1;;
           esac
           MAJOR="${BASE%%.*}"

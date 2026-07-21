@@ -82,6 +82,23 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Beta version: v${FULL} (baked CP_VERSION=${BASE}, sha ${SHORT})"
 
+      # Claim the version by pushing the git tag BEFORE the image exists.
+      # The version is derived from `git tag`, so this makes allocation atomic:
+      # if any later step fails, a re-run computes the NEXT version and pushes
+      # to a fresh immutable tag instead of overwriting this one's bytes. That
+      # is what lets release-to-prod.yml trust :<version> as byte-stable.
+      - name: Claim the beta version (push git tag)
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.ver.outputs.full }}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::Tag ${TAG} already exists — refusing to reuse it."
+            exit 1
+          fi
+          git tag "$TAG"
+          git push origin "$TAG"
+          echo "Claimed ${TAG}"
+
       # --- Publish beta image to GHCR (multi-arch). NEVER :latest. ---
       - name: Log in to GHCR
         uses: docker/login-action@v4
@@ -137,7 +154,11 @@ jobs:
       - name: Generate changelog
         id: changelog
         run: |
-          LAST_TAG="$(git describe --tags --abbrev=0 2>/dev/null || echo '')"
+          set -euo pipefail
+          # Exclude the tag we just claimed for THIS build, or the range would
+          # be empty (it points at HEAD).
+          THIS_TAG="v${{ steps.ver.outputs.full }}"
+          LAST_TAG="$(git describe --tags --abbrev=0 --exclude="$THIS_TAG" 2>/dev/null || echo '')"
           if [ -n "$LAST_TAG" ]; then
             CHANGES="$(git log --oneline --no-merges "${LAST_TAG}..HEAD")"
           else
