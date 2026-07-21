@@ -70,7 +70,7 @@ def test_ac9_cli_output_has_no_leading_v_and_single_trailing_newline():
     assert not result.stdout.startswith('v')
 
 
-def test_ac9_cli_reads_tags_from_stdin_only_with_explicit_flag():
+def test_cli_reads_tags_from_stdin_only_with_explicit_flag():
     result = subprocess.run(
         [sys.executable, str(SCRIPT_PATH), '--stdin'],
         input='v3.9.1\nv3.10.0-beta.1\n',
