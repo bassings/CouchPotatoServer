@@ -96,6 +96,10 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64,linux/arm64
+          # :<version> is the IMMUTABLE artifact (each build gets a fresh
+          # version, so it is never rewritten). :beta and :sha-<short> are
+          # convenience pointers — a re-run of the same commit repoints
+          # :sha-<short> at the newer build. Pin :<version> for immutability.
           tags: |
             ${{ env.GHCR_IMAGE }}:beta
             ${{ env.GHCR_IMAGE }}:${{ steps.ver.outputs.full }}

@@ -25,6 +25,7 @@ concurrency:
 
 env:
   GHCR_IMAGE: ghcr.io/bassings/couchpotatoserver
+  DOCKERHUB_IMAGE: docker.io/bassings/couchpotato
 
 jobs:
   promote:
@@ -32,6 +33,8 @@ jobs:
     permissions:
       contents: write
       packages: write
+    env:
+      HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
 
     steps:
       - uses: actions/checkout@v7
@@ -96,6 +99,24 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           echo "Promoting ${BETA} (${BETA_SHA}) -> stable v${BASE}"
 
+      # The beta builder only smoke-tests the image; the real test matrix
+      # (pytest 3.10-3.13, UI unit, E2E, a11y) runs in ci.yml on the same
+      # commit. The retired release.yml ran pytest before publishing stable,
+      # so gate promotion on that CI result to keep the guarantee.
+      - name: Require green CI on the beta commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
+          CONCLUSION="$(gh run list --workflow ci.yml --commit "$SHA" \
+                          --limit 1 --json conclusion --jq '.[0].conclusion // ""')"
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI for beta commit ${SHA} is '${CONCLUSION:-not found}' (need 'success'). Refusing to promote."
+            exit 1
+          fi
+          echo "CI on ${SHA}: success"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -128,6 +149,29 @@ jobs:
             "$SRCREF"
           echo "Promoted $SRCREF to :latest :${{ steps.resolve.outputs.base }} :${{ steps.resolve.outputs.minor }} :${{ steps.resolve.outputs.major }}"
 
+      # Docker Hub is a secondary mirror. The beta channel publishes there, so
+      # promotion must too — otherwise Docker Hub :latest would go stale and
+      # its users would silently stop receiving stable releases.
+      - name: Log in to Docker Hub
+        if: env.HAS_DOCKER_CREDS == 'true'
+        uses: docker/login-action@v4
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Promote image to Docker Hub (same digest)
+        if: env.HAS_DOCKER_CREDS == 'true'
+        run: |
+          set -euo pipefail
+          SRCREF="${GHCR_IMAGE}@${{ steps.src.outputs.digest }}"
+          docker buildx imagetools create \
+            --tag "${DOCKERHUB_IMAGE}:latest" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.base }}" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.minor }}" \
+            --tag "${DOCKERHUB_IMAGE}:${{ steps.resolve.outputs.major }}" \
+            "$SRCREF"
+          echo "Mirrored the promoted digest to ${DOCKERHUB_IMAGE}"
+
       - name: Build source archives (from the promoted beta commit)
         run: |
           set -euo pipefail
@@ -146,11 +190,14 @@ jobs:
         id: changelog
         run: |
           set -euo pipefail
+          # Range ends at the PROMOTED commit, not the dispatch-time checkout,
+          # so the notes describe exactly what's in the image being shipped.
+          SHA="${{ steps.resolve.outputs.beta_sha }}"
           LAST_STABLE="$(git tag --list 'v*' --sort=-v:refname \
                           | grep -vi -e '-beta' -e '-alpha' -e '-rc' -e '-dev' \
                           | head -n1 || true)"
           if [ -n "$LAST_STABLE" ]; then
-            CHANGES="$(git log --oneline --no-merges "${LAST_STABLE}..HEAD")"
+            CHANGES="$(git log --oneline --no-merges "${LAST_STABLE}..${SHA}")"
           else
             CHANGES="First stable release on the new promotion flow."
             LAST_STABLE="(none)"

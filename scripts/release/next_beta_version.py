@@ -66,10 +66,21 @@ def _read_tags_from_git() -> list[str]:
 
 
 def main(argv: list[str]) -> int:
-    if argv:
-        tags = argv
-    elif not sys.stdin.isatty():
+    """Tag source, in precedence order:
+
+    ``--stdin``   read newline-separated tags from stdin (explicit opt-in).
+    argv          treat the arguments as the tag list (used by tests).
+    neither       read ``git tag`` — the CI path.
+
+    Reading stdin must be EXPLICIT: a GitHub Actions ``run:`` step has a
+    non-tty stdin, so an ``isatty()``-based fallback silently read EOF and
+    returned the empty-history version (``0.1.0-beta.1``) on every build
+    instead of consulting git.
+    """
+    if argv and argv[0] == '--stdin':
         tags = [line for line in sys.stdin.read().splitlines() if line.strip()]
+    elif argv:
+        tags = argv
     else:
         tags = _read_tags_from_git()
 

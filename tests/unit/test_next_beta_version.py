@@ -70,12 +70,47 @@ def test_ac9_cli_output_has_no_leading_v_and_single_trailing_newline():
     assert not result.stdout.startswith('v')
 
 
-def test_ac9_cli_reads_tags_from_stdin_when_no_argv_given():
+def test_ac9_cli_reads_tags_from_stdin_only_with_explicit_flag():
     result = subprocess.run(
-        [sys.executable, str(SCRIPT_PATH)],
+        [sys.executable, str(SCRIPT_PATH), '--stdin'],
         input='v3.9.1\nv3.10.0-beta.1\n',
         capture_output=True,
         text=True,
         check=True,
     )
     assert result.stdout == '3.11.0-beta.1\n'
+
+
+def test_cli_with_no_argv_reads_git_tags_even_when_stdin_is_not_a_tty(tmp_path):
+    """Regression: a GitHub Actions `run:` step has a NON-TTY stdin. An
+    isatty()-based stdin fallback therefore read EOF and returned the
+    empty-history version (0.1.0-beta.1) on every CI build instead of
+    consulting git — which would have broken beta versioning on the very
+    first run and collided on every run after. Exercise the real CI shape:
+    no argv, stdin connected to /dev/null, inside a git repo with tags.
+    """
+    repo = tmp_path / 'repo'
+    repo.mkdir()
+    run = lambda *a: subprocess.run(a, cwd=repo, check=True, capture_output=True)  # noqa: E731
+    run('git', 'init', '-q')
+    run('git', 'config', 'user.email', 't@example.com')
+    run('git', 'config', 'user.name', 'T')
+    (repo / 'f.txt').write_text('x')
+    run('git', 'add', 'f.txt')
+    run('git', 'commit', '-qm', 'init')
+    run('git', 'tag', 'v3.9.1')
+    run('git', 'tag', 'v3.10.0-beta.1')
+
+    with open('/dev/null') as devnull:
+        result = subprocess.run(
+            [sys.executable, str(SCRIPT_PATH)],
+            cwd=repo,
+            stdin=devnull,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+    assert result.stdout == '3.11.0-beta.1\n', (
+        'CI invocation must read git tags, not fall through to empty stdin'
+    )
