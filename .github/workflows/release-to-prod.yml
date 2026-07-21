@@ -17,6 +17,7 @@ on:
 permissions:
   contents: write   # create the stable tag + release
   packages: write   # re-tag in GHCR
+  actions: read     # read ci.yml run conclusions for the CI gate
 
 # Only one promotion at a time; never cancel one mid-flight.
 concurrency:
@@ -33,6 +34,7 @@ jobs:
     permissions:
       contents: write
       packages: write
+      actions: read
     env:
       HAS_DOCKER_CREDS: ${{ secrets.DOCKER_USERNAME != '' }}
 
@@ -75,9 +77,20 @@ jobs:
           BASE="${FULL%%-beta*}"           # 3.10.0
           # Tight validation: BASE must be digits-and-dots only, and the
           # remainder (if any) must be exactly -beta.<digits>.
+          # Exactly three dot-separated, all-digit components — a charset-only
+          # check would accept malformed values like "3..0" or "3.1.2.4".
           case "$BASE" in
-            *[!0-9.]*|"") echo "::error::Resolved base version '$BASE' is not X.Y.Z"; exit 1;;
+            *.*.*.*) echo "::error::Base version '$BASE' has too many components"; exit 1;;
+            *.*.*)   : ;;   # exactly two dots — the required X.Y.Z shape
+            *)       echo "::error::Base version '$BASE' is not X.Y.Z"; exit 1;;
           esac
+          V_MAJOR="${BASE%%.*}"; V_REST="${BASE#*.}"
+          V_MINOR="${V_REST%%.*}"; V_PATCH="${V_REST#*.}"
+          for part in "$V_MAJOR" "$V_MINOR" "$V_PATCH"; do
+            case "$part" in
+              ''|*[!0-9]*) echo "::error::Base version '$BASE' is not X.Y.Z"; exit 1;;
+            esac
+          done
           SUFFIX="${FULL#"$BASE"}"
           case "$SUFFIX" in
             "") : ;;
