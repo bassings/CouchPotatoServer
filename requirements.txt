@@ -36,7 +36,7 @@ pymediainfo==7.0.1
 knowit==0.5.11
 rebulk==3.2.0
 srt==3.5.3
-tomlkit==0.15.0
+tomlkit==0.15.1
 click-option-group==0.5.9
 defusedxml==0.7.1
 trakit==0.2.5
