@@ -76,6 +76,24 @@ def _match(doc):
     if not stored_3d:
         stored_3d = [False] * len(qualities)
 
+    # Refuse to touch a row whose positional lists disagree in length. Only
+    # 'qualities' and '3d' take part in matching, so such a row would still
+    # match a legacy default -- and _permute() would reorder 'qualities'
+    # while leaving the mismatched list stale, silently re-pairing every
+    # remaining flag with a different quality. Leaving a malformed row
+    # exactly as found is strictly better than making it differently wrong.
+    # An ABSENT (or empty) list is a different case: older schemas simply
+    # lacked it, and there is nothing to detach.
+    for key in POSITIONAL_KEYS:
+        values = doc.get(key)
+        if values and len(values) != len(qualities):
+            log.warning(
+                'Profile %r has %d %s entries for %d qualities; skipping '
+                'quality-order fix for it.',
+                label, len(values), key, len(qualities),
+            )
+            return None
+
     for legacy in LEGACY_DEFAULTS:
         if (label == legacy['label']
                 and list(qualities) == legacy['qualities']

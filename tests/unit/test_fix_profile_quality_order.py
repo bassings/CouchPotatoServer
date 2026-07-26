@@ -270,6 +270,48 @@ class TestFailureHandling:
             '1080p', '720p', 'brrip', 'dvdrip',
         ]
 
+    def test_refuses_to_half_migrate_a_row_with_a_truncated_list(self):
+        """A malformed row must be left ALONE, not partially rewritten.
+
+        `_match()` validates label/qualities/3d, so a row whose `finish` (or
+        `wait_for`/`stop_after`) list is the wrong length still matches a
+        legacy default. If we reorder `qualities` but skip the mismatched
+        list, every remaining flag silently describes a different quality
+        than before — e.g. finish[0] was 720p's and now claims to be
+        1080p's. That is worse than leaving the row untouched, because the
+        damage is invisible.
+
+        The row is already broken (MovieSearcher.single() indexes
+        profile['finish'][index] with no length guard), but the migration
+        must not make it *differently* broken.
+        """
+        doc = _legacy_best()
+        doc['finish'] = [True, False, True]  # 3 entries for 4 qualities
+        db = _db_with(doc)
+
+        fixed, checked = fix_profile_quality_order(db)
+
+        assert (fixed, checked) == (0, 1)
+        db.update.assert_not_called()
+        assert doc['qualities'] == ['720p', '1080p', 'brrip', 'dvdrip'], (
+            'the malformed row must be left exactly as found'
+        )
+
+    def test_absent_positional_list_is_still_migratable(self):
+        """Distinguish 'absent' from 'present but wrong length'. An absent
+        list has nothing to detach, so reordering qualities stays safe —
+        this is the older-schema case covered above for '3d'."""
+        doc = _legacy_best()
+        del doc['stop_after']
+        db = _db_with(doc)
+
+        fixed, checked = fix_profile_quality_order(db)
+
+        assert (fixed, checked) == (1, 1)
+        assert db.update.call_args[0][0]['qualities'] == [
+            '1080p', '720p', 'brrip', 'dvdrip',
+        ]
+
     def test_ignores_non_profile_documents(self):
         db = _db_with({'_t': 'movie', '_id': 'x', 'label': 'Best'})
 
