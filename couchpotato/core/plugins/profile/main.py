@@ -12,6 +12,76 @@ from .index import ProfileIndex
 log = CPLog(__name__)
 
 
+# Seeded on a fresh install by ProfilePlugin.fill().
+#
+# ORDER MATTERS: index 0 is the MOST preferred quality (see QualityPlugin
+# .isHigher -- "a lower number means higher quality"), and MovieSearcher
+# .single() walks this list in order and stops at the first successful
+# download. So the first entry is effectively what a profile fetches.
+#
+# BUG-016: these used to be seeded worst-first -- 'Best' led with 720p and so
+# never reached 1080p, and 'UHD 4K' led with 720p and so could never deliver
+# 4K. Keep every list ordered best-first per the canonical ranking in
+# QualityPlugin.qualities. Existing databases are repaired separately by
+# couchpotato/core/migration/fix_profile_quality_order.py.
+#
+# The '3d' entries are consumed back-to-front by build_profile_doc(), so a
+# profile's 3D rungs must come first in its qualities list.
+DEFAULT_PROFILES = [{
+    'label': 'Best',
+    # Deliberately no 2160p: adding it here would silently switch existing
+    # users onto 20-60GB downloads. Users who want 4K have 'UHD 4K'.
+    'qualities': ['1080p', '720p', 'brrip', 'dvdrip']
+}, {
+    'label': 'HD',
+    'qualities': ['1080p', '720p']
+}, {
+    'label': 'SD',
+    'qualities': ['dvdr', 'dvdrip']
+}, {
+    'label': 'Prefer 3D HD',
+    'qualities': ['1080p', '720p', '1080p', '720p'],
+    '3d': [True, True]
+}, {
+    'label': '3D HD',
+    'qualities': ['1080p', '720p'],
+    '3d': [True, True]
+}, {
+    'label': 'UHD 4K',
+    'qualities': ['2160p', '1080p', '720p']
+}]
+
+
+def build_profile_doc(profile, order):
+    """Expand a DEFAULT_PROFILES entry into the document stored in the db.
+
+    `finish`/`wait_for`/`stop_after`/`3d` are positional siblings of
+    `qualities` -- entry N of each describes rung N -- so they are always
+    built to the same length. Defaults are "take the best thing available
+    now, then stop" (finish, no waiting).
+    """
+    doc = {
+        '_t': 'profile',
+        'label': toUnicode(profile.get('label')),
+        'order': order,
+        'qualities': profile.get('qualities'),
+        'minimum_score': 1,
+        'finish': [],
+        'wait_for': [],
+        'stop_after': [],
+        '3d': []
+    }
+
+    threed = list(profile.get('3d', []))
+    for _ in profile.get('qualities'):
+        doc['finish'].append(True)
+        doc['wait_for'].append(0)
+        doc['stop_after'].append(0)
+        doc['3d'].append(threed.pop() if threed else False)
+
+    return doc
+
+
 class ProfilePlugin(Plugin):
 
     _database = {
@@ -219,54 +289,10 @@ class ProfilePlugin(Plugin):
         try:
             db = get_db()
 
-            profiles = [{
-                'label': 'Best',
-                'qualities': ['720p', '1080p', 'brrip', 'dvdrip']
-            }, {
-                'label': 'HD',
-                'qualities': ['720p', '1080p']
-            }, {
-                'label': 'SD',
-                'qualities': ['dvdrip', 'dvdr']
-            }, {
-                'label': 'Prefer 3D HD',
-                'qualities': ['1080p', '720p', '720p', '1080p'],
-                '3d': [True, True]
-            }, {
-                'label': '3D HD',
-                'qualities': ['1080p', '720p'],
-                '3d': [True, True]
-            }, {
-                'label': 'UHD 4K',
-                'qualities': ['720p', '1080p', '2160p']
-            }]
-
-            # Create default quality profile
-            order = 0
-            for profile in profiles:
+            # Create default quality profiles
+            for order, profile in enumerate(DEFAULT_PROFILES):
                 log.info('Creating default profile: %s', profile.get('label'))
-
-                pro = {
-                    '_t': 'profile',
-                    'label': toUnicode(profile.get('label')),
-                    'order': order,
-                    'qualities': profile.get('qualities'),
-                    'minimum_score': 1,
-                    'finish': [],
-                    'wait_for': [],
-                    'stop_after': [],
-                    '3d': []
-                }
-
-                threed = profile.get('3d', [])
-                for q in profile.get('qualities'):
-                    pro['finish'].append(True)
-                    pro['wait_for'].append(0)
-                    pro['stop_after'].append(0)
-                    pro['3d'].append(threed.pop() if threed else False)
-
-                db.insert(pro)
-                order += 1
+                db.insert(build_profile_doc(profile, order))
 
             return True
         except Exception:
