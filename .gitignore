@@ -42,3 +42,13 @@ reports/mutation
 # mutmut cache (3.x uses a mutants dir / sqlite cache)
 .mutmut-cache
 mutants/
+
+# Local agent / design-tooling scaffolding — not part of this project
+/.openclaw/
+/.design-sync/
+/ds-bundle/
+/HEARTBEAT.md
+/IDENTITY.md
+/SOUL.md
+/TOOLS.md
+/USER.md

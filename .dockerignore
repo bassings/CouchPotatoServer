@@ -11,6 +11,8 @@ docker-compose.yml
 .env.*
 .config/
 .openclaw/
+.design-sync/
+ds-bundle/
 HEARTBEAT.md
 IDENTITY.md
 SOUL.md
