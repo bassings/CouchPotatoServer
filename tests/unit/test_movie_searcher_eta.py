@@ -158,6 +158,115 @@ class TestCouldBeReleasedPreReleaseGuard:
         assert result is True
 
 
+class TestCouldBeReleasedUnknownDates:
+    """BUG-017: an EMPTY or absent `dates` mapping meant 'already released'.
+
+    The pre-1972 branch read `if not dates or dates.get('theater', 0) < 0
+    or dates.get('dvd', 0) < 0: return True`. The comment shows the intent —
+    a *negative* epoch is the pre-1970 sentinel — but `not dates` rode along,
+    so an unknown release date returned True and the searcher downloaded.
+
+    Empty is exactly what the caller passes when the lookup fails:
+    `MovieBase.updateReleaseDate()` returns `{}` from its exception handler
+    and whenever the info provider has no release_date yet. Bulk-adding
+    movies (each triggering a search via `search_on_add`) is when provider
+    calls are most likely to come back empty.
+
+    Note the asymmetry that hid this: `{'theater': 0, 'dvd': 0}` already
+    behaved correctly (see TestCouldBeReleasedPreReleaseGuard), so only the
+    falsy-mapping shapes were wrong. See specs/BUG-017-eta-unknown-release-dates.md.
+    """
+
+    @pytest.mark.parametrize('dates', [{}, None], ids=['empty-dict', 'none'])
+    def test_unknown_dates_are_not_releasable(self, searcher, dates):
+        """AC1/AC2 (bug repro): a current-year movie whose release dates
+        could not be resolved must NOT be considered released. Fails against
+        the unfixed code, which returns True for both shapes."""
+        result = searcher.couldBeReleased(
+            False, dates, year=time.gmtime().tm_year,
+        )
+        assert result is False, (
+            "Unknown release dates must not authorise a download"
+        )
+
+    @pytest.mark.parametrize('dates', [{}, None], ids=['empty-dict', 'none'])
+    def test_unknown_dates_are_not_releasable_for_pre_releases(self, searcher, dates):
+        """AC3: same for the pre-release branch — unknown is unknown
+        regardless of which branch asks."""
+        result = searcher.couldBeReleased(
+            True, dates, year=time.gmtime().tm_year,
+        )
+        assert result is False
+
+    @pytest.mark.parametrize('dates', [
+        {'theater': -1},
+        {'dvd': -1},
+        {'theater': -1, 'dvd': 0},
+    ], ids=['theater', 'dvd', 'theater-with-zero-dvd'])
+    def test_negative_epoch_sentinel_still_releasable(self, searcher, dates):
+        """AC4 (regression): the pre-1972 sentinel is the branch's real
+        purpose and must survive removal of the `not dates` clause. Note
+        these dicts are missing a key each — the fix must not reintroduce a
+        TypeError on partial mappings."""
+        result = searcher.couldBeReleased(
+            False, dates, year=time.gmtime().tm_year,
+        )
+        assert result is True
+
+    @pytest.mark.parametrize('dates', [
+        {}, None, {'theater': 0, 'dvd': 0},
+    ], ids=['empty-dict', 'none', 'explicit-zeros'])
+    def test_old_movie_with_unknown_dates_is_still_releasable(self, searcher, dates):
+        """AC5 (regression): the *other* `not dates` test — the top-of-method
+        'old movie and no dates' heuristic at line 381 — is deliberate and
+        must be left intact. A film two years old cannot be unreleased, so
+        assuming released is right there. Only the pre-1972 branch changes."""
+        old_year = time.gmtime().tm_year - 2
+        result = searcher.couldBeReleased(False, dates, year=old_year)
+        assert result is True
+
+    def test_unknown_year_with_unknown_dates_is_still_releasable(self, searcher):
+        """Regression: `year=None` also routes to the line-381 heuristic
+        (catalogue entries with no year at all)."""
+        assert searcher.couldBeReleased(False, {}, year=None) is True
+
+
+class TestAlwaysSearchDescription:
+    """AC7: `always_search` does not merely widen searching — at
+    `MovieSearcher.single()` it is also one of the three conditions that
+    authorise the download (`force_download or not could_not_be_released or
+    always_search`). The description said only 'Search for movies even
+    before there is a ETA', so a user could enable it expecting to review
+    results manually and instead get automatic pre-ETA grabs.
+
+    Behaviour is deliberately unchanged (people have configured around it);
+    only the description is corrected. See specs/BUG-017.
+    """
+
+    def _always_search_option(self):
+        from couchpotato.core.media.movie.searcher import config
+
+        for plugin in config:
+            for group in plugin.get('groups', []):
+                for option in group.get('options', []):
+                    if option.get('name') == 'always_search':
+                        return option
+        raise AssertionError('always_search option not found in config')
+
+    def test_description_mentions_downloading_not_just_searching(self):
+        description = self._always_search_option()['description'].lower()
+
+        assert 'download' in description, (
+            "always_search also bypasses the ETA gate for downloads; the "
+            "description must say so, got: %r" % description
+        )
+
+    def test_default_is_still_off(self):
+        """Regression guard: the honest description must not come with a
+        quiet default flip."""
+        assert self._always_search_option()['default'] is False
+
+
 class TestCouldBeReleasedMissingDateKeys:
     """Latent TypeError hardening: `dates.get('theater')` / `dates.get('dvd')`
     without an explicit default return None for a dict that has other keys

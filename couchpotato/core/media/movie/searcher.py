@@ -378,6 +378,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         now_year = date.today().year
         now_month = date.today().month
 
+        # updateReleaseDate() returns {} both from its exception handler and
+        # when the info provider simply has no release_date yet, and callers
+        # may pass None. Normalise once so the .get() calls below are safe
+        # without a `not dates` short-circuit -- see BUG-017.
+        dates = dates or {}
+
         if (year is None or year < now_year - 1 or (year <= now_year - 1 and now_month > 4)) and (not dates or (dates.get('theater', 0) == 0 and dates.get('dvd', 0) == 0)):
             return True
         else:
@@ -387,8 +393,16 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             if year is not None and year > (now_year + add_year):
                 return False
 
-            # For movies before 1972
-            if not dates or dates.get('theater', 0) < 0 or dates.get('dvd', 0) < 0:
+            # For movies before 1972 (a negative epoch is the sentinel).
+            #
+            # BUG-017: this used to also match `not dates`, so an UNKNOWN
+            # release date was read as "already released" and authorised a
+            # download. Unknown dates now fall through every branch below to
+            # the closing `return False` -- unknown means not yet released.
+            # The similar `not dates` test at the top of this method is a
+            # different, deliberate case ("old movie AND no dates"): a film
+            # two years in the past cannot be unreleased.
+            if dates.get('theater', 0) < 0 or dates.get('dvd', 0) < 0:
                 return True
 
             if is_pre_release:
@@ -554,7 +568,7 @@ config = [{
                     'migrate_from': 'searcher',
                     'type': 'bool',
                     'label': 'Always search',
-                    'description': 'Search for movies even before there is a ETA. Enabling this will probably get you a lot of fakes.',
+                    'description': 'Search for <em>and download</em> movies even before there is an ETA. This bypasses the release-date gate entirely, not just the search, so you will probably get a lot of fakes and early grabs.',
                 },
                 {
                     'name': 'run_on_launch',
