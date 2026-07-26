@@ -231,6 +231,131 @@ class TestCouldBeReleasedUnknownDates:
         assert searcher.couldBeReleased(False, {}, year=None) is True
 
 
+class TestConfigurableWaitAfterRelease:
+    """BUG-017: the theatrical unlock was hardcoded at 12 weeks
+    (`theater + 7257600 < now`), written when physical media was the target.
+
+    Now that release dates are actually populated, that constant decides when
+    every movie in a library becomes downloadable, so it is a setting rather
+    than a magic number. Default 0 -- a film unlocks once its release date has
+    passed; set 84 for the old behaviour.
+    """
+
+    def _released_days_ago(self, days):
+        return {'theater': int(time.time()) - days * 86400, 'dvd': 0}
+
+    def test_default_unlocks_once_the_release_date_has_passed(self):
+        """AC12: yesterday's release is downloadable at the default."""
+        searcher = object.__new__(MovieSearcher)
+
+        result = searcher.couldBeReleased(
+            False, self._released_days_ago(1), year=time.gmtime().tm_year,
+        )
+        assert result is True
+
+    def test_future_release_is_not_downloadable_at_the_default(self):
+        """AC14: the reported bug, end to end. An unreleased film must not be
+        grabbed even though the default wait is zero."""
+        searcher = object.__new__(MovieSearcher)
+        future = {'theater': int(time.time()) + 30 * 86400, 'dvd': 0}
+
+        result = searcher.couldBeReleased(
+            False, future, year=time.gmtime().tm_year,
+        )
+        assert result is False
+
+    def test_wait_days_holds_back_a_recent_release(self):
+        """AC12: with a 7-day wait, yesterday's release is still too early."""
+        searcher = object.__new__(MovieSearcher)
+
+        result = searcher.couldBeReleased(
+            False, self._released_days_ago(1),
+            year=time.gmtime().tm_year, wait_days=7,
+        )
+        assert result is False
+
+    def test_wait_days_elapses(self):
+        """AC12: ...and is downloadable once the wait has elapsed."""
+        searcher = object.__new__(MovieSearcher)
+
+        result = searcher.couldBeReleased(
+            False, self._released_days_ago(10),
+            year=time.gmtime().tm_year, wait_days=7,
+        )
+        assert result is True
+
+    def test_legacy_twelve_week_behaviour_is_reproducible(self):
+        """The old hardcoded constant was 7257600s = 84 days. A user who
+        wants it back must be able to get exactly it."""
+        searcher = object.__new__(MovieSearcher)
+
+        assert searcher.couldBeReleased(
+            False, self._released_days_ago(83),
+            year=time.gmtime().tm_year, wait_days=84,
+        ) is False
+        assert searcher.couldBeReleased(
+            False, self._released_days_ago(85),
+            year=time.gmtime().tm_year, wait_days=84,
+        ) is True
+
+    def test_wait_days_does_not_affect_the_pre_release_window(self):
+        """The pre-release branch (cam/ts/scr, 1 week before theatres) is a
+        separate rule about pre-release *qualities* and must not be shifted
+        by a setting about waiting after release."""
+        searcher = object.__new__(MovieSearcher)
+        soon = {'theater': int(time.time()) + 3 * 86400, 'dvd': 0}
+
+        assert searcher.couldBeReleased(
+            True, soon, year=time.gmtime().tm_year, wait_days=30,
+        ) is True
+
+    @pytest.mark.parametrize('wait_days', [None, 0, '', 'abc'])
+    def test_unusable_wait_values_fall_back_to_no_wait(self, searcher, wait_days):
+        """The setting arrives from config as a string and may be blank.
+        A junk value must mean 'no wait', never a crash or an infinite hold."""
+        result = searcher.couldBeReleased(
+            False, self._released_days_ago(1),
+            year=time.gmtime().tm_year, wait_days=wait_days,
+        )
+        assert result is True
+
+
+class TestWaitForReleaseSetting:
+    """AC13 — the setting exists, is sane, and is actually wired up."""
+
+    def _option(self, name):
+        from couchpotato.core.media.movie.searcher import config
+
+        for plugin in config:
+            for group in plugin.get('groups', []):
+                for option in group.get('options', []):
+                    if option.get('name') == name:
+                        return option
+        raise AssertionError('%s option not found in config' % name)
+
+    def test_setting_exists_and_defaults_to_no_wait(self):
+        option = self._option('wait_for_release')
+
+        assert option['default'] == 0
+        assert option['type'] == 'int'
+
+    def test_single_passes_the_setting_to_could_be_released(self):
+        """A setting nothing reads is worse than no setting. Pin the wiring
+        so a refactor cannot quietly drop it."""
+        import inspect
+
+        from couchpotato.core.media.movie.searcher import MovieSearcher
+
+        source = inspect.getsource(MovieSearcher.single)
+
+        assert "self.conf('wait_for_release')" in source, (
+            'single() must read the wait_for_release setting'
+        )
+        assert 'wait_days' in source, (
+            'single() must pass wait_days through to couldBeReleased'
+        )
+
+
 class TestAlwaysSearchDescription:
     """AC7: `always_search` does not merely widen searching — at
     `MovieSearcher.single()` it is also one of the three conditions that

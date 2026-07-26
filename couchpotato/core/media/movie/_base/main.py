@@ -1,3 +1,4 @@
+import calendar
 import sqlite3
 import traceback
 import time
@@ -14,6 +15,53 @@ from couchpotato.core.media_lock import media_lock
 
 
 log = CPLog(__name__)
+
+
+def releaseDatesFromInfo(info):
+    """Derive the ETA mapping from the release date the info provider already
+    stored on the movie document.
+
+    BUG-017: `movie.info.release_date` has no handler anywhere, so the
+    mapping the ETA gate reads was always empty and the gate never held
+    anything back. The date itself was always present -- the TMDB provider
+    writes TMDB's `release_date` to `info['released']`.
+
+    Returns ``{'theater': <utc epoch>, 'dvd': 0}``, or ``{}`` when nothing
+    usable is there. `dvd` is deliberately left unknown rather than guessed:
+    a fabricated dvd date would unlock the "4 weeks before dvd" early-download
+    path in couldBeReleased().
+    """
+    if not isinstance(info, dict):
+        return {}
+
+    released = info.get('released')
+    if not isinstance(released, str):
+        return {}
+
+    # `str(movie.get('release_date'))` in the TMDB provider turns a missing
+    # date into the literal 'None', which is truthy -- reject it explicitly.
+    released = released.strip()
+    if not released or released.lower() == 'none':
+        return {}
+
+    # Some providers append a time component; the date part is what we want.
+    date_part = released.split(' ')[0].split('T')[0]
+
+    try:
+        year, month, day = (int(x) for x in date_part.split('-'))
+        # timegm, not mktime: the gate compares against int(time.time()),
+        # which is UTC, so a local-time parse would shift the unlock by up
+        # to a day depending on the server's timezone.
+        theater = calendar.timegm((year, month, day, 0, 0, 0, 0, 0, 0))
+    except (ValueError, TypeError, AttributeError):
+        return {}
+
+    # Reject impossible dates that still parse as integers (e.g. 2026-13-45):
+    # timegm normalises them silently rather than raising.
+    if not (1 <= month <= 12 and 1 <= day <= 31):
+        return {}
+
+    return {'theater': theater, 'dvd': 0}
 
 
 class MovieBase(MovieTypeBase):
@@ -422,10 +470,25 @@ class MovieBase(MovieTypeBase):
             else:
                 dates = media.get('info').get('release_date')
 
+            # A stale `[]` may be cached here: older versions stored whatever
+            # the unhandled event returned, on every search.
+            if not isinstance(dates, dict):
+                dates = None
+
             if dates and (dates.get('expires', 0) < time.time() or dates.get('expires', 0) > time.time() + (604800 * 4)) or not dates:
-                dates = fireEvent('movie.info.release_date', identifier = getIdentifier(media), merge = True)
-                media['info'].update({'release_date': dates})
-                db.update(media)
+                fetched = fireEvent('movie.info.release_date', identifier = getIdentifier(media), merge = True)
+
+                if isinstance(fetched, dict) and fetched:
+                    dates = fetched
+                    media['info'].update({'release_date': dates})
+                    db.update(media)
+                else:
+                    # No provider implements movie.info.release_date, so this
+                    # is the normal path (BUG-017). Derive from the date the
+                    # info provider already stored. Not written back: it is
+                    # free to recompute, and persisting it would mean a db
+                    # write per movie per search cycle for no benefit.
+                    dates = releaseDatesFromInfo(media.get('info') or {})
 
             return dates
         except Exception:
