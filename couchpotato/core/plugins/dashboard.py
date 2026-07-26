@@ -72,7 +72,19 @@ class Dashboard(Plugin):
                 pp = profile_pre.get(media.get('profile_id'))
                 if not pp: continue
 
-                eta = media['info'].get('release_date', {}) or {}
+                # Nothing populates info['release_date'] -- `movie.info
+                # .release_date` has no handler -- so fall back to deriving
+                # it from the date the info provider did store, exactly as
+                # MovieBase.updateReleaseDate() does. Without this the ETA
+                # gate answers "not released" for every movie and the view
+                # lists nothing. Imported here rather than at module scope:
+                # the plugin loader swallows ImportError at DEBUG, so a
+                # load-order problem would silently disable the dashboard.
+                from couchpotato.core.media.movie._base.main import releaseDatesFromInfo
+
+                eta = media['info'].get('release_date') or {}
+                if not isinstance(eta, dict) or not eta:
+                    eta = releaseDatesFromInfo(media['info'])
                 coming_soon = False
 
                 # Theater quality
@@ -84,7 +96,10 @@ class Dashboard(Plugin):
                 if coming_soon:
 
                     # Don't list older movies
-                    eta_date = eta.get(coming_soon)
+                    # A derived mapping only knows 'theater' ('dvd' is left
+                    # unknown rather than guessed), so fall back to it --
+                    # otherwise the 'late' cutoff can never match.
+                    eta_date = eta.get(coming_soon) or eta.get('theater')
                     eta_3month_passed = (eta_date < (now - 7862400)) if eta_date else False  # Release was more than 3 months ago
 
                     if (not late and not eta_3month_passed) or \
