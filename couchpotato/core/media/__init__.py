@@ -94,7 +94,7 @@ class MediaBase(Plugin):
 
         # Loop over type
         for image in images:
-            if not isinstance(image, (str, unicode)):
+            if not isinstance(image, str):
                 continue
 
             # Check if it has top image

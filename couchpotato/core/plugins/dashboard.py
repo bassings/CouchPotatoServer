@@ -41,7 +41,7 @@ class Dashboard(Plugin):
         # Add limit
         limit = 12
         if limit_offset:
-            splt = splitString(limit_offset) if isinstance(limit_offset, (str, unicode)) else limit_offset
+            splt = splitString(limit_offset) if isinstance(limit_offset, str) else limit_offset
             limit = tryInt(splt[0])
 
         # Get all active medias
