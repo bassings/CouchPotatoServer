@@ -12,6 +12,57 @@ log = CPLog(__name__)
 events = {}
 _events_lock = threading.Lock()
 
+# Event names that are deliberately fired with no handler in this tree.
+#
+# fireEvent() returns [] for an unhandled name, which is indistinguishable from
+# "handled, found nothing" -- so a mis-wired event does not fail, the feature
+# behind it just quietly does nothing. `movie.info.release_date` sat like that
+# for the life of the fork and left the release-date gate with no dates at all
+# (BUG-017). Everything below is either a deliberate extension point or a
+# known gap recorded here; anything else warns once at runtime and fails
+# tests/unit/test_event_wiring.py.
+OPTIONAL_EVENTS = frozenset({
+    # Extension points with no in-tree implementation. Unhandled is harmless:
+    # each caller degrades to a default rather than depending on a result.
+    'cp.messages',       # broadcast messages from the (defunct) couchpotato.com
+    'release.validate',  # optional custom release-name validation; contributes 0 to the score
+    # Known gaps, not extension points. Listed so the audit stays green, NOT
+    # because unhandled is correct here:
+    'movie.info.release_date',
+    # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around by
+    #   deriving the date from info['released'] instead of adding a handler.
+    'cp.source_url',
+    # ^ SourceUpdater.doUpdate() would raise AttributeError on the None this
+    #   returns. Unreachable in practice -- that updater is selected only for a
+    #   downloaded-source install (not Docker, not a git checkout), neither of
+    #   which this project ships. Pre-existing; fix or delete that path.
+})
+
+# Per-dispatch and per-setting hooks. These are opt-in by design and are
+# unhandled for nearly every name they are generated for, so warning about
+# them would drown the signal:
+#
+#   result.modify.<name>, <name>.after  -- fireEvent() derives BOTH from EVERY
+#       dispatch (see the calls at the end of this module), so warning would
+#       mean two useless lines per event name in the system.
+#   setting.save.<section>.<option>     -- Settings.save() fires one per saved
+#       option; only a handful of options have a handler, so a single settings
+#       save would emit a warning per option without one.
+OPTIONAL_EVENT_PREFIXES = ('result.modify.', 'setting.save.')
+OPTIONAL_EVENT_SUFFIXES = ('.after',)
+
+
+def _isOptionalEvent(name):
+    return (name in OPTIONAL_EVENTS
+            or name.startswith(OPTIONAL_EVENT_PREFIXES)
+            or name.endswith(OPTIONAL_EVENT_SUFFIXES))
+
+# Names already reported by fireEvent(); it is hot, so this is one line per
+# name for the process lifetime, not one per call. Plain set: adds and
+# membership tests are atomic under the GIL, and a duplicated warning in a
+# race is harmless.
+_warned_unhandled = set()
+
 # blinker namespace (not used for dispatch, but available for introspection)
 _ns = Namespace()
 
@@ -93,6 +144,16 @@ def fireEvent(name, *args, **kwargs):
         handlers = list(events.get(name, []))
 
     if not handlers:
+        # Say so once. Silence here is how a dead event hides: callers cannot
+        # tell "nothing handled this" from "handled, no result". Static
+        # analysis covers literal names (test_event_wiring.py); this also
+        # catches the templated ones ('%s.snatched' % media_type) that only
+        # become concrete here.
+        if not _isOptionalEvent(name) and name not in _warned_unhandled:
+            _warned_unhandled.add(name)
+            log.warning('Event "%s" was fired but nothing handles it; it did '
+                        'nothing. Either register a handler or add the name to '
+                        'OPTIONAL_EVENTS in couchpotato/core/event.py.', name)
         return []
 
     try:

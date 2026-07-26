@@ -26,8 +26,12 @@ class Manage(Plugin):
     def __init__(self):
         self._progress_lock = threading.Lock()
 
-        fireEvent('scheduler.interval', identifier = 'manage.update_library', handle = self.updateLibrary, hours = 2)
-
+        # A fireEvent('scheduler.interval', ...) call used to sit here. The
+        # event is 'schedule.interval' (singular), so it scheduled nothing.
+        # Removed rather than corrected: setCrons() below already registers
+        # this job with the user's configured library_refresh_interval, and
+        # only when it is > 0. Fixing the typo would have forced a hardcoded
+        # 2-hour rescan that overrides the user's ability to turn it off.
         addEvent('manage.update', self.updateLibrary)
         addEvent('manage.diskspace', self.getDiskSpace)
 
