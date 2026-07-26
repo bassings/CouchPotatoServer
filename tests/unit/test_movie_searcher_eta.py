@@ -340,19 +340,66 @@ class TestWaitForReleaseSetting:
         assert option['type'] == 'int'
 
     def test_single_passes_the_setting_to_could_be_released(self):
-        """A setting nothing reads is worse than no setting. Pin the wiring
-        so a refactor cannot quietly drop it."""
-        import inspect
+        """A setting nothing reads is worse than no setting.
+
+        This drives single() for real and asserts on the call, rather than
+        grepping its source: a source check stays green if the value is read
+        into a variable and then silently dropped before the call, which is
+        exactly the regression worth guarding against.
+        """
+        from unittest.mock import MagicMock, patch
 
         from couchpotato.core.media.movie.searcher import MovieSearcher
 
-        source = inspect.getsource(MovieSearcher.single)
+        searcher = MovieSearcher.__new__(MovieSearcher)
+        movie = {
+            '_id': 'movie-1', 'title': 'Test', 'profile_id': 'profile-1',
+            'status': 'active', 'releases': [],
+            'info': {'year': 2026, 'titles': ['Test']},
+            'identifiers': {'imdb': 'tt1234567'},
+        }
+        profile = {
+            '_id': 'profile-1', 'qualities': ['1080p'], 'finish': [True],
+            'wait_for': [0], 'stop_after': [0], '3d': [False],
+            'minimum_score': 1,
+        }
 
-        assert "self.conf('wait_for_release')" in source, (
-            'single() must read the wait_for_release setting'
-        )
-        assert 'wait_days' in source, (
-            'single() must pass wait_days through to couldBeReleased'
+        def fake_fire_event(name, *args, **kwargs):
+            return {
+                'quality.pre_releases': [],
+                'movie.update_release_dates': {'theater': 1, 'dvd': 0},
+                'quality.single': {'identifier': '1080p', 'label': '1080p'},
+                'searcher.search': [],
+                'media.get': movie,
+                'release.create_from_search': [],
+                'release.try_download_result': False,
+                'media.restatus': 'active',
+            }.get(name)
+
+        db = MagicMock()
+        db.get.return_value = profile
+
+        # 'always_search' must stay falsy or the ETA branch is skipped.
+        conf = MagicMock(side_effect=lambda name, **kw: {
+            'always_search': False, 'wait_for_release': 21,
+        }.get(name))
+
+        # With always_search falsy, single() takes the "ignore eta once every
+        # 7 days" path, which reads Env.prop; float() needs a real number.
+        env = MagicMock()
+        env.prop.return_value = 0
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire_event), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie.searcher.Env', env), \
+                patch.object(searcher, 'conf', conf), \
+                patch.object(searcher, 'couldBeReleased', return_value=True) as could:
+            searcher.single(movie, search_protocols=['nzb'])
+
+        assert could.called, 'single() must consult couldBeReleased'
+        assert could.call_args.kwargs.get('wait_days') == 21, (
+            'single() must pass the configured wait through, got %r'
+            % (could.call_args,)
         )
 
 

@@ -49,17 +49,33 @@ def releaseDatesFromInfo(info):
 
     try:
         year, month, day = (int(x) for x in date_part.split('-'))
-        # timegm, not mktime: the gate compares against int(time.time()),
-        # which is UTC, so a local-time parse would shift the unlock by up
-        # to a day depending on the server's timezone.
-        theater = calendar.timegm((year, month, day, 0, 0, 0, 0, 0, 0))
     except (ValueError, TypeError, AttributeError):
         return {}
 
-    # Reject impossible dates that still parse as integers (e.g. 2026-13-45):
-    # timegm normalises them silently rather than raising.
-    if not (1 <= month <= 12 and 1 <= day <= 31):
+    # Reject impossible dates. timegm() NORMALISES them silently rather than
+    # raising -- 2026-02-30 becomes 2026-03-02 -- and a quietly shifted
+    # unlock date is worse than a rejected one because nothing surfaces it.
+    # monthrange, not `day <= 31`, so Feb 30 and Apr 31 are caught too.
+    if not 1 <= month <= 12:
         return {}
+    if not 1 <= day <= calendar.monthrange(year, month)[1]:
+        return {}
+
+    # Anything before the epoch is treated as unknown rather than derived.
+    # TMDB uses 1900-01-01 to mean "no release date" -- themoviedb.py already
+    # nulls `year` for it ("1900 is the same as None") but still writes the
+    # placeholder to `released`. Taking it literally would reopen BUG-017:
+    # a negative epoch is couldBeReleased()'s pre-1972 "definitely out"
+    # sentinel, so an unknown date would authorise an immediate download.
+    # Genuinely old films lose nothing -- an old `year` routes them to the
+    # "old movie, no dates" heuristic, which already assumes released.
+    if year < 1970:
+        return {}
+
+    # timegm, not mktime: the gate compares against int(time.time()), which
+    # is UTC, so a local-time parse would shift the unlock by up to a day
+    # depending on the server's timezone.
+    theater = calendar.timegm((year, month, day, 0, 0, 0, 0, 0, 0))
 
     return {'theater': theater, 'dvd': 0}
 

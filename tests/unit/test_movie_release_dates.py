@@ -75,6 +75,57 @@ class TestReleaseDatesFromInfo:
     def test_tolerates_a_non_dict(self):
         assert releaseDatesFromInfo(None) == {}
 
+    def test_rejects_the_tmdb_1900_placeholder(self):
+        """TMDB uses 1900-01-01 to mean "no release date". The provider
+        already knows this -- themoviedb.py has `# 1900 is the same as None`
+        and nulls `year` for it -- but it still writes the placeholder to
+        `released`.
+
+        Taking it literally is not merely wrong, it reopens this very bug:
+        1900 is a NEGATIVE epoch, and couldBeReleased() treats a negative
+        date as the pre-1972 "definitely already out" sentinel and returns
+        True before any wait is applied. So an unknown release date would
+        once again authorise an immediate download.
+        """
+        assert releaseDatesFromInfo({'released': '1900-01-01'}) == {}
+
+    @pytest.mark.parametrize('released', [
+        '1900-01-01', '1899-12-31', '1965-06-01', '1969-12-31',
+    ])
+    def test_rejects_pre_epoch_dates(self, released):
+        """More generally: never derive a negative epoch, because it collides
+        with the pre-1972 sentinel. Genuinely old films are not harmed -- an
+        old `year` routes them to couldBeReleased()'s "old movie, no dates"
+        heuristic, which assumes released. Being unknown is the right answer
+        here; being negative is an assertion we don't want to make."""
+        assert releaseDatesFromInfo({'released': released}) == {}
+
+    def test_accepts_the_first_representable_date(self):
+        """The boundary: 1970-01-01 is epoch 0, which is not negative and so
+        does not trip the sentinel."""
+        assert releaseDatesFromInfo({'released': '1970-01-01'}) == {
+            'theater': 0, 'dvd': 0,
+        }
+
+    @pytest.mark.parametrize('released', [
+        '2026-02-30',   # February never has 30 days
+        '2026-04-31',   # April has 30
+        '2023-02-29',   # not a leap year
+    ], ids=['feb-30', 'apr-31', 'non-leap-feb-29'])
+    def test_rejects_impossible_days_for_the_month(self, released):
+        """`timegm` silently NORMALISES an impossible day rather than
+        raising -- 2026-02-30 becomes 2026-03-02 -- so a day <= 31 check is
+        not enough. A quietly shifted unlock date is worse than a rejected
+        one, because nothing surfaces it."""
+        assert releaseDatesFromInfo({'released': released}) == {}
+
+    def test_accepts_a_real_leap_day(self):
+        """The mirror of the above: 2024 IS a leap year, so this is valid and
+        must not be rejected by an over-eager guard."""
+        dates = releaseDatesFromInfo({'released': '2024-02-29'})
+
+        assert dates['theater'] == _epoch(2024, 2, 29)
+
     def test_accepts_a_datetime_style_string(self):
         """Some providers append a time component; take the date part."""
         dates = releaseDatesFromInfo({'released': '2026-08-14 00:00:00'})
