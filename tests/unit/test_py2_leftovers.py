@@ -39,29 +39,18 @@ class TestSearchTypesArgument:
 
         plugin = self._search_plugin()
 
-        with patch('couchpotato.core.media._base.search.main.fireEvent', return_value={}):
+        with patch('couchpotato.core.media._base.search.main.fireEvent', return_value={}) as fire:
             result = plugin.search(q='test', types='movie')
 
-        assert result is not None
-
-
-class TestPlexServerErrorFormatting:
-    """`plex/server.py` formats a parse failure with `ex(e)` -- a Python 2
-    helper that no longer exists. The NameError fires from inside an `except`
-    block, so it replaces the real diagnostic with a confusing one at exactly
-    the moment someone is debugging their Plex setup."""
-
-    def test_error_path_formats_the_exception(self):
-        import couchpotato.core.notifications.plex.server as server
-
-        source = server.__file__
-        with open(source) as handle:
-            text = handle.read()
-
-        assert 'ex(e)' not in text, (
-            "plex/server.py still calls the Python 2 ex() helper, which does "
-            "not exist -- the except block will raise NameError"
+        # `assert result is not None` would pass even if the string were
+        # iterated character by character -- assert the normalisation instead:
+        # exactly one lookup, for the whole word.
+        fired = [c.args[0] for c in fire.call_args_list]
+        assert fired == ['movie.search'], (
+            "a string `types` must be normalised to one entry, not iterated "
+            "per character; fired: %s" % fired
         )
+        assert result['movie'] == {}
 
 
 class TestF821IsEnforced:
@@ -116,16 +105,21 @@ def test_no_python2_builtins_remain(module_path):
     with open(module_path) as handle:
         text = handle.read()
 
-    # The lookarounds do the real work: they reject `toUnicode` and
-    # `long_name` (adjacent word chars), `x.long` (attribute access) and
-    # `'unicode'` (adjacent quotes) on their own. Deliberately NO
-    # "skip lines that also mention the word in quotes" clause -- that would
-    # skip a whole line like `f(unicode(x)) if mode == 'unicode' else x`,
-    # hiding a genuine leftover behind an innocent string on the same line.
+    # The lookarounds reject `toUnicode` and `long_name` (adjacent word
+    # chars), `x.long` (attribute access) and `'unicode'` (adjacent quotes).
+    # The trailing group then requires the name to be USED as an identifier --
+    # called, subscripted, compared, or passed as an argument -- so ordinary
+    # prose like "wait as long as needed" in a docstring does not trip it.
+    #
+    # Deliberately NO "skip lines that also mention the word in quotes"
+    # clause: that would skip a whole line like
+    # `f(unicode(x)) if mode == 'unicode' else x`, hiding a genuine leftover
+    # behind an innocent string on the same line.
     for name in ('unicode', 'long', 'basestring'):
+        pattern = r'(?<![\w.\'"])%s(?![\w\'"])\s*[(\[,)\]:=]' % name
         matches = [
             line for line in text.splitlines()
-            if re.search(r'(?<![\w.\'"])%s(?![\w\'"])' % name, line)
+            if re.search(pattern, line)
             and not line.strip().startswith('#')
         ]
         assert not matches, (

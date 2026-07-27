@@ -88,10 +88,18 @@ class TestLimitOffset:
 
         assert len(result['movies']) == 12
 
-    @pytest.mark.parametrize('bad', ['abc', ''])
-    def test_junk_limit_does_not_crash(self, bad):
-        """tryInt() yields 0 for junk. Whatever the resulting count, the view
-        must answer rather than raise -- this is a public API surface."""
-        result = _run(bad)
+    def test_junk_limit_does_not_crash(self):
+        """A non-numeric limit reaches the parsing block (it is truthy) and
+        tryInt() yields 0. Whatever the resulting count, the view must answer
+        rather than raise -- this is a public API surface."""
+        result = _run('abc')
 
         assert 'movies' in result
+
+    def test_empty_limit_falls_through_to_the_default(self):
+        """'' is falsy, so it never reaches the parsing block at all -- it
+        takes the same path as no parameter. Asserted explicitly so the case
+        is not mistaken for coverage of the parsing code."""
+        result = _run('', count=20)
+
+        assert len(result['movies']) == 12
