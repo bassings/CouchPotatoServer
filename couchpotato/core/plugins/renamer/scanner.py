@@ -78,7 +78,8 @@ class ScannerMixin:
                     # dict (createFromSearch's populate loop died on the
                     # Python 2 names before storing anything), so direct
                     # rel['info']['name'] access KeyErrors on real data.
-                    rel_name = (rel.get('info') or {}).get('name') or ''
+                    rel_info = rel.get('info') or {}
+                    rel_name = rel_info.get('name') or ''
 
                     if not isinstance(download_info, dict):
                         log.error('Faulty release found without any info, ignoring.')
@@ -90,7 +91,7 @@ class ScannerMixin:
                         scan_required = True
                         continue
 
-                    nzbname = self.createNzbName(rel['info'], movie_dict)
+                    nzbname = self.createNzbName(rel_info, movie_dict)
 
                     found_release = False
                     for release_download in release_downloads:
