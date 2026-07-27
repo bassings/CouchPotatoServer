@@ -15,6 +15,7 @@ reachable paths behaviourally; `test_f821_is_enforced` pins the mechanism so
 the rule cannot be quietly switched off again.
 """
 
+import ast
 import pathlib
 
 import pytest
@@ -97,32 +98,59 @@ class TestF821IsEnforced:
     'couchpotato/core/media/_base/providers/torrent/torrentday.py',
 ])
 def test_no_python2_builtins_remain(module_path):
-    """A cheap, direct assertion per known-affected file. F821 in CI is the
-    general guard; this names the specific files so a regression points
-    straight at the history."""
-    import re
+    """A direct assertion per known-affected file. F821 in CI is the general
+    guard; this names the specific files so a regression points straight at
+    the history.
 
-    with open(module_path) as handle:
-        text = handle.read()
+    Uses the AST rather than a regex. Two earlier regex attempts both failed
+    in opposite directions: a loose pattern matched ordinary prose ("wait as
+    long as needed" in a docstring), and tightening it to require trailing
+    punctuation then MISSED real leftovers like `text_type = unicode` and a
+    bare name as the last element of a wrapped tuple. Name nodes have neither
+    problem -- comments and string literals are not names, and a name is a
+    name wherever it appears.
 
-    # The lookarounds reject `toUnicode` and `long_name` (adjacent word
-    # chars), `x.long` (attribute access) and `'unicode'` (adjacent quotes).
-    # The trailing group then requires the name to be USED as an identifier --
-    # called, subscripted, compared, or passed as an argument -- so ordinary
-    # prose like "wait as long as needed" in a docstring does not trip it.
-    #
-    # Deliberately NO "skip lines that also mention the word in quotes"
-    # clause: that would skip a whole line like
-    # `f(unicode(x)) if mode == 'unicode' else x`, hiding a genuine leftover
-    # behind an innocent string on the same line.
-    for name in ('unicode', 'long', 'basestring'):
-        pattern = r'(?<![\w.\'"])%s(?![\w\'"])\s*[(\[,)\]:=]' % name
-        matches = [
-            line for line in text.splitlines()
-            if re.search(pattern, line)
-            and not line.strip().startswith('#')
-        ]
-        assert not matches, (
-            '%s still references the Python 2 builtin %r: %s'
-            % (module_path, name, matches[:3])
-        )
+    Only Load context counts: reading `unicode` is the bug. A local variable
+    that happens to be called `file` or `buffer` is not.
+    """
+    root = pathlib.Path(__file__).resolve().parents[2]
+    tree = ast.parse((root / module_path).read_text())
+
+    offenders = sorted({
+        '%s (line %d)' % (node.id, node.lineno)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in ('unicode', 'long', 'basestring', 'xrange', 'raw_input')
+    })
+
+    assert not offenders, (
+        '%s still reads Python 2 builtins: %s' % (module_path, offenders)
+    )
+
+
+@pytest.mark.parametrize('source,should_flag', [
+    ('isinstance(x, (str, unicode))', True),
+    ('y = unicode(v)', True),
+    ('text_type = unicode', True),                    # missed by the tight regex
+    ('T = (\n    str,\n    unicode\n)', True),       # bare name in a wrapped tuple
+    ('def f():\n    """wait as long as needed"""', False),   # prose in a docstring
+    ('s = "a long time"', False),                     # prose in a string
+    ('# unicode was removed', False),                 # prose in a comment
+    ('text = toUnicode(v)', False),                   # different identifier
+    ('a = long_name', False),
+    ('b = obj.long', False),                          # attribute, not a name
+    ('for file in files:\n    pass', False),           # Store context
+], ids=lambda v: str(v)[:38])
+def test_builtin_detector_discriminates(source, should_flag):
+    """Pins both failure directions the earlier regexes fell into."""
+    tree = ast.parse(source)
+
+    flagged = any(
+        isinstance(node, ast.Name)
+        and isinstance(node.ctx, ast.Load)
+        and node.id in ('unicode', 'long', 'basestring', 'xrange', 'raw_input')
+        for node in ast.walk(tree)
+    )
+
+    assert flagged is should_flag
