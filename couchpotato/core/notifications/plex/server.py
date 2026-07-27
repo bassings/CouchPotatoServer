@@ -58,10 +58,20 @@ class PlexServer:
                 req.add_header("X-Plex-Client-Identifier", "b3a6b24dcab2224bdb101fc6aa08ea5e2f3147d6")
                 req.add_header("X-Plex-Version", "1.0")
 
+                response = None
                 try:
                     response = urllib.request.urlopen(req)
-                except urllib.error.URLError as e:
+                except urllib.error.URLError:
                     log.info('Error fetching token from plex.tv: %s', traceback.format_exc())
+
+                # Without this guard `response` stays unbound when urlopen
+                # raises -- the handler above only logs -- and etree.parse()
+                # below then raises NameError, which neither except clause
+                # catches. Same class of latent crash as the ex() call this
+                # commit fixes, one line further up.
+                if response is None:
+                    log.info('No plex.tv response to parse; skipping token fetch')
+                    return None
 
                 try:
                     auth_tree = etree.parse(response)
@@ -69,7 +79,7 @@ class PlexServer:
                     self.plex.conf('auth_token', token)
 
                 except (ValueError, IndexError) as e:
-                    log.info("Error parsing plex.tv response: " + ex(e))
+                    log.info("Error parsing plex.tv response: %s", e)
 
             #Add X-Plex-Token header for myPlex support workaround
             data = self.plex.urlopen('%s/%s?X-Plex-Token=%s' % (

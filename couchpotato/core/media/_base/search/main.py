@@ -30,7 +30,7 @@ class Search(Plugin):
     def search(self, q = '', types = None, **kwargs):
 
         # Make sure types is the correct instance
-        if isinstance(types, (str, unicode)):
+        if isinstance(types, str):
             types = [types]
         elif isinstance(types, (list, tuple, set)):
             types = list(types)
