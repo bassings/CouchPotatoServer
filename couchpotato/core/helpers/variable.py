@@ -341,6 +341,15 @@ re_password = [re.compile(r'(.+){{([^{}]+)}}$'), re.compile(r'(.+)\s+password\s*
 
 
 def scanForPassword(name):
+    # "No name" is an ordinary answer of "no password", not an error. Without
+    # this, re.search() raises TypeError on None -- and every release created
+    # before v3.17.0 has an empty info dict, because createFromSearch's
+    # populate loop died on the Python 2 `unicode`/`long` names before it
+    # could store anything. bytes matters too: a str pattern against bytes
+    # raises the same TypeError.
+    if not name or not isinstance(name, str):
+        return None
+
     m = None
     for reg in re_password:
         m = reg.search(name)

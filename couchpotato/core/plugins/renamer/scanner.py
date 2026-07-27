@@ -62,12 +62,24 @@ class ScannerMixin:
 
             log.debug('Checking status snatched releases...')
 
-            try:
-                for rel in rels:
+            # Per-release, NOT around the whole loop: this used to wrap
+            # `for rel in rels`, so one malformed document aborted the pass
+            # and every release behind it went unchecked -- a completed
+            # download was never noticed, so renaming never fired for it.
+            # Seen in production, where a single release with no info['name']
+            # was blocking status checks for the other 16.
+            for rel in rels:
+                try:
                     if not rel.get('media_id'):
                         continue
                     movie_dict = db.get('id', rel.get('media_id'))
                     download_info = rel.get('download_info')
+                    # Every release created before v3.17.0 has an empty info
+                    # dict (createFromSearch's populate loop died on the
+                    # Python 2 names before storing anything), so direct
+                    # rel['info']['name'] access KeyErrors on real data.
+                    rel_info = rel.get('info') or {}
+                    rel_name = rel_info.get('name') or ''
 
                     if not isinstance(download_info, dict):
                         log.error('Faulty release found without any info, ignoring.')
@@ -75,11 +87,11 @@ class ScannerMixin:
                         continue
 
                     if not download_info.get('id') or not download_info.get('downloader'):
-                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', download_info.get('downloader', 'unknown'), rel['info']['name'])
+                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', download_info.get('downloader', 'unknown'), rel_name or '<unnamed>')
                         scan_required = True
                         continue
 
-                    nzbname = self.createNzbName(rel['info'], movie_dict)
+                    nzbname = self.createNzbName(rel_info, movie_dict)
 
                     found_release = False
                     for release_download in release_downloads:
@@ -90,7 +102,7 @@ class ScannerMixin:
                                 found_release = True
                                 break
                         else:
-                            if release_download['name'] == nzbname or rel['info']['name'] in release_download['name'] or getImdb(release_download['name']) == getIdentifier(movie_dict):
+                            if release_download['name'] == nzbname or (rel_name and rel_name in release_download['name']) or getImdb(release_download['name']) == getIdentifier(movie_dict):
                                 log.debug('Found release by release name or imdb ID: %s', release_download['name'])
                                 found_release = True
                                 break
@@ -148,8 +160,10 @@ class ScannerMixin:
                         else:
                             scan_required = True
 
-            except Exception:
-                log.error('Failed checking for release in downloader: %s', traceback.format_exc())
+                except Exception:
+                    log.error('Failed checking release %s in downloader, skipping it: %s',
+                              rel.get('_id'), traceback.format_exc())
+                    continue
 
             for release_download in scan_releases:
                 if release_download['scan']:
