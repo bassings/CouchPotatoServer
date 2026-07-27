@@ -119,6 +119,23 @@ class TestReleaseDatesFromInfo:
         one, because nothing surfaces it."""
         assert releaseDatesFromInfo({'released': released}) == {}
 
+    @pytest.mark.parametrize('released', [
+        '10000-01-01',      # one past datetime's ceiling
+        '99999999-06-15',
+    ])
+    def test_rejects_years_outside_the_representable_range(self, released):
+        """calendar.monthrange/timegm raise ValueError above year 9999
+        (`year must be in 1..9999`). This function promises never to raise --
+        a provider returning a nonsense year must degrade to "unknown", not
+        throw an exception up into the search loop once per movie."""
+        assert releaseDatesFromInfo({'released': released}) == {}
+
+    def test_accepts_the_last_representable_year(self):
+        """The boundary on the other side stays usable."""
+        dates = releaseDatesFromInfo({'released': '9999-12-31'})
+
+        assert dates['theater'] == _epoch(9999, 12, 31)
+
     def test_accepts_a_real_leap_day(self):
         """The mirror of the above: 2024 IS a leap year, so this is valid and
         must not be rejected by an over-eager guard."""

@@ -44,8 +44,13 @@ def _media(released, media_id='m1'):
     }
 
 
-def _run(media, gate, late=False, profile=None):
-    """Drive getSoonView with the surrounding plumbing mocked."""
+def _run(media, gate, late=False, profile=None, wait_days=0):
+    """Drive getSoonView with the surrounding plumbing mocked.
+
+    `gate` is the real couldBeReleased, called with whatever positional and
+    keyword arguments the view passes -- so a missing `wait_days` shows up as
+    a wrong answer rather than being silently absorbed by a stub.
+    """
     dashboard = object.__new__(Dashboard)
     profile = profile or {'_id': 'p1', 'qualities': ['1080p', '720p']}
 
@@ -57,7 +62,13 @@ def _run(media, gate, late=False, profile=None):
         if name == 'media.with_status':
             return [{'_id': media['_id']}]
         if name == 'movie.searcher.could_be_released':
-            return gate(*args)
+            # fireEvent consumes its own dispatch options before invoking a
+            # handler; forward only what the handler would really receive.
+            passthrough = {
+                k: v for k, v in kwargs.items()
+                if k not in ('single', 'merge', 'in_order', 'on_complete', 'is_after_event')
+            }
+            return gate(*args, **passthrough)
         if name == 'release.for_media':
             return []
         return None
@@ -67,7 +78,8 @@ def _run(media, gate, late=False, profile=None):
     db.get.return_value = media
 
     with patch('couchpotato.core.plugins.dashboard.get_db', return_value=db), \
-            patch('couchpotato.core.plugins.dashboard.fireEvent', side_effect=fake_fire_event):
+            patch('couchpotato.core.plugins.dashboard.fireEvent', side_effect=fake_fire_event), \
+            patch('couchpotato.core.plugins.dashboard.Env.setting', return_value=wait_days):
         return dashboard.getSoonView(late=late)
 
 
@@ -129,6 +141,38 @@ class TestComingSoonUsesDerivedDates:
         result = _run(_media(released='None'), gate)
 
         assert result['empty'] is True
+
+
+class TestHonoursTheConfiguredWait:
+    """The view answers "is this coming soon" by calling the same gate the
+    searcher uses. If it does not pass the configured `wait_for_release`, it
+    reports a movie as available while the searcher is still holding it back
+    -- the dashboard and the downloader disagree about the same movie.
+    """
+
+    def test_a_movie_inside_the_wait_window_is_not_listed(self, gate):
+        recent = time.strftime('%Y-%m-%d', time.gmtime(time.time() - 3 * DAY))
+
+        result = _run(_media(released=recent), gate, wait_days=21)
+
+        assert result['empty'] is True, (
+            'released 3 days ago with a 21-day wait: the searcher will not '
+            'download it, so the dashboard must not advertise it'
+        )
+
+    def test_a_movie_past_the_wait_window_is_listed(self, gate):
+        older = time.strftime('%Y-%m-%d', time.gmtime(time.time() - 30 * DAY))
+
+        result = _run(_media(released=older), gate, wait_days=21)
+
+        assert result['empty'] is False
+
+    def test_default_zero_wait_is_unchanged(self, gate):
+        recent = time.strftime('%Y-%m-%d', time.gmtime(time.time() - 3 * DAY))
+
+        result = _run(_media(released=recent), gate, wait_days=0)
+
+        assert result['empty'] is False
 
 
 class TestLateView:

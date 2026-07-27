@@ -56,6 +56,13 @@ def releaseDatesFromInfo(info):
     # raising -- 2026-02-30 becomes 2026-03-02 -- and a quietly shifted
     # unlock date is worse than a rejected one because nothing surfaces it.
     # monthrange, not `day <= 31`, so Feb 30 and Apr 31 are caught too.
+    #
+    # The year bound comes first: monthrange() and timegm() both raise
+    # ValueError above 9999 ("year must be in 1..9999"), and this function
+    # promises never to raise -- a provider returning a nonsense year must
+    # degrade to "unknown", not throw once per movie into the search loop.
+    if not 1 <= year <= 9999:
+        return {}
     if not 1 <= month <= 12:
         return {}
     if not 1 <= day <= calendar.monthrange(year, month)[1]:
