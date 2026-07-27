@@ -9,7 +9,7 @@ from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toSafeString, \
     toUnicode, sp
 from couchpotato.core.helpers.variable import md5, scanForPassword, tryInt, getIdentifier, \
-    randomString
+    randomString, getTitle
 from couchpotato.core.http_client import HttpClient
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
@@ -299,7 +299,13 @@ class Plugin:
         return value
 
     def createNzbName(self, data, media, unique_tag = False):
-        release_name = data.get('name')
+        # A release with no name falls back to the movie title. Every release
+        # created before v3.17.0 has an empty info dict (createFromSearch's
+        # populate loop died on the Python 2 names before storing anything),
+        # and toUnicode(None) yields the literal string 'None' -- which this
+        # function would otherwise hand to the downloaders as a filename,
+        # producing 'None.cp(tt123).nzb'.
+        release_name = data.get('name') or getTitle(media) or getIdentifier(media) or 'unknown'
         tag = self.cpTag(media, unique_tag = unique_tag)
 
         # Check if password is filename

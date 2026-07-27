@@ -72,14 +72,46 @@ class TestCreateNzbName:
         plugin = object.__new__(Plugin)
         return plugin
 
-    def test_a_release_with_no_name_does_not_raise(self):
-        """`info` is an empty dict on every pre-v3.17.0 release."""
+    def test_a_release_with_no_name_falls_back_to_the_title(self):
+        """`info` is an empty dict on every pre-v3.17.0 release.
+
+        Not raising is not enough: `toUnicode(None)` yields the literal string
+        'None', and this function names actual downloads (nzbget, sabnzbd,
+        pneumatic, and createFileName), so a nameless release produced a file
+        called 'None.cp(tt123).nzb'.
+        """
         plugin = self._plugin()
 
         with patch.object(type(plugin), 'cpTag', return_value='', create=True):
             name = plugin.createNzbName({}, {'title': 'Some Movie'})
 
-        assert isinstance(name, str)
+        assert 'None' not in name, (
+            "a nameless release must not be named after the string 'None', "
+            "got %r" % name
+        )
+        assert 'Some' in name
+
+    def test_a_release_with_a_name_is_unaffected(self):
+        """Regression guard: the normal path must not start consulting the
+        movie title."""
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName(
+                {'name': 'Some.Movie.2026.1080p'}, {'title': 'Some Movie'},
+            )
+
+        assert name.startswith('Some.Movie.2026.1080p')
+
+    def test_no_name_and_no_title_still_yields_something_usable(self):
+        """Last resort: the imdb id, then a literal placeholder -- never an
+        empty filename."""
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName({}, {'identifiers': {'imdb': 'tt1234567'}})
+
+        assert name and 'None' not in name
 
 
 class TestCheckSnatchedIsolatesBadReleases:
@@ -168,8 +200,6 @@ class TestCheckSnatchedIsolatesBadReleases:
         good = self._release('1', 'Good.One.1080p')
         bad = self._release('2', None)
         bad['download_info'] = {'status_support': True}     # no id, no downloader
-
-        errors = []
 
         def fake_fire_event(name, *args, **kwargs):
             if name == 'release.with_status':
