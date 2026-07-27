@@ -126,7 +126,7 @@ class TestCheckSnatchedIsolatesBadReleases:
             if name == 'download.status':
                 return [{'id': 'dl-%s' % r['_id'], 'downloader': 'sabnzbd',
                          'name': r['info'].get('name') or '', 'status': 'busy',
-                         'timeleft': -1, 'scan': False} for r in rels]
+                         'timeleft': -1, 'scan': False, 'folder': '/downloads/x'} for r in rels]
             if name == 'release.update_status':
                 checked.append(str(args[0]) if args else None)
             return None
@@ -151,6 +151,52 @@ class TestCheckSnatchedIsolatesBadReleases:
             'the release after the failing one was never processed -- one bad '
             'document is blocking status checks for everything behind it '
             '(processed: %s)' % checked
+        )
+
+    def test_a_downloader_without_status_support_does_not_raise(self):
+        """Second instance of the same root cause, found in review.
+
+        When download_info lacks an id/downloader, the code logs which release
+        it is skipping using `rel['info']['name']` -- direct key access, which
+        KeyErrors on the empty info dict every pre-v3.17.0 release has. The
+        raise happens BEFORE `scan_required = True`, so that release's rescan
+        signal is lost as well.
+        """
+        scanner = self._scanner()
+        # A MIX is required: with no download ids at all, checkSnatched
+        # returns before the loop, so the offending line is unreachable.
+        good = self._release('1', 'Good.One.1080p')
+        bad = self._release('2', None)
+        bad['download_info'] = {'status_support': True}     # no id, no downloader
+
+        errors = []
+
+        def fake_fire_event(name, *args, **kwargs):
+            if name == 'release.with_status':
+                return [good, bad]
+            if name == 'download.status':
+                return [{'id': 'dl-1', 'downloader': 'sabnzbd', 'name': 'x',
+                         'status': 'busy', 'timeleft': -1, 'scan': False}]
+            return None
+
+        db = MagicMock()
+        db.get.return_value = {'_id': 'movie-1', 'title': 'Some Movie'}
+
+        with patch('couchpotato.core.plugins.renamer.scanner.fireEvent', side_effect=fake_fire_event), \
+                patch('couchpotato.core.plugins.renamer.scanner.get_db', return_value=db), \
+                patch('couchpotato.core.plugins.renamer.scanner.log') as mock_log, \
+                patch.object(type(scanner), 'conf', return_value=False, create=True), \
+                patch.object(type(scanner), 'createNzbName', return_value='x', create=True), \
+                patch.object(type(scanner), 'untagRelease', return_value=None, create=True), \
+                patch.object(type(scanner), 'scan', return_value=None, create=True):
+            scanner.checkSnatched(fire_scan=False)
+            # Inspect the real arguments -- str(call) escapes the quotes, so a
+            # naive substring search silently never matches.
+            errors = [str(a) for c in mock_log.error.call_args_list for a in c.args]
+
+        assert not any("KeyError: 'name'" in e for e in errors), (
+            'the no-status-support path raised on the empty info dict instead '
+            'of skipping cleanly: %s' % errors
         )
 
     def test_the_pass_still_completes(self):

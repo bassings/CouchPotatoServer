@@ -74,6 +74,11 @@ class ScannerMixin:
                         continue
                     movie_dict = db.get('id', rel.get('media_id'))
                     download_info = rel.get('download_info')
+                    # Every release created before v3.17.0 has an empty info
+                    # dict (createFromSearch's populate loop died on the
+                    # Python 2 names before storing anything), so direct
+                    # rel['info']['name'] access KeyErrors on real data.
+                    rel_name = (rel.get('info') or {}).get('name') or ''
 
                     if not isinstance(download_info, dict):
                         log.error('Faulty release found without any info, ignoring.')
@@ -81,7 +86,7 @@ class ScannerMixin:
                         continue
 
                     if not download_info.get('id') or not download_info.get('downloader'):
-                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', download_info.get('downloader', 'unknown'), rel['info']['name'])
+                        log.debug('Download status functionality is not implemented for downloader (%s) of release %s.', download_info.get('downloader', 'unknown'), rel_name or '<unnamed>')
                         scan_required = True
                         continue
 
@@ -96,7 +101,7 @@ class ScannerMixin:
                                 found_release = True
                                 break
                         else:
-                            if release_download['name'] == nzbname or rel['info']['name'] in release_download['name'] or getImdb(release_download['name']) == getIdentifier(movie_dict):
+                            if release_download['name'] == nzbname or (rel_name and rel_name in release_download['name']) or getImdb(release_download['name']) == getIdentifier(movie_dict):
                                 log.debug('Found release by release name or imdb ID: %s', release_download['name'])
                                 found_release = True
                                 break
