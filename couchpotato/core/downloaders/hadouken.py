@@ -1,8 +1,8 @@
 from base64 import b16encode, b32decode, b64encode
-try:
-    from packaging.version import Version as LooseVersion
-except ImportError:
-    from distutils.version import LooseVersion
+# packaging is a pinned requirement; the old distutils.version fallback was
+# dead code that would itself fail on Python 3.12+, where distutils was
+# removed.
+from packaging.version import Version as LooseVersion
 from hashlib import sha1
 import http.client as httplib
 import json

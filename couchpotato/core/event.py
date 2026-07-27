@@ -12,6 +12,81 @@ log = CPLog(__name__)
 events = {}
 _events_lock = threading.Lock()
 
+# Event names that are deliberately fired with no handler in this tree.
+#
+# fireEvent() returns [] for an unhandled name, which is indistinguishable from
+# "handled, found nothing" -- so a mis-wired event does not fail, the feature
+# behind it just quietly does nothing. `movie.info.release_date` sat like that
+# for the life of the fork and left the release-date gate with no dates at all
+# (BUG-017). Everything below is either a deliberate extension point or a
+# known gap recorded here; anything else warns once at runtime and fails
+# tests/unit/test_event_wiring.py.
+OPTIONAL_EVENTS = frozenset({
+    # Extension points with no in-tree implementation. Unhandled is harmless:
+    # each caller degrades to a default rather than depending on a result.
+    'cp.messages',       # broadcast messages from the (defunct) couchpotato.com
+    'release.validate',  # optional custom release-name validation; contributes 0 to the score
+    # Known gaps, not extension points. Listed so the audit stays green, NOT
+    # because unhandled is correct here:
+    'movie.info.release_date',
+    # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around
+    #   rather than handled: MovieBase.updateReleaseDate() falls back to
+    #   releaseDatesFromInfo() (media/movie/_base/main.py), which derives a
+    #   theatrical date from the `released` string the info provider already
+    #   stores. Landed in #201 -- before that the gate had no dates at all.
+    'cp.source_url',
+    # ^ SourceUpdater.doUpdate() calls .get() on what this returns, so every
+    #   update attempt on a source install dies with
+    #   `AttributeError: 'list' object has no attribute 'get'` -- the
+    #   early-return below hands back [] before `single` is ever read, so it
+    #   is an empty list, not None. This IS reachable:
+    #   release-to-prod.yml attaches .tar.gz/.zip source archives to each
+    #   stable release, and running one outside Docker gives no .git, which is
+    #   exactly how SourceUpdater gets selected. Pre-existing and out of scope
+    #   here; recorded in docs/technical-debt.md.
+})
+
+# Per-dispatch and per-setting hooks. These are opt-in by design and are
+# unhandled for nearly every name they are generated for, so warning about
+# them would drown the signal:
+#
+#   result.modify.<name>, <name>.after  -- fireEvent() derives BOTH from EVERY
+#       dispatch (see the calls at the end of this module), so warning would
+#       mean two useless lines per event name in the system.
+#   setting.save.<section>.<option>     -- Settings.save() fires one per saved
+#       option; only a handful of options have a handler, so a single settings
+#       save would emit a warning per option without one.
+OPTIONAL_EVENT_PREFIXES = ('result.modify.', 'setting.save.')
+OPTIONAL_EVENT_SUFFIXES = ('.after',)
+
+
+def _isOptionalEvent(name):
+    return (name in OPTIONAL_EVENTS
+            or name.startswith(OPTIONAL_EVENT_PREFIXES)
+            or name.endswith(OPTIONAL_EVENT_SUFFIXES))
+
+# Names already reported by fireEvent(); it is hot, so this is one line per
+# name for the process lifetime, not one per call. Plain set rather than a
+# lock: add and membership tests are atomic under CPython's GIL, and the worst
+# outcome of a race is a duplicated warning line. (On a future free-threaded
+# build that atomicity no longer holds -- the consequence stays a duplicate
+# log line, not corruption, so this is still a fine trade there.)
+#
+# Set to True once the cap is reached, so that is announced exactly once.
+# Going quiet without saying so would be the same silent failure this whole
+# mechanism exists to prevent.
+_warned_cache_full = [False]
+
+# BOUNDED, because event names are not all internal: Search.search() fires
+# `'%s.search' % media_type` where `types` comes straight off the API request,
+# so a caller can mint unlimited distinct names. An unbounded set would grow
+# for the life of the process on arbitrary input -- a slow memory leak plus a
+# log line each. Past the cap we stop recording and stop logging; the cap is
+# far above the number of real event names in the app, so genuine gaps are
+# still reported.
+MAX_WARNED_UNHANDLED = 500
+_warned_unhandled = set()
+
 # blinker namespace (not used for dispatch, but available for introspection)
 _ns = Namespace()
 
@@ -93,6 +168,31 @@ def fireEvent(name, *args, **kwargs):
         handlers = list(events.get(name, []))
 
     if not handlers:
+        # Say so once. Silence here is how a dead event hides: callers cannot
+        # tell "nothing handled this" from "handled, no result". Static
+        # analysis covers literal names (test_event_wiring.py); this also
+        # catches the templated ones ('%s.snatched' % media_type) that only
+        # become concrete here.
+        if not _isOptionalEvent(name) and name not in _warned_unhandled:
+            if len(_warned_unhandled) < MAX_WARNED_UNHANDLED:
+                _warned_unhandled.add(name)
+                # %r and a length cap: `name` can be caller-derived (the
+                # search API's `types` param becomes '<type>.search'), and
+                # this is the first place that value reaches the log. repr()
+                # escapes newlines, so a crafted name cannot forge log lines.
+                log.warning('Event %r was fired but nothing handles it; it '
+                            'did nothing. Either register a handler or add the '
+                            'name to OPTIONAL_EVENTS in '
+                            'couchpotato/core/event.py.', name[:200])
+            elif not _warned_cache_full[0]:
+                _warned_cache_full[0] = True
+                log.warning('Reached %d distinct unhandled event names and am '
+                            'no longer reporting them. Event names can be '
+                            'caller-derived, so this is usually a client '
+                            'sending arbitrary values rather than %d real '
+                            'bugs -- but genuine unhandled events will now go '
+                            'unreported until restart.',
+                            MAX_WARNED_UNHANDLED, MAX_WARNED_UNHANDLED)
         return []
 
     try:

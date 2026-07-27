@@ -36,16 +36,32 @@
   notifications/metadata don't auto-fire); being addressed by the
   Downloaded/review workflow — see `specs/DOWNLOADED-REVIEW-WORKFLOW.md` +
   `specs/RENAMER-EVENT-CHAIN.md`.
-- **`movie.info.release_date` has no provider handler.** The event is fired
-  (`media/movie/_base/main.py`) but nothing registers a handler, so the
-  `{theater, dvd}` mapping the ETA gate reads was always empty and the gate
-  was a no-op — every movie downloaded regardless of release date (BUG-017).
-  Worked around by deriving a theatrical date from the `released` string the
-  TMDB provider already stores. The real fix is a provider handler using
-  TMDB's per-country `release_dates` endpoint, which would give a genuine
-  **digital/physical** date as well; until then `dvd` is always unknown, so
-  the dvd-based unlock paths in `couldBeReleased()` are dead code and the
-  dashboard's "late" view falls back to the theatrical date.
+- **Events fired with no handler.** `fireEvent()` returns `[]` for an
+  unhandled name, indistinguishable from "handled, found nothing", so a
+  mis-wired event never fails — the feature behind it silently does nothing.
+  `tests/unit/test_event_wiring.py` now fails CI when a new one appears, and
+  `fireEvent()` warns once per name at runtime. Two known gaps stay
+  allowlisted in `couchpotato/core/event.OPTIONAL_EVENTS`:
+  - `movie.info.release_date` — no provider handler, so the `{theater, dvd}`
+    mapping the ETA gate reads was always empty and the gate was a no-op:
+    every movie downloaded regardless of release date (BUG-017). Worked
+    around in #201 by deriving a theatrical date from the `released` string
+    the TMDB provider already stores (`releaseDatesFromInfo()` in
+    `media/movie/_base/main.py`, used as `updateReleaseDate()`'s fallback).
+    The real fix is a provider handler using TMDB's per-country
+    `release_dates` endpoint, which would give a genuine **digital/physical**
+    date as well; until then `dvd` is always unknown, so the dvd-based unlock
+    paths in `couldBeReleased()` are dead code and the dashboard's "late"
+    view falls back to the theatrical date.
+  - `cp.source_url` — **`SourceUpdater.doUpdate()` calls `.get()` on what
+    this returns, so every update attempt on a source install dies with
+    `AttributeError: 'list' object has no attribute 'get'`** (an unhandled
+    `fireEvent` returns `[]` before it reads `single`, so it is an empty list,
+    not `None`).
+    Reachable: `release-to-prod.yml` attaches `.tar.gz`/`.zip` source archives
+    to each stable release, and running one outside Docker leaves no `.git`,
+    which is exactly how `SourceUpdater` is selected. Either implement the
+    handler or delete that update path.
 - **The legacy `/old` UI's `movie.js` reads `info.release_date`** for display
   and has therefore always shown nothing. Harmless — that stack is
   unreachable (`/old/*` redirects) — but it goes away with UI-CLEANUP.

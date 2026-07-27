@@ -16,10 +16,17 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 if os.name == 'nt':
-    import imp
+    # importlib.util.find_spec, not imp.find_module: `imp` was removed in
+    # Python 3.12, so this whole module raised ModuleNotFoundError on a modern
+    # Windows install -- and the plugin loader swallows that at DEBUG, so the
+    # file browser just vanished from the UI with nothing in the log.
+    import importlib.util
     try:
-        imp.find_module('win32file')
+        found = importlib.util.find_spec('win32file')
     except Exception:
+        found = None
+
+    if found is None:
         # todo:: subclass ImportError for missing dependencies, vs. broken plugins?
         raise ImportError("Missing the win32file module, which is a part of the prerequisite \
             pywin32 package. You can get it from http://sourceforge.net/projects/pywin32/files/pywin32/")
