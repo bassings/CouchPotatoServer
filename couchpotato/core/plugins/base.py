@@ -305,7 +305,7 @@ class Plugin:
         # and toUnicode(None) yields the literal string 'None' -- which this
         # function would otherwise hand to the downloaders as a filename,
         # producing 'None.cp(tt123).nzb'.
-        release_name = data.get('name') or getTitle(media) or getIdentifier(media) or 'unknown'
+        release_name = data.get('name') or getTitle(media) or getIdentifier(media or {}) or 'unknown'
         tag = self.cpTag(media, unique_tag = unique_tag)
 
         # Check if password is filename

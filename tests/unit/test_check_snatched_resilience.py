@@ -113,6 +113,17 @@ class TestCreateNzbName:
 
         assert name == 'unknown'
 
+    def test_a_none_media_does_not_raise(self):
+        """getTitle() is defensive about bad input; getIdentifier() is not.
+        This fallback chain introduced a getIdentifier call on a path that
+        previously had none, so guard what it introduced."""
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName({}, None)
+
+        assert name == 'unknown'
+
     def test_no_name_and_no_title_still_yields_something_usable(self):
         """Last resort: the imdb id, then a literal placeholder -- never an
         empty filename."""
