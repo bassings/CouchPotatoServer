@@ -62,8 +62,14 @@ class ScannerMixin:
 
             log.debug('Checking status snatched releases...')
 
-            try:
-                for rel in rels:
+            # Per-release, NOT around the whole loop: this used to wrap
+            # `for rel in rels`, so one malformed document aborted the pass
+            # and every release behind it went unchecked -- a completed
+            # download was never noticed, so renaming never fired for it.
+            # Seen in production, where a single release with no info['name']
+            # was blocking status checks for the other 16.
+            for rel in rels:
+                try:
                     if not rel.get('media_id'):
                         continue
                     movie_dict = db.get('id', rel.get('media_id'))
@@ -148,8 +154,10 @@ class ScannerMixin:
                         else:
                             scan_required = True
 
-            except Exception:
-                log.error('Failed checking for release in downloader: %s', traceback.format_exc())
+                except Exception:
+                    log.error('Failed checking release %s in downloader, skipping it: %s',
+                              rel.get('_id'), traceback.format_exc())
+                    continue
 
             for release_download in scan_releases:
                 if release_download['scan']:
