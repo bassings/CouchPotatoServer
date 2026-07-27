@@ -29,8 +29,11 @@ OPTIONAL_EVENTS = frozenset({
     # Known gaps, not extension points. Listed so the audit stays green, NOT
     # because unhandled is correct here:
     'movie.info.release_date',
-    # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around by
-    #   deriving the date from info['released'] instead of adding a handler.
+    # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around
+    #   rather than handled: MovieBase.updateReleaseDate() falls back to
+    #   releaseDatesFromInfo() (media/movie/_base/main.py), which derives a
+    #   theatrical date from the `released` string the info provider already
+    #   stores. Landed in #201 -- before that the gate had no dates at all.
     'cp.source_url',
     # ^ SourceUpdater.doUpdate() calls .get() on what this returns, so every
     #   update attempt on a source install dies with

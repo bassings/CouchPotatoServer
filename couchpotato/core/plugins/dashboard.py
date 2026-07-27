@@ -8,6 +8,7 @@ from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.variable import splitString, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
+from couchpotato.environment import Env
 
 
 log = CPLog(__name__)
@@ -22,8 +23,21 @@ class Dashboard(Plugin):
 
     def getSoonView(self, limit_offset = None, random = False, late = False, **kwargs):
 
+        # Imported here rather than at module scope: the plugin loader
+        # swallows ImportError at DEBUG, so a load-order problem would
+        # silently disable the whole dashboard. Hoisted out of the per-movie
+        # loop below -- getSoonView can iterate a large active list.
+        from couchpotato.core.media.movie._base.main import releaseDatesFromInfo
+
         db = get_db()
         now = time.time()
+
+        # The same hold-off the searcher applies (MovieSearcher.single reads
+        # this too). Without it this view answers "coming soon" for a movie
+        # the searcher is still holding back, so the dashboard and the
+        # downloader disagree about the same movie. Read from the searcher's
+        # own section -- self.conf() would resolve to 'dashboard'.
+        wait_days = Env.setting('wait_for_release', section = 'moviesearcher', default = 0)
 
         # Get profiles first, determine pre or post theater
         profiles = fireEvent('profile.all', single = True)
@@ -72,19 +86,30 @@ class Dashboard(Plugin):
                 pp = profile_pre.get(media.get('profile_id'))
                 if not pp: continue
 
-                eta = media['info'].get('release_date', {}) or {}
+                # Nothing populates info['release_date'] -- `movie.info
+                # .release_date` has no handler -- so fall back to deriving
+                # it from the date the info provider did store, exactly as
+                # MovieBase.updateReleaseDate() does. Without this the ETA
+                # gate answers "not released" for every movie and the view
+                # lists nothing.
+                eta = media['info'].get('release_date') or {}
+                if not isinstance(eta, dict) or not eta:
+                    eta = releaseDatesFromInfo(media['info'])
                 coming_soon = False
 
                 # Theater quality
-                if pp.get('theater') and fireEvent('movie.searcher.could_be_released', True, eta, media['info']['year'], single = True):
+                if pp.get('theater') and fireEvent('movie.searcher.could_be_released', True, eta, media['info']['year'], wait_days = wait_days, single = True):
                     coming_soon = 'theater'
-                elif pp.get('dvd') and fireEvent('movie.searcher.could_be_released', False, eta, media['info']['year'], single = True):
+                elif pp.get('dvd') and fireEvent('movie.searcher.could_be_released', False, eta, media['info']['year'], wait_days = wait_days, single = True):
                     coming_soon = 'dvd'
 
                 if coming_soon:
 
                     # Don't list older movies
-                    eta_date = eta.get(coming_soon)
+                    # A derived mapping only knows 'theater' ('dvd' is left
+                    # unknown rather than guessed), so fall back to it --
+                    # otherwise the 'late' cutoff can never match.
+                    eta_date = eta.get(coming_soon) or eta.get('theater')
                     eta_3month_passed = (eta_date < (now - 7862400)) if eta_date else False  # Release was more than 3 months ago
 
                     if (not late and not eta_3month_passed) or \

@@ -181,6 +181,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         too_early_to_search = []
         outside_eta_results = 0
         always_search = self.conf('always_search')
+        wait_days = self.conf('wait_for_release')
         ignore_eta = manual
         total_result_count = 0
 
@@ -209,7 +210,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 'minimum_score': profile.get('minimum_score', 1),
             }
 
-            could_not_be_released = not self.couldBeReleased(q_identifier in pre_releases, release_dates, movie['info']['year'])
+            could_not_be_released = not self.couldBeReleased(q_identifier in pre_releases, release_dates, movie['info']['year'], wait_days = wait_days)
             if not always_search and could_not_be_released:
                 too_early_to_search.append(q_identifier)
 
@@ -372,11 +373,29 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         log.info("Wrong: %s, undetermined naming. Looking for '%s (%s)'", nzb['name'], media_title, media['info']['year'])
         return False
 
-    def couldBeReleased(self, is_pre_release, dates, year = None):
+    def couldBeReleased(self, is_pre_release, dates, year = None, wait_days = None):
+        """Whether a movie is far enough past its release date to download.
+
+        `wait_days` is the configurable hold-off after the release date
+        (the `wait_for_release` setting, default 0 = as soon as it is out).
+        It is a parameter rather than a `self.conf()` read so this stays a
+        pure function -- callers pass the configured value.
+        """
 
         now = int(time.time())
         now_year = date.today().year
         now_month = date.today().month
+
+        # `dates` may arrive as a list: an unhandled fireEvent returns [], and
+        # older databases have [] cached in info['release_date']. Normalise
+        # once so the .get() calls below are safe without a `not dates`
+        # short-circuit -- see BUG-017.
+        if not isinstance(dates, dict):
+            dates = {}
+
+        # A blank or junk setting means "no wait", never a crash or a hold
+        # that never expires.
+        wait_seconds = max(tryInt(wait_days, 0), 0) * 86400
 
         if (year is None or year < now_year - 1 or (year <= now_year - 1 and now_month > 4)) and (not dates or (dates.get('theater', 0) == 0 and dates.get('dvd', 0) == 0)):
             return True
@@ -387,8 +406,16 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             if year is not None and year > (now_year + add_year):
                 return False
 
-            # For movies before 1972
-            if not dates or dates.get('theater', 0) < 0 or dates.get('dvd', 0) < 0:
+            # For movies before 1972 (a negative epoch is the sentinel).
+            #
+            # BUG-017: this used to also match `not dates`, so an UNKNOWN
+            # release date was read as "already released" and authorised a
+            # download. Unknown dates now fall through every branch below to
+            # the closing `return False` -- unknown means not yet released.
+            # The similar `not dates` test at the top of this method is a
+            # different, deliberate case ("old movie AND no dates"): a film
+            # two years in the past cannot be unreleased.
+            if dates.get('theater', 0) < 0 or dates.get('dvd', 0) < 0:
                 return True
 
             if is_pre_release:
@@ -396,8 +423,11 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 if dates.get('theater', 0) > 0 and dates.get('theater', 0) - 604800 < now:
                     return True
             else:
-                # 12 weeks after theater release
-                if dates.get('theater', 0) > 0 and dates.get('theater', 0) + 7257600 < now:
+                # Past the release date, plus the configured hold-off. This
+                # was a hardcoded 12 weeks (7257600s), written when waiting
+                # for physical media was the point; it is now the
+                # `wait_for_release` setting, default 0 -- see BUG-017.
+                if dates.get('theater', 0) > 0 and dates.get('theater', 0) + wait_seconds < now:
                     return True
 
                 if dates.get('dvd', 0) > 0:
@@ -554,7 +584,14 @@ config = [{
                     'migrate_from': 'searcher',
                     'type': 'bool',
                     'label': 'Always search',
-                    'description': 'Search for movies even before there is a ETA. Enabling this will probably get you a lot of fakes.',
+                    'description': 'Search for <em>and download</em> movies even before there is an ETA. This bypasses the release-date gate entirely, not just the search, so you will probably get a lot of fakes and early grabs.',
+                },
+                {
+                    'name': 'wait_for_release',
+                    'default': 0,
+                    'type': 'int',
+                    'label': 'Wait after release',
+                    'description': 'Days to wait after a movie\'s release date before downloading it. <strong>0</strong>: as soon as it is out. Raise this if you keep getting fakes or poor early rips; <strong>84</strong> (12 weeks) matches the old built-in behaviour of waiting for a physical release.',
                 },
                 {
                     'name': 'run_on_launch',

@@ -300,6 +300,17 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     except Exception as e:
         log.warning('Release quality fix skipped: %s', e)
 
+    # Reorder default profiles seeded worst-first (BUG-016: 'Best' led with
+    # 720p, so it never reached 1080p). Only untouched default profiles are
+    # rewritten; customised ones are left alone.
+    try:
+        from couchpotato.core.migration.fix_profile_quality_order import fix_profile_quality_order
+        n_fixed, n_checked = fix_profile_quality_order(db)
+        if n_fixed:
+            log.info('Reordered %d of %d quality profiles best-first.', n_fixed, n_checked)
+    except Exception as e:
+        log.warning('Profile quality order fix skipped: %s', e)
+
     fireEventAsync('app.load')
 
     # Run with uvicorn
