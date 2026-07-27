@@ -39,8 +39,13 @@ ignore = [
     "E501",
     # Module imported but unused — needed for __init__.py re-exports
     "F401",
-    # Undefined name — too many false positives with dynamic imports
-    "F821",
+    # NOTE: F821 (undefined name) is deliberately NOT ignored. It was, with
+    # the note "too many false positives with dynamic imports" — but when
+    # re-enabled it found 8 real latent NameErrors (Python 2 `unicode`/`long`
+    # leftovers, a missing `import traceback`, a dead `ex()` helper) and zero
+    # false positives. Each only crashed once its line was finally reached,
+    # which is why they survived the Python 3 migration. Keep it enforced;
+    # tests/unit/test_py2_leftovers.py pins that.
     # Local variable assigned but never used
     "F841",
     # Ambiguous variable name

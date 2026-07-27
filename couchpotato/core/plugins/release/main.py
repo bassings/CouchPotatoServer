@@ -527,10 +527,10 @@ class Release(Plugin):
                     # Update info, but filter out functions
                     for info in rel:
                         try:
-                            if not isinstance(rel[info], (str, unicode, int, long, float)):
+                            if not isinstance(rel[info], (str, int, float)):
                                 continue
 
-                            rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], (str, unicode)) else rel[info]
+                            rls['info'][info] = toUnicode(rel[info]) if isinstance(rel[info], str) else rel[info]
                         except Exception:
                             log.debug('Couldn\'t add %s to ReleaseInfo: %s', info, traceback.format_exc())
 
