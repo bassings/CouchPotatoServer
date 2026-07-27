@@ -36,6 +36,19 @@
   notifications/metadata don't auto-fire); being addressed by the
   Downloaded/review workflow — see `specs/DOWNLOADED-REVIEW-WORKFLOW.md` +
   `specs/RENAMER-EVENT-CHAIN.md`.
+- **`movie.info.release_date` has no provider handler.** The event is fired
+  (`media/movie/_base/main.py`) but nothing registers a handler, so the
+  `{theater, dvd}` mapping the ETA gate reads was always empty and the gate
+  was a no-op — every movie downloaded regardless of release date (BUG-017).
+  Worked around by deriving a theatrical date from the `released` string the
+  TMDB provider already stores. The real fix is a provider handler using
+  TMDB's per-country `release_dates` endpoint, which would give a genuine
+  **digital/physical** date as well; until then `dvd` is always unknown, so
+  the dvd-based unlock paths in `couldBeReleased()` are dead code and the
+  dashboard's "late" view falls back to the theatrical date.
+- **The legacy `/old` UI's `movie.js` reads `info.release_date`** for display
+  and has therefore always shown nothing. Harmless — that stack is
+  unreachable (`/old/*` redirects) — but it goes away with UI-CLEANUP.
 - **Review + implement Dependabot dependency PRs** — keep the dependency
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them
