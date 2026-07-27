@@ -333,7 +333,9 @@ class Plugin:
 
         tag = ''
         if Env.setting('enabled', 'renamer') or unique_tag:
-            identifier = getIdentifier(media) or ''
+            # `media or {}` for the same reason as createNzbName above:
+            # getIdentifier() indexes its argument directly, unlike getTitle().
+            identifier = getIdentifier(media or {}) or ''
             unique_tag = ', ' + randomString() if unique_tag else ''
 
             tag = '.cp('

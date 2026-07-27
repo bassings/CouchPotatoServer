@@ -115,14 +115,21 @@ class TestCreateNzbName:
 
     def test_a_none_media_does_not_raise(self):
         """getTitle() is defensive about bad input; getIdentifier() is not.
-        This fallback chain introduced a getIdentifier call on a path that
-        previously had none, so guard what it introduced."""
+
+        Deliberately does NOT patch cpTag: an earlier version of this test did,
+        which meant it passed while the real cpTag -- which calls
+        getIdentifier(media) two lines later -- still crashed on None. Patching
+        the collaborator that holds the bug is how a test proves nothing.
+        Env.setting is patched instead so the renamer-enabled branch, the
+        normal case, is the one exercised.
+        """
         plugin = self._plugin()
 
-        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+        with patch('couchpotato.core.plugins.base.Env') as env:
+            env.setting.return_value = True          # renamer enabled
             name = plugin.createNzbName({}, None)
 
-        assert name == 'unknown'
+        assert name.startswith('unknown')
 
     def test_no_name_and_no_title_still_yields_something_usable(self):
         """Last resort: the imdb id, then a literal placeholder -- never an
@@ -249,6 +256,60 @@ class TestCheckSnatchedIsolatesBadReleases:
         assert not any("KeyError: 'name'" in e for e in errors), (
             'the no-status-support path raised on the empty info dict instead '
             'of skipping cleanly: %s' % errors
+        )
+
+    def _run_for_rescan(self, include_no_status_release):
+        """Return whether checkSnatched asked for a rescan.
+
+        `scan_required = True` has no direct observable, so this drives it via
+        the only thing that reads it: with fire_scan=True, the method calls
+        self.scan() at the end iff a rescan was requested.
+        """
+        scanner = self._scanner()
+        good = self._release('1', 'Good.One.1080p')
+        rels = [good]
+        if include_no_status_release:
+            bad = self._release('2', None)
+            bad['download_info'] = {'status_support': True}   # no id/downloader
+            rels.append(bad)
+
+        def fake_fire_event(name, *args, **kwargs):
+            if name == 'release.with_status':
+                return list(rels)
+            if name == 'download.status':
+                return [{'id': 'dl-1', 'downloader': 'sabnzbd', 'name': 'Good.One.1080p',
+                         'status': 'busy', 'timeleft': -1, 'scan': False,
+                         'folder': '/downloads/x'}]
+            return None
+
+        db = MagicMock()
+        db.get.return_value = {'_id': 'movie-1', 'title': 'Some Movie'}
+
+        with patch('couchpotato.core.plugins.renamer.scanner.fireEvent', side_effect=fake_fire_event), \
+                patch('couchpotato.core.plugins.renamer.scanner.get_db', return_value=db), \
+                patch.object(type(scanner), 'conf', return_value=False, create=True), \
+                patch.object(type(scanner), 'createNzbName', return_value='x', create=True), \
+                patch.object(type(scanner), 'untagRelease', return_value=None, create=True), \
+                patch.object(type(scanner), 'scan', return_value=None, create=True) as scan:
+            scanner.checkSnatched(fire_scan=True)
+
+        return scan.called
+
+    def test_the_rescan_signal_survives(self):
+        """The positive half of the claim, which the test above only implied.
+
+        A release whose downloader has no status support is meant to set
+        `scan_required = True` and continue. The KeyError used to fire on the
+        log line BEFORE that assignment, so the signal was lost. Differential
+        against a control run without that release, so this isolates the
+        signal rather than catching any incidental rescan.
+        """
+        assert self._run_for_rescan(include_no_status_release=False) is False, (
+            'control: the good release alone must not request a rescan, or '
+            'this test proves nothing'
+        )
+        assert self._run_for_rescan(include_no_status_release=True) is True, (
+            'the no-status-support release must still request a rescan'
         )
 
     def test_the_pass_still_completes(self):
