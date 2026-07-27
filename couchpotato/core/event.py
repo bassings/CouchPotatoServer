@@ -32,8 +32,11 @@ OPTIONAL_EVENTS = frozenset({
     # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around by
     #   deriving the date from info['released'] instead of adding a handler.
     'cp.source_url',
-    # ^ SourceUpdater.doUpdate() calls .get() on the None this returns, so
-    #   every update attempt on a source install fails. This IS reachable:
+    # ^ SourceUpdater.doUpdate() calls .get() on what this returns, so every
+    #   update attempt on a source install dies with
+    #   `AttributeError: 'list' object has no attribute 'get'` -- the
+    #   early-return below hands back [] before `single` is ever read, so it
+    #   is an empty list, not None. This IS reachable:
     #   release-to-prod.yml attaches .tar.gz/.zip source archives to each
     #   stable release, and running one outside Docker gives no .git, which is
     #   exactly how SourceUpdater gets selected. Pre-existing and out of scope
@@ -170,10 +173,14 @@ def fireEvent(name, *args, **kwargs):
         if not _isOptionalEvent(name) and name not in _warned_unhandled:
             if len(_warned_unhandled) < MAX_WARNED_UNHANDLED:
                 _warned_unhandled.add(name)
-                log.warning('Event "%s" was fired but nothing handles it; it '
+                # %r and a length cap: `name` can be caller-derived (the
+                # search API's `types` param becomes '<type>.search'), and
+                # this is the first place that value reaches the log. repr()
+                # escapes newlines, so a crafted name cannot forge log lines.
+                log.warning('Event %r was fired but nothing handles it; it '
                             'did nothing. Either register a handler or add the '
                             'name to OPTIONAL_EVENTS in '
-                            'couchpotato/core/event.py.', name)
+                            'couchpotato/core/event.py.', name[:200])
             elif not _warned_cache_full[0]:
                 _warned_cache_full[0] = True
                 log.warning('Reached %d distinct unhandled event names and am '

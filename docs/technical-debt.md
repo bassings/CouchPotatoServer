@@ -48,8 +48,11 @@
     using TMDB's per-country `release_dates` endpoint, which would also give a
     digital/physical date. Until then `dvd` is always unknown, so the
     dvd-based unlock paths in `couldBeReleased()` are dead code.
-  - `cp.source_url` — **`SourceUpdater.doUpdate()` calls `.get()` on the
-    `None` this returns, so every update attempt on a source install fails.**
+  - `cp.source_url` — **`SourceUpdater.doUpdate()` calls `.get()` on what
+    this returns, so every update attempt on a source install dies with
+    `AttributeError: 'list' object has no attribute 'get'`** (an unhandled
+    `fireEvent` returns `[]` before it reads `single`, so it is an empty list,
+    not `None`).
     Reachable: `release-to-prod.yml` attaches `.tar.gz`/`.zip` source archives
     to each stable release, and running one outside Docker leaves no `.git`,
     which is exactly how `SourceUpdater` is selected. Either implement the

@@ -16,8 +16,8 @@ Scope note: this module covers removed stdlib *modules*. Removed *builtins*
 is enforced in the blocking lint, plus tests/unit/test_py2_leftovers.py.
 """
 
+import ast
 import pathlib
-import re
 
 import pytest
 
@@ -44,19 +44,30 @@ def _python_files():
     return files
 
 
-def _import_pattern(module_name):
-    """Match every import form for a module, including submodules.
+def _imported_modules(tree):
+    """Every top-level module name imported by a parsed file.
 
-    `import imp.util` and `from distutils.core import setup` fail exactly the
-    same way as the bare module, so matching only the top-level name would
-    miss them. The `\\b` after the optional dotted tail keeps `imp` from
-    matching `importlib`.
+    AST rather than regex, for the same reason test_event_wiring.py gives:
+    a line-based pattern matches its own documentation, and `^\\s*` with
+    re.M matches any physical line — including one inside a triple-quoted
+    docstring that merely shows an import. Import nodes cannot be confused
+    with prose.
+
+    Submodules collapse to their root: `import imp.util` and
+    `from distutils.core import setup` fail exactly like the bare module.
     """
-    return re.compile(
-        r'^\s*(?:import\s+%s(?:\.\w+)*\b|from\s+%s(?:\.\w+)*\s+import)'
-        % (module_name, module_name),
-        re.M,
-    )
+    found = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                found.add(alias.name.split('.')[0])
+        elif isinstance(node, ast.ImportFrom):
+            # `from . import x` has module=None; relative imports are local.
+            if node.module and not node.level:
+                found.add(node.module.split('.')[0])
+
+    return found
 
 
 @pytest.mark.parametrize('module_name', sorted(REMOVED_MODULES))
@@ -64,11 +75,9 @@ def test_removed_stdlib_module_is_not_imported(module_name):
     """These raise ModuleNotFoundError on a supported interpreter. A guarded
     import (behind `if os.name == 'nt'`) is not safe either — it just moves the
     failure to the platform nobody tests on."""
-    pattern = _import_pattern(module_name)
-
     offenders = [
         str(path) for path in _python_files()
-        if pattern.search(path.read_text(errors='replace'))
+        if module_name in _imported_modules(ast.parse(path.read_text(errors='replace')))
     ]
 
     assert not offenders, (
@@ -77,26 +86,27 @@ def test_removed_stdlib_module_is_not_imported(module_name):
     )
 
 
-@pytest.mark.parametrize('line,should_match', [
-    ('import imp', True),
-    ('    import imp', True),
-    ('import imp.util', True),
-    ('from imp import find_module', True),
-    ('from imp.util import thing', True),
-    ('import importlib', False),          # not `imp`, despite the prefix
-    ('import importlib.util', False),
-    ('from importlib import util', False),
-    ('# import imp', False),              # a comment about it is fine
-    ('imp = 3', False),                   # a variable named imp is fine
-], ids=lambda v: str(v)[:34])
-def test_removed_module_pattern_discriminates(line, should_match):
-    """The detector must catch submodule imports without firing on
-    similarly-named modules -- `importlib` starts with `imp`.
-
-    Uses the same _import_pattern() the real test does, so this cannot drift
-    into validating a frozen copy of the logic.
-    """
-    assert bool(_import_pattern('imp').search(line)) is should_match
+@pytest.mark.parametrize('source,expected', [
+    ('import imp', {'imp'}),
+    ('def f():\n    import imp', {'imp'}),        # function-scope import
+    ('if os.name == "nt":\n    import imp', {'imp'}),  # the guarded form
+    ('import imp.util', {'imp'}),
+    ('from imp import find_module', {'imp'}),
+    ('from imp.util import thing', {'imp'}),
+    ('from distutils.core import setup', {'distutils'}),
+    ('import importlib', {'importlib'}),
+    ('import importlib.util', {'importlib'}),
+    ('from importlib import util', {'importlib'}),
+    ('# import imp', set()),
+    ('imp = 3', set()),
+    ('"""Example:\n\n    import imp\n"""', set()),   # prose in a docstring
+    ('from . import sibling', set()),                  # relative, not stdlib
+], ids=lambda v: str(v)[:38])
+def test_import_detection_discriminates(source, expected):
+    """Catches every import form without firing on similarly-named modules
+    (`importlib` starts with `imp`), commented-out imports, a variable of the
+    same name, or an import shown inside a docstring."""
+    assert _imported_modules(ast.parse(source)) == expected
 
 
 class TestFileBrowserWindowsProbe:

@@ -317,6 +317,31 @@ class TestFireEventWarnsOnUnhandled:
             'past the cap, further unknown names must not log'
         )
 
+    def test_a_crafted_name_cannot_forge_log_lines(self, caplog):
+        """`name` is caller-derived -- the search API's `types` param becomes
+        `'<type>.search'` -- and this is the first place it reaches the log.
+        %r escapes newlines, so an injected line break cannot fake a second
+        log record."""
+        from couchpotato.core.event import fireEvent
+
+        with caplog.at_level('WARNING'):
+            fireEvent('evil\nWARNING  forged log line.search')
+
+        assert 'forged log line' in caplog.text, 'sanity: the name was logged'
+        assert '\nWARNING  forged' not in caplog.text, (
+            'a newline in the event name must not survive into the log'
+        )
+
+    def test_an_absurdly_long_name_is_truncated(self, caplog):
+        from couchpotato.core.event import fireEvent
+
+        with caplog.at_level('WARNING'):
+            fireEvent('x' * 5000 + '.search')
+
+        assert len(caplog.text) < 1000, (
+            'a caller-supplied name must not write an unbounded log line'
+        )
+
     def test_handled_events_do_not_warn(self, caplog):
         from couchpotato.core.event import addEvent, fireEvent, removeEvent
 
