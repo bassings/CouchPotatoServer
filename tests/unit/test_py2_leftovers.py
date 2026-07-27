@@ -15,9 +15,10 @@ reachable paths behaviourally; `test_f821_is_enforced` pins the mechanism so
 the rule cannot be quietly switched off again.
 """
 
-import tomllib
+import pathlib
 
 import pytest
+import tomlkit
 
 
 class TestSearchTypesArgument:
@@ -68,11 +69,19 @@ class TestF821IsEnforced:
     rule cannot -- unless someone re-adds it to the ignore list, which is what
     this test prevents."""
 
-    def test_f821_is_not_ignored(self):
-        with open('pyproject.toml', 'rb') as handle:
-            config = tomllib.load(handle)
+    def _ruff_lint_config(self):
+        """tomlkit, not tomllib: tomllib landed in Python 3.11 and CI's matrix
+        includes 3.10, where importing it fails at collection time and takes
+        the whole test module down. tomlkit is already a pinned runtime
+        dependency and works on every supported version."""
+        pyproject = pathlib.Path(__file__).resolve().parents[2] / 'pyproject.toml'
 
-        ignored = config['tool']['ruff']['lint'].get('ignore', [])
+        return tomlkit.parse(pyproject.read_text())['tool']['ruff']['lint']
+
+    def test_f821_is_not_ignored(self):
+        config = self._ruff_lint_config()
+
+        ignored = config.get('ignore', [])
 
         assert 'F821' not in ignored, (
             "F821 (undefined-name) catches Python 2 leftovers like `unicode` "
@@ -83,10 +92,7 @@ class TestF821IsEnforced:
 
     def test_f_rules_are_still_selected(self):
         """Ignoring F821 individually is not the only way to lose it."""
-        with open('pyproject.toml', 'rb') as handle:
-            config = tomllib.load(handle)
-
-        selected = config['tool']['ruff']['lint'].get('select', [])
+        selected = self._ruff_lint_config().get('select', [])
 
         assert 'F' in selected or 'F821' in selected, (
             'the pyflakes rule group must stay selected for F821 to apply'
