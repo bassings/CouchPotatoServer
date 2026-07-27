@@ -36,6 +36,24 @@
   notifications/metadata don't auto-fire); being addressed by the
   Downloaded/review workflow — see `specs/DOWNLOADED-REVIEW-WORKFLOW.md` +
   `specs/RENAMER-EVENT-CHAIN.md`.
+- **Events fired with no handler.** `fireEvent()` returns `[]` for an
+  unhandled name, indistinguishable from "handled, found nothing", so a
+  mis-wired event never fails — the feature behind it silently does nothing.
+  `tests/unit/test_event_wiring.py` now fails CI when a new one appears, and
+  `fireEvent()` warns once per name at runtime. Two known gaps stay
+  allowlisted in `couchpotato/core/event.OPTIONAL_EVENTS`:
+  - `movie.info.release_date` — no provider handler, so the ETA gate had no
+    dates at all. Worked around by deriving a theatrical date from the
+    `released` string TMDB already stores; the real fix is a provider handler
+    using TMDB's per-country `release_dates` endpoint, which would also give a
+    digital/physical date. Until then `dvd` is always unknown, so the
+    dvd-based unlock paths in `couldBeReleased()` are dead code.
+  - `cp.source_url` — **`SourceUpdater.doUpdate()` calls `.get()` on the
+    `None` this returns, so every update attempt on a source install fails.**
+    Reachable: `release-to-prod.yml` attaches `.tar.gz`/`.zip` source archives
+    to each stable release, and running one outside Docker leaves no `.git`,
+    which is exactly how `SourceUpdater` is selected. Either implement the
+    handler or delete that update path.
 - **Review + implement Dependabot dependency PRs** — keep the dependency
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them

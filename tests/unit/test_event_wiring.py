@@ -254,6 +254,36 @@ class TestFireEventWarnsOnUnhandled:
         assert result == ['ok']
         assert caplog.text == '', 'a normal dispatch must be silent, got: %r' % caplog.text
 
+    def test_the_warning_cache_is_bounded(self, caplog):
+        """Event names can be caller-derived: `Search.search()` fires
+        `'%s.search' % media_type` where `types` comes straight off the API
+        request. An unbounded cache would grow for the life of the process on
+        arbitrary input -- a slow memory leak plus a log line each.
+
+        Past the cap the cache stops growing and stops logging.
+        """
+        from couchpotato.core import event
+        from couchpotato.core.event import fireEvent
+
+        for i in range(event.MAX_WARNED_UNHANDLED + 50):
+            fireEvent('attacker.controlled.%d.search' % i)
+
+        assert len(event._warned_unhandled) <= event.MAX_WARNED_UNHANDLED
+
+    def test_stops_logging_once_the_cache_is_full(self, caplog):
+        from couchpotato.core import event
+        from couchpotato.core.event import fireEvent
+
+        for i in range(event.MAX_WARNED_UNHANDLED):
+            fireEvent('filler.%d.search' % i)
+
+        with caplog.at_level('WARNING'):
+            fireEvent('one.more.unhandled.search')
+
+        assert 'one.more.unhandled.search' not in caplog.text, (
+            'past the cap, further unknown names must not log'
+        )
+
     def test_handled_events_do_not_warn(self, caplog):
         from couchpotato.core.event import addEvent, fireEvent, removeEvent
 

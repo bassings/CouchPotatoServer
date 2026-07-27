@@ -44,8 +44,12 @@ def test_removed_stdlib_module_is_not_imported(module_name):
     """These raise ModuleNotFoundError on a supported interpreter. A guarded
     import (behind `if os.name == 'nt'`) is not safe either — it just moves the
     failure to the platform nobody tests on."""
+    # Also catches submodule forms -- `import imp.util` and
+    # `from distutils.core import setup` fail exactly the same way as the
+    # bare module, so matching only the top-level name would miss them.
     pattern = re.compile(
-        r'^\s*(?:import\s+%s\b|from\s+%s[\s.]+import)' % (module_name, module_name),
+        r'^\s*(?:import\s+%s(?:\.\w+)*\b|from\s+%s(?:\.\w+)*\s+import)'
+        % (module_name, module_name),
         re.M,
     )
 
@@ -58,6 +62,30 @@ def test_removed_stdlib_module_is_not_imported(module_name):
         '%s was removed in Python %s but is imported by: %s'
         % (module_name, REMOVED_MODULES[module_name], offenders)
     )
+
+
+@pytest.mark.parametrize('line,should_match', [
+    ('import imp', True),
+    ('    import imp', True),
+    ('import imp.util', True),
+    ('from imp import find_module', True),
+    ('from imp.util import thing', True),
+    ('import importlib', False),          # not `imp`, despite the prefix
+    ('import importlib.util', False),
+    ('from importlib import util', False),
+    ('# import imp', False),              # a comment about it is fine
+    ('imp = 3', False),                   # a variable named imp is fine
+], ids=lambda v: str(v)[:34])
+def test_removed_module_pattern_discriminates(line, should_match):
+    """The detector must catch submodule imports without firing on
+    similarly-named modules -- `importlib` starts with `imp`."""
+    import re
+
+    pattern = re.compile(
+        r'^\s*(?:import\s+imp(?:\.\w+)*\b|from\s+imp(?:\.\w+)*\s+import)', re.M,
+    )
+
+    assert bool(pattern.search(line)) is should_match
 
 
 class TestFileBrowserWindowsProbe:

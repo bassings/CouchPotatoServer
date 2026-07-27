@@ -32,10 +32,12 @@ OPTIONAL_EVENTS = frozenset({
     # ^ the release-date lookup behind the ETA gate (BUG-017). Worked around by
     #   deriving the date from info['released'] instead of adding a handler.
     'cp.source_url',
-    # ^ SourceUpdater.doUpdate() would raise AttributeError on the None this
-    #   returns. Unreachable in practice -- that updater is selected only for a
-    #   downloaded-source install (not Docker, not a git checkout), neither of
-    #   which this project ships. Pre-existing; fix or delete that path.
+    # ^ SourceUpdater.doUpdate() calls .get() on the None this returns, so
+    #   every update attempt on a source install fails. This IS reachable:
+    #   release-to-prod.yml attaches .tar.gz/.zip source archives to each
+    #   stable release, and running one outside Docker gives no .git, which is
+    #   exactly how SourceUpdater gets selected. Pre-existing and out of scope
+    #   here; recorded in docs/technical-debt.md.
 })
 
 # Per-dispatch and per-setting hooks. These are opt-in by design and are
@@ -61,6 +63,15 @@ def _isOptionalEvent(name):
 # name for the process lifetime, not one per call. Plain set: adds and
 # membership tests are atomic under the GIL, and a duplicated warning in a
 # race is harmless.
+#
+# BOUNDED, because event names are not all internal: Search.search() fires
+# `'%s.search' % media_type` where `types` comes straight off the API request,
+# so a caller can mint unlimited distinct names. An unbounded set would grow
+# for the life of the process on arbitrary input -- a slow memory leak plus a
+# log line each. Past the cap we stop recording and stop logging; the cap is
+# far above the number of real event names in the app, so genuine gaps are
+# still reported.
+MAX_WARNED_UNHANDLED = 500
 _warned_unhandled = set()
 
 # blinker namespace (not used for dispatch, but available for introspection)
@@ -149,7 +160,9 @@ def fireEvent(name, *args, **kwargs):
         # analysis covers literal names (test_event_wiring.py); this also
         # catches the templated ones ('%s.snatched' % media_type) that only
         # become concrete here.
-        if not _isOptionalEvent(name) and name not in _warned_unhandled:
+        if (not _isOptionalEvent(name)
+                and name not in _warned_unhandled
+                and len(_warned_unhandled) < MAX_WARNED_UNHANDLED):
             _warned_unhandled.add(name)
             log.warning('Event "%s" was fired but nothing handles it; it did '
                         'nothing. Either register a handler or add the name to '
