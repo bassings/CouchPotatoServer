@@ -198,18 +198,34 @@ class TestFileBrowserWindowsProbe:
 
         assert browser.autoload == 'FileBrowser'
 
-    def test_no_windows_only_bindings_leak_into_the_module(self):
-        """Pins the fixture: after a faked-Windows reload, the attributes that
-        only exist on that path must not survive into the shared module."""
-        self._reimport_as_windows(
+    def test_the_faked_reload_really_does_pollute_the_module(self):
+        """The fixture's reason to exist, asserted where it is observable.
+
+        A test cannot check its own fixture teardown, so this asserts the
+        precondition -- the faked-Windows reload really does bind attributes
+        the host platform never would -- and the module-scope test at the
+        bottom of this file asserts they are gone afterwards.
+        """
+        module = self._reimport_as_windows(
             find_spec_result=MagicMock(), fake_win32file=MagicMock(),
+        )
+
+        assert hasattr(module, 'win32file'), (
+            'if the faked reload stopped binding this, the cleanup fixture '
+            'would be guarding nothing'
         )
 
 
 def test_browser_module_is_unpolluted_after_the_windows_tests():
-    """Module-scope check, ordered after the class above: the faked-Windows
-    reloads must not have left MagicMock bindings behind for the rest of the
-    session."""
+    """The post-condition for TestFileBrowserWindowsProbe's cleanup fixture.
+
+    Deliberately module-scope and placed last: it must observe the state the
+    class leaves behind, which a method inside that class cannot do (its own
+    fixture teardown has not run yet). pytest executes tests in file order, so
+    this runs after them; if it is ever reordered it fails loudly rather than
+    passing vacuously, because the pollution it checks for is real (see
+    test_the_faked_reload_really_does_pollute_the_module).
+    """
     import couchpotato.core.plugins.browser as browser
 
     for leaked in ('win32file', 'found'):
