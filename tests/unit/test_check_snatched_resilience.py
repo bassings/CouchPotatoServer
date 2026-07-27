@@ -103,6 +103,16 @@ class TestCreateNzbName:
 
         assert name.startswith('Some.Movie.2026.1080p')
 
+    def test_no_name_no_title_and_no_id_uses_the_literal_fallback(self):
+        """The last tier of the chain, which nothing else covers -- a name is
+        going on a filesystem, so it must never end up empty."""
+        plugin = self._plugin()
+
+        with patch.object(type(plugin), 'cpTag', return_value='', create=True):
+            name = plugin.createNzbName({}, {})
+
+        assert name == 'unknown'
+
     def test_no_name_and_no_title_still_yields_something_usable(self):
         """Last resort: the imdb id, then a literal placeholder -- never an
         empty filename."""
@@ -206,7 +216,8 @@ class TestCheckSnatchedIsolatesBadReleases:
                 return [good, bad]
             if name == 'download.status':
                 return [{'id': 'dl-1', 'downloader': 'sabnzbd', 'name': 'x',
-                         'status': 'busy', 'timeleft': -1, 'scan': False}]
+                         'status': 'busy', 'timeleft': -1, 'scan': False,
+                         'folder': '/downloads/x'}]
             return None
 
         db = MagicMock()
@@ -239,7 +250,8 @@ class TestCheckSnatchedIsolatesBadReleases:
                 return [self._release('1', None)]
             if name == 'download.status':
                 return [{'id': 'dl-1', 'downloader': 'sabnzbd', 'name': '',
-                         'status': 'busy', 'timeleft': -1, 'scan': False}]
+                         'status': 'busy', 'timeleft': -1, 'scan': False,
+                         'folder': '/downloads/x'}]
             return None
 
         db = MagicMock()
