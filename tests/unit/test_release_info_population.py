@@ -180,6 +180,22 @@ class TestPlexErrorFormatting:
             # Must complete without propagating NameError.
             server.request('library/sections')
 
+    def test_a_failed_token_fetch_does_not_raise_nameerror(self):
+        """Adjacent latent crash, same class: when urlopen raises URLError the
+        handler only logs, leaving `response` unbound -- and the next block's
+        `etree.parse(response)` then raised NameError, which neither except
+        clause catches, so it escaped `request()` entirely."""
+        import urllib.error
+
+        server = self._server()
+
+        with patch('urllib.request.urlopen', side_effect=urllib.error.URLError('boom')), \
+                patch('couchpotato.core.notifications.plex.server.etree.parse') as parse:
+            result = server.request('library/sections')
+
+        assert result is None
+        parse.assert_not_called(), 'must not try to parse a response we never got'
+
     def test_the_error_is_logged_with_the_exception(self):
         server = self._server()
 
