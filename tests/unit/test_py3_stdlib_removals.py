@@ -7,8 +7,13 @@ install on any modern Python would raise ModuleNotFoundError at import time.
 The plugin loader swallows ImportError at DEBUG, so the file browser would
 simply vanish from the UI with no error anywhere the user would look.
 
-See MEMORY.md `loader-silent-import-swallow` for why that failure mode is
-particularly nasty in this codebase.
+That silent-disable is why a guarded import is not "safe": `couchpotato/core/
+loader.py` logs a failed plugin import at DEBUG and moves on, so the only
+symptom is a missing feature.
+
+Scope note: this module covers removed stdlib *modules*. Removed *builtins*
+(`unicode`, `long`, `basestring`) are covered separately by ruff's F821, which
+is enforced in the blocking lint, plus tests/unit/test_py2_leftovers.py.
 """
 
 import pathlib
@@ -39,19 +44,27 @@ def _python_files():
     return files
 
 
+def _import_pattern(module_name):
+    """Match every import form for a module, including submodules.
+
+    `import imp.util` and `from distutils.core import setup` fail exactly the
+    same way as the bare module, so matching only the top-level name would
+    miss them. The `\\b` after the optional dotted tail keeps `imp` from
+    matching `importlib`.
+    """
+    return re.compile(
+        r'^\s*(?:import\s+%s(?:\.\w+)*\b|from\s+%s(?:\.\w+)*\s+import)'
+        % (module_name, module_name),
+        re.M,
+    )
+
+
 @pytest.mark.parametrize('module_name', sorted(REMOVED_MODULES))
 def test_removed_stdlib_module_is_not_imported(module_name):
     """These raise ModuleNotFoundError on a supported interpreter. A guarded
     import (behind `if os.name == 'nt'`) is not safe either — it just moves the
     failure to the platform nobody tests on."""
-    # Also catches submodule forms -- `import imp.util` and
-    # `from distutils.core import setup` fail exactly the same way as the
-    # bare module, so matching only the top-level name would miss them.
-    pattern = re.compile(
-        r'^\s*(?:import\s+%s(?:\.\w+)*\b|from\s+%s(?:\.\w+)*\s+import)'
-        % (module_name, module_name),
-        re.M,
-    )
+    pattern = _import_pattern(module_name)
 
     offenders = [
         str(path) for path in _python_files()
@@ -78,14 +91,12 @@ def test_removed_stdlib_module_is_not_imported(module_name):
 ], ids=lambda v: str(v)[:34])
 def test_removed_module_pattern_discriminates(line, should_match):
     """The detector must catch submodule imports without firing on
-    similarly-named modules -- `importlib` starts with `imp`."""
-    import re
+    similarly-named modules -- `importlib` starts with `imp`.
 
-    pattern = re.compile(
-        r'^\s*(?:import\s+imp(?:\.\w+)*\b|from\s+imp(?:\.\w+)*\s+import)', re.M,
-    )
-
-    assert bool(pattern.search(line)) is should_match
+    Uses the same _import_pattern() the real test does, so this cannot drift
+    into validating a frozen copy of the logic.
+    """
+    assert bool(_import_pattern('imp').search(line)) is should_match
 
 
 class TestFileBrowserWindowsProbe:

@@ -60,10 +60,17 @@ def _isOptionalEvent(name):
             or name.endswith(OPTIONAL_EVENT_SUFFIXES))
 
 # Names already reported by fireEvent(); it is hot, so this is one line per
-# name for the process lifetime, not one per call. Plain set: adds and
-# membership tests are atomic under the GIL, and a duplicated warning in a
-# race is harmless.
+# name for the process lifetime, not one per call. Plain set rather than a
+# lock: add and membership tests are atomic under CPython's GIL, and the worst
+# outcome of a race is a duplicated warning line. (On a future free-threaded
+# build that atomicity no longer holds -- the consequence stays a duplicate
+# log line, not corruption, so this is still a fine trade there.)
 #
+# Set to True once the cap is reached, so that is announced exactly once.
+# Going quiet without saying so would be the same silent failure this whole
+# mechanism exists to prevent.
+_warned_cache_full = [False]
+
 # BOUNDED, because event names are not all internal: Search.search() fires
 # `'%s.search' % media_type` where `types` comes straight off the API request,
 # so a caller can mint unlimited distinct names. An unbounded set would grow
@@ -160,13 +167,22 @@ def fireEvent(name, *args, **kwargs):
         # analysis covers literal names (test_event_wiring.py); this also
         # catches the templated ones ('%s.snatched' % media_type) that only
         # become concrete here.
-        if (not _isOptionalEvent(name)
-                and name not in _warned_unhandled
-                and len(_warned_unhandled) < MAX_WARNED_UNHANDLED):
-            _warned_unhandled.add(name)
-            log.warning('Event "%s" was fired but nothing handles it; it did '
-                        'nothing. Either register a handler or add the name to '
-                        'OPTIONAL_EVENTS in couchpotato/core/event.py.', name)
+        if not _isOptionalEvent(name) and name not in _warned_unhandled:
+            if len(_warned_unhandled) < MAX_WARNED_UNHANDLED:
+                _warned_unhandled.add(name)
+                log.warning('Event "%s" was fired but nothing handles it; it '
+                            'did nothing. Either register a handler or add the '
+                            'name to OPTIONAL_EVENTS in '
+                            'couchpotato/core/event.py.', name)
+            elif not _warned_cache_full[0]:
+                _warned_cache_full[0] = True
+                log.warning('Reached %d distinct unhandled event names and am '
+                            'no longer reporting them. Event names can be '
+                            'caller-derived, so this is usually a client '
+                            'sending arbitrary values rather than %d real '
+                            'bugs -- but genuine unhandled events will now go '
+                            'unreported until restart.',
+                            MAX_WARNED_UNHANDLED, MAX_WARNED_UNHANDLED)
         return []
 
     try:

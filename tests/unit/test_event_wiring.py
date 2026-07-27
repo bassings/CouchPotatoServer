@@ -155,11 +155,17 @@ class TestFireEventWarnsOnUnhandled:
 
     @pytest.fixture(autouse=True)
     def _reset(self):
+        """Both pieces of module state, or a test that fills the cache leaves
+        the cap-announced flag set and silently disarms the next one."""
         from couchpotato.core import event
 
-        event._warned_unhandled.clear()
+        def clear():
+            event._warned_unhandled.clear()
+            event._warned_cache_full[0] = False
+
+        clear()
         yield
-        event._warned_unhandled.clear()
+        clear()
 
     def test_warns_once_for_an_unhandled_event(self, caplog):
         from couchpotato.core.event import fireEvent
@@ -269,6 +275,33 @@ class TestFireEventWarnsOnUnhandled:
             fireEvent('attacker.controlled.%d.search' % i)
 
         assert len(event._warned_unhandled) <= event.MAX_WARNED_UNHANDLED
+
+    def test_says_so_when_it_stops_reporting(self, caplog):
+        """Hitting the cap disables the guard for the rest of the process --
+        including for genuinely new dead events unrelated to whatever filled
+        it. Silently going quiet is the same failure this whole mechanism
+        exists to prevent, so it must announce that it has stopped.
+        """
+        from couchpotato.core import event
+        from couchpotato.core.event import fireEvent
+
+        with caplog.at_level('WARNING'):
+            for i in range(event.MAX_WARNED_UNHANDLED + 1):
+                fireEvent('filler.%d.search' % i)
+
+        assert 'no longer reporting' in caplog.text.lower(), (
+            'reaching the cap must be announced, got: %r' % caplog.text[-400:]
+        )
+
+    def test_announces_the_cap_only_once(self, caplog):
+        from couchpotato.core import event
+        from couchpotato.core.event import fireEvent
+
+        with caplog.at_level('WARNING'):
+            for i in range(event.MAX_WARNED_UNHANDLED + 20):
+                fireEvent('filler.%d.search' % i)
+
+        assert caplog.text.lower().count('no longer reporting') == 1
 
     def test_stops_logging_once_the_cache_is_full(self, caplog):
         from couchpotato.core import event
