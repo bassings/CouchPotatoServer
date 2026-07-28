@@ -498,6 +498,17 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         changes the movie's status -- it exists so a movie you already have
         can be re-examined against what providers currently offer.
         """
+        try:
+            return self._searchReleases(media_id)
+        except Exception:
+            # Wrapped like tryNextRelease and markFailedAndResearch: single()
+            # indexes movie['info']['year'] directly, and a library import can
+            # lack it -- exactly the movies this feature targets. A 500 on the
+            # detail page is a worse answer than a handled failure.
+            log.error('Failed searching releases for %s: %s', media_id, traceback.format_exc())
+            return {'success': False, 'found': 0}
+
+    def _searchReleases(self, media_id):
         media = fireEvent('media.get', media_id, single = True)
         if not media:
             return {'success': False, 'found': 0}

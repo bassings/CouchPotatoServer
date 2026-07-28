@@ -381,6 +381,21 @@ class TestFoundCount:
 
         assert result['found'] == 0
 
+    def test_a_failure_inside_the_search_does_not_500(self, searcher):
+        """single() can raise for a movie with incomplete info -- e.g. a
+        library import with no 'year', which single() indexes directly. Its
+        siblings tryNextRelease and markFailedAndResearch both wrap their work;
+        this view did not, so a plausible edge case for exactly the movies
+        this feature targets returned a 500 instead of a handled failure."""
+        movie = _movie(status='done')
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', side_effect=KeyError('year'), create=True):
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert result == {'success': False, 'found': 0}
+
     def test_a_movie_that_no_longer_exists_is_reported_as_a_failure(self, searcher):
         """The detail page can be open while the movie is deleted in another
         tab; the click must not report success for a search that never ran."""
