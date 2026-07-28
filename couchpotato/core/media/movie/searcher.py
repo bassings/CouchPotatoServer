@@ -481,7 +481,13 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         if not media:
             return {'success': False, 'found': 0}
 
-        self.single(media, list_only = True)
+        # manual=True as well as list_only: single() derives bypass_cache from
+        # `manual`, so without it a user pressing "Search for releases" is
+        # answered from the 30-minute provider cache -- stale results for an
+        # explicitly user-initiated action. It also matches how try_next and
+        # mark_failed mark "a human asked for this". It cannot cause a
+        # download: list_only short-circuits the download gate regardless.
+        self.single(media, manual = True, list_only = True)
 
         # Re-read so the count reflects what was just stored.
         media = fireEvent('media.get', media_id, single = True) or media

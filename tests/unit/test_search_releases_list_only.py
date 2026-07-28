@@ -207,6 +207,36 @@ class TestApiView:
         assert single.called, 'the view must actually run a search'
         assert single.call_args.kwargs.get('list_only') is True
 
+    def test_the_search_is_not_served_from_cache(self, searcher):
+        """A user pressing "Search for releases" is asking what is available
+        NOW. single() derives bypass_cache from `manual`, so without it the
+        click is answered from the 30-minute provider cache -- stale results
+        for an explicitly user-initiated action.
+
+        manual=True is also the established idiom for "a human asked for
+        this" across try_next and mark_failed. It cannot cause a download
+        here: list_only short-circuits the download gate regardless.
+        """
+        movie = _movie(status='done')
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.call_args.kwargs.get('manual') is True, (
+            'without manual=True the search is answered from the provider '
+            'cache, so a user-initiated refresh can return stale results'
+        )
+
+    def test_a_cached_search_would_still_not_download(self, searcher):
+        """manual=True widens what is searched (it also ignores the ETA
+        gate). Pin that this cannot turn the list-only action into a
+        downloading one."""
+        calls = _drive(searcher, _movie(status='done'), list_only=True, manual=True)
+
+        assert 'release.try_download_result' not in calls
+
 
 class TestMovieDetailButton:
     """AC8 -- the action has to be reachable from the UI, and specifically on
