@@ -172,6 +172,15 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         default_title = getTitle(movie)
         if not default_title:
+            # A list-only search must never delete anything. This branch is
+            # reasonable for the automatic path -- an untitled movie cannot be
+            # searched, so it is removed rather than failing every cycle -- but
+            # it was previously unreachable for a done/downloaded movie, and
+            # the list_only bypass exposed it. Deleting a library record
+            # because the user asked "what's available?" is not acceptable.
+            if list_only:
+                log.debug('No usable title for %s; nothing to search.', movie.get('_id'))
+                return
             log.error('No proper info found for movie, removing it from library to stop it from causing more issues.')
             fireEvent('media.delete', movie['_id'], single = True)
             return
@@ -288,15 +297,23 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     and fireEvent('release.try_download_result', results, movie, quality_custom, single = True):
                 ret = True
 
-            # Remove releases that aren't found anymore
-            temp_previous_releases = []
-            for release in previous_releases:
-                if release.get('status') == 'available' and release.get('identifier') not in found_releases:
-                    fireEvent('release.delete', release.get('_id'), single = True)
-                else:
-                    temp_previous_releases.append(release)
-            previous_releases = temp_previous_releases
-            del temp_previous_releases
+            # Remove releases that aren't found anymore.
+            #
+            # Skipped for a list-only search: providers routinely swallow
+            # connection/HTTP errors and simply return no results, and this
+            # would then delete the very release list the user opened the page
+            # to look at. The automatic path can afford to re-derive the set
+            # each cycle because it is followed by a download; an explicit
+            # "show me what's available" cannot.
+            if not list_only:
+                temp_previous_releases = []
+                for release in previous_releases:
+                    if release.get('status') == 'available' and release.get('identifier') not in found_releases:
+                        fireEvent('release.delete', release.get('_id'), single = True)
+                    else:
+                        temp_previous_releases.append(release)
+                previous_releases = temp_previous_releases
+                del temp_previous_releases
 
             # Break if CP wants to shut down
             if self.shuttingDown() or ret:

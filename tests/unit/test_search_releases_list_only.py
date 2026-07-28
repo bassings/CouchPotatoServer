@@ -55,11 +55,15 @@ def _profile():
     }
 
 
-def _drive(searcher, movie, **kwargs):
+def _drive(searcher, movie, no_results=False, **kwargs):
     """Run single() with the surrounding plumbing mocked, returning the
-    fireEvent calls so the assertions can look at what it actually did."""
+    fireEvent calls so the assertions can look at what it actually did.
+
+    `no_results` models the common provider failure mode: implementations
+    swallow connection/HTTP errors and simply return nothing.
+    """
     calls = []
-    found = [{'name': 'Some.Movie.2160p', 'url': 'http://x/1', 'score': 10}]
+    found = [] if no_results else [{'name': 'Some.Movie.2160p', 'url': 'http://x/1', 'score': 10}]
 
     def fake_fire_event(name, *args, **kw):
         calls.append(name)
@@ -74,7 +78,7 @@ def _drive(searcher, movie, **kwargs):
         if name == 'media.get':
             return movie
         if name == 'release.create_from_search':
-            return ['rel-%d' % len(calls)]
+            return [] if no_results else ['rel-%d' % len(calls)]
         if name == 'release.try_download_result':
             return True
         if name == 'quality.ishigher':
@@ -156,6 +160,46 @@ class TestListOnlySearchesDoneMovies:
         calls = _drive(searcher, _movie(status='done'), list_only=True)
 
         assert 'media.tag' in calls
+
+
+class TestListOnlyIsNonDestructive:
+    """Two data-loss paths the list-only bypass newly reaches.
+
+    Both were previously unreachable for a done/downloaded movie because the
+    status short-circuit returned before them. Bypassing that gate exposed
+    them, so list-only has to opt out of each.
+    """
+
+    def test_it_never_deletes_a_movie_with_no_title(self, searcher):
+        """single() deletes any movie whose title won't resolve -- reasonable
+        for the automatic path (it cannot be searched), catastrophic for a
+        read-only 'show me what's available' action on a library record."""
+        movie = _movie(status='done')
+        movie['title'] = ''
+        movie['info'] = {'year': 2020}
+
+        calls = _drive(searcher, movie, list_only=True)
+
+        assert 'media.delete' not in calls, (
+            'a list-only search deleted the library record'
+        )
+
+    def test_it_does_not_delete_existing_releases_when_providers_return_nothing(self, searcher):
+        """single() removes previously-available releases the current search
+        did not return. Providers routinely swallow connection errors and
+        return [], so one failed search would wipe the release list the user
+        opened the page to look at."""
+        movie = _movie(status='done', releases=[
+            {'_id': 'old-1', 'status': 'available', 'quality': '1080p',
+             'identifier': 'kept', 'is_3d': False},
+        ])
+
+        calls = _drive(searcher, movie, list_only=True, no_results=True)
+
+        assert 'release.delete' not in calls, (
+            'a list-only search whose providers returned nothing deleted the '
+            'movie\'s existing releases'
+        )
 
 
 class TestAutomaticPathUnchanged:

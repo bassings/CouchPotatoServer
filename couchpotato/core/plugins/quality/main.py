@@ -269,6 +269,12 @@ class QualityPlugin(Plugin):
                             'label': label,
                             'finish': [True],
                             'wait_for': [0],
+                            # FEAT-004: these one-quality profiles are seeded
+                            # here rather than by ProfilePlugin.fill(), so they
+                            # need the review gate too -- otherwise a fresh
+                            # install still has a dozen profiles that
+                            # auto-complete downloads.
+                            'manual_confirmation': True,
                         })
                     else:
                         log.info('Profile already exists, skipping: %s', label)

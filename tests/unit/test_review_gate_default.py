@@ -191,3 +191,64 @@ class TestCoreFlagSurvivesAnEdit:
         doc = self._save(plugin, {'label': 'Mine', 'types': self._types()})
 
         assert not doc.get('core')
+
+
+class TestQualitySeededProfiles:
+    """QualityPlugin.fill() seeds a one-quality core profile per quality, and
+    runs BEFORE ProfilePlugin.fill() on a fresh database. Those documents are
+    built inline rather than through build_profile_doc(), so they needed the
+    gate adding separately -- otherwise a fresh install still had a dozen
+    profiles that auto-complete downloads."""
+
+    def test_the_seeded_profile_document_has_the_gate_on(self):
+        """Asserted on the profile-insert block specifically, so it cannot
+        pass on an unrelated occurrence elsewhere in fill()."""
+        import inspect
+        import re
+
+        from couchpotato.core.plugins.quality.main import QualityPlugin
+
+        source = inspect.getsource(QualityPlugin.fill)
+        block = re.search(r"'_t': 'profile'.*?\}\)", source, re.S)
+
+        assert block, "could not find the profile insert in QualityPlugin.fill"
+        assert "'manual_confirmation': True" in block.group(0)
+
+
+class TestTagPersistsTheTimestampBump:
+    """FEAT-005 leans on media.tag(..., update_edited=True) to keep
+    release.cleanDone from sweeping the releases a search just surfaced.
+
+    tag() had db.update() inside the tag-is-new branch, so the SECOND search
+    onward bumped last_edit in memory only and the protection silently stopped
+    working."""
+
+    def _tag(self, existing_tags):
+        from couchpotato.core.media._base.media.main import MediaPlugin
+
+        plugin = object.__new__(MediaPlugin)
+        doc = {'_id': 'm1', 'tags': list(existing_tags), 'last_edit': 0}
+        db = MagicMock()
+        db.get.return_value = doc
+
+        with patch('couchpotato.core.media._base.media.main.get_db', return_value=db), \
+                patch('couchpotato.core.media._base.media.main.media_lock'):
+            plugin.tag('m1', 'recent', update_edited=True)
+
+        return doc, db
+
+    def test_a_repeat_tag_still_persists_the_new_timestamp(self):
+        """The bug: 'recent' already present, so nothing was written."""
+        doc, db = self._tag(['recent'])
+
+        assert doc['last_edit'] > 0
+        assert db.update.called, (
+            'last_edit was bumped in memory but never persisted, so the '
+            'cleanup protection stopped working after the first search'
+        )
+
+    def test_a_first_tag_still_persists(self):
+        doc, db = self._tag([])
+
+        assert 'recent' in doc['tags']
+        assert db.update.called
