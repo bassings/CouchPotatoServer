@@ -57,6 +57,16 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             },
         })
 
+        addApiView('movie.searcher.search_releases', self.searchReleasesView, docs = {
+            'desc': "FEAT-005: list the releases currently available for a movie "
+                    "WITHOUT downloading any of them. Works on a movie that is "
+                    "already 'done' or awaiting review, so a better copy can be "
+                    "found later and picked by hand.",
+            'params': {
+                'media_id': {'desc': 'The id of the media'},
+            },
+        })
+
         addApiView('movie.searcher.full_search', self.searchAllView, docs = {
             'desc': 'Starts a full search for all wanted movies',
         })
@@ -132,7 +142,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         self.in_progress = False
 
-    def single(self, movie, search_protocols = None, manual = False, force_download = False, bypass_cache = None):
+    def single(self, movie, search_protocols = None, manual = False, force_download = False, bypass_cache = None, list_only = False):
 
         # BUG-015 follow-up: bypass_cache controls whether the provider HTTP
         # cache (30-minute newznab/torrentpotato cache) is bypassed for this
@@ -155,7 +165,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # 'downloaded' is the manual-review gate (workflow phase 1): treat it like
         # 'done' for gating purposes so a movie awaiting review is never searched
         # or upgraded, unless a manual/forced search explicitly overrides it.
-        if not movie['profile_id'] or (movie['status'] in ('done', 'downloaded') and not manual):
+        if not movie['profile_id'] or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
             log.debug('Movie doesn\'t have a profile, is already done, or is awaiting review, assuming in manage tab.')
             fireEvent('media.restatus', movie['_id'], single = True)
             return
@@ -231,7 +241,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                         has_better_quality += 1
 
             # Don't search for quality lower then already available.
-            if has_better_quality > 0:
+            #
+            # FEAT-005: a list-only search skips this. For a movie that already
+            # holds its profile's top quality this breaks on the FIRST rung, so
+            # honouring it would mean "show me what's available" searched
+            # nothing at all -- which is exactly the case the feature is for.
+            if has_better_quality > 0 and not list_only:
                 log.info('Better quality (%s) already available or snatched for %s', q_identifier, default_title)
                 fireEvent('media.restatus', movie['_id'], single = True)
                 break
@@ -265,8 +280,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             if could_not_be_released and results_count > 0:
                 log.debug('Found %s releases for "%s", but ETA isn\'t correct yet.', results_count, default_title)
 
-            # Try find a valid result and download it
-            if (force_download or not could_not_be_released or always_search) and fireEvent('release.try_download_result', results, movie, quality_custom, single = True):
+            # Try find a valid result and download it.
+            # FEAT-005: never in list-only mode -- the results are stored as
+            # 'available' by release.create_from_search above, and the user
+            # picks one.
+            if not list_only and (force_download or not could_not_be_released or always_search) \
+                    and fireEvent('release.try_download_result', results, movie, quality_custom, single = True):
                 ret = True
 
             # Remove releases that aren't found anymore
@@ -442,6 +461,32 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
 
         return False
+
+    def searchReleasesView(self, media_id = None, **kwargs):
+        """FEAT-005 "Search for releases": populate the movie's release list
+        without snatching anything.
+
+        Unlike every other search entry point this never downloads and never
+        changes the movie's status -- it exists so a movie you already have
+        can be re-examined against what providers currently offer.
+        """
+        media = fireEvent('media.get', media_id, single = True)
+        if not media:
+            return {'success': False, 'found': 0}
+
+        self.single(media, list_only = True)
+
+        # Re-read so the count reflects what was just stored.
+        media = fireEvent('media.get', media_id, single = True) or media
+        found = len([
+            r for r in (media.get('releases') or [])
+            if r.get('status') == 'available'
+        ])
+
+        return {
+            'success': True,
+            'found': found,
+        }
 
     def tryNextReleaseView(self, media_id = None, **kwargs):
 
