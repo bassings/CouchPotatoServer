@@ -66,6 +66,11 @@ def build_profile_doc(profile, order):
         'order': order,
         'qualities': profile.get('qualities'),
         'minimum_score': 1,
+        # FEAT-004: the review gate is ON for seeded profiles. A completed
+        # download waits for confirmation instead of auto-promoting to 'done'
+        # -- the decision DOWNLOADED-REVIEW-WORKFLOW.md made, which the
+        # original compatibility default (off) inverted in practice.
+        'manual_confirmation': True,
         'finish': [],
         'wait_for': [],
         'stop_after': [],
@@ -177,10 +182,16 @@ class ProfilePlugin(Plugin):
                 # Workflow phase 2 (specs/DOWNLOADED-REVIEW-WORKFLOW.md): when
                 # truthy, a completing download for a movie on this profile is
                 # routed to the 'downloaded' review gate instead of 'done'
-                # (see MediaPlugin.restatus). Defaults False so existing/legacy
-                # profiles (and every caller that doesn't mention the field)
-                # keep today's auto-upgrade-to-done behavior unchanged.
-                'manual_confirmation': tryInt(kwargs.get('manual_confirmation', 0)) == 1,
+                # (see MediaPlugin.restatus).
+                #
+                # FEAT-004: NEW profiles default this ON -- the original
+                # compatibility default of off inverted the workflow's own
+                # decision, and in practice meant installs never reviewed
+                # anything. The edit path below deliberately overrides this
+                # with the PERSISTED value when the key is omitted: the live
+                # profile editor does not resend it, and without that fallback
+                # an existing profile's gate would flip on every save.
+                'manual_confirmation': tryInt(kwargs.get('manual_confirmation', 1)) == 1,
                 'qualities': [],
                 'wait_for': [],
                 'stop_after': [],
