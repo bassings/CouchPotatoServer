@@ -66,6 +66,37 @@ These are meaningfully different products, and the second is much less useful.
   which INI models badly. YAML or JSON fits the shape; adding a YAML
   dependency for one file is a cost worth weighing.
 
+## Scope input from review of #205
+
+Findings raised while shipping FEAT-004/005 that this work would subsume,
+recorded here so the reasoning is not lost:
+
+- **Profile defaults are declared in two places.** `manual_confirmation: True`
+  is now hardcoded independently in `build_profile_doc()`
+  (`profile/main.py`) and in the inline profile insert in
+  `QualityPlugin.fill()` (`quality/main.py`). Both are correct and both are
+  tested, but nothing keeps them in sync — a future change to any default has
+  two call sites to find by inspection. The same is true of the seeded
+  *quality lists*: `DEFAULT_PROFILES` and the one-quality profiles
+  `QualityPlugin.fill()` creates are separate declarations of "what profiles
+  exist". A file collapses both into one source of truth, which is a
+  substantial part of the value here.
+
+- **`profile.save` rebuilds rather than patches.** It reconstructs the whole
+  document from the caller's payload, so any field the caller omits reverts to
+  a default. `order` and `manual_confirmation` have persisted-value fallbacks
+  bolted on for exactly this reason, and `core` needed one adding after a bulk
+  update cleared it on 12 built-ins. A file-driven design should not need
+  per-field fallbacks, because the file *is* the declaration — but if the UI
+  keeps writing profiles, this shape needs designing out rather than
+  inheriting.
+
+- **There is no supported way to change `manual_confirmation`.** The settings
+  profile editor's `profileToForm`/`formToPayload` never expose it, so the
+  field can only be set through the API. Whatever replaces the current editor
+  needs every profile field reachable, or the same gap recurs for the next
+  field added.
+
 ## Suggested scope if picked up
 
 Smallest version that solves the motivating problems: a file that is

@@ -153,7 +153,11 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # sweep never bypasses the cache, even though it still searches with
         # manual=True for the status-gating/ignore_eta behaviour below.
         if bypass_cache is None:
-            bypass_cache = manual
+            # list_only is always user-initiated -- it only exists to answer
+            # "what is available right now" -- so it bypasses the cache on its
+            # own rather than relying on every caller remembering to pair it
+            # with manual=True.
+            bypass_cache = manual or list_only
 
         # Find out search type
         try:

@@ -55,6 +55,13 @@ def _profile():
     }
 
 
+class _Calls(list):
+    """A list of fired event NAMES that also carries the full (name, args,
+    kwargs) tuples, so a test can assert HOW an event was fired and not merely
+    that it was."""
+    fired = ()
+
+
 def _drive(searcher, movie, no_results=False, **kwargs):
     """Run single() with the surrounding plumbing mocked, returning the
     fireEvent calls so the assertions can look at what it actually did.
@@ -62,11 +69,13 @@ def _drive(searcher, movie, no_results=False, **kwargs):
     `no_results` models the common provider failure mode: implementations
     swallow connection/HTTP errors and simply return nothing.
     """
-    calls = []
+    calls = _Calls()
+    fired = []
     found = [] if no_results else [{'name': 'Some.Movie.2160p', 'url': 'http://x/1', 'score': 10}]
 
     def fake_fire_event(name, *args, **kw):
         calls.append(name)
+        fired.append((name, args, kw))
         if name == 'quality.pre_releases':
             return []
         if name == 'movie.update_release_dates':
@@ -99,6 +108,7 @@ def _drive(searcher, movie, no_results=False, **kwargs):
             patch.object(type(searcher), 'shuttingDown', return_value=False, create=True):
         searcher.single(movie, search_protocols=['nzb'], **kwargs)
 
+    calls.fired = fired          # attach so callers can inspect kwargs too
     return calls
 
 
@@ -159,7 +169,12 @@ class TestListOnlySearchesDoneMovies:
         """
         calls = _drive(searcher, _movie(status='done'), list_only=True)
 
-        assert 'media.tag' in calls
+        tag_calls = [f for f in calls.fired if f[0] == 'media.tag']
+        assert tag_calls, 'the movie was never touched, so cleanDone will sweep the results'
+        # Asserting the kwarg, not just the event name: without update_edited
+        # the tag is added but last_edit is untouched, and the protection this
+        # test exists for does not happen.
+        assert tag_calls[0][2].get('update_edited') is True
 
 
 class TestListOnlyIsNonDestructive:
@@ -321,3 +336,57 @@ class TestMovieDetailButton:
         html = self._render('downloaded')
 
         assert 'data-testid="search-releases"' in html
+
+
+class TestListOnlyImpliesFreshResults:
+    """list_only on its own must not be served from cache, so a future caller
+    of the movie.searcher.single event cannot accidentally get stale results
+    by forgetting manual=True."""
+
+    def test_list_only_alone_bypasses_the_cache(self, searcher):
+        import inspect
+
+        from couchpotato.core.media.movie.searcher import MovieSearcher
+
+        source = inspect.getsource(MovieSearcher.single)
+
+        assert 'bypass_cache = manual or list_only' in source
+
+
+class TestFoundCount:
+    """The count the toast reports, exercised against real release data
+    rather than inferred from a mocked-out single()."""
+
+    def _view(self, searcher, releases):
+        movie = _movie(status='done', releases=releases)
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True):
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            return searcher.searchReleasesView(media_id='movie-1')
+
+    def test_it_counts_only_available_releases(self, searcher):
+        result = self._view(searcher, [
+            {'status': 'available', 'quality': '2160p'},
+            {'status': 'available', 'quality': '1080p'},
+            {'status': 'done', 'quality': '720p'},
+            {'status': 'failed', 'quality': '720p'},
+            {'status': 'ignored', 'quality': 'brrip'},
+        ])
+
+        assert result['found'] == 2
+
+    def test_no_available_releases_reports_zero(self, searcher):
+        result = self._view(searcher, [{'status': 'done', 'quality': '720p'}])
+
+        assert result['found'] == 0
+
+    def test_a_movie_that_no_longer_exists_is_reported_as_a_failure(self, searcher):
+        """The detail page can be open while the movie is deleted in another
+        tab; the click must not report success for a search that never ran."""
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', return_value=None), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='gone')
+
+        assert result == {'success': False, 'found': 0}
+        assert not single.called, 'no search should run for a movie that is gone'
