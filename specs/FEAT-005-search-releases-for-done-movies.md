@@ -74,6 +74,13 @@ the user asked for it.
       so they appear in the movie's release list.
 - [ ] AC5: the movie's status is unchanged by a list-only search (a `done`
       movie stays `done`; a `downloaded` movie stays in the review gate).
+- [ ] AC9: a list-only search DOES bump the movie's `last_edit` (via the
+      existing `media.tag('recent', update_edited=True)`). This is the single
+      mutation it makes, and it is required rather than incidental:
+      `release.cleanDone()` deletes every `available` release for a movie
+      whose `last_edit` is older than a week, and a `done` movie's `last_edit`
+      is typically months old — so without the bump the results would be swept
+      before the user could act on them.
 - [ ] AC6: the automatic path is untouched — with `list_only` defaulted false,
       the has-better-quality break and the download call behave exactly as
       before.

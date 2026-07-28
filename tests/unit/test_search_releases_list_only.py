@@ -143,6 +143,21 @@ class TestListOnlySearchesDoneMovies:
         )
 
 
+    def test_the_movie_is_touched_so_the_results_survive_cleanup(self, searcher):
+        """release.cleanDone() deletes every 'available' release for a movie
+        whose last_edit is older than a week, and a 'done' movie's last_edit
+        is typically months old. So the last_edit bump is load-bearing here:
+        without it the releases this search just surfaced get swept before
+        the user can pick one, and the feature is silently useless.
+
+        This is the one mutation a list-only search does make, and it is
+        deliberate -- hence a test rather than a gate.
+        """
+        calls = _drive(searcher, _movie(status='done'), list_only=True)
+
+        assert 'media.tag' in calls
+
+
 class TestAutomaticPathUnchanged:
     """AC6 -- list_only defaults false and must change nothing."""
 

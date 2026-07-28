@@ -303,6 +303,13 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                 break
 
         if total_result_count > 0:
+            # Deliberately NOT gated by list_only, despite list-only being
+            # otherwise read-only. release.cleanDone() deletes every
+            # 'available' release for any movie whose last_edit is older than
+            # a week -- and a 'done' movie's last_edit is typically months
+            # old. Without this bump, the releases a list-only search just
+            # surfaced would be swept before the user could pick one, which
+            # would make FEAT-005 silently useless.
             fireEvent('media.tag', movie['_id'], 'recent', update_edited = True, single = True)
 
         if len(too_early_to_search) > 0:
