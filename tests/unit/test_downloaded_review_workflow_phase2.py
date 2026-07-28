@@ -178,11 +178,20 @@ class TestProfileManualConfirmationPersistence:
         assert len(updated) == 1
         assert updated[0]['manual_confirmation'] is True
 
-    def test_save_defaults_manual_confirmation_false_when_omitted_on_new_profile(self):
+    def test_save_defaults_manual_confirmation_true_when_omitted_on_new_profile(self):
         """A save() call that never mentions manual_confirmation AND has no
         existing doc to fall back to (a brand new profile, or a caller whose
-        id doesn't resolve) must persist it as False, not leave it unset in
-        a way that could be misread as truthy."""
+        id doesn't resolve) must persist it EXPLICITLY, not leave it unset in
+        a way that could be misread.
+
+        FEAT-004 changed which value that is: new profiles now default the
+        review gate ON. The original default of False was chosen for
+        backwards compatibility, but it inverted the workflow's own decision
+        -- on a real install every profile had it unset, so nothing was ever
+        reviewed. The explicitness this test was written to protect is
+        unchanged; only the default flipped. The edit-path fallback below is
+        what keeps existing profiles on their stored value.
+        """
         result, updated = self._run_save({
             'id': 'profile-new',
             'label': 'Auto',
@@ -191,7 +200,7 @@ class TestProfileManualConfirmationPersistence:
 
         assert result['success'] is True
         assert len(updated) == 1
-        assert updated[0]['manual_confirmation'] is False
+        assert updated[0]['manual_confirmation'] is True
 
     def test_save_omitting_key_on_existing_true_profile_preserves_true(self):
         """BLOCKING bug (workflow phase 2 review): the live profile editor

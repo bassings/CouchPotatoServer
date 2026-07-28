@@ -196,4 +196,50 @@ test.describe('Movie Detail', () => {
       // in this suite, so this only exercises when one happens to exist.
     }
   });
+
+  test('should show a "Search for releases" action on the detail page (FEAT-005)', async ({ page }) => {
+    await page.goto('/');
+
+    const movieGrid = page.locator('#movie-grid');
+    await expect(movieGrid).toBeVisible({ timeout: 10000 });
+
+    const firstCard = movieGrid.locator('.poster-card').first();
+    test.skip(await firstCard.count() === 0, 'no movies in the library to open');
+
+    await firstCard.click();
+    await expect(page).toHaveURL(/.*movie\/.+/);
+
+    // Present regardless of status: the feature exists so a movie you already
+    // have can be re-checked against what providers currently offer.
+    const searchBtn = page.locator('[data-testid="search-releases"]');
+    await expect(searchBtn).toBeVisible({ timeout: 5000 });
+    await expect(searchBtn).toBeEnabled();
+    await expect(searchBtn).toContainText(/Search for releases/i);
+  });
+
+  test('the search action targets the list-only endpoint, not a full search', async ({ page }) => {
+    await page.goto('/');
+
+    const movieGrid = page.locator('#movie-grid');
+    await expect(movieGrid).toBeVisible({ timeout: 10000 });
+
+    const firstCard = movieGrid.locator('.poster-card').first();
+    test.skip(await firstCard.count() === 0, 'no movies in the library to open');
+
+    await firstCard.click();
+    await expect(page).toHaveURL(/.*movie\/.+/);
+
+    // Wiring it to the wrong endpoint would download rather than list, which
+    // is precisely what this feature avoids -- so assert the request itself.
+    const searchBtn = page.locator('[data-testid="search-releases"]');
+    await expect(searchBtn).toBeVisible({ timeout: 5000 });
+
+    const request = page.waitForRequest(
+      (r) => r.url().includes('movie.searcher.search_releases'),
+      { timeout: 10000 },
+    );
+    await searchBtn.click();
+    const req = await request;
+    expect(req.url()).not.toContain('full_search');
+  });
 });

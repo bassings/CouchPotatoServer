@@ -123,12 +123,24 @@
       {% endif %}
 
       <!-- Actions -->
-      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false, markingReviewDone: false, markingReviewFailed: false }">
+      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false, markingReviewDone: false, markingReviewFailed: false, searchingReleases: false }">
         <button @click="refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; location.reload(); })"
                 class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="refreshing">
           <span x-show="!refreshing">Refresh</span>
           <span x-show="refreshing">Refreshing…</span>
+        </button>
+        <!-- FEAT-005: list what providers currently offer WITHOUT downloading
+             anything. Shown for every status on purpose -- the point is that a
+             movie you already have can be re-examined when a better copy
+             appears. movie.searcher.search_releases takes media_id. -->
+        <button @click="searchingReleases = true; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Found ' + (d.found || 0) + ' release' + (d.found === 1 ? '' : 's'), 'success'); setTimeout(() => location.reload(), 900); } else { searchingReleases = false; toast('Search failed', 'error'); } }).catch(() => { searchingReleases = false; toast('Search failed', 'error'); })"
+                class="px-3.5 py-1.5 bg-cp-blue/10 text-cp-blue hover:bg-cp-blue/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
+                data-testid="search-releases"
+                :disabled="searchingReleases">
+          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
+          <span x-show="!searchingReleases">Search for releases</span>
+          <span x-show="searchingReleases">Searching…</span>
         </button>
         {% if status != 'done' and status != 'downloaded' %}
         <button @click="markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { location.reload(); } else { markingDone = false; } }).catch(() => { markingDone = false; })"

@@ -853,9 +853,19 @@ class MediaPlugin(MediaBase):
                     m['last_edit'] = int(time.time())
 
                 tags = m.get('tags') or []
-                if tag not in tags:
+                added = tag not in tags
+                if added:
                     tags.append(tag)
                     m['tags'] = tags
+
+                # Persist when the tag is new OR when the caller asked for the
+                # timestamp bump. Previously db.update() sat inside the
+                # tag-is-new branch, so a repeat call with update_edited=True
+                # changed last_edit in memory only -- which meant the
+                # cleanup-protection FEAT-005 relies on (release.cleanDone
+                # sweeps 'available' releases older than a week) silently
+                # stopped working from the second search onward.
+                if added or update_edited:
                     db.update(m)
 
                 return True
