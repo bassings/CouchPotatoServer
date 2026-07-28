@@ -111,3 +111,83 @@ class TestSaveDefaults:
                          existing=existing)
 
         assert doc.get('manual_confirmation') is False
+
+
+class TestCoreFlagSurvivesAnEdit:
+    """`core` marks a built-in profile non-deletable: the settings UI disables
+    its delete button and the JS guards on it.
+
+    save() built it as `kwargs.get('core', False)` with no fallback to the
+    persisted value -- unlike `order` and `manual_confirmation`. The new-UI
+    profile editor sends id/label/minimum_score/wait_for/stop_after/types and
+    never `core`, so **every edit of a built-in profile silently cleared the
+    flag and made it deletable**. Found when a bulk profile update cleared it
+    on 12 built-ins at once.
+    """
+
+    @pytest.fixture
+    def plugin(self):
+        from couchpotato.core.plugins.profile.main import ProfilePlugin
+
+        return object.__new__(ProfilePlugin)
+
+    def _save(self, plugin, kwargs, existing=None):
+        db = MagicMock()
+        inserted = {}
+
+        def fake_insert(doc):
+            inserted.update(doc)
+            inserted.setdefault('_id', 'new-profile')
+            return inserted
+
+        db.insert.side_effect = fake_insert
+        if existing is None:
+            db.get.side_effect = KeyError('not found')
+        else:
+            db.get.return_value = dict(existing)
+
+        with patch('couchpotato.core.plugins.profile.main.get_db', return_value=db), \
+                patch('couchpotato.core.plugins.profile.main.fireEvent'):
+            plugin.save(**kwargs)
+
+        return db.update.call_args[0][0] if db.update.called else inserted
+
+    def _types(self):
+        return [{'quality': '1080p', 'finish': 1, '3d': 0}]
+
+    def test_editing_a_builtin_without_sending_core_keeps_it(self, plugin):
+        """Bug repro: this is exactly the payload the profile editor sends."""
+        existing = {'_id': 'p1', 'label': '720p', 'core': True, 'order': 5}
+
+        doc = self._save(plugin, {'id': 'p1', 'label': '720p',
+                                  'minimum_score': '1', 'wait_for': '0',
+                                  'stop_after': '0', 'types': self._types()},
+                         existing=existing)
+
+        assert doc.get('core') is True, (
+            'editing a built-in profile cleared its core flag, making it '
+            'deletable in the UI'
+        )
+
+    def test_a_non_core_profile_stays_non_core(self, plugin):
+        existing = {'_id': 'p1', 'label': 'Mine', 'core': False, 'order': 5}
+
+        doc = self._save(plugin, {'id': 'p1', 'label': 'Mine',
+                                  'types': self._types()}, existing=existing)
+
+        assert not doc.get('core')
+
+    def test_an_explicit_core_value_still_wins(self, plugin):
+        existing = {'_id': 'p1', 'label': 'Mine', 'core': False, 'order': 5}
+
+        doc = self._save(plugin, {'id': 'p1', 'label': 'Mine', 'core': True,
+                                  'types': self._types()}, existing=existing)
+
+        assert doc.get('core') is True
+
+    def test_a_new_profile_is_not_core(self, plugin):
+        """Only the seeded built-ins are core; anything a user creates is
+        theirs to delete."""
+        doc = self._save(plugin, {'label': 'Mine', 'types': self._types()})
+
+        assert not doc.get('core')

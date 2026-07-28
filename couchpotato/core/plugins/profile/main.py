@@ -213,6 +213,13 @@ class ProfilePlugin(Plugin):
             try:
                 p = db.get('id', id)
                 profile['order'] = tryInt(kwargs.get('order', p.get('order', 999)))
+                # Same fallback idiom as 'order' and 'manual_confirmation'
+                # below, and for the same reason: the profile editor sends
+                # id/label/minimum_score/wait_for/stop_after/types and never
+                # 'core'. Without this, every edit of a built-in profile
+                # cleared the flag -- which is what marks it non-deletable in
+                # the settings UI -- so a routine rename made it deletable.
+                profile['core'] = kwargs.get('core', p.get('core', False))
                 # Fall back to the persisted value when the key is omitted, same
                 # idiom as 'order' above. Without this, editing an existing
                 # profile without resending manual_confirmation (as the live
