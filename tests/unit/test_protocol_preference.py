@@ -81,12 +81,29 @@ class TestSortByProtocolPreference:
         result = sort_by_protocol_preference(items, 'torrent', _get)
         assert _protocols(result) == ['torrent', 'nzb', 'mystery']
 
+    @pytest.mark.parametrize('preference, expected', [('nzb', 'nzb'), ('torrent', 'torrent')])
     @pytest.mark.parametrize('bad', [None, '', '   ', 'ftp'])
-    def test_missing_or_unrecognised_protocols_are_treated_as_unknown(self, bad):
-        """A6: absent data must not outrank real data."""
-        items = _items(bad, 'nzb')
-        result = sort_by_protocol_preference(items, 'nzb', _get)
-        assert _protocols(result) == ['nzb', bad]
+    def test_missing_or_unrecognised_protocols_are_treated_as_unknown(self, bad, preference, expected):
+        """A6: absent data must not outrank real data, in EITHER direction.
+
+        Parametrised over both preferences because A6 claims unknown sorts
+        last under 'nzb' *and* 'torrent' -- running it only one way would
+        leave half the claim untested.
+        """
+        items = _items(bad, expected)
+        result = sort_by_protocol_preference(items, preference, _get)
+        assert _protocols(result) == [expected, bad]
+
+    def test_score_order_is_preserved_within_the_group_under_a_torrent_preference(self):
+        """A4 claims stability for all three preference values.
+
+        The nzb direction is covered above; this pins the torrent direction
+        so the claim is true as written rather than true by inference from
+        `sorted` being unconditionally stable.
+        """
+        items = _items('nzb', 'torrent', 'nzb', 'torrent', 'torrent')
+        result = sort_by_protocol_preference(items, 'torrent', _get)
+        assert [i['pos'] for i in result] == [1, 3, 4, 0, 2]
 
     def test_a_non_string_protocol_does_not_crash_and_ranks_as_unknown(self):
         """A corrupt document can carry a non-None non-string 'protocol'
@@ -198,12 +215,13 @@ class TestSearcherSearchOrdering:
         """A7: no second hand-rolled copy of this logic may survive.
 
         Asserting only `helper.called` would pass even if the preference or
-        the getter were wired up wrong (e.g. reading the wrong config key,
-        or handing over a getter that reaches into the wrong shape of
-        item). Pin the actual contract: the preference read from config is
-        passed through unchanged, and the getter extracts the protocol from
-        `rel['protocol']` -- the shape search() results have, as opposed to
-        forMedia()'s `rel['info']['protocol']`.
+        the getter were wired up wrong (reading the wrong config key, or
+        handing over a getter that reaches into the wrong shape of item).
+        Pin the actual contract: the option name and section actually read
+        from config, the preference passed through unchanged, and a getter
+        that extracts the protocol from `rel['protocol']` -- the shape
+        search() results have, as opposed to forMedia()'s
+        `rel['info']['protocol']`.
         """
         from unittest.mock import patch
 
@@ -212,10 +230,15 @@ class TestSearcherSearchOrdering:
                    return_value = results) as helper, \
                 patch('couchpotato.core.media._base.searcher.main.fireEvent',
                       side_effect = lambda event, *a, **k: results if event.endswith('.nzb.movie') else []), \
-                patch.object(searcher, 'conf', return_value = 'nzb'):
+                patch.object(searcher, 'conf', return_value = 'nzb') as conf:
             searcher.search(['nzb'], {'type': 'movie'}, {'identifier': '1080p'})
 
         assert helper.called, 'Searcher.search must delegate to sort_by_protocol_preference'
+
+        # The config key literal is otherwise untested: `conf` is patched by
+        # every test here, so a typo in either the option name or the section
+        # would silently read a different (absent) setting in production.
+        conf.assert_called_once_with('preferred_method', section = 'searcher')
 
         args, kwargs = helper.call_args
         preference = args[1] if len(args) > 1 else kwargs['preference']
@@ -340,10 +363,14 @@ class TestReleaseForMediaOrdering:
         with patch('couchpotato.core.plugins.release.main.sort_by_protocol_preference',
                    return_value = docs) as helper, \
                 patch('couchpotato.core.plugins.release.main.get_db', return_value = db), \
-                patch.object(plugin, 'conf', return_value = 'nzb'):
+                patch.object(plugin, 'conf', return_value = 'nzb') as conf:
             plugin.forMedia('movie-1')
 
         assert helper.called, 'Release.forMedia must delegate to sort_by_protocol_preference'
+
+        # Both call sites must read the SAME option out of the SAME section,
+        # or the list the user sees and the list the picker walks diverge.
+        conf.assert_called_once_with('preferred_method', section = 'searcher')
 
         args, kwargs = helper.call_args
         preference = args[1] if len(args) > 1 else kwargs['preference']
@@ -584,6 +611,7 @@ class TestPreferredMethodRealSettingsPlumbing:
     """
 
     def test_preferred_method_is_read_through_the_real_settings_and_env_plumbing(self, tmp_path):
+        from couchpotato.core.media._base.searcher.main import Searcher
         from couchpotato.core.settings import Settings
         from couchpotato.environment import Env
 
@@ -597,6 +625,13 @@ class TestPreferredMethodRealSettingsPlumbing:
         Env._settings = settings
         try:
             assert Env.setting('preferred_method', section = 'searcher', default = 'both') == 'nzb'
+
+            # Go through Plugin.conf as the call sites actually do, rather
+            # than stopping at Env.setting -- that is the layer every other
+            # test in this file patches away, and the layer the option name
+            # and section literals are written against.
+            searcher = object.__new__(Searcher)
+            assert searcher.conf('preferred_method', section = 'searcher') == 'nzb'
         finally:
             Env._settings = original_settings
 

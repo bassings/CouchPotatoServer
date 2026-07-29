@@ -104,15 +104,19 @@ choosing between releases by hand are invisible.
   sort LAST, where under the old direction-dependent behaviour they sorted
   FIRST for one preference direction. Verified side by side: master orders
   `['done-no-info', 'nzb', 'torrent', 'magnet']` under an nzb preference,
-  this change orders `['nzb', 'torrent', 'magnet', 'done-no-info']` (identical
-  to a torrent preference, which is the point -- direction-independent). This
-  has a knock-on: `movie_detail.html` picks `completed_releases[0]` for the
-  header's downloaded quality/status, so for a movie with both a
-  scanner-created `done` release and another completed release carrying
-  protocol info, which one the header shows can flip. This is accepted as a
-  correct consequence of fixing the direction-dependent bug, not a new defect,
-  and is pinned by a test (see Acceptance criteria A10 note and
-  `tests/unit/test_protocol_preference.py`).
+  this change orders `['nzb', 'torrent', 'magnet', 'done-no-info']`. The point
+  is that the unknown release now sorts LAST under both preference
+  directions, rather than first under one of them. This has a knock-on: BOTH
+  `couchpotato/ui/templates/partials/movie_detail.html:20-23` and
+  `couchpotato/ui/templates/partials/movie_cards.html:12-16` pick
+  `completed_releases[0]` for the downloaded quality/status they display (the
+  detail header and the poster-grid badge respectively), so for a movie with
+  both a scanner-created `done` release and another completed release carrying
+  protocol info, which one they show can flip. Those two templates are the
+  only order-sensitive consumers of `release.for_media`; every other caller
+  iterates the whole list. This is accepted as a correct consequence of fixing
+  the direction-dependent bug, not a new defect, and is pinned by a test (see
+  Acceptance criteria A10 note and `tests/unit/test_protocol_preference.py`).
 - **Server-side sort/filter over htmx**, not client-side Alpine. It keeps a
   single Jinja rendering path and fits the htmx-first architecture; the cost is
   a round-trip per interaction, which is acceptable for a LAN app.
@@ -183,7 +187,9 @@ each protocol group.
 - [x] A4: within a protocol group, score-descending order is preserved (sort
       stability) for all three preference values.
       (`test_score_order_is_preserved_within_each_protocol_group`,
-      `test_score_order_survives_inside_the_preferred_group`)
+      `test_score_order_is_preserved_within_the_group_under_a_torrent_preference`,
+      `test_score_order_survives_inside_the_preferred_group`,
+      `test_both_leaves_the_incoming_order_untouched`)
 - [x] A5: `torrent_magnet` is ranked with `torrent`, not as unknown.
       (`test_torrent_magnet_ranks_with_torrent`)
 - [x] A6: a release with a missing, empty or unrecognised protocol sorts
@@ -198,11 +204,15 @@ each protocol group.
       `call_args`, not just `.called`)
 - [x] A8: an empty list, and a list with a single item, are handled without
       error for every preference value. (`test_empty_and_single_item_lists_are_safe`)
-- [x] A9: the config option renders in Settings → Searcher → Basics with the
-      new label and value labels, and an existing `settings.conf` containing
-      `preferred_method = nzb` is still read correctly (stored values unchanged).
-      (`TestPreferredMethodConfigOption`; real config-file read verified end to
-      end by `TestPreferredMethodRealSettingsPlumbing::test_preferred_method_is_read_through_the_real_settings_and_env_plumbing`)
+- [x] A9: the config option is defined with the new label and value labels, and
+      an existing `settings.conf` containing `preferred_method = nzb` is still
+      read correctly (stored values unchanged).
+      (`TestPreferredMethodConfigOption` asserts on the config data structure —
+      it does NOT assert rendering; that the settings page renders the option
+      was verified manually against a running instance via the settings API,
+      not by an automated test. The real config-file read is covered by
+      `TestPreferredMethodRealSettingsPlumbing::test_preferred_method_is_read_through_the_real_settings_and_env_plumbing`,
+      which goes through `Settings` → `Env.setting` → `Plugin.conf`.)
 - [x] A10: fallback is explicit — when the preferred protocol has no release
       passing `tryDownloadResult`'s filters, a release of the other protocol is
       still downloaded. **Verification, not implementation** — this was
