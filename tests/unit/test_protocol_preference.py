@@ -502,3 +502,53 @@ class TestPreferredMethodConfigOption:
         assert stored == ['both', 'nzb', 'torrent']
         assert self._option()['default'] == 'both'
         assert self._option()['type'] == 'dropdown'
+
+
+class TestPreferredMethodRealSettingsPlumbing:
+    """Every call-site test above patches `self.conf` directly, so nothing
+    pins the real Settings -> Env.setting -> Plugin.conf path for this
+    option. This test writes a real settings.conf to a temp file, loads it
+    through the project's actual Settings class (the same class
+    tests/unit/test_settings.py exercises), points Env at that instance,
+    and asserts `preferred_method` is read back as 'nzb' -- with no mocks
+    on the settings machinery itself.
+    """
+
+    def test_preferred_method_is_read_through_the_real_settings_and_env_plumbing(self, tmp_path):
+        from couchpotato.core.settings import Settings
+        from couchpotato.environment import Env
+
+        config_path = tmp_path / 'settings.conf'
+        config_path.write_text('[searcher]\npreferred_method = nzb\n')
+
+        settings = Settings()
+        settings.setFile(str(config_path))
+
+        original_settings = Env._settings
+        Env._settings = settings
+        try:
+            assert Env.setting('preferred_method', section = 'searcher', default = 'both') == 'nzb'
+        finally:
+            Env._settings = original_settings
+
+    def test_an_absent_section_falls_back_to_the_documented_default(self, tmp_path):
+        """No [searcher] section at all -- the production instance's actual
+        state, per FEAT-007's Problem section ("has sat at the `both`
+        default since install"). Env.setting must return the default, not
+        raise.
+        """
+        from couchpotato.core.settings import Settings
+        from couchpotato.environment import Env
+
+        config_path = tmp_path / 'settings.conf'
+        config_path.write_text('[core]\ndebug = 0\n')
+
+        settings = Settings()
+        settings.setFile(str(config_path))
+
+        original_settings = Env._settings
+        Env._settings = settings
+        try:
+            assert Env.setting('preferred_method', section = 'searcher', default = 'both') == 'both'
+        finally:
+            Env._settings = original_settings
