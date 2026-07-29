@@ -195,7 +195,16 @@ class TestSearcherSearchOrdering:
         assert [r['name'] for r in ordered] == ['best.nzb', 'mid.nzb', 'worst.nzb', 'a.torrent']
 
     def test_search_uses_the_shared_helper(self, searcher):
-        """A7: no second hand-rolled copy of this logic may survive."""
+        """A7: no second hand-rolled copy of this logic may survive.
+
+        Asserting only `helper.called` would pass even if the preference or
+        the getter were wired up wrong (e.g. reading the wrong config key,
+        or handing over a getter that reaches into the wrong shape of
+        item). Pin the actual contract: the preference read from config is
+        passed through unchanged, and the getter extracts the protocol from
+        `rel['protocol']` -- the shape search() results have, as opposed to
+        forMedia()'s `rel['info']['protocol']`.
+        """
         from unittest.mock import patch
 
         results = [{'name': 'x.nzb', 'protocol': 'nzb', 'score': 1}]
@@ -207,6 +216,14 @@ class TestSearcherSearchOrdering:
             searcher.search(['nzb'], {'type': 'movie'}, {'identifier': '1080p'})
 
         assert helper.called, 'Searcher.search must delegate to sort_by_protocol_preference'
+
+        args, kwargs = helper.call_args
+        preference = args[1] if len(args) > 1 else kwargs['preference']
+        get_protocol = args[2] if len(args) > 2 else kwargs['get_protocol']
+
+        assert preference == 'nzb', 'the preference read from conf() must be passed through unchanged'
+        assert get_protocol({'protocol': 'torrent'}) == 'torrent', \
+            "search()'s getter must read the protocol from rel['protocol']"
 
 
 class TestReleaseForMediaOrdering:
@@ -289,7 +306,15 @@ class TestReleaseForMediaOrdering:
         assert [r['_id'] for r in self._for_media(plugin, 'both', docs)] == ['t1', 'nullscore']
 
     def test_for_media_uses_the_shared_helper(self, plugin):
-        """A7: the second copy of the logic must be gone."""
+        """A7: the second copy of the logic must be gone.
+
+        Asserting only `helper.called` would pass even if the preference or
+        the getter were wired up wrong. Pin the actual contract: the
+        preference read from config is passed through unchanged, and the
+        getter extracts the protocol from `rel['info']['protocol']` -- the
+        shape release documents have, as opposed to search()'s
+        `rel['protocol']`.
+        """
         from unittest.mock import MagicMock, patch
 
         docs = [self._doc('n1', 'nzb', 100)]
@@ -304,6 +329,14 @@ class TestReleaseForMediaOrdering:
             plugin.forMedia('movie-1')
 
         assert helper.called, 'Release.forMedia must delegate to sort_by_protocol_preference'
+
+        args, kwargs = helper.call_args
+        preference = args[1] if len(args) > 1 else kwargs['preference']
+        get_protocol = args[2] if len(args) > 2 else kwargs['get_protocol']
+
+        assert preference == 'nzb', 'the preference read from conf() must be passed through unchanged'
+        assert get_protocol({'info': {'protocol': 'torrent'}}) == 'torrent', \
+            "forMedia()'s getter must read the protocol from rel['info']['protocol']"
 
 
 class TestFallbackToTheOtherProtocol:
