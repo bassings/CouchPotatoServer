@@ -96,7 +96,23 @@ choosing between releases by hand are invisible.
 - **`torrent_magnet` groups with `torrent`.** It is a torrent as far as the
   preference is concerned.
 - **Unknown protocol sorts last** in both directions, replacing the current
-  direction-dependent behaviour.
+  direction-dependent behaviour. **Accepted consequence:** `Release.add()`
+  (`couchpotato/core/plugins/release/main.py`, around lines 180-188) creates
+  release documents with no `info` key at all -- these represent movies the
+  library scanner found, i.e. copies the user already owns. Under a non-`both`
+  `preferred_method`, these scanner-created releases now rank as unknown and
+  sort LAST, where under the old direction-dependent behaviour they sorted
+  FIRST for one preference direction. Verified side by side: master orders
+  `['done-no-info', 'nzb', 'torrent', 'magnet']` under an nzb preference,
+  this change orders `['nzb', 'torrent', 'magnet', 'done-no-info']` (identical
+  to a torrent preference, which is the point -- direction-independent). This
+  has a knock-on: `movie_detail.html` picks `completed_releases[0]` for the
+  header's downloaded quality/status, so for a movie with both a
+  scanner-created `done` release and another completed release carrying
+  protocol info, which one the header shows can flip. This is accepted as a
+  correct consequence of fixing the direction-dependent bug, not a new defect,
+  and is pinned by a test (see Acceptance criteria A10 note and
+  `tests/unit/test_protocol_preference.py`).
 - **Server-side sort/filter over htmx**, not client-side Alpine. It keeps a
   single Jinja rendering path and fits the htmx-first architecture; the cost is
   a round-trip per interaction, which is acceptable for a LAN app.

@@ -339,6 +339,60 @@ class TestReleaseForMediaOrdering:
             "forMedia()'s getter must read the protocol from rel['info']['protocol']"
 
 
+class TestScannerCreatedReleasesRankAsUnknown:
+    """FIX 9: an undocumented behavioural change for library-scanned releases.
+
+    `Release.add()` (release/main.py, around lines 180-188) creates release
+    documents with NO `info` key at all -- these represent movies the
+    library scanner found, i.e. copies the user already owns. Under a
+    non-`both` `preferred_method` these now rank as unknown protocol and
+    sort LAST, where under the old direction-dependent `[:3]` sort they
+    sorted FIRST for an nzb preference (`''[:3]` == '' sorts before 'nzb'
+    ascending). This is an accepted, documented consequence of making
+    unknown-protocol handling direction-independent (see the "Unknown
+    protocol sorts last" decision in the FEAT-007 spec), not a new defect.
+
+    The knock-on: movie_detail.html's header picks completed_releases[0], so
+    for a movie with BOTH a scanner-created 'done' release and another
+    completed release carrying protocol info, which one the header shows
+    can flip. This test pins forMedia's output order for that scenario so
+    the behaviour is locked and visible rather than incidental.
+    """
+
+    @pytest.fixture
+    def plugin(self):
+        from couchpotato.core.plugins.release.main import Release
+        return object.__new__(Release)
+
+    def _for_media(self, plugin, preference, docs):
+        from unittest.mock import MagicMock, patch
+
+        db = MagicMock()
+        db.get_many.return_value = [{'_id': d['_id']} for d in docs]
+        db.get.side_effect = lambda _index, _id: next(d for d in docs if d['_id'] == _id)
+
+        with patch('couchpotato.core.plugins.release.main.get_db', return_value = db), \
+                patch.object(plugin, 'conf', return_value = preference):
+            return plugin.forMedia('movie-1')
+
+    def test_a_scanner_created_release_sorts_after_a_protocol_carrying_completed_release_under_nzb_preference(self, plugin):
+        """Both releases are 'completed' in movie_detail.html's sense (status
+        in ['done', 'seeding', 'downloaded']); the scanner-created one has no
+        'info' block at all, exactly as Release.add() leaves it. Under a
+        preference for nzb, the torrent-with-info release now sorts first
+        and the scanner-created release sorts last -- so
+        completed_releases[0] would flip from the scanner-created release
+        (its only candidate before this PR, when both docs are unknown/no
+        preference) to the protocol-carrying one.
+        """
+        docs = [
+            {'_id': 'scanned', 'status': 'done'},  # Release.add(): no 'info' key
+            {'_id': 'other', 'status': 'downloaded', 'info': {'protocol': 'torrent', 'score': 100}},
+        ]
+        result = self._for_media(plugin, 'nzb', docs)
+        assert [r['_id'] for r in result] == ['other', 'scanned']
+
+
 class TestFallbackToTheOtherProtocol:
     """A10: the preference orders candidates; it never excludes them.
 
