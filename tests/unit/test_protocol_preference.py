@@ -262,6 +262,21 @@ class TestReleaseForMediaOrdering:
         ]
         assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 'broken', 'missing_key']
 
+    def test_a_score_of_none_does_not_crash_the_list(self, plugin):
+        """The `or {}` guard is only half a guard: a doc with an explicit
+        'info': {'score': None} still has a truthy info dict, so `or {}`
+        does not fire, and `.get('score', 0)` returns None (the key IS
+        present) rather than the 0 default. Comparing None to an int during
+        sort raises TypeError. The score coercion must use `tryInt` (already
+        imported in release/main.py) so None/garbage sorts as 0, consistent
+        with the rest of the hardening.
+        """
+        docs = [
+            {'_id': 'nullscore', 'info': {'protocol': 'nzb', 'score': None}},
+            self._doc('t1', 'torrent', 500),
+        ]
+        assert [r['_id'] for r in self._for_media(plugin, 'both', docs)] == ['t1', 'nullscore']
+
     def test_for_media_uses_the_shared_helper(self, plugin):
         """A7: the second copy of the logic must be gone."""
         from unittest.mock import MagicMock, patch

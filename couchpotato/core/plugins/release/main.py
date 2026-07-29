@@ -672,7 +672,7 @@ class Release(Plugin):
             except Exception:
                 log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())
 
-        releases = sorted(releases, key = lambda k: (k.get('info') or {}).get('score', 0), reverse = True)
+        releases = sorted(releases, key = lambda k: tryInt((k.get('info') or {}).get('score', 0)), reverse = True)
 
         # Sort based on the preferred download source. Same helper as
         # Searcher.search(), so the list the user sees is ordered the same way
