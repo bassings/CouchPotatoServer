@@ -88,6 +88,17 @@ class TestSortByProtocolPreference:
         result = sort_by_protocol_preference(items, 'nzb', _get)
         assert _protocols(result) == ['nzb', bad]
 
+    def test_a_non_string_protocol_does_not_crash_and_ranks_as_unknown(self):
+        """A corrupt document can carry a non-None non-string 'protocol'
+        (e.g. a list). `(protocol or '').strip().lower()` raises
+        AttributeError for that; master's `[:3]` slice tolerated sequences.
+        Since this feeds forMedia and therefore the movie-detail page, a
+        non-string protocol must rank as unknown rather than raising.
+        """
+        items = _items(['not', 'a', 'string'], 'torrent', 'nzb')
+        result = sort_by_protocol_preference(items, 'nzb', _get)
+        assert _protocols(result) == ['nzb', 'torrent', ['not', 'a', 'string']]
+
     def test_protocol_matching_is_case_and_whitespace_insensitive(self):
         """Provider data is not guaranteed to be normalised."""
         items = _items('torrent', ' NZB ')

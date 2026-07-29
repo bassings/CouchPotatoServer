@@ -30,7 +30,10 @@ def protocol_rank(protocol, preference):
     way the preference points.
     """
 
-    normalised = (protocol or '').strip().lower()
+    if not isinstance(protocol, str):
+        return _UNKNOWN
+
+    normalised = protocol.strip().lower()
 
     if normalised in _NZB_PROTOCOLS:
         family = 'nzb'
