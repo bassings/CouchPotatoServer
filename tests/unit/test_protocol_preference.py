@@ -295,15 +295,30 @@ class TestReleaseForMediaOrdering:
         'info': {'score': None} still has a truthy info dict, so `or {}`
         does not fire, and `.get('score', 0)` returns None (the key IS
         present) rather than the 0 default. Comparing None to an int during
-        sort raises TypeError. The score coercion must use `tryInt` (already
-        imported in release/main.py) so None/garbage sorts as 0, consistent
-        with the rest of the hardening.
+        sort raises TypeError. The score coercion must default None/garbage
+        to 0, consistent with the rest of the hardening.
         """
         docs = [
             {'_id': 'nullscore', 'info': {'protocol': 'nzb', 'score': None}},
             self._doc('t1', 'torrent', 500),
         ]
         assert [r['_id'] for r in self._for_media(plugin, 'both', docs)] == ['t1', 'nullscore']
+
+    def test_fractional_scores_are_not_truncated_into_ties(self, plugin):
+        """The coercion must not lose precision — `tryInt` would.
+
+        Torrent scores are floats: `score/main.py` adds `seeders * 100 / 15`,
+        and `/` is true division. Coercing with `tryInt` truncates, so 300.8
+        and 300.2 both become 300, the two releases tie, and their order falls
+        back to whatever the input order happened to be instead of the actual
+        score. `tryFloat` keeps the fraction and still defaults None/garbage
+        to 0.
+        """
+        docs = [
+            {'_id': 'lower', 'info': {'protocol': 'torrent', 'score': 300.2}},
+            {'_id': 'higher', 'info': {'protocol': 'torrent', 'score': 300.8}},
+        ]
+        assert [r['_id'] for r in self._for_media(plugin, 'both', docs)] == ['higher', 'lower']
 
     def test_for_media_uses_the_shared_helper(self, plugin):
         """A7: the second copy of the logic must be gone.

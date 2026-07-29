@@ -10,7 +10,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
-from couchpotato.core.helpers.variable import getTitle, tryInt
+from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
@@ -672,7 +672,10 @@ class Release(Plugin):
             except Exception:
                 log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())
 
-        releases = sorted(releases, key = lambda k: tryInt((k.get('info') or {}).get('score', 0)), reverse = True)
+        # tryFloat, not tryInt: scores are floats (score/main.py adds
+        # seeders * 100 / 15), so truncating would tie releases whose scores
+        # differ only in the fraction and lose the real ranking.
+        releases = sorted(releases, key = lambda k: tryFloat((k.get('info') or {}).get('score', 0)), reverse = True)
 
         # Sort based on the preferred download source. Same helper as
         # Searcher.search(), so the list the user sees is ordered the same way
