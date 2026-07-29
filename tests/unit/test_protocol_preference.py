@@ -246,9 +246,21 @@ class TestReleaseForMediaOrdering:
         assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 't1', 'unknown']
 
     def test_a_release_with_no_info_block_does_not_crash_the_list(self, plugin):
-        """Defensive: a partially-written document must not break the page."""
-        docs = [{'_id': 'broken'}, self._doc('n1', 'nzb', 100)]
-        assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 'broken']
+        """Defensive: a partially-written document must not break the page.
+
+        `k.get('info', {})` (the old, unguarded expression) already returns
+        `{}` for a MISSING 'info' key, so a doc that simply omits 'info'
+        does not exercise the `(k.get('info') or {})` hardening at all --
+        it would pass against either expression. The only case the `or {}`
+        guard changes is an explicit `'info': None`, which is what this test
+        must include to actually cover the hardening.
+        """
+        docs = [
+            {'_id': 'broken', 'info': None},
+            {'_id': 'missing_key'},
+            self._doc('n1', 'nzb', 100),
+        ]
+        assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 'broken', 'missing_key']
 
     def test_for_media_uses_the_shared_helper(self, plugin):
         """A7: the second copy of the logic must be gone."""
