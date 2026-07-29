@@ -17,7 +17,7 @@ config = [{
                 {
                     'name': 'preferred_method',
                     'label': 'Preferred download source',
-                    'description': 'Prefer this source when both have acceptable releases. Falls back to the other if nothing suitable is found.',
+                    'description': 'Prefer this source when both have acceptable releases. Falls back to the other if no acceptable release of this type is found.',
                     'default': 'both',
                     'type': 'dropdown',
                     'values': [('No preference', 'both'), ('Usenet (NZB)', 'nzb'), ('Torrents', 'torrent')],
