@@ -5,6 +5,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.encoding import simplifyString
 from couchpotato.core.helpers.variable import splitString, removeEmpty, removeDuplicate
+from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.logger import CPLog
 from couchpotato.core.media._base.searcher.base import SearcherBase
 
@@ -58,9 +59,11 @@ class Searcher(SearcherBase):
 
         sorted_results = sorted(results, key = lambda k: k['score'], reverse = True)
 
+        # Hard preference, applied after the score sort and relying on its
+        # stability: every release of the preferred protocol outranks the
+        # other, but nothing is excluded, so an unmatched preference falls back.
         download_preference = self.conf('preferred_method', section = 'searcher')
-        if download_preference != 'both':
-            sorted_results = sorted(sorted_results, key = lambda k: k['protocol'][:3], reverse = (download_preference == 'torrent'))
+        sorted_results = sort_by_protocol_preference(sorted_results, download_preference, lambda k: k.get('protocol'))
 
         return sorted_results
 

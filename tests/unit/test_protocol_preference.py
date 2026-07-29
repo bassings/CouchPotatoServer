@@ -117,3 +117,82 @@ class TestSortByProtocolPreference:
         items = _items('torrent', 'nzb')
         sort_by_protocol_preference(items, 'nzb', _get)
         assert _protocols(items) == ['torrent', 'nzb']
+
+
+class TestSearcherSearchOrdering:
+    """`Searcher.search()` — the order here decides what gets downloaded."""
+
+    @pytest.fixture
+    def searcher(self):
+        # __init__ registers events and API views; bypass it.
+        from couchpotato.core.media._base.searcher.main import Searcher
+        return object.__new__(Searcher)
+
+    def _search(self, searcher, preference, results):
+        """Drive search() with one provider event per protocol, as in production."""
+        from unittest.mock import patch
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'provider.search.nzb.movie':
+                return [r for r in results if r['protocol'] == 'nzb']
+            if event == 'provider.search.torrent.movie':
+                return [r for r in results if r['protocol'] != 'nzb']
+            return []
+
+        with patch('couchpotato.core.media._base.searcher.main.fireEvent',
+                   side_effect = fake_fire_event), \
+                patch.object(searcher, 'conf', return_value = preference):
+            return searcher.search(['nzb', 'torrent'], {'type': 'movie'}, {'identifier': '1080p'})
+
+    def test_nzb_preference_orders_nzb_first_regardless_of_score(self, searcher):
+        """A1: a 900-seeder torrent scoring 3400 still loses to a 210-score nzb."""
+        results = [
+            {'name': 'big.torrent', 'protocol': 'torrent', 'score': 3400},
+            {'name': 'good.nzb', 'protocol': 'nzb', 'score': 210},
+        ]
+        ordered = self._search(searcher, 'nzb', results)
+        assert [r['name'] for r in ordered] == ['good.nzb', 'big.torrent']
+
+    def test_torrent_preference_orders_torrents_first(self, searcher):
+        """A2."""
+        results = [
+            {'name': 'big.nzb', 'protocol': 'nzb', 'score': 3400},
+            {'name': 'ok.torrent', 'protocol': 'torrent', 'score': 210},
+        ]
+        ordered = self._search(searcher, 'torrent', results)
+        assert [r['name'] for r in ordered] == ['ok.torrent', 'big.nzb']
+
+    def test_both_preserves_pure_score_order(self, searcher):
+        """A3."""
+        results = [
+            {'name': 'mid.nzb', 'protocol': 'nzb', 'score': 500},
+            {'name': 'big.torrent', 'protocol': 'torrent', 'score': 3400},
+            {'name': 'small.torrent', 'protocol': 'torrent', 'score': 10},
+        ]
+        ordered = self._search(searcher, 'both', results)
+        assert [r['name'] for r in ordered] == ['big.torrent', 'mid.nzb', 'small.torrent']
+
+    def test_score_order_survives_inside_the_preferred_group(self, searcher):
+        """A4 at the call site, not just in the helper."""
+        results = [
+            {'name': 'best.nzb', 'protocol': 'nzb', 'score': 900},
+            {'name': 'worst.nzb', 'protocol': 'nzb', 'score': 5},
+            {'name': 'mid.nzb', 'protocol': 'nzb', 'score': 400},
+            {'name': 'a.torrent', 'protocol': 'torrent', 'score': 5000},
+        ]
+        ordered = self._search(searcher, 'nzb', results)
+        assert [r['name'] for r in ordered] == ['best.nzb', 'mid.nzb', 'worst.nzb', 'a.torrent']
+
+    def test_search_uses_the_shared_helper(self, searcher):
+        """A7: no second hand-rolled copy of this logic may survive."""
+        from unittest.mock import patch
+
+        results = [{'name': 'x.nzb', 'protocol': 'nzb', 'score': 1}]
+        with patch('couchpotato.core.media._base.searcher.main.sort_by_protocol_preference',
+                   return_value = results) as helper, \
+                patch('couchpotato.core.media._base.searcher.main.fireEvent',
+                      side_effect = lambda event, *a, **k: results if event.endswith('.nzb.movie') else []), \
+                patch.object(searcher, 'conf', return_value = 'nzb'):
+            searcher.search(['nzb'], {'type': 'movie'}, {'identifier': '1080p'})
+
+        assert helper.called, 'Searcher.search must delegate to sort_by_protocol_preference'
