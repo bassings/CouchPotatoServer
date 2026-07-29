@@ -330,3 +330,43 @@ class TestFallbackToTheOtherProtocol:
             {'name': 'big.torrent', 'protocol': 'torrent', 'score': 5000, 'size': 4000, 'seeders': 900, 'age': 5},
         ]
         assert self._try(plugin, results) == ['good.nzb']
+
+
+class TestPreferredMethodConfigOption:
+    """A9: named for what it does, without changing what it stores."""
+
+    @staticmethod
+    def _option():
+        from couchpotato.core.media._base.searcher import config
+        for section in config:
+            if section['name'] != 'searcher':
+                continue
+            for group in section['groups']:
+                for option in group['options']:
+                    if option['name'] == 'preferred_method':
+                        return option
+        raise AssertionError('preferred_method option not found in searcher config')
+
+    def test_the_label_says_what_the_setting_does(self):
+        option = self._option()
+        assert option['label'] == 'Preferred download source'
+
+    def test_the_description_explains_the_hard_preference_and_the_fallback(self):
+        description = self._option()['description'].lower()
+        assert 'prefer' in description
+        assert 'falls back' in description
+
+    def test_the_value_labels_are_plain_english(self):
+        labels = [label for label, _stored in self._option()['values']]
+        assert labels == ['No preference', 'Usenet (NZB)', 'Torrents']
+
+    def test_the_stored_values_are_unchanged(self):
+        """Backwards compatibility: existing settings.conf files must keep working.
+
+        Only the display strings change. `preferred_method = nzb` written by an
+        older build must still be read as 'nzb'.
+        """
+        stored = [value for _label, value in self._option()['values']]
+        assert stored == ['both', 'nzb', 'torrent']
+        assert self._option()['default'] == 'both'
+        assert self._option()['type'] == 'dropdown'
