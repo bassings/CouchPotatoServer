@@ -16,11 +16,11 @@ config = [{
             'options': [
                 {
                     'name': 'preferred_method',
-                    'label': 'First search',
-                    'description': 'Which of the methods do you prefer',
+                    'label': 'Preferred download source',
+                    'description': 'Prefer this source when both have acceptable releases. Falls back to the other if no acceptable release of this type is found.',
                     'default': 'both',
                     'type': 'dropdown',
-                    'values': [('usenet & torrents', 'both'), ('usenet', 'nzb'), ('torrents', 'torrent')],
+                    'values': [('No preference', 'both'), ('Usenet (NZB)', 'nzb'), ('Torrents', 'torrent')],
                 },
             ],
         }, {

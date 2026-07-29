@@ -9,7 +9,8 @@ from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
-from couchpotato.core.helpers.variable import getTitle, tryInt
+from couchpotato.core.helpers.protocol import sort_by_protocol_preference
+from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
@@ -671,11 +672,15 @@ class Release(Plugin):
             except Exception:
                 log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())
 
-        releases = sorted(releases, key = lambda k: k.get('info', {}).get('score', 0), reverse = True)
+        # tryFloat, not tryInt: scores are floats (score/main.py adds
+        # seeders * 100 / 15), so truncating would tie releases whose scores
+        # differ only in the fraction and lose the real ranking.
+        releases = sorted(releases, key = lambda k: tryFloat((k.get('info') or {}).get('score', 0)), reverse = True)
 
-        # Sort based on preferred search method
+        # Sort based on the preferred download source. Same helper as
+        # Searcher.search(), so the list the user sees is ordered the same way
+        # the automatic picker orders its candidates.
         download_preference = self.conf('preferred_method', section = 'searcher')
-        if download_preference != 'both':
-            releases = sorted(releases, key = lambda k: k.get('info', {}).get('protocol', '')[:3], reverse = (download_preference == 'torrent'))
+        releases = sort_by_protocol_preference(releases, download_preference, lambda k: (k.get('info') or {}).get('protocol'))
 
         return releases or []
