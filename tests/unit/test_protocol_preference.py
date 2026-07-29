@@ -266,3 +266,67 @@ class TestReleaseForMediaOrdering:
             plugin.forMedia('movie-1')
 
         assert helper.called, 'Release.forMedia must delegate to sort_by_protocol_preference'
+
+
+class TestFallbackToTheOtherProtocol:
+    """A10: the preference orders candidates; it never excludes them.
+
+    `tryDownloadResult` walks the preference-ordered list and takes the first
+    release that passes the filters — so when the preferred protocol has
+    nothing usable, the other one is still downloaded. That is the designed
+    behaviour ("fall back to torrent"), and it is what makes the preference
+    safe to turn on.
+    """
+
+    @pytest.fixture
+    def plugin(self):
+        from couchpotato.core.plugins.release.main import Release
+        return object.__new__(Release)
+
+    def _try(self, plugin, results, minimum_score = 1):
+        from unittest.mock import MagicMock, patch
+
+        downloaded = []
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.download':
+                downloaded.append(kwargs.get('data', {}).get('name'))
+                return True
+            return None
+
+        env = MagicMock()
+        env.setting.return_value = 1  # torrent.minimum_seeders
+
+        with patch('couchpotato.core.plugins.release.main.fireEvent', side_effect = fake_fire_event), \
+                patch('couchpotato.core.plugins.release.main.Env', env):
+            plugin.tryDownloadResult(results, {'_id': 'movie-1'}, {'minimum_score': minimum_score, 'index': 0})
+
+        return downloaded
+
+    def test_a_torrent_is_downloaded_when_no_nzb_was_found(self, plugin):
+        """Preference nzb, but the search returned torrents only."""
+        results = [
+            {'name': 'only.torrent', 'protocol': 'torrent', 'score': 100, 'size': 4000, 'seeders': 20, 'age': 5},
+        ]
+        assert self._try(plugin, results) == ['only.torrent']
+
+    def test_a_torrent_is_downloaded_when_the_preferred_nzb_fails_the_filters(self, plugin):
+        """The real fallback path: an nzb ranked first but rejected on score.
+
+        The list arrives nzb-first (the preference already applied); the nzb is
+        filtered out for scoring below `minimum_score`, and the torrent behind
+        it is taken.
+        """
+        results = [
+            {'name': 'weak.nzb', 'protocol': 'nzb', 'score': 2, 'size': 4000, 'age': 5},
+            {'name': 'fine.torrent', 'protocol': 'torrent', 'score': 800, 'size': 4000, 'seeders': 20, 'age': 5},
+        ]
+        assert self._try(plugin, results, minimum_score = 500) == ['fine.torrent']
+
+    def test_the_preferred_release_still_wins_when_it_passes(self, plugin):
+        """The complement — fallback must not fire when it should not."""
+        results = [
+            {'name': 'good.nzb', 'protocol': 'nzb', 'score': 800, 'size': 4000, 'age': 5},
+            {'name': 'big.torrent', 'protocol': 'torrent', 'score': 5000, 'size': 4000, 'seeders': 900, 'age': 5},
+        ]
+        assert self._try(plugin, results) == ['good.nzb']
