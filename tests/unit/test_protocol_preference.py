@@ -196,3 +196,73 @@ class TestSearcherSearchOrdering:
             searcher.search(['nzb'], {'type': 'movie'}, {'identifier': '1080p'})
 
         assert helper.called, 'Searcher.search must delegate to sort_by_protocol_preference'
+
+
+class TestReleaseForMediaOrdering:
+    """`Release.forMedia()` — the order the movie detail page renders."""
+
+    @pytest.fixture
+    def plugin(self):
+        from couchpotato.core.plugins.release.main import Release
+        return object.__new__(Release)
+
+    def _for_media(self, plugin, preference, docs):
+        from unittest.mock import MagicMock, patch
+
+        db = MagicMock()
+        db.get_many.return_value = [{'_id': d['_id']} for d in docs]
+        db.get.side_effect = lambda _index, _id: next(d for d in docs if d['_id'] == _id)
+
+        with patch('couchpotato.core.plugins.release.main.get_db', return_value = db), \
+                patch.object(plugin, 'conf', return_value = preference):
+            return plugin.forMedia('movie-1')
+
+    @staticmethod
+    def _doc(_id, protocol, score):
+        return {'_id': _id, 'info': {'protocol': protocol, 'score': score}}
+
+    def test_nzb_preference_lists_nzb_first(self, plugin):
+        """A1 on the display path."""
+        docs = [self._doc('t1', 'torrent', 3400), self._doc('n1', 'nzb', 210)]
+        assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 't1']
+
+    def test_torrent_preference_lists_torrents_first(self, plugin):
+        """A2 on the display path."""
+        docs = [self._doc('n1', 'nzb', 3400), self._doc('t1', 'torrent', 210)]
+        assert [r['_id'] for r in self._for_media(plugin, 'torrent', docs)] == ['t1', 'n1']
+
+    def test_both_lists_in_score_order(self, plugin):
+        """A3 on the display path."""
+        docs = [self._doc('n1', 'nzb', 500), self._doc('t1', 'torrent', 3400)]
+        assert [r['_id'] for r in self._for_media(plugin, 'both', docs)] == ['t1', 'n1']
+
+    def test_a_release_with_no_protocol_is_listed_last_not_first(self, plugin):
+        """A6: THE BUG. `''[:3]` sorted ascending put this at the TOP under 'nzb'."""
+        docs = [
+            self._doc('unknown', '', 999),
+            self._doc('t1', 'torrent', 500),
+            self._doc('n1', 'nzb', 100),
+        ]
+        assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 't1', 'unknown']
+
+    def test_a_release_with_no_info_block_does_not_crash_the_list(self, plugin):
+        """Defensive: a partially-written document must not break the page."""
+        docs = [{'_id': 'broken'}, self._doc('n1', 'nzb', 100)]
+        assert [r['_id'] for r in self._for_media(plugin, 'nzb', docs)] == ['n1', 'broken']
+
+    def test_for_media_uses_the_shared_helper(self, plugin):
+        """A7: the second copy of the logic must be gone."""
+        from unittest.mock import MagicMock, patch
+
+        docs = [self._doc('n1', 'nzb', 100)]
+        db = MagicMock()
+        db.get_many.return_value = [{'_id': 'n1'}]
+        db.get.side_effect = lambda _index, _id: docs[0]
+
+        with patch('couchpotato.core.plugins.release.main.sort_by_protocol_preference',
+                   return_value = docs) as helper, \
+                patch('couchpotato.core.plugins.release.main.get_db', return_value = db), \
+                patch.object(plugin, 'conf', return_value = 'nzb'):
+            plugin.forMedia('movie-1')
+
+        assert helper.called, 'Release.forMedia must delegate to sort_by_protocol_preference'
