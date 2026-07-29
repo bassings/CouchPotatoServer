@@ -310,10 +310,21 @@ class TestFallbackToTheOtherProtocol:
     """A10: the preference orders candidates; it never excludes them.
 
     `tryDownloadResult` walks the preference-ordered list and takes the first
-    release that passes the filters — so when the preferred protocol has
-    nothing usable, the other one is still downloaded. That is the designed
-    behaviour ("fall back to torrent"), and it is what makes the preference
-    safe to turn on.
+    release that passes the FILTERS (status / minimum_score / size / seeders)
+    -- so when the preferred protocol has nothing that passes those filters,
+    the other one is still downloaded. That is the designed behaviour
+    ("fall back to torrent"), and it is covered below.
+
+    That is NOT the same as "any failure of the preferred release falls
+    back". If the preferred release passes every filter but the DOWNLOAD
+    ITSELF then fails (downloader disabled/unreachable, provider error --
+    `release.download` returning something other than True or the sentinel
+    'try_next'), `tryDownloadResult` hits `break` and the non-preferred
+    release is never tried. This is pre-existing behaviour, not a
+    regression introduced here, and it is a known limitation, not something
+    this test suite claims is "safe" -- see
+    test_a_download_failure_does_not_fall_through_to_the_other_protocol
+    below, which pins it explicitly.
     """
 
     @pytest.fixture
@@ -340,6 +351,32 @@ class TestFallbackToTheOtherProtocol:
             plugin.tryDownloadResult(results, {'_id': 'movie-1'}, {'minimum_score': minimum_score, 'index': 0})
 
         return downloaded
+
+    def _try_with_download_outcomes(self, plugin, results, outcomes, minimum_score = 1):
+        """Like `_try`, but `release.download`'s return value is controlled
+        per release name via `outcomes` (defaulting to True), so a
+        download-failure scenario can be driven without touching the
+        filters.
+        """
+        from unittest.mock import MagicMock, patch
+
+        attempted = []
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.download':
+                name = kwargs.get('data', {}).get('name')
+                attempted.append(name)
+                return outcomes.get(name, True)
+            return None
+
+        env = MagicMock()
+        env.setting.return_value = 1  # torrent.minimum_seeders
+
+        with patch('couchpotato.core.plugins.release.main.fireEvent', side_effect = fake_fire_event), \
+                patch('couchpotato.core.plugins.release.main.Env', env):
+            plugin.tryDownloadResult(results, {'_id': 'movie-1'}, {'minimum_score': minimum_score, 'index': 0})
+
+        return attempted
 
     def test_a_torrent_is_downloaded_when_no_nzb_was_found(self, plugin):
         """Preference nzb, but the search returned torrents only."""
@@ -368,6 +405,30 @@ class TestFallbackToTheOtherProtocol:
             {'name': 'big.torrent', 'protocol': 'torrent', 'score': 5000, 'size': 4000, 'seeders': 900, 'age': 5},
         ]
         assert self._try(plugin, results) == ['good.nzb']
+
+    def test_a_download_failure_does_not_fall_through_to_the_other_protocol(self, plugin):
+        """KNOWN LIMITATION, pinned deliberately, not a regression.
+
+        The preferred nzb passes every filter (score, size, age) and is
+        tried first. `release.download` then returns False for it --
+        simulating a disabled/unreachable downloader or a provider error,
+        as opposed to a filter rejection. `tryDownloadResult` only advances
+        to the next candidate when a release is rejected by the filters or
+        when `release.download` returns the sentinel 'try_next'; any other
+        return value (including False) hits `break`, so the torrent behind
+        it is never attempted. This contradicts a plain reading of the
+        setting's "falls back" description for this one case -- the
+        description has been narrowed to say the fallback covers "no
+        acceptable release of this type is found", which this scenario
+        satisfies (an nzb was found and was acceptable) but which still
+        doesn't get downloaded.
+        """
+        results = [
+            {'name': 'good.nzb', 'protocol': 'nzb', 'score': 800, 'size': 4000, 'age': 5},
+            {'name': 'big.torrent', 'protocol': 'torrent', 'score': 5000, 'size': 4000, 'seeders': 900, 'age': 5},
+        ]
+        attempted = self._try_with_download_outcomes(plugin, results, outcomes = {'good.nzb': False})
+        assert attempted == ['good.nzb']
 
 
 class TestPreferredMethodConfigOption:

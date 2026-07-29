@@ -81,7 +81,18 @@ choosing between releases by hand are invisible.
 - **Fallback, not exclusion.** When no acceptable release of the preferred
   protocol exists, the other protocol is used. There is no "usenet only" mode
   and no "wait for an NZB" mode; a fourth strict state was considered and
-  rejected.
+  rejected. **Known limitation, carried forward unchanged from before this
+  change:** "acceptable" means the release passes `tryDownloadResult`'s
+  FILTERS (status / minimum_score / size / seeders). Fallback happens when
+  the preferred release is filtered out, NOT when its download fails --
+  if a preferred-protocol release passes every filter but the download
+  itself then fails (downloader disabled/unreachable, provider error),
+  `tryDownloadResult` does not advance to the next candidate and the other
+  protocol is never tried for that search. This is pre-existing behaviour,
+  not introduced by this PR; it is pinned by
+  `tests/unit/test_protocol_preference.py::TestFallbackToTheOtherProtocol::test_a_download_failure_does_not_fall_through_to_the_other_protocol`
+  so the gap stays visible rather than contradicted by the setting's
+  description.
 - **`torrent_magnet` groups with `torrent`.** It is a torrent as far as the
   preference is concerned.
 - **Unknown protocol sorts last** in both directions, replacing the current
