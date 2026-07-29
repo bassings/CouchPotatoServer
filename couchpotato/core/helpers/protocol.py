@@ -1,16 +1,21 @@
 """Ordering releases by the user's preferred download source.
 
 `searcher.preferred_method` ('both' | 'nzb' | 'torrent') is a HARD preference
-that FALLS BACK: every release of the preferred protocol outranks every release
-of the other one, but nothing is excluded, so when the preferred protocol has
-no usable release the other one is still downloaded.
+that orders every release of the preferred protocol before every release of
+the other one; nothing is excluded by this ordering step. Falls back to the
+other protocol if no acceptable release of the preferred one is found --
+"acceptable" meaning it passes `Release.tryDownloadResult`'s FILTERS (status /
+minimum_score / size / seeders). If the preferred release passes those filters
+but the download itself then fails (downloader disabled/unreachable,
+provider error), `tryDownloadResult` does not advance to the next candidate --
+that is a pre-existing, separate limitation of this ordering, not something
+this module can fix. See tests/unit/test_protocol_preference.py::
+TestFallbackToTheOtherProtocol for both the covered and the known-gap cases.
 
 Both call sites — `Searcher.search()` (what gets downloaded) and
 `Release.forMedia()` (what the UI lists) — sort by score first and then apply
 this, relying on a stable sort to keep score order inside each protocol group.
 """
-
-NO_PREFERENCE = 'both'
 
 _NZB_PROTOCOLS = ('nzb',)
 _TORRENT_PROTOCOLS = ('torrent', 'torrent_magnet')
@@ -21,7 +26,7 @@ _OTHER = 1
 _UNKNOWN = 2
 
 
-def protocol_rank(protocol, preference):
+def _protocol_rank(protocol, preference):
     """Rank `protocol` against `preference`.
 
     Returns 0 for the preferred family, 1 for the other known family, and 2 for
@@ -59,4 +64,4 @@ def sort_by_protocol_preference(items, preference, get_protocol):
     if preference not in ('nzb', 'torrent'):
         return list(items)
 
-    return sorted(items, key = lambda item: protocol_rank(get_protocol(item), preference))
+    return sorted(items, key = lambda item: _protocol_rank(get_protocol(item), preference))
