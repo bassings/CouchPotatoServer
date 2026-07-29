@@ -168,27 +168,51 @@ each protocol group.
 
 ### Acceptance criteria — Part A
 
-- [ ] A1: with `preferred_method = 'nzb'`, every NZB release precedes every
+- [x] A1: with `preferred_method = 'nzb'`, every NZB release precedes every
       torrent release in both `Searcher.search()` and `Release.forMedia()`,
-      regardless of score.
-- [ ] A2: with `preferred_method = 'torrent'`, the reverse holds.
-- [ ] A3: with `preferred_method = 'both'`, order is score-descending only —
-      the helper returns the list unchanged.
-- [ ] A4: within a protocol group, score-descending order is preserved (sort
+      regardless of score. (`test_nzb_preference_puts_every_nzb_before_every_torrent`,
+      `test_nzb_preference_orders_nzb_first_regardless_of_score`,
+      `test_nzb_preference_lists_nzb_first`)
+- [x] A2: with `preferred_method = 'torrent'`, the reverse holds.
+      (`test_torrent_preference_puts_every_torrent_before_every_nzb`,
+      `test_torrent_preference_orders_torrents_first`,
+      `test_torrent_preference_lists_torrents_first`)
+- [x] A3: with `preferred_method = 'both'`, order is score-descending only —
+      the helper returns the list unchanged. (`test_both_leaves_the_incoming_order_untouched`,
+      `test_both_preserves_pure_score_order`, `test_both_lists_in_score_order`)
+- [x] A4: within a protocol group, score-descending order is preserved (sort
       stability) for all three preference values.
-- [ ] A5: `torrent_magnet` is ranked with `torrent`, not as unknown.
-- [ ] A6: a release with a missing, empty or unrecognised protocol sorts
+      (`test_score_order_is_preserved_within_each_protocol_group`,
+      `test_score_order_survives_inside_the_preferred_group`)
+- [x] A5: `torrent_magnet` is ranked with `torrent`, not as unknown.
+      (`test_torrent_magnet_ranks_with_torrent`)
+- [x] A6: a release with a missing, empty or unrecognised protocol sorts
       **last** under `'nzb'` *and* under `'torrent'`.
-- [ ] A7: both call sites use the shared helper — no remaining hand-rolled
-      protocol sort, verified by test, not by eye.
-- [ ] A8: an empty list, and a list with a single item, are handled without
-      error for every preference value.
-- [ ] A9: the config option renders in Settings → Searcher → Basics with the
+      (`test_unknown_protocol_sorts_last_when_preferring_nzb`,
+      `test_unknown_protocol_sorts_last_when_preferring_torrent_too`,
+      `test_missing_or_unrecognised_protocols_are_treated_as_unknown`,
+      `test_a_release_with_no_protocol_is_listed_last_not_first`)
+- [x] A7: both call sites use the shared helper — no remaining hand-rolled
+      protocol sort, verified by test, not by eye. (`test_search_uses_the_shared_helper`,
+      `test_for_media_uses_the_shared_helper` — strengthened to assert on
+      `call_args`, not just `.called`)
+- [x] A8: an empty list, and a list with a single item, are handled without
+      error for every preference value. (`test_empty_and_single_item_lists_are_safe`)
+- [x] A9: the config option renders in Settings → Searcher → Basics with the
       new label and value labels, and an existing `settings.conf` containing
       `preferred_method = nzb` is still read correctly (stored values unchanged).
-- [ ] A10: fallback is explicit — when the preferred protocol has no release
+      (`TestPreferredMethodConfigOption`; real config-file read verified end to
+      end by `TestPreferredMethodRealSettingsPlumbing::test_preferred_method_is_read_through_the_real_settings_and_env_plumbing`)
+- [x] A10: fallback is explicit — when the preferred protocol has no release
       passing `tryDownloadResult`'s filters, a release of the other protocol is
-      still downloaded.
+      still downloaded. **Verification, not implementation** — this was
+      confirmed working for filter rejections
+      (`test_a_torrent_is_downloaded_when_no_nzb_was_found`,
+      `test_a_torrent_is_downloaded_when_the_preferred_nzb_fails_the_filters`,
+      `test_the_preferred_release_still_wins_when_it_passes`), with the
+      download-failure limitation called out and pinned separately
+      (`test_a_download_failure_does_not_fall_through_to_the_other_protocol`
+      — see "Fallback, not exclusion" above).
 
 ## Part B — Sort/filter for the release list
 
