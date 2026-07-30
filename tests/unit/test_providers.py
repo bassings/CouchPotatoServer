@@ -2,6 +2,8 @@
 
 Uses unittest.mock to avoid real HTTP calls.
 """
+import re
+from pathlib import Path
 import json
 import os
 import sys
@@ -673,3 +675,57 @@ class TestTorrentPotatoJackettIntegration:
         assert result['success'] is True
         assert result['added'] == 0  # Should skip since URL already exists
         assert result['total'] == 1
+
+
+class TestFanartTVSettingIsReachable:
+    """The api_key setting must live on a tab the settings UI actually renders.
+
+    Requiring a key that cannot be entered is worse than the public upstream key
+    it replaced. The first version of this config block copied themoviedb.py's
+    verbatim — `tab: 'providers'`, which `hiddenTabs` filters out entirely — so
+    the only way to set it was hand-editing config.ini on the server. This is the
+    enforced version of that lesson rather than a comment nobody reads.
+    """
+
+    SCRIPTS = (
+        Path(__file__).resolve().parents[2]
+        / "couchpotato/ui/templates/partials/settings/scripts.html"
+    )
+
+    def _hidden_tabs(self):
+        text = self.SCRIPTS.read_text(encoding="utf-8")
+        match = re.search(r"hiddenTabs:\s*new Set\(\[(.*?)\]\)", text, re.DOTALL)
+        assert match, "could not find hiddenTabs in the settings UI script"
+        return set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+
+    def _fanart_group(self):
+        from couchpotato.core.media.movie.providers.info import fanarttv
+
+        groups = fanarttv.config[0]["groups"]
+        assert len(groups) == 1, f"expected one group, got {len(groups)}"
+        return groups[0]
+
+    def test_api_key_option_exists(self):
+        options = {o["name"] for o in self._fanart_group()["options"]}
+        assert "api_key" in options
+
+    def test_group_is_not_on_a_tab_the_ui_hides(self):
+        group = self._fanart_group()
+        hidden = self._hidden_tabs()
+        assert group["tab"] not in hidden, (
+            f"fanart.tv settings are registered on the '{group['tab']}' tab, which "
+            f"the settings UI hides ({sorted(hidden)}). The api_key would be "
+            f"unreachable, leaving config.ini as the only way to set it."
+        )
+
+    def test_group_is_not_marked_hidden(self):
+        assert not self._fanart_group().get("hidden"), (
+            "the group is marked hidden; the key must be discoverable"
+        )
+
+    def test_description_tells_the_user_what_they_lose_and_where_to_get_a_key(self):
+        description = self._fanart_group()["description"]
+        assert "fanart.tv/get-an-api-key" in description
+        assert "Optional" in description, (
+            "the description should make clear the app works without it"
+        )

@@ -150,6 +150,19 @@
   upstream hits" would have filed this fork's own committed key under expected
   noise.
 
+- **The settings UI hides the `providers` tab, so metadata-provider settings are
+  unreachable.** `couchpotato/ui/templates/partials/settings/scripts.html` has
+  `hiddenTabs: new Set(['providers', 'automation'])`, and nothing remaps
+  `providers`, so any group declaring `'tab': 'providers'` never enters
+  `tabOrder`. That currently affects **TheMovieDB's `api_key`**
+  (`themoviedb.py`), which is masked by its baked-in fallback key — which is
+  exactly why the gap went unnoticed. fanart.tv sidesteps it by registering under
+  `general` instead (see the comment in `fanarttv.py`), and
+  `tests/unit/test_providers.py::TestFanartTVSettingIsReachable` fails if that
+  regresses. The real fix is to surface the Providers tab (or remap those groups)
+  so metadata providers are configurable like everything else; that is a UI change
+  and wants its own commit.
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.

@@ -139,11 +139,11 @@ class FanartTV(MovieProvider):
             # not an application fault, so ERROR would misrepresent it and
             # drown genuine failures.
             log.warning(
-                'No fanart.tv API key configured -- skipping extra art. Get a '
-                'free key at https://fanart.tv/get-an-api-key/ and set '
-                'api_key under [fanarttv] in config.ini (the settings UI\'s '
-                '"Providers" tab is not currently reachable -- see '
-                'docs/technical-debt.md).'
+                'No fanart.tv API key configured -- skipping extra art. Posters '
+                'still come from TheMovieDB; this only affects extra artwork '
+                '(logos, banners, discs). Get a free key at '
+                'https://fanart.tv/get-an-api-key/ and set it in '
+                'Settings > General > Fanart.tv.'
             )
             return True
         return False
@@ -153,13 +153,28 @@ config = [{
     'name': 'fanarttv',
     'groups': [
         {
-            'tab': 'providers',
+            # 'general', NOT 'providers' — and deliberately not `hidden`.
+            #
+            # This block was first written by copying themoviedb.py's, which uses
+            # `tab: 'providers'` + `hidden: True`. That is faithful to the
+            # existing pattern and completely unreachable: the new settings UI
+            # filters the whole tab out (`hiddenTabs: new Set(['providers',
+            # 'automation'])` in partials/settings/scripts.html), so the setting
+            # could only be changed by hand-editing config.ini on the server.
+            # Shipping a key requirement with no way to enter the key is worse
+            # than the public upstream key this replaced.
+            #
+            # TheMovieDB has the same problem; it is masked there by a baked-in
+            # fallback key, which is why nobody noticed. Surfacing the Providers
+            # tab properly is the real fix — see docs/technical-debt.md.
+            'tab': 'general',
             'name': 'fanarttv',
             'label': 'Fanart.tv',
-            'hidden': True,
-            'description': 'Used for extra artwork (logos, banners, discs). '
-                            'Requires a free API key from '
-                            '<a href="https://fanart.tv/get-an-api-key/" target="_blank">fanart.tv</a>.',
+            'description': 'Optional. Adds extra artwork (logos, banners, discs) '
+                            'on top of the posters TheMovieDB already provides. '
+                            'Without a key CouchPotato simply skips that extra art. '
+                            'Free key from '
+                            '<a href="https://fanart.tv/get-an-api-key/" target="_blank" rel="noopener">fanart.tv</a>.',
             'options': [
                 {
                     'name': 'api_key',
