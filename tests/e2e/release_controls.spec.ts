@@ -1,0 +1,125 @@
+import { test, expect } from '@playwright/test';
+
+/**
+ * FEAT-007 Part B: the release list's filter and sort controls.
+ *
+ * The controls are htmx-driven: each one swaps #movie-releases. These tests
+ * assert on what the user sees and on the ARIA state, not on the request.
+ *
+ * Setup follows tests/e2e/movie-detail.spec.ts's own pattern (goto('/'),
+ * #movie-grid, .poster-card) rather than assuming a movie id or a dedicated
+ * /wanted route -- both work, but matching the existing spec keeps this
+ * suite consistent with the rest of the file it sits next to.
+ *
+ * COVERAGE GAP: CI/local e2e always starts from a fresh, empty .e2e-data (see
+ * the coverage-gap notes in movie-detail.spec.ts and
+ * specs/DOWNLOADED-REVIEW-WORKFLOW.md), so there is no fixture that seeds a
+ * movie with releases, let alone releases from multiple sources/qualities.
+ * Every test below explicitly test.skip()s with a stated reason when the
+ * library has no movie, no releases, or not enough variety to exercise a
+ * given assertion -- it does not fake data into the app to force a pass.
+ */
+
+test.describe('Release list controls', () => {
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+
+    const movieGrid = page.locator('#movie-grid');
+    await expect(movieGrid).toBeVisible({ timeout: 10000 });
+
+    const firstCard = movieGrid.locator('.poster-card').first();
+    test.skip(await firstCard.count() === 0, 'no movie in the test library to open');
+
+    await firstCard.click();
+    await expect(page).toHaveURL(/.*movie\/.+/);
+    await expect(page.locator('h1')).toBeVisible({ timeout: 5000 });
+  });
+
+  test('the release table exposes sortable headers with aria-sort', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    const sortable = releases.locator('th[aria-sort]');
+    expect(await sortable.count()).toBeGreaterThan(0);
+    // Nothing is sorted until the user asks (B1: defaults reproduce the old page).
+    for (const th of await sortable.all()) {
+      expect(await th.getAttribute('aria-sort')).toBe('none');
+    }
+  });
+
+  test('sorting by size marks that column and reorders the rows', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(await releases.locator('tbody tr').count() < 2, 'need at least two releases to observe a reorder');
+
+    const before = await releases.locator('tbody tr').first().textContent();
+
+    await releases.getByRole('link', { name: /^Size/ }).click();
+    await expect(releases.locator('th[aria-sort="descending"]')).toHaveCount(1);
+
+    // Clicking again reverses it.
+    await releases.getByRole('link', { name: /^Size/ }).click();
+    await expect(releases.locator('th[aria-sort="ascending"]')).toHaveCount(1);
+
+    const after = await releases.locator('tbody tr').first().textContent();
+    expect(after).not.toBe(before);
+  });
+
+  test('filtering by source shows only that source', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    const select = releases.locator('#rel-source');
+    const options = await select.locator('option').allInnerTexts();
+    test.skip(
+      !options.some(o => /NZB/i.test(o)) || !options.some(o => /Torrent/i.test(o)),
+      'this movie has releases from only one source',
+    );
+
+    await select.selectOption('nzb');
+    await expect(page.locator('#movie-releases')).toBeVisible();
+    // Column order is fixed by SORT_COLUMNS in releases_view.py: Name,
+    // Quality, Score, Size, Seeders, Source, Status, Age -- Source is the
+    // 6th <td>.
+    const sources = await page.locator('#movie-releases tbody tr td:nth-child(6)').allInnerTexts();
+    for (const source of sources) {
+      expect(source.trim()).toMatch(/NZB/i);
+    }
+  });
+
+  test('the result count is announced in a live region', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    await expect(releases.locator('[aria-live="polite"]')).toContainText(/release/);
+  });
+
+  test('Download and Skip still work after a swap (B13)', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    await releases.getByRole('link', { name: /^Score/ }).click();
+    await expect(page.locator('#movie-releases')).toBeVisible();
+
+    // The Alpine component must have rebound after the swap: the buttons are
+    // present and enabled, not inert. Do NOT click Download -- that would
+    // snatch a real release.
+    const action = page.locator('#movie-releases button', { hasText: /Download|Skip/ }).first();
+    if (await action.count() > 0) {
+      await expect(action).toBeEnabled();
+    }
+  });
+
+  test('a bookmarked filtered URL renders filtered on first paint (B8)', async ({ page }) => {
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    const url = new URL(page.url());
+    url.searchParams.set('sort', 'size');
+    url.searchParams.set('dir', 'desc');
+
+    await page.goto(url.toString());
+    await expect(page.locator('#movie-releases table')).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#movie-releases th[aria-sort="descending"]')).toHaveCount(1);
+  });
+});

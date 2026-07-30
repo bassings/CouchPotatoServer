@@ -151,6 +151,35 @@ test.describe('Accessibility', () => {
     await checkA11y(page, 'Settings');
   });
 
+  // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows
+  // movie-detail.spec.ts's own pattern for reaching the detail page -- CI/
+  // local e2e always starts from a fresh, empty .e2e-data (see the
+  // coverage-gap notes there), so there is no fixture guaranteed to produce a
+  // movie with releases; skip explicitly rather than fake data into the app.
+  test('Movie Detail page with a release filter applied should be accessible', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+
+    const movieGrid = page.locator('#movie-grid');
+    await expect(movieGrid).toBeVisible({ timeout: 10000 });
+
+    const firstCard = movieGrid.locator('.poster-card').first();
+    test.skip(await firstCard.count() === 0, 'no movie in the test library to open');
+
+    await firstCard.click();
+    await expect(page).toHaveURL(/.*movie\/.+/);
+    await expect(page.locator('h1')).toBeVisible({ timeout: 5000 });
+
+    const releases = page.locator('#movie-releases');
+    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+
+    // Apply a sort so the active-column aria-sort state is exercised too.
+    await releases.getByRole('link', { name: /^Score/ }).click();
+    await expect(page.locator('#movie-releases')).toBeVisible();
+
+    await checkA11y(page, 'Movie Detail (filtered release list)');
+  });
+
   // The wizard's provider/downloader/library toggles only render into the DOM
   // once their step is reached (each step is `x-show`-gated) and, for the
   // provider toggles, once a search type is chosen. Walk the real flow so the
