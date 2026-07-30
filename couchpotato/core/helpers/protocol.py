@@ -26,6 +26,26 @@ _OTHER = 1
 _UNKNOWN = 2
 
 
+def protocol_family(protocol):
+    """Classify `protocol` as 'nzb', 'torrent', or None if unrecognised.
+
+    Public because two features depend on the same answer: the preference
+    ordering below, and the release list's source filter
+    (`couchpotato/ui/releases_view.py`). They must not drift apart.
+    """
+
+    if not isinstance(protocol, str):
+        return None
+
+    normalised = protocol.strip().lower()
+
+    if normalised in _NZB_PROTOCOLS:
+        return 'nzb'
+    if normalised in _TORRENT_PROTOCOLS:
+        return 'torrent'
+    return None
+
+
 def _protocol_rank(protocol, preference):
     """Rank `protocol` against `preference`.
 
@@ -35,16 +55,9 @@ def _protocol_rank(protocol, preference):
     way the preference points.
     """
 
-    if not isinstance(protocol, str):
-        return _UNKNOWN
+    family = protocol_family(protocol)
 
-    normalised = protocol.strip().lower()
-
-    if normalised in _NZB_PROTOCOLS:
-        family = 'nzb'
-    elif normalised in _TORRENT_PROTOCOLS:
-        family = 'torrent'
-    else:
+    if family is None:
         return _UNKNOWN
 
     return _PREFERRED if family == preference else _OTHER
