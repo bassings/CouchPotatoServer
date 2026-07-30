@@ -248,3 +248,59 @@ class TestReleasesPartialRoute:
                 api['media.get'] = old
             else:
                 api.pop('media.get', None)
+
+
+class TestMovieDetailHtmxBranch:
+    """The filter form (partials/movie_releases.html) targets GET /movie/{id}
+    directly rather than /partial/movie/{id}/releases, so its
+    hx-push-url="true" pushes a URL that is also valid to land on directly --
+    the standalone partial route returns a bare, unstyled fragment, which
+    would look broken sitting in the address bar. movie_detail branches on
+    the HX-Request header htmx sets on every request it issues: present ->
+    the releases partial (matching #movie-releases, the form's hx-target);
+    absent -> the ordinary full-page shell, unchanged.
+    """
+
+    def test_an_htmx_request_gets_the_releases_partial_not_the_shell(self, client, media_get):
+        resp = client.get('/movie/movie-1', headers = {'HX-Request': 'true'})
+
+        assert resp.status_code == 200
+        assert 'id="movie-releases"' in resp.text
+        assert 'id="movie-detail-container"' not in resp.text, (
+            'an htmx (fragment) request must not get the full-page shell'
+        )
+
+    def test_an_htmx_request_honours_the_query_params(self, client, media_get):
+        """Exactly what the filter form's serialized fields drive."""
+        resp = client.get('/movie/movie-1', params = {'source': 'nzb'},
+                           headers = {'HX-Request': 'true'})
+
+        assert 'nzb1.release.name' in resp.text
+        assert 'tor1.release.name' not in resp.text
+
+    def test_a_plain_navigation_still_gets_the_full_page_shell(self, client, media_get):
+        """No HX-Request header -- e.g. a browser reload of a pushed,
+        filtered URL -- must still get detail.html, which re-fetches the
+        filtered content itself (FEAT-007 B8), not the bare releases
+        fragment.
+        """
+        resp = client.get('/movie/movie-1?source=nzb')
+
+        assert resp.status_code == 200
+        assert 'id="movie-detail-container"' in resp.text
+        assert 'id="movie-releases"' not in resp.text
+
+    def test_the_filter_form_pushes_a_bookmarkable_url(self, client, media_get):
+        """Regression: the form used to target /partial/movie/{id}/releases
+        with no hx-push-url at all, so a filter change never touched the
+        address bar -- unlike the sort links a few lines below it, which
+        already push a bookmarkable URL. A reload after filtering silently
+        dropped the filter.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+
+        assert 'hx-push-url="true"' in resp.text
+        assert 'hx-get="/movie/movie-1"' in resp.text, (
+            'the form must fetch through movie_detail\'s own path, not the '
+            'standalone partial route, so the pushed URL is valid to land on directly'
+        )

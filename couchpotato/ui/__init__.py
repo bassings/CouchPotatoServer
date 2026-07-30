@@ -131,6 +131,25 @@ def _releases_ctx(movie, movie_id, params):
     }
 
 
+async def _render_releases_partial(movie_id, params):
+    """Render partials/movie_releases.html for `movie_id`, filtered/sorted per
+    `params`. Shared by the standalone GET /partial/movie/{id}/releases route
+    and movie_detail's htmx branch below -- see that route's comment for why
+    a filter change needs this rather than the full-page shell.
+    """
+    from couchpotato.api import callApiHandler
+    movie = {}
+    try:
+        result = await run_in_threadpool(callApiHandler, 'media.get', id=movie_id)
+        if isinstance(result, dict):
+            movie = result.get('media', result) or {}
+    except Exception:
+        log.error('Failed to fetch movie for release list')
+    tmpl = _jinja.get_template('partials/movie_releases.html')
+    releases_ctx = _releases_ctx(movie, movie_id, params)
+    return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()))
+
+
 def create_router(require_auth) -> APIRouter:
     """Create the /new/ router. require_auth is the FastAPI dependency."""
     router = APIRouter()
@@ -159,6 +178,23 @@ def create_router(require_auth) -> APIRouter:
     @router.get('/movie/{movie_id}/')
     @router.get('/movie/{movie_id}')
     async def movie_detail(movie_id: str, request: Request, user=Depends(require_auth)):
+        # The release-list filter form (partials/movie_releases.html)
+        # targets THIS path with hx-get (not the standalone
+        # /partial/movie/{id}/releases endpoint) specifically so its
+        # hx-push-url="true" pushes a URL that is also valid to land on
+        # directly -- the standalone endpoint returns a bare, unstyled
+        # fragment, which would look broken if it ended up in the address
+        # bar after a filter change (sort links already avoid this by
+        # pushing an explicit href distinct from what they fetch; a form's
+        # values are chosen at submit time, so it cannot pre-compute a
+        # per-selection href the same way). htmx marks every request it
+        # issues with `HX-Request: true`, so branch on that: an htmx
+        # (fragment) request gets exactly the releases partial -- matching
+        # #movie-releases, the form's hx-target -- while a real navigation
+        # (no header) still gets the full-page shell below.
+        if request.headers.get('hx-request') == 'true':
+            return await _render_releases_partial(movie_id, dict(request.query_params))
+
         tmpl = _jinja.get_template('detail.html')
         # Forward the release-list controls (source/quality/sort/dir/...) into
         # the initial hx-get, so a filtered/sorted URL like
@@ -259,20 +295,12 @@ def create_router(require_auth) -> APIRouter:
     async def partial_movie_releases(movie_id: str, request: Request, user=Depends(require_auth)):
         """Return the release list, filtered and sorted per the query params.
 
-        Behind htmx: the sort/filter controls in partials/movie_releases.html
-        target #movie-releases with hx-swap="outerHTML" against this route.
+        Behind htmx: the sort links in partials/movie_releases.html target
+        #movie-releases with hx-swap="outerHTML" against this route (the
+        filter form targets movie_detail's own path instead -- see its
+        comment for why).
         """
-        from couchpotato.api import callApiHandler
-        movie = {}
-        try:
-            result = await run_in_threadpool(callApiHandler, 'media.get', id=movie_id)
-            if isinstance(result, dict):
-                movie = result.get('media', result) or {}
-        except Exception:
-            log.error('Failed to fetch movie for release list')
-        tmpl = _jinja.get_template('partials/movie_releases.html')
-        releases_ctx = _releases_ctx(movie, movie_id, dict(request.query_params))
-        return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()))
+        return await _render_releases_partial(movie_id, dict(request.query_params))
 
     @router.get('/partial/search')
     async def partial_search(request: Request, q: str = '', user=Depends(require_auth)):

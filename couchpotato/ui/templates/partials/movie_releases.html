@@ -24,7 +24,25 @@
        releases" live-region count.
 
    The releaseDownloader() Alpine component lives in movie_detail.html (loaded
-   once per full page render), not here -- see the comment there for why. #}
+   once per full page render), not here -- see the comment there for why.
+
+   #release-count-announcer (WCAG 4.1.3): a filter/sort change swaps
+   `#movie-releases`'s entire outerHTML, so an `aria-live` region nested
+   inside it is destroyed and a brand-new node is inserted on every
+   interaction -- screen readers do not announce a node they never saw
+   "change" (they only announce mutations to a region that was already
+   registered in the accessibility tree). The visible "N of M releases"
+   count below stays where it is (sighted users see the swap happen), but a
+   second, screen-reader-only copy lives as a SIBLING of `#movie-releases`,
+   never touched by that swap, and is updated via `hx-swap-oob="innerHTML"`
+   -- htmx scans the whole response for out-of-band targets regardless of
+   the primary hx-target, so this same response updates both. `innerHTML`
+   (not the bare `hx-swap-oob="true"` outerHTML shorthand) is deliberate:
+   outerHTML would still destroy and recreate the announcer node itself on
+   every swap, which is exactly the bug this exists to fix -- only a swap
+   that leaves the node's identity alone and changes just its text content
+   is announced reliably. #}
+<p id="release-count-announcer" class="sr-only" aria-live="polite" aria-atomic="true" hx-swap-oob="innerHTML">{% if total_releases %}{{ releases|length }} of {{ total_releases }} release{{ '' if total_releases == 1 else 's' }}{% endif %}</p>
 <div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
   {% if not total_releases and raw_release_count %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
@@ -34,11 +52,21 @@
   {% elif total_releases %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
 
+  {# hx-get targets movie_detail's OWN path, not /partial/movie/{id}/releases:
+     that makes hx-push-url="true" push a URL that is also valid to land on
+     directly (a reload, a shared link). The route branches on the
+     HX-Request header htmx sets automatically, returning just this partial
+     for the fragment swap and the full shell for a real navigation -- see
+     couchpotato/ui/__init__.py's movie_detail route. Without this, filter
+     changes left the address bar on the pre-filter URL while sort links (a
+     few lines below) already pushed a bookmarkable one -- reloading after
+     filtering silently dropped the filter. #}
   <form class="flex flex-wrap items-end gap-3 mb-3"
-        hx-get="{{ new_base }}partial/movie/{{ movie_id }}/releases"
+        hx-get="{{ new_base }}movie/{{ movie_id }}"
         hx-target="#movie-releases"
         hx-swap="outerHTML"
         hx-trigger="change"
+        hx-push-url="true"
         aria-label="Filter releases">
     <input type="hidden" name="sort" value="{{ controls.sort }}">
     <input type="hidden" name="dir" value="{{ controls.dir }}">
@@ -78,14 +106,7 @@
       </select>
     </div>
 
-    <noscript>
-      <button type="submit"
-              class="min-h-[44px] px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-lg text-xs transition-colors">
-        Apply
-      </button>
-    </noscript>
-
-    <p class="text-[11px] text-cp-muted ml-auto" aria-live="polite">
+    <p class="text-[11px] text-cp-muted ml-auto">
       {{ releases|length }} of {{ total_releases }} release{{ '' if total_releases == 1 else 's' }}
     </p>
   </form>
