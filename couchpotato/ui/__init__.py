@@ -14,15 +14,6 @@ from starlette.concurrency import run_in_threadpool
 from couchpotato.environment import Env
 from couchpotato.core.logger import CPLog
 
-# Re-exported so `from couchpotato.ui import require_auth` works: the releases
-# partial route (create_router, below) receives the identical function as its
-# `require_auth` parameter -- that parameter only shadows this name locally,
-# inside create_router's body, so it does not affect which function actually
-# guards any route. Safe from a circular import: `couchpotato.ui` is a
-# submodule of `couchpotato`, so importing it always fully initialises
-# `couchpotato/__init__.py` (where require_auth is defined) first.
-from couchpotato import require_auth  # noqa: F401
-
 log = CPLog(__name__)
 
 _template_dir = os.path.join(os.path.dirname(__file__), 'templates')

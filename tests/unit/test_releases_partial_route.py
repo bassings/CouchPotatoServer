@@ -132,14 +132,49 @@ class TestReleasesPartialRoute:
         resp = client.get('/partial/movie/movie-1/releases')
         assert 'aria-live="polite"' in resp.text
 
-    def test_requires_auth_when_a_password_is_set(self, client, media_get):
-        """B7. With no credentials configured the app is open by design;
-        this asserts the route is behind the same guard as its siblings.
+    def test_an_unauthenticated_request_is_redirected_to_login(self, media_get):
+        """B7: the route must be behind the same guard as its siblings.
+
+        Asserting that the name `require_auth` is importable from
+        `couchpotato.ui` would prove nothing about this route -- it would pass
+        even if the route had no dependency at all. Configure credentials and
+        make a real cookie-less request instead: `require_auth`
+        (`couchpotato/__init__.py:74-80`) raises a 302 to the login page when
+        `get_current_user` finds nobody.
         """
-        from couchpotato.ui import require_auth
-        import couchpotato.ui as ui_module
-        assert require_auth is not None
-        assert 'require_auth' in ui_module.__dict__
+        settings_data = {
+            'username': 'admin',
+            'password': 'secret',
+            'api_key': 'testkey123',
+            'dark_theme': False,
+        }
+        original_setting = Env.setting
+
+        def mock_setting(key = None, *args, **kwargs):
+            if 'value' in kwargs:
+                settings_data[key] = kwargs['value']
+                return
+            if key in settings_data:
+                return settings_data[key]
+            return kwargs.get('default', '')
+
+        Env.setting = staticmethod(mock_setting)
+        try:
+            from couchpotato import create_app
+            guarded = TestClient(create_app('testkey123', '/'), follow_redirects = False)
+            resp = guarded.get('/partial/movie/movie-1/releases')
+        finally:
+            Env.setting = original_setting
+
+        assert resp.status_code == 302
+        assert resp.headers.get('location', '').endswith('/login/')
+
+    def test_the_route_is_reachable_when_no_credentials_are_configured(self, client, media_get):
+        """The complement: an open install (no username/password) is the
+        default and must keep working, so the test above is proving the guard
+        rather than a broken route.
+        """
+        assert client.get('/partial/movie/movie-1/releases').status_code == 200
 
     def test_a_movie_with_no_releases_renders_the_empty_state(self, client):
         """B14."""
