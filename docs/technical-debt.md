@@ -131,6 +131,21 @@
   are configurable like everything else; that is a UI change and wants its own
   commit.
 
+- **Accepted: the E2E search specs do not cover the `/partial/search` handler.**
+  Decided 2026-07-31 (Scott). The specs stub the provider response, so their
+  content assertions echo test-supplied markup — blanking
+  `partials/search_results.html` leaves them green. They still exercise the
+  client wiring (typing → debounce → `hx-get` → swap; a typo'd `hx-target` fails
+  four of them), and both sides of the seam are covered:
+  `tests/unit/test_search_results_template.py` pins the template and `movie.search`
+  has unit coverage. What is unguarded is the ~15 lines of handler between them.
+
+  Accepted because the alternative — a live TMDB call in the suite — is what made
+  those tests slow and flaky and blocked parallel runs (4.1 min → 1.0 min). This
+  is a decision, not an oversight: please do not "restore real coverage" by
+  putting the network call back. If it is ever worth closing, fake the provider
+  *inside the server* so the real handler and template run with no internet.
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.
