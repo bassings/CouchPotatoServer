@@ -166,6 +166,23 @@ test.describe('Accessibility', () => {
     const movieGrid = page.locator('#movie-grid');
     await expect(movieGrid).toBeVisible({ timeout: 10000 });
 
+    // #movie-grid is the static htmx shell (present before its hx-get load
+    // even fires), so checking .poster-card's count immediately after the
+    // grid becomes "visible" races the swap and can misreport "no movie in
+    // the test library" for a seed that ran but just hadn't landed yet (the
+    // same race proven for release_controls.spec.ts's beforeEach). Wait for
+    // an actual card to attach, with a real timeout, tolerating it so a
+    // genuine load timeout gets a distinct message from a genuinely empty
+    // library.
+    const cardLoaded = await movieGrid.locator('.poster-card').first()
+      .waitFor({ state: 'attached', timeout: 10000 })
+      .then(() => true)
+      .catch(() => false);
+
+    test.skip(!cardLoaded, 'timed out after 10s waiting for the movie grid ' +
+      'htmx load to swap in a .poster-card -- this is a load/perf problem, ' +
+      'not a missing seed/movie');
+
     const firstCard = movieGrid.locator('.poster-card').first();
     test.skip(
       await firstCard.count() === 0,

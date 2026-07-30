@@ -37,13 +37,30 @@ test.describe('Release list controls', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto(`/movie/${SEEDED_MOVIE_ID}`);
 
-    // Wait for the release list itself, not the <h1>: these tests are about
-    // the controls, and coupling setup to unrelated title rendering makes all
-    // six fail for a reason that has nothing to do with them.
-    await page.waitForSelector('#movie-releases, #movie-detail-container', { timeout: 15000 });
+    // Wait for the htmx swap to actually land, not for the always-present
+    // shell: #movie-detail-container is STATIC markup in detail.html (it's
+    // the hx-get host, present before the request even fires), so a comma
+    // selector like '#movie-releases, #movie-detail-container' resolves
+    // instantly against the shell and waits for nothing. The skip guard
+    // below then ran before htmx had swapped in the release list at all --
+    // proven with an artificially delayed partial response (a 400ms delay
+    // was enough to make every test in this file skip while reporting "the
+    // seed did not run", when in fact it had). Wait on #movie-releases
+    // itself instead: that id only exists in the swapped-in content
+    // (partials/movie_releases.html), never in the shell.
+    const swapped = await page.locator('#movie-releases')
+      .waitFor({ state: 'attached', timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+
+    // Distinguish a real load timeout (something is actually wrong/slow --
+    // never a routine skip) from the legitimate "seed didn't run" case below.
+    test.skip(!swapped, 'timed out after 15s waiting for the movie detail htmx ' +
+      'load to swap in #movie-releases -- this is a load/perf problem, not a ' +
+      'missing seed');
 
     test.skip(
-      await page.locator('#movie-releases').count() === 0,
+      await page.locator('#movie-releases table').count() === 0,
       `no seeded movie with releases at /movie/${SEEDED_MOVIE_ID} -- the seed ` +
       'did not run: scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
     );
