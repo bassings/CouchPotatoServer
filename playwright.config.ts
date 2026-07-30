@@ -69,11 +69,20 @@ export default defineConfig({
    * server step. CI starts the server itself (see .github/workflows/ci.yml),
    * so we skip webServer there to avoid a port clash.
    * Uses a throwaway .e2e-data dir — never the real ./.config the dev/docker uses.
+   *
+   * Seeds a deterministic movie + releases (scripts/seed_e2e_data.py, FEAT-007
+   * Part B) before the server starts, so tests/e2e/release_controls.spec.ts and
+   * the movie-detail case in accessibility.a11y.spec.ts run instead of
+   * test.skip()-ing on an empty library -- same before-server-start ordering
+   * as the CI job. The seed step is deliberately tolerant (`|| true`): if it
+   * fails, the server still starts and the rest of the suite still runs --
+   * those two specs just fall back to skipping, matching the pre-seed
+   * behaviour, rather than a seed bug taking down the entire local E2E run.
    */
   webServer: process.env.CI
     ? undefined
     : {
-        command: 'python CouchPotato.py --data_dir=.e2e-data',
+        command: '(python scripts/seed_e2e_data.py --data_dir=.e2e-data || true) && python CouchPotato.py --data_dir=.e2e-data',
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
         reuseExistingServer: true,

@@ -165,10 +165,27 @@ jobs:
     
     - name: Install Node dependencies
       run: npm ci
-    
+
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
-    
+
+    # FEAT-007 Part B: seeds a deterministic movie + releases so
+    # tests/e2e/release_controls.spec.ts (and the movie-detail case in
+    # accessibility.a11y.spec.ts) actually run instead of test.skip()-ing on
+    # an empty library. Must run BEFORE the server starts: the app's own
+    # SQLiteAdapter.open() will then pick up the seeded rows on its first
+    # (and only) connection, rather than racing a long-lived server
+    # connection with a second writer process. See scripts/seed_e2e_data.py
+    # for the full rationale. Tolerant of failure -- the worst case must be
+    # the pre-existing behaviour (those tests skip), never a red build from
+    # the seed step itself.
+    - name: Seed E2E test data
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        python scripts/seed_e2e_data.py --data_dir=.config || echo "::warning::seed_e2e_data.py failed -- release-control/a11y tests will skip instead of running"
+      continue-on-error: true
+
     - name: Start CouchPotato server
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
@@ -176,7 +193,7 @@ jobs:
         python CouchPotato.py --data_dir=.config &
         sleep 10
         curl -sf http://localhost:5050/ || exit 1
-    
+
     - name: Run E2E tests
       run: npm run test:e2e -- --project=chromium
     
@@ -215,17 +232,29 @@ jobs:
     
     - name: Install Node dependencies
       run: npm ci
-    
+
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
-    
+
+    # See the matching step in the ui-e2e-tests job above: this job also
+    # starts its own server against its own empty .config, so it needs the
+    # same seed to exercise the movie-detail (filtered release list) a11y
+    # case in accessibility.a11y.spec.ts instead of skipping it. Same
+    # before-server-start ordering and same failure tolerance.
+    - name: Seed E2E test data
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        python scripts/seed_e2e_data.py --data_dir=.config || echo "::warning::seed_e2e_data.py failed -- the movie-detail a11y case will skip instead of running"
+      continue-on-error: true
+
     - name: Start CouchPotato server
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
       run: |
         python CouchPotato.py --data_dir=.config &
         sleep 10
-    
+
     - name: Run accessibility tests
       run: npm run test:a11y
     
