@@ -62,7 +62,7 @@
      few lines below) already pushed a bookmarkable one -- reloading after
      filtering silently dropped the filter. #}
   <form class="flex flex-wrap items-end gap-3 mb-3"
-        hx-get="{{ new_base }}movie/{{ movie_id }}"
+        hx-get="{{ new_base }}movie/{{ movie_id|urlencode }}"
         hx-target="#movie-releases"
         hx-swap="outerHTML"
         hx-trigger="change"
@@ -71,10 +71,18 @@
     <input type="hidden" name="sort" value="{{ controls.sort }}">
     <input type="hidden" name="dir" value="{{ controls.dir }}">
 
+    {# focus-visible:outline-2 outline-cp-accent, not focus:outline-none +
+       focus:border-cp-accent/30 (WCAG 2.4.7): `focus:outline-none` sets
+       `outline: 2px solid transparent`, which beats base.html's global
+       `:focus-visible { outline: 2px solid #35c5f4 }` on specificity, and
+       the border tint loses to `:root.light .border-white\/[0.06]` in the
+       light theme -- so a keyboard-focused select was indistinguishable
+       from an unfocused one there. The sort links a few lines below already
+       use the outline idiom correctly; these selects now match it. #}
     <div class="flex flex-col gap-1">
       <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-source">Source</label>
       <select id="rel-source" name="source"
-              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cp-accent">
         <option value="all" {% if controls.source == 'all' %}selected{% endif %}>All sources</option>
         {% for value in options.source %}
         <option value="{{ value }}" {% if controls.source == value %}selected{% endif %}>
@@ -87,7 +95,7 @@
     <div class="flex flex-col gap-1">
       <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-quality">Quality</label>
       <select id="rel-quality" name="quality"
-              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cp-accent">
         <option value="all" {% if controls.quality == 'all' %}selected{% endif %}>All qualities</option>
         {% for value in options.quality %}
         <option value="{{ value }}" {% if controls.quality == value %}selected{% endif %}>{{ value }}</option>
@@ -98,7 +106,7 @@
     <div class="flex flex-col gap-1">
       <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-status">Status</label>
       <select id="rel-status" name="status"
-              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cp-accent">
         <option value="all" {% if controls.status == 'all' %}selected{% endif %}>All statuses</option>
         {% for value in options.status %}
         <option value="{{ value }}" {% if controls.status == value %}selected{% endif %}>{{ value }}</option>
@@ -119,7 +127,14 @@
           {% for column in columns %}
           <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider"
               aria-sort="{{ column.aria_sort }}">
-            <a href="{{ column.href }}"
+            {# id is load-bearing, not cosmetic: htmx only restores keyboard
+               focus after a swap when the pre-swap activeElement has an id
+               it can find again in the freshly-swapped-in content -- these
+               links had none, so clicking Size (say) and pressing Enter
+               left focus on <body>, dumping the user back at "Skip to main
+               content". #}
+            <a id="sort-{{ column.key }}"
+               href="{{ column.href }}"
                hx-get="{{ column.hx_get }}"
                hx-target="#movie-releases"
                hx-swap="outerHTML"
@@ -239,11 +254,11 @@
         <tr>
           <td colspan="9" class="px-4 py-4 text-cp-muted text-center">
             No releases match the selected filters.
-            <a href="{{ new_base }}movie/{{ movie_id }}"
-               hx-get="{{ new_base }}partial/movie/{{ movie_id }}/releases"
+            <a href="{{ new_base }}movie/{{ movie_id|urlencode }}"
+               hx-get="{{ new_base }}partial/movie/{{ movie_id|urlencode }}/releases"
                hx-target="#movie-releases"
                hx-swap="outerHTML"
-               hx-push-url="{{ new_base }}movie/{{ movie_id }}"
+               hx-push-url="{{ new_base }}movie/{{ movie_id|urlencode }}"
                class="text-cp-accent hover:text-cp-accentHover underline ml-1">Clear filters</a>
           </td>
         </tr>

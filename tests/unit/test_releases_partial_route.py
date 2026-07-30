@@ -132,6 +132,44 @@ class TestReleasesPartialRoute:
         resp = client.get('/partial/movie/movie-1/releases')
         assert 'aria-live="polite"' in resp.text
 
+    def test_the_live_region_survives_a_swap_via_hx_swap_oob(self, client, media_get):
+        """Regression: the aria-live count used to live INSIDE #movie-releases,
+        which hx-swap="outerHTML" destroys and recreates on every filter/sort
+        change -- a screen reader does not announce a brand-new node, only a
+        mutation to one already in the accessibility tree. A persistent
+        sr-only announcer outside #movie-releases, updated via
+        hx-swap-oob="innerHTML" (not the bare "true" outerHTML shorthand,
+        which would recreate it too), fixes that.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+        assert 'id="release-count-announcer"' in resp.text
+        assert 'hx-swap-oob="innerHTML"' in resp.text
+
+    def test_filter_selects_use_the_focus_visible_outline_idiom(self, client, media_get):
+        """Regression (WCAG 2.4.7): the selects used `focus:outline-none` +
+        `focus:border-cp-accent/30`, which loses to base.html's global
+        `:focus-visible` outline rule on specificity and to the light
+        theme's border override, leaving a keyboard-focused select
+        indistinguishable from an unfocused one. They must use the same
+        `focus-visible:outline...outline-cp-accent` idiom the sort links
+        already use correctly.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+        assert 'focus:outline-none' not in resp.text
+        assert resp.text.count('focus-visible:outline-cp-accent') >= 4, (
+            '3 selects + the sort links should all use the idiom'
+        )
+
+    def test_each_sort_link_has_a_stable_id_for_htmx_focus_restoration(self, client, media_get):
+        """Regression: htmx only restores keyboard focus after a swap when the
+        pre-swap activeElement has an id it can find again in the
+        swapped-in content. The sort header anchors had none, so focusing
+        Size and pressing Enter measurably threw focus to <body>.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+        for key in ('name', 'quality', 'score', 'size', 'seeders', 'source', 'status', 'age'):
+            assert 'id="sort-%s"' % key in resp.text
+
     def test_an_unauthenticated_request_is_redirected_to_login(self, media_get):
         """B7: the route must be behind the same guard as its siblings.
 

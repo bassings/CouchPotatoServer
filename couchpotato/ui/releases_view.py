@@ -9,7 +9,7 @@ or hand-edited, so `normalise_controls` coerces anything unrecognised to a
 default instead of raising.
 """
 
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 from couchpotato.core.helpers.protocol import protocol_family
 from couchpotato.core.helpers.variable import tryFloat
@@ -252,6 +252,10 @@ def sort_columns(controls, movie_id, web_base = '/'):
     """One entry per sortable column: label, links, and aria-sort state."""
 
     base = web_base if web_base.endswith('/') else web_base + '/'
+    # movie_id lands directly in a URL path segment; quote() it so a `?`, `#`
+    # or `/` in an id can't be misread as the start of a query string/fragment
+    # or an extra path segment and corrupt the link.
+    safe_movie_id = quote(str(movie_id), safe = '')
     columns = []
 
     for key, label in SORT_COLUMNS:
@@ -266,8 +270,8 @@ def sort_columns(controls, movie_id, web_base = '/'):
             'label': label,
             'aria_sort': ('descending' if controls['dir'] == 'desc' else 'ascending') if is_active else 'none',
             'is_active': is_active,
-            'hx_get': '%spartial/movie/%s/releases?%s' % (base, movie_id, query),
-            'href': '%smovie/%s?%s' % (base, movie_id, query),
+            'hx_get': '%spartial/movie/%s/releases?%s' % (base, safe_movie_id, query),
+            'href': '%smovie/%s?%s' % (base, safe_movie_id, query),
         })
 
     return columns
