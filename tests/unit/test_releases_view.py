@@ -78,3 +78,105 @@ class TestNormaliseControls:
         got = normalise_controls({'source': 'nzb', 'evil': 'x'})
         assert 'evil' not in got
         assert got['source'] == 'nzb'
+
+
+def _release(_id, protocol = 'nzb', quality = '1080p', status = 'available',
+             score = 100, size = 4000, seeders = None, age = 3, name = None):
+    """A release document in the shape `release.for_media` returns."""
+    info = {'protocol': protocol, 'score': score, 'size': size, 'age': age,
+            'name': name or '%s.release' % _id}
+    if seeders is not None:
+        info['seeders'] = seeders
+    return {'_id': _id, 'quality': quality, 'status': status, 'info': info}
+
+
+def _ids(releases):
+    return [r['_id'] for r in releases]
+
+
+class TestFilterReleases:
+
+    def test_defaults_return_everything_in_the_given_order(self):
+        """B1."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('a'), _release('b', protocol = 'torrent')]
+        assert _ids(filter_and_sort_releases(releases, DEFAULT_CONTROLS)) == ['a', 'b']
+
+    def test_source_nzb_returns_only_nzb(self):
+        """B2."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('n', 'nzb'), _release('t', 'torrent'), _release('m', 'torrent_magnet')]
+        controls = dict(DEFAULT_CONTROLS, source = 'nzb')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['n']
+
+    def test_source_torrent_includes_magnets(self):
+        """B2: torrent_magnet is a torrent."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('n', 'nzb'), _release('t', 'torrent'), _release('m', 'torrent_magnet')]
+        controls = dict(DEFAULT_CONTROLS, source = 'torrent')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['t', 'm']
+
+    def test_a_release_with_an_unknown_protocol_is_excluded_by_either_source_filter(self):
+        """It is neither nzb nor torrent, so it matches neither."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('u', ''), _release('n', 'nzb')]
+        assert _ids(filter_and_sort_releases(releases, dict(DEFAULT_CONTROLS, source = 'nzb'))) == ['n']
+        assert _ids(filter_and_sort_releases(releases, dict(DEFAULT_CONTROLS, source = 'torrent'))) == []
+        # ...but 'all' still shows it, so it is never invisible.
+        assert _ids(filter_and_sort_releases(releases, DEFAULT_CONTROLS)) == ['u', 'n']
+
+    def test_quality_filter_matches_the_identifier(self):
+        """B3."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('hd', quality = '1080p'), _release('uhd', quality = '2160p')]
+        controls = dict(DEFAULT_CONTROLS, quality = '2160p')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['uhd']
+
+    def test_quality_filter_tolerates_a_dict_shaped_quality(self):
+        """Release docs store a string (release/main.py:183,:501) but the
+        template defends against a dict (movie_detail.html:279), so the
+        filter reads the identifier out of either shape.
+        """
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [{'_id': 'd', 'quality': {'identifier': '1080p'}, 'status': 'available', 'info': {}}]
+        controls = dict(DEFAULT_CONTROLS, quality = '1080p')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['d']
+
+    def test_status_filter(self):
+        """B3."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('a', status = 'available'), _release('i', status = 'ignored')]
+        controls = dict(DEFAULT_CONTROLS, status = 'ignored')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['i']
+
+    def test_all_three_filters_compose(self):
+        """B3: applied together, not last-one-wins."""
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [
+            _release('want', 'nzb', '1080p', 'available'),
+            _release('wrong_source', 'torrent', '1080p', 'available'),
+            _release('wrong_quality', 'nzb', '720p', 'available'),
+            _release('wrong_status', 'nzb', '1080p', 'ignored'),
+        ]
+        controls = dict(DEFAULT_CONTROLS, source = 'nzb', quality = '1080p', status = 'available')
+        assert _ids(filter_and_sort_releases(releases, controls)) == ['want']
+
+    def test_filtering_never_mutates_the_input(self):
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [_release('a'), _release('b', protocol = 'torrent')]
+        filter_and_sort_releases(releases, dict(DEFAULT_CONTROLS, source = 'nzb'))
+        assert _ids(releases) == ['a', 'b']
+
+    def test_an_empty_list_is_safe(self):
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        assert filter_and_sort_releases([], DEFAULT_CONTROLS) == []

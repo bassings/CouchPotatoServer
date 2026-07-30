@@ -57,3 +57,50 @@ def normalise_controls(params):
         controls['quality'] = quality.strip()
 
     return controls
+
+
+def _quality_identifier(release):
+    """Read the quality identifier out of either shape a release may hold."""
+
+    quality = release.get('quality')
+    if isinstance(quality, str):
+        return quality
+    if isinstance(quality, dict):
+        return quality.get('identifier') or quality.get('label') or ''
+    return ''
+
+
+def _info(release):
+    return release.get('info') or {}
+
+
+def _matches(release, controls):
+    if controls['source'] != 'all':
+        if protocol_family(_info(release).get('protocol')) != controls['source']:
+            return False
+
+    if controls['quality'] != 'all':
+        if _quality_identifier(release) != controls['quality']:
+            return False
+
+    if controls['status'] != 'all':
+        if (release.get('status') or '') != controls['status']:
+            return False
+
+    return True
+
+
+def filter_and_sort_releases(releases, controls):
+    """Apply `controls` (already normalised) to `releases`.
+
+    Returns a new list; never mutates the input.
+    """
+
+    filtered = [r for r in releases if _matches(r, controls)]
+
+    return _sorted(filtered, controls)
+
+
+def _sorted(releases, controls):
+    # Filled in by Task 4; ordering is a separate concern from filtering.
+    return list(releases)
