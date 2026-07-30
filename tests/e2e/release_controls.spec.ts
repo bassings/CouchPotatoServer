@@ -144,7 +144,12 @@ test.describe('Release list controls', () => {
       'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
     );
 
-    await expect(releases.locator('[aria-live="polite"]')).toContainText(/release/);
+    // The live region lives OUTSIDE #movie-releases now (a sibling,
+    // #release-count-announcer): it must, since hx-swap="outerHTML" destroys
+    // and recreates #movie-releases wholesale on every filter/sort change,
+    // and a screen reader does not announce a brand-new node -- only a
+    // mutation to one already registered in the accessibility tree.
+    await expect(page.locator('#release-count-announcer')).toContainText(/release/);
   });
 
   test('Download and Skip still work after a swap (B13)', async ({ page }) => {
@@ -155,16 +160,34 @@ test.describe('Release list controls', () => {
       'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
     );
 
+    const actionButton = releases.locator('button', { hasText: /Download|Skip/ }).first();
+    test.skip(
+      await actionButton.count() === 0,
+      'no release in this data has an actionable status (available/ignored) -- ' +
+      'scripts/seed_e2e_data.py seeds both, so this indicates the seed did not run, ' +
+      'not a routine skip',
+    );
+
     await releases.getByRole('link', { name: /^Score/ }).click();
     await expect(page.locator('#movie-releases')).toBeVisible();
 
-    // The Alpine component must have rebound after the swap: the buttons are
-    // present and enabled, not inert. Do NOT click Download -- that would
-    // snatch a real release.
-    const action = page.locator('#movie-releases button', { hasText: /Download|Skip/ }).first();
-    if (await action.count() > 0) {
-      await expect(action).toBeEnabled();
-    }
+    // A real check that Alpine rebound releaseDownloader() on the freshly
+    // swapped-in #movie-releases node -- NOT the old `toBeEnabled()`
+    // assertion, which checked for an HTML `disabled` attribute that is
+    // never actually present: the buttons use `:disabled="downloading[...]"`,
+    // an Alpine binding, so that assertion passed whether or not Alpine ever
+    // reinitialised the component. Alpine.$data() reads the reactive scope
+    // Alpine itself attached to the element; if the component failed to
+    // rebind, this is undefined rather than the releaseDownloader() shape.
+    // Do NOT click Download/Skip themselves -- that would snatch or ignore
+    // a real release in whatever library the suite happens to run against.
+    const rebound = await page.evaluate(() => {
+      const el = document.querySelector('#movie-releases');
+      const alpine = (window as any).Alpine; // global exposed by the vendored script, not a module import
+      const data = alpine && el ? alpine.$data(el) : null;
+      return !!data && typeof data.downloading === 'object' && typeof data.ignoring === 'object';
+    });
+    expect(rebound, 'Alpine.$data(#movie-releases) should be the rebound releaseDownloader() scope').toBe(true);
   });
 
   test('a bookmarked filtered URL renders filtered on first paint (B8)', async ({ page }) => {
