@@ -52,3 +52,6 @@ mutants/
 /SOUL.md
 /TOOLS.md
 /USER.md
+
+# E2E test data dirs (any suffix) - never commit test data
+.e2e-*data/

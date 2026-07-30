@@ -126,16 +126,13 @@
           </td>
           <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>
           <td class="px-4 py-2.5 text-cp-muted font-light font-mono">{{ (r_info.get('size') or 0)|round|int }} MB</td>
-          <td class="px-4 py-2.5 font-mono">
-            {%- if r_seeders is not none -%}
-              {% if r_seeders >= 5 %}
-              <span class="text-cp-success">{{ r_seeders }}</span>
-              {% elif r_seeders >= 1 %}
-              <span class="text-cp-warning">{{ r_seeders }}</span>
-              {% else %}
-              <span class="text-cp-danger">{{ r_seeders }}</span>
-              {% endif %}
-            {%- endif -%}
+          {# Blank, not 0, for an NZB: an NZB has no seeders, and "0" would
+             read as a torrent nobody is seeding. No health colouring here --
+             it was not asked for, nothing tests it, and it applied
+             text-cp-success/warning/danger, which fail WCAG AA contrast on
+             the light theme (see the :root.light overrides in base.html). #}
+          <td class="px-4 py-2.5 text-cp-muted font-light font-mono">
+            {%- if r_seeders is not none %}{{ r_seeders }}{% endif -%}
           </td>
           <td class="px-4 py-2.5">
             {% if r_protocol == 'nzb' %}

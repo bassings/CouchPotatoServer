@@ -87,6 +87,18 @@ tailwind.config = {
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
   /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
   :root.light .text-cp-accent { color: #0e7490; }
+  /* A11Y (WCAG 2.2 AA, 1.4.3): the status tokens are chosen for the dark
+     theme and fail badly as text on the light theme's near-white surfaces --
+     measured against #ffffff: success #3ddc84 = 1.78:1, warning #e5a00d =
+     2.24:1, danger #f04848 = 3.67:1, blue #35c5f4 = 2.01:1, all under the
+     4.5:1 minimum. These 700-weight equivalents clear it (5.48, 5.02, 6.47
+     and 5.36:1 respectively) while reading as the same colour, and follow the
+     accent override directly above. Backgrounds are 10% tints of the token
+     over white, so white is the worst case. */
+  :root.light .text-cp-success { color: #047857; }
+  :root.light .text-cp-warning { color: #b45309; }
+  :root.light .text-cp-danger { color: #b91c1c; }
+  :root.light .text-cp-blue { color: #0e7490; }
 
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }

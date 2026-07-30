@@ -26,9 +26,14 @@
   <!-- Bulk selection checkbox (IMP-005) -->
   <label class="absolute top-2 left-2 z-20 cursor-pointer opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
          :class="selected ? 'opacity-100' : ''">
+    {# The wrapping <label> holds only an icon, so it gives the checkbox no
+       accessible name -- axe reports it as an unlabelled form element
+       (critical, WCAG 4.1.2). Name it explicitly after the movie it selects,
+       so a screen reader announces which card is being ticked. #}
     <input type="checkbox"
            class="movie-select-checkbox sr-only"
            data-movie-id="{{ movie_id }}"
+           aria-label="Select {{ title }}"
            x-model="selected"
            @click.stop>
     <span class="flex items-center justify-center w-5 h-5 rounded-md bg-black/60 backdrop-blur-sm border border-white/20 transition-colors"
