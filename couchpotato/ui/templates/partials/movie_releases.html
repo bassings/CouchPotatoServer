@@ -181,8 +181,19 @@
         {% set r_quality = r.get('quality', '') %}
         {% set r_protocol = r_info.get('protocol', 'unknown') %}
         {% set r_score = r_info.get('score', 0) %}
-        {% set r_size = r_info.get('size') %}
-        {% set r_seeders = r_info.get('seeders') %}
+        {# `|to_num` is load-bearing, not defensive dressing: providers store
+           these UNCOERCED. torrentpotato.py:102 (the Jackett path) passes the
+           tracker's raw JSON straight through and scenetime.py:61 stores a
+           scraped string, so `size`/`seeders` can each arrive as a str. Any
+           arithmetic or comparison on that raises TypeError, which Jinja does
+           not catch and which happens outside the route's try/except -- one
+           string seeder count would 500 the whole movie-detail body. Keep the
+           RAW value too: only it can distinguish "absent" (an NZB has no
+           seeders -> blank) from a real zero, since to_num maps both to 0. #}
+        {% set r_size_raw = r_info.get('size') %}
+        {% set r_seeders_raw = r_info.get('seeders') %}
+        {% set r_size = r_size_raw|to_num %}
+        {% set r_seeders = r_seeders_raw|to_num %}
         {% set r_age = r_info.get('age', 0) %}
         {% set r_id = r.get('_id', '') %}
         {% set r_files = r.get('files', {}) %}
@@ -210,7 +221,7 @@
              whitespace-nowrap keeps "9999 MB" etc. from wrapping to two
              lines in the narrow column. #}
           <td class="px-4 py-2.5 text-cp-muted font-light font-mono whitespace-nowrap">
-            {%- if r_size is not none -%}
+            {%- if r_size_raw is not none -%}
             {{ r_size|round|int }} MB
             {%- else -%}
             <span aria-hidden="true">&mdash;</span><span class="sr-only">size not available</span>
@@ -236,12 +247,12 @@
              the dark poster backdrop the `on-dark` exception carves out
              for), so no `on-dark` class is warranted. #}
           <td class="px-4 py-2.5 font-light font-mono whitespace-nowrap {{
-                'text-cp-warning' if r_seeders == 0 else
-                'text-cp-success' if r_seeders is not none and r_seeders >= 5 else
+                'text-cp-warning' if r_seeders_raw is not none and r_seeders == 0 else
+                'text-cp-success' if r_seeders_raw is not none and r_seeders >= 5 else
                 'text-cp-muted'
               }}">
-            {%- if r_seeders is not none -%}
-            {{ r_seeders }}
+            {%- if r_seeders_raw is not none -%}
+            {{ r_seeders|round|int }}
             {%- else -%}
             <span class="sr-only">not applicable</span>
             {%- endif -%}

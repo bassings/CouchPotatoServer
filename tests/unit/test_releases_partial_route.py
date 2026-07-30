@@ -594,3 +594,164 @@ class TestSeederHealthColour:
                 api['media.get'] = old
             else:
                 api.pop('media.get', None)
+
+
+class TestProviderSuppliedStringNumerics:
+    """A provider-supplied STRING size/seeders must not 500 the release list.
+
+    Providers do not normalise these: `torrentpotato.py:102` -- the Jackett
+    integration, i.e. the documented production path -- passes the tracker's
+    raw JSON `seeders`/`size` straight through, `scenetime.py:61` stores a
+    scraped string, and `release/main.py` copies provider fields into `info`
+    preserving type. The template's seed-health comparison (`r_seeders >= 5`)
+    and size rounding then raise TypeError, which Jinja does not catch and
+    which happens OUTSIDE the route's try/except -- so one string seeder count
+    returned 500 for the whole release list AND for `/partial/movie/{id}`,
+    which renders the same include, killing the entire detail body.
+    """
+
+    @pytest.mark.parametrize('size, seeders', [
+        ('700', '12'),
+        ('700', '0'),
+        (700, ''),
+        ('1.4 GB', 'many'),
+        (None, None),
+        ('', None),
+        (8000, 12),
+    ])
+    def test_string_or_junk_numerics_still_render(self, size, seeders, client):
+        info = {'protocol': 'torrent', 'score': 10, 'age': 3,
+                'name': 'strnum.release.name', 'size': size}
+        if seeders is not None:
+            info['seeders'] = seeders
+        movie = dict(MOVIE, releases = [
+            {'_id': 'r', 'quality': '1080p', 'status': 'available', 'info': info},
+        ])
+
+        def handler(**kwargs):
+            return {'media': movie}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            for url in ('/partial/movie/movie-1/releases', '/partial/movie/movie-1'):
+                resp = client.get(url)
+                assert resp.status_code == 200, \
+                    '%s returned %s for size=%r seeders=%r' % (url, resp.status_code, size, seeders)
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+
+class TestContentNegotiationIsAdvertised:
+    """`/movie/{id}` returns two different bodies for one URL depending on
+    htmx's request headers, so it must say so.
+
+    Without `Vary`, any caching layer in front of the app -- a reverse proxy,
+    a CDN, the kind of setup a home server sits behind -- can store the
+    fragment and serve it to a browser asking for the page (a bare, unstyled
+    table with no nav), or store the page and hand it to an htmx swap.
+    """
+
+    def _vary(self, resp):
+        return [v.strip().lower() for v in resp.headers.get('vary', '').split(',') if v.strip()]
+
+    def test_the_full_page_response_advertises_the_negotiation(self, client, media_get):
+        resp = client.get('/movie/movie-1')
+        assert 'hx-request' in self._vary(resp)
+        assert 'hx-history-restore-request' in self._vary(resp)
+
+    def test_the_fragment_response_advertises_it_too(self, client, media_get):
+        resp = client.get('/movie/movie-1', headers = {'HX-Request': 'true'})
+        assert 'hx-request' in self._vary(resp)
+
+    def test_the_standalone_partial_route_advertises_it(self, client, media_get):
+        resp = client.get('/partial/movie/movie-1/releases')
+        assert 'hx-request' in self._vary(resp)
+
+
+class TestTitleDerivationIsPinned:
+    """The title chain is correct but was untested: reverting `_releases_ctx`
+    to `titles[0] if titles else 'Unknown'` left the whole suite green.
+
+    That matters more than a caption: `movie_detail.html`'s own fallback chain
+    was deleted in favour of this single derivation, so the page `<h1>` now has
+    no independent guard. A silent regression here renders "Unknown" as the
+    title of every movie whose `info.titles` is empty -- which
+    MovieResultModifier.default_info makes the norm for any movie whose info
+    was never filled.
+    """
+
+    def _movie(self, **info_overrides):
+        info = {'titles': [], 'year': 2026}
+        info.update(info_overrides)
+        return {'_id': 'movie-1', 'status': 'active', 'info': info,
+                'title': 'Doc Title',
+                'profile': {'label': 'HD', 'qualities': ['1080p']},
+                'releases': [_release('r', 'nzb', '1080p', 'available', 10, 100)]}
+
+    def _render(self, client, movie):
+        def handler(**kwargs):
+            return {'media': movie}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            return client.get('/partial/movie/movie-1/releases').text
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_empty_titles_falls_back_to_original_title(self, client):
+        body = self._render(client, self._movie(original_title = 'Real Title'))
+        assert 'Real Title' in body
+        assert 'Unknown' not in body
+
+    def test_empty_titles_and_no_original_falls_back_to_the_document_title(self, client):
+        body = self._render(client, self._movie())
+        assert 'Doc Title' in body
+
+    def test_titles_wins_when_present(self, client):
+        body = self._render(client, self._movie(titles = ['Primary'], original_title = 'Other'))
+        assert 'Primary' in body
+
+    def test_the_full_page_h1_uses_the_same_derivation(self, client):
+        """The <h1> must agree with the caption -- one derivation, not two."""
+        def handler(**kwargs):
+            return {'media': self._movie(original_title = 'Real Title')}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            body = client.get('/partial/movie/movie-1').text
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+        assert re.search(r'<h1[^>]*>\s*Real Title\s*</h1>', body), \
+            'the <h1> must render the derived title, not an empty string'
+
+
+class TestMovieIdIsUrlQuoted:
+    """`sort_columns` interpolates `movie_id` into a path. A `?`/`#`/space in
+    an id would otherwise terminate the path early and silently corrupt every
+    sort link. Correct in code, but the mutation survived with no test.
+    """
+
+    def test_special_characters_in_the_id_are_escaped(self):
+        from couchpotato.ui.releases_view import DEFAULT_CONTROLS, sort_columns
+
+        columns = sort_columns(DEFAULT_CONTROLS, 'we?ird #id', '/')
+        for column in columns:
+            assert '?ird' not in column['hx_get'].split('?')[0], 'raw ? leaked into the path'
+            assert '#' not in column['href'].split('?')[0], 'raw # leaked into the path'
+            assert 'we%3Fird' in column['hx_get'] or 'we%3fird' in column['hx_get']

@@ -18,6 +18,26 @@
 
 <script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
 <script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.4.min.js"></script>
+<script>
+  /* Disable htmx's localStorage history snapshots (WCAG-adjacent correctness,
+     not a perf tweak).
+
+     FEAT-007 Part B introduced the first `hx-push-url` in this codebase, which
+     engaged htmx history for the first time. htmx snapshots
+     `document.body.innerHTML` -- and that snapshot already contains the copy
+     Alpine `x-teleport`ed to <body> (partials/movie_info_modal.html:3). On a
+     Back that hits the cache, htmx restores the snapshot and Alpine teleports
+     a SECOND copy, leaving a scope-less duplicate whose every binding throws
+     (`movie is not defined`, `isOpen is not defined`, ...) and duplicating ids
+     so `<label for="modal-profile-select">` matches two elements. Measured:
+     3 duplicated ids and 42 uncaught page errors, deterministically.
+
+     With the cache off, every Back takes htmx's AJAX restore path instead,
+     which re-requests the URL with HX-History-Restore-Request and gets a
+     clean full page (see the movie_detail route). Measured on that path: 0
+     duplicate ids, 0 page errors, correct rows and announcer. */
+  window.htmx && (htmx.config.historyCacheSize = 0);
+</script>
 <!-- Extracted, unit-tested UI logic. This module script MUST precede the Alpine
      script: deferred scripts (classic defer + modules) run in document order,
      each finishing before the next, so loading it first guarantees CP.ui is

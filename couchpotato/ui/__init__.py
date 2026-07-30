@@ -42,6 +42,24 @@ def _to_str(value):
 _jinja.filters['to_str'] = _to_str
 
 
+def _to_num(value):
+    """Coerce a release's numeric field to a float, defaulting junk to 0.
+
+    Providers do NOT normalise these: `torrentpotato.py:102` (the Jackett
+    integration) passes the tracker's raw JSON `seeders` straight through, and
+    `scenetime.py:61` stores a scraped **string**. `release/main.py` copies
+    provider fields into `info` preserving type, and `media.get` hands them
+    back uncoerced. Comparing or rounding those in a template raises
+    TypeError, which Jinja does not catch and which happens outside the
+    route's try/except -- so a single string `seeders` 500s the entire
+    movie-detail body, not just one cell.
+    """
+    from couchpotato.core.helpers.variable import tryFloat
+    return tryFloat(value)
+
+_jinja.filters['to_num'] = _to_num
+
+
 def _ctx(extra=None):
     """Common template context."""
     api_key = Env.setting('api_key')
@@ -131,6 +149,12 @@ def _releases_ctx(movie, movie_id, params):
     }
 
 
+#: `/movie/{id}` is content-negotiated on htmx's request headers (full page vs
+#: releases fragment), so every response from that path must advertise it or a
+#: caching proxy will hand the wrong body to the wrong request.
+_HTMX_VARY = {'Vary': 'HX-Request, HX-History-Restore-Request'}
+
+
 async def _render_releases_partial(movie_id, params):
     """Render partials/movie_releases.html for `movie_id`, filtered/sorted per
     `params`. Shared by the standalone GET /partial/movie/{id}/releases route
@@ -147,7 +171,7 @@ async def _render_releases_partial(movie_id, params):
         log.error('Failed to fetch movie for release list')
     tmpl = _jinja.get_template('partials/movie_releases.html')
     releases_ctx = _releases_ctx(movie, movie_id, params)
-    return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()))
+    return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()), headers = _HTMX_VARY)
 
 
 def create_router(require_auth) -> APIRouter:
@@ -212,7 +236,14 @@ def create_router(require_auth) -> APIRouter:
         # apply them on first paint.
         query = request.url.query
         detail_query = ('?' + query) if query else ''
-        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id, 'detail_query': detail_query})))
+        # Vary: this URL returns two different bodies (full shell vs releases
+        # fragment) depending on request headers, so anything caching in front
+        # of the app -- a reverse proxy, a CDN -- must key on them or it will
+        # serve a bare table to a browser asking for the page, or vice versa.
+        # Set on BOTH branches; the header has to be present on the cacheable
+        # response, not just the fragment one.
+        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id, 'detail_query': detail_query})),
+                            headers = _HTMX_VARY)
 
     @router.get('/suggestions/')
     @router.get('/suggestions')
