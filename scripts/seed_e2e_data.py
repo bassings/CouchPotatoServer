@@ -95,11 +95,17 @@ RELEASES = [
         'age': 1,
         'name': 'E2E.Seed.Movie.2024.1080p.BluRay-GRP3',
     },
+    # Deliberately NOT 'downloaded': that status puts the movie in the
+    # manual-review gate, which renders a per-release "Mark failed" button and
+    # breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
+    # for a non-downloaded movie" -- the seeded movie must stay a plain
+    # non-downloaded movie. 'done' gives the status filter the same variety
+    # without changing what the movie IS.
     {
         'suffix': '4',
         'protocol': 'torrent',
         'quality': '720p',
-        'status': 'downloaded',
+        'status': 'done',
         'size': 6400,
         'seeders': 3,
         'score': 40.0,

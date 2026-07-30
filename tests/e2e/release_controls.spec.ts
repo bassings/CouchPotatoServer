@@ -25,22 +25,28 @@ import { test, expect } from '@playwright/test';
  */
 
 test.describe('Release list controls', () => {
+  // The movie scripts/seed_e2e_data.py creates. Navigating straight to it,
+  // rather than clicking whichever card happens to be first on '/', is what
+  // makes these tests order-independent: other specs in this suite mutate
+  // shared app state (one clicks "Mark as Done", which moves a movie out of
+  // the Wanted view entirely), and other movies can appear (search.spec.ts
+  // adds real ones), so "the first card" is neither stable nor necessarily
+  // a movie with releases. The id is deterministic, so the URL always is.
+  const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
+
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto(`/movie/${SEEDED_MOVIE_ID}`);
 
-    const movieGrid = page.locator('#movie-grid');
-    await expect(movieGrid).toBeVisible({ timeout: 10000 });
+    // Wait for the release list itself, not the <h1>: these tests are about
+    // the controls, and coupling setup to unrelated title rendering makes all
+    // six fail for a reason that has nothing to do with them.
+    await page.waitForSelector('#movie-releases, #movie-detail-container', { timeout: 15000 });
 
-    const firstCard = movieGrid.locator('.poster-card').first();
     test.skip(
-      await firstCard.count() === 0,
-      'no movie in the test library -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+      await page.locator('#movie-releases').count() === 0,
+      `no seeded movie with releases at /movie/${SEEDED_MOVIE_ID} -- the seed ` +
+      'did not run: scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
     );
-
-    await firstCard.click();
-    await expect(page).toHaveURL(/.*movie\/.+/);
-    await expect(page.locator('h1')).toBeVisible({ timeout: 5000 });
   });
 
   test('the release table exposes sortable headers with aria-sort', async ({ page }) => {

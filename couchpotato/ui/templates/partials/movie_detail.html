@@ -1,5 +1,11 @@
 {% set info = movie.get('info', {}) %}
-{% set title = info.get('titles', ['Unknown'])[0] %}
+{# `titles` can be present but EMPTY -- MovieResultModifier.default_info seeds
+   it as [] (providers/info/_modifier.py:21), so any movie whose info was never
+   filled (a failed TMDB refresh, an import) hits that. `.get('titles', [...])`
+   does not help there: the key exists, so the default never applies, and
+   indexing [] yields Undefined and renders an EMPTY <h1>. Fall through the
+   same chain movie_cards.html already uses, plus the document's own title. #}
+{% set title = info.get('titles', [''])[0] or info.get('original_title', '') or movie.get('title', '') or 'Unknown' %}
 {% set raw_year = info.get('year', 0) %}
 {% set year = raw_year if raw_year and raw_year != 0 else 'TBA' %}
 {% set plot = info.get('plot', '') %}
