@@ -11,13 +11,17 @@ import { test, expect } from '@playwright/test';
  * /wanted route -- both work, but matching the existing spec keeps this
  * suite consistent with the rest of the file it sits next to.
  *
- * COVERAGE GAP: CI/local e2e always starts from a fresh, empty .e2e-data (see
+ * COVERAGE GAP: CI/local e2e starts from a fresh, empty .e2e-data/.config (see
  * the coverage-gap notes in movie-detail.spec.ts and
- * specs/DOWNLOADED-REVIEW-WORKFLOW.md), so there is no fixture that seeds a
+ * specs/DOWNLOADED-REVIEW-WORKFLOW.md), so without a seed step there is no
  * movie with releases, let alone releases from multiple sources/qualities.
- * Every test below explicitly test.skip()s with a stated reason when the
- * library has no movie, no releases, or not enough variety to exercise a
- * given assertion -- it does not fake data into the app to force a pass.
+ * scripts/seed_e2e_data.py seeds exactly that (wired into playwright.config.ts's
+ * webServer for local runs, and into the ui-e2e-tests/accessibility CI jobs) --
+ * every test below still explicitly test.skip()s with a stated reason when
+ * the library has no movie, no releases, or not enough variety to exercise a
+ * given assertion (e.g. someone running this suite against their own,
+ * unseeded instance), but the reason says plainly that the seed didn't run
+ * rather than leaving it looking like a routine, expected skip.
  */
 
 test.describe('Release list controls', () => {
@@ -28,7 +32,11 @@ test.describe('Release list controls', () => {
     await expect(movieGrid).toBeVisible({ timeout: 10000 });
 
     const firstCard = movieGrid.locator('.poster-card').first();
-    test.skip(await firstCard.count() === 0, 'no movie in the test library to open');
+    test.skip(
+      await firstCard.count() === 0,
+      'no movie in the test library -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     await firstCard.click();
     await expect(page).toHaveURL(/.*movie\/.+/);
@@ -37,7 +45,11 @@ test.describe('Release list controls', () => {
 
   test('the release table exposes sortable headers with aria-sort', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     const sortable = releases.locator('th[aria-sort]');
     expect(await sortable.count()).toBeGreaterThan(0);
@@ -49,8 +61,16 @@ test.describe('Release list controls', () => {
 
   test('sorting by size marks that column and reorders the rows', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
-    test.skip(await releases.locator('tbody tr').count() < 2, 'need at least two releases to observe a reorder');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
+    test.skip(
+      await releases.locator('tbody tr').count() < 2,
+      'need at least two releases to observe a reorder -- scripts/seed_e2e_data.py ' +
+      'seeds 6, so this indicates the seed did not run rather than a routine skip',
+    );
 
     const before = await releases.locator('tbody tr').first().textContent();
 
@@ -67,13 +87,19 @@ test.describe('Release list controls', () => {
 
   test('filtering by source shows only that source', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     const select = releases.locator('#rel-source');
     const options = await select.locator('option').allInnerTexts();
     test.skip(
       !options.some(o => /NZB/i.test(o)) || !options.some(o => /Torrent/i.test(o)),
-      'this movie has releases from only one source',
+      'this movie has releases from only one source -- scripts/seed_e2e_data.py ' +
+      'seeds both NZB and torrent releases, so this indicates the seed did not ' +
+      'run rather than a routine skip',
     );
 
     await select.selectOption('nzb');
@@ -89,14 +115,22 @@ test.describe('Release list controls', () => {
 
   test('the result count is announced in a live region', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     await expect(releases.locator('[aria-live="polite"]')).toContainText(/release/);
   });
 
   test('Download and Skip still work after a swap (B13)', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     await releases.getByRole('link', { name: /^Score/ }).click();
     await expect(page.locator('#movie-releases')).toBeVisible();
@@ -112,7 +146,11 @@ test.describe('Release list controls', () => {
 
   test('a bookmarked filtered URL renders filtered on first paint (B8)', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     const url = new URL(page.url());
     url.searchParams.set('sort', 'size');

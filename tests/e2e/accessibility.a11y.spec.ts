@@ -152,10 +152,13 @@ test.describe('Accessibility', () => {
   });
 
   // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows
-  // movie-detail.spec.ts's own pattern for reaching the detail page -- CI/
-  // local e2e always starts from a fresh, empty .e2e-data (see the
-  // coverage-gap notes there), so there is no fixture guaranteed to produce a
-  // movie with releases; skip explicitly rather than fake data into the app.
+  // movie-detail.spec.ts's own pattern for reaching the detail page.
+  // scripts/seed_e2e_data.py seeds a movie with releases (wired into
+  // playwright.config.ts's webServer for local runs, and into the
+  // ui-e2e-tests/accessibility CI jobs) so this normally runs rather than
+  // skipping; the skips below stay so this suite still works against an
+  // unseeded instance, but say plainly that the seed didn't run rather than
+  // looking like a routine, expected skip.
   test('Movie Detail page with a release filter applied should be accessible', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -164,14 +167,22 @@ test.describe('Accessibility', () => {
     await expect(movieGrid).toBeVisible({ timeout: 10000 });
 
     const firstCard = movieGrid.locator('.poster-card').first();
-    test.skip(await firstCard.count() === 0, 'no movie in the test library to open');
+    test.skip(
+      await firstCard.count() === 0,
+      'no movie in the test library -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     await firstCard.click();
     await expect(page).toHaveURL(/.*movie\/.+/);
     await expect(page.locator('h1')).toBeVisible({ timeout: 5000 });
 
     const releases = page.locator('#movie-releases');
-    test.skip(await releases.locator('table').count() === 0, 'this movie has no releases');
+    test.skip(
+      await releases.locator('table').count() === 0,
+      'this movie has no releases -- no seeded movie with releases: run ' +
+      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
+    );
 
     // Apply a sort so the active-column aria-sort state is exercised too.
     await releases.getByRole('link', { name: /^Score/ }).click();
