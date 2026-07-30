@@ -72,11 +72,11 @@
       {% endif %}
       <div class="absolute top-2 right-2 flex gap-1">
         {% if status == 'active' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-blue/20 text-cp-blue backdrop-blur-sm">wanted</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-blue/20 text-cp-blue on-dark backdrop-blur-sm">wanted</span>
         {% elif status == 'done' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success backdrop-blur-sm">done</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">done</span>
         {% elif status == 'downloaded' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning backdrop-blur-sm">downloaded / review</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning on-dark backdrop-blur-sm">downloaded / review</span>
         {% else %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
@@ -85,12 +85,12 @@
       <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-white/80 backdrop-blur-sm">{{ quality_label }}</span>
         {% if downloaded_quality %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
         {% endif %}
       </div>
       {% elif downloaded_quality %}
       <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
       </div>
       {% endif %}
     </div>
