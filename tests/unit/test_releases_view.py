@@ -379,7 +379,10 @@ class TestFilterOptions:
             _release('c', 'nzb', '1080p', 'available'),
         ]
         options = filter_options(releases)
-        assert options['quality'] == ['720p', '1080p'] or options['quality'] == ['1080p', '720p']
+        # Order isn't asserted here (no profile is given, so filter_options
+        # falls back to sorted()) -- membership only. The dead predecessor of
+        # this line asserted `== [...] or == [...]`, which the very next line
+        # already supersedes (a set comparison), so it named nothing.
         assert set(options['quality']) == {'1080p', '720p'}
         assert set(options['status']) == {'available', 'ignored'}
         assert set(options['source']) == {'nzb', 'torrent'}
@@ -460,6 +463,20 @@ class TestSortColumns:
         from couchpotato.ui.releases_view import sort_columns
 
         columns = sort_columns(DEFAULT_CONTROLS, 'movie-1', '/cp/')
+        assert columns[0]['hx_get'].startswith('/cp/partial/movie/movie-1/releases?')
+        assert columns[0]['href'].startswith('/cp/movie/movie-1?')
+
+    def test_a_web_base_without_a_trailing_slash_is_normalised(self):
+        """(mutation-survivor 10e) No existing test passed a web_base WITHOUT
+        a trailing slash before this -- `Env.get('web_base')` can legitimately
+        come back that way -- so `sort_columns`'s
+        `base = web_base if web_base.endswith('/') else web_base + '/'`
+        normalisation had nothing pinning it; deleting it would have produced
+        a run-together '/cppartial/...' path and every test still passed.
+        """
+        from couchpotato.ui.releases_view import sort_columns
+
+        columns = sort_columns(DEFAULT_CONTROLS, 'movie-1', '/cp')
         assert columns[0]['hx_get'].startswith('/cp/partial/movie/movie-1/releases?')
         assert columns[0]['href'].startswith('/cp/movie/movie-1?')
 

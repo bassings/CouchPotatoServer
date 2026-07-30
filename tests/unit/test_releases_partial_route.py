@@ -342,3 +342,75 @@ class TestMovieDetailHtmxBranch:
             'the form must fetch through movie_detail\'s own path, not the '
             'standalone partial route, so the pushed URL is valid to land on directly'
         )
+
+    def test_the_full_page_shell_forwards_query_params_into_its_own_hx_get(self, client, media_get):
+        """(FEAT-007 B8, mutation-survivor 10b) detail_query has no dedicated
+        unit test today -- replacing it with '' (never forwarding the query
+        string) leaves the whole suite green. detail.html is a bare htmx
+        shell: it is the ONLY place `?source=nzb&sort=size` can be applied on
+        first paint, since the shell itself carries no releases content.
+        """
+        resp = client.get('/movie/movie-1?source=nzb&sort=size')
+
+        assert resp.status_code == 200
+        assert 'hx-get="/partial/movie/movie-1?source=nzb&amp;sort=size"' in resp.text
+
+    def test_a_release_outside_the_profile_is_excluded_even_when_others_match(self, client):
+        """(mutation-survivor 10a) Replacing the profile-quality matching
+        filter in _releases_ctx with `list(all_releases)` (i.e. no filter at
+        all) leaves the whole suite green today, because every existing
+        fixture's releases already all match their movie's profile. Mix a
+        matching and a non-matching quality on the SAME movie so an
+        unfiltered pass-through is visibly wrong.
+        """
+        def handler(**kwargs):
+            movie = dict(MOVIE, releases = [
+                _release('hd', 'nzb', '1080p', 'available', 100, 5000),
+                _release('sd', 'nzb', '480p', 'available', 100, 5000),
+            ])
+            return {'media': movie}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            assert 'hd.release.name' in resp.text
+            assert 'sd.release.name' not in resp.text, (
+                '480p is not in the profile\'s [1080p, 720p] qualities'
+            )
+            assert '1 of 1 release' in resp.text
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_query_params_are_applied_on_the_full_page_partial_render(self, client, media_get):
+        """(mutation-survivor 10c) `partial_movie_detail` (GET
+        /partial/movie/{id}, the full detail body's own first-paint fetch)
+        passes `dict(request.query_params)` into _releases_ctx --
+        replacing that with `{}` (ignoring the query string on first paint)
+        leaves the whole suite green today, since no existing test drives
+        this specific route WITH query params.
+        """
+        resp = client.get('/partial/movie/movie-1?source=nzb')
+
+        assert 'nzb1.release.name' in resp.text
+        assert 'tor1.release.name' not in resp.text
+
+    def test_filter_options_render_real_choices_not_just_the_static_all_option(self, client, media_get):
+        """(mutation-survivor 10d) Replacing filter_options(...)'s wiring with
+        empty lists leaves the whole suite green: every existing assertion
+        checks the DEFAULT ('All ...') option, which renders regardless.
+        Assert the data-driven <option>s (one per distinct quality/status/
+        source actually present) are there too.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+
+        assert '<option value="nzb"' in resp.text
+        assert '<option value="torrent"' in resp.text
+        assert '<option value="1080p" >1080p</option>' in resp.text
+        assert '<option value="720p" >720p</option>' in resp.text
+        assert '<option value="available" >available</option>' in resp.text
+        assert '<option value="ignored" >ignored</option>' in resp.text
