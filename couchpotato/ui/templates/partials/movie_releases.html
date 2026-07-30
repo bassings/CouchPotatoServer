@@ -1,0 +1,189 @@
+{# Movie detail release list. Rendered inline by movie_detail.html for first
+   paint, and standalone by GET /partial/movie/<id>/releases for htmx swaps,
+   so it must not depend on anything movie_detail.html computes locally. #}
+{% if releases %}
+<div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
+  <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
+  <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
+    <table class="w-full text-xs">
+      <caption class="sr-only">Available releases for {{ title }}</caption>
+      <thead>
+        <tr class="border-b border-white/[0.05] text-cp-muted text-left">
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Score</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Source</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in matching_releases %}
+        {% set r_info = r.get('info', {}) %}
+        {% set r_quality = r.get('quality', '') %}
+        {% set r_protocol = r_info.get('protocol', 'unknown') %}
+        {% set r_score = r_info.get('score', 0) %}
+        {% set r_age = r_info.get('age', 0) %}
+        {% set r_id = r.get('_id', '') %}
+        {% set r_files = r.get('files', {}) %}
+        {% set r_movie_files = r_files.get('movie', []) %}
+        {% set r_filename = r_movie_files[0].split('/')|last if r_movie_files else '' %}
+        {% set r_display_name = r_info.get('name') or r_filename or r.get('identifier', 'Unknown') %}
+        {% set r_identifier_parts = r.get('identifier', '').split('.') %}
+        {% set r_audio = r_identifier_parts[1] if r_identifier_parts|length > 2 and r_identifier_parts[1] and r_identifier_parts[1] != 'unknown' else '' %}
+        <tr class="border-b border-white/[0.03] hover:bg-white/[0.015] transition-colors">
+          <td class="px-4 py-2.5 max-w-xs truncate font-light" title="{{ r_display_name }}">{{ r_display_name }}</td>
+          <td class="px-4 py-2.5">
+            {% set q_label = r_quality if r_quality is string else r_quality.get('label', '') %}
+            {% if q_label %}
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-accent/10 text-cp-accent">{{ q_label }}</span>
+            {% endif %}
+            {% if r_audio %}
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-white/10 text-cp-muted ml-0.5">{{ r_audio }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>
+          <td class="px-4 py-2.5">
+            {% if r_protocol == 'nzb' %}
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-blue/10 text-cp-blue">NZB</span>
+            {% elif r_protocol == 'torrent' %}
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-warning/10 text-cp-warning">Torrent</span>
+            {% else %}
+            <span class="px-1.5 py-0.5 rounded text-[9px] bg-white/10 text-cp-muted">{{ r_protocol }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2.5">
+            {% set rstatus = r.get('status', '') %}
+            {% if rstatus == 'done' %}
+            <span class="text-cp-success">done</span>
+            {% elif rstatus == 'snatched' %}
+            <span class="text-cp-warning">snatched</span>
+            {% else %}
+            <span class="text-cp-muted">{{ rstatus }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-2.5 text-cp-muted font-light">{{ r_age|int }}d</td>
+          <td class="px-4 py-2.5">
+            <div class="flex flex-wrap items-center gap-1">
+            {% if r.get('status', '') == 'available' %}
+            <button @click="downloadRelease('{{ r_id }}')"
+                    class="px-2 py-1 rounded text-[9px] font-medium bg-cp-success/10 text-cp-success hover:bg-cp-success/20 transition-colors disabled:opacity-50"
+                    :disabled="downloading['{{ r_id }}']"
+                    :class="{ 'bg-cp-danger/10 text-cp-danger': downloadErrors['{{ r_id }}'] }">
+              <span x-show="!downloading['{{ r_id }}'] && !downloadErrors['{{ r_id }}']">⬇ Download</span>
+              <span x-show="downloading['{{ r_id }}']">Snatching...</span>
+              <span x-show="downloadErrors['{{ r_id }}']" x-text="downloadErrors['{{ r_id }}']"></span>
+            </button>
+            <button @click="ignoreRelease('{{ r_id }}')"
+                    class="px-2 py-1 rounded text-[9px] font-medium bg-cp-muted/10 text-cp-muted hover:bg-cp-danger/20 hover:text-cp-danger transition-colors disabled:opacity-50"
+                    :disabled="ignoring['{{ r_id }}']"
+                    title="Ignore this release (hide from future searches)">
+              <span x-show="!ignoring['{{ r_id }}']">🚫 Skip</span>
+              <span x-show="ignoring['{{ r_id }}']">...</span>
+            </button>
+            {% elif r.get('status', '') == 'ignored' %}
+            <button @click="ignoreRelease('{{ r_id }}')"
+                    class="px-2 py-1 rounded text-[9px] font-medium bg-cp-warning/10 text-cp-warning hover:bg-cp-warning/20 transition-colors disabled:opacity-50"
+                    :disabled="ignoring['{{ r_id }}']"
+                    title="Un-ignore this release">
+              <span x-show="!ignoring['{{ r_id }}']">↩ Un-skip</span>
+              <span x-show="ignoring['{{ r_id }}']">...</span>
+            </button>
+            {% elif r.get('status', '') == 'downloaded' %}
+            <!-- Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md phase 3c):
+                 per-release rejection of the landed copy, distinct from the
+                 movie-level Mark Failed action above. Calls release.failed
+                 (param id, per release/main.py:283) directly -- unlike
+                 ignore(), this is a one-way transition (no toggle-back), so it
+                 is gated behind confirm() like the movie-level action. -->
+            <button @click="if(confirm('Mark this release as failed? This excludes it from future searches and cannot be undone.')) { markingReleaseFailed['{{ r_id }}'] = true; fetch(CP.apiBase + '/release.failed/?id={{ r_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Release marked failed', 'success'); setTimeout(() => location.reload(), 900); } else { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); } }).catch(() => { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); }); }"
+                    class="px-2 py-1 rounded text-[9px] font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+                    :disabled="markingReleaseFailed['{{ r_id }}']"
+                    title="Mark this release as failed (exclude it from future searches)">
+              <svg aria-hidden="true" class="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
+              <span x-show="!markingReleaseFailed['{{ r_id }}']">Mark failed</span>
+              <span x-show="markingReleaseFailed['{{ r_id }}']">...</span>
+            </button>
+            {% endif %}
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+        {% if not matching_releases %}
+        <tr>
+          <td colspan="7" class="px-4 py-4 text-cp-muted text-center">
+            No releases match the selected profile qualities.
+          </td>
+        </tr>
+        {% endif %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<script>
+function releaseDownloader() {
+  return {
+    downloading: {},
+    downloadErrors: {},
+    ignoring: {},
+    markingReleaseFailed: {},
+
+    init() {},
+
+    async downloadRelease(releaseId) {
+      this.downloading[releaseId] = true;
+      this.downloadErrors[releaseId] = null;
+
+      try {
+        const res = await fetch(CP.apiBase + '/release.manual_download/?id=' + releaseId);
+        const data = await res.json();
+
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          // Show error - likely no downloader enabled
+          this.downloadErrors[releaseId] = 'Failed';
+          this.downloading[releaseId] = false;
+
+          // Clear error after 3 seconds
+          setTimeout(() => {
+            this.downloadErrors[releaseId] = null;
+          }, 3000);
+        }
+      } catch (e) {
+        console.error('Download failed:', e);
+        this.downloadErrors[releaseId] = 'Error';
+        this.downloading[releaseId] = false;
+
+        setTimeout(() => {
+          this.downloadErrors[releaseId] = null;
+        }, 3000);
+      }
+    },
+
+    async ignoreRelease(releaseId) {
+      this.ignoring[releaseId] = true;
+
+      try {
+        const res = await fetch(CP.apiBase + '/release.ignore/?id=' + releaseId);
+        const data = await res.json();
+
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          console.error('Failed to ignore release');
+          this.ignoring[releaseId] = false;
+        }
+      } catch (e) {
+        console.error('Ignore failed:', e);
+        this.ignoring[releaseId] = false;
+      }
+    }
+  };
+}
+</script>
