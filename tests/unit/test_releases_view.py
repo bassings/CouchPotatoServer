@@ -242,17 +242,24 @@ class TestSortReleases:
         assert _ids(filter_and_sort_releases(releases, controls)) == ['n', 't']
 
     def test_quality_sorts_by_profile_order_not_alphabetically(self):
-        """B4: '1080p' < '720p' as strings, which would be wrong.
+        """B4: the profile's qualities list is ordered best-first, so index in
+        it -- not string order -- is the meaningful key.
 
-        The profile's qualities list is ordered best-first, so index in it is
-        the meaningful key.
+        Regression: the original version of this test used a profile of
+        ['1080p', '720p'], whose order already IS alphabetical ('1080p' <
+        '720p' as strings), so it passed even with `_quality_key`'s
+        profile-index logic replaced outright by `return identifier.lower()`
+        -- verified by making exactly that substitution in a scratch copy.
+        ['720p', '1080p'] makes the two orders disagree (profile-order asc is
+        ['hd', 'fhd']; alphabetical asc is ['fhd', 'hd']), so only a genuine
+        profile-index lookup passes.
         """
         from couchpotato.ui.releases_view import filter_and_sort_releases
 
         releases = [_release('hd', quality = '720p'), _release('fhd', quality = '1080p')]
         controls = dict(DEFAULT_CONTROLS, sort = 'quality', dir = 'asc')
-        got = filter_and_sort_releases(releases, controls, profile_qualities = ['1080p', '720p'])
-        assert _ids(got) == ['fhd', 'hd']
+        got = filter_and_sort_releases(releases, controls, profile_qualities = ['720p', '1080p'])
+        assert _ids(got) == ['hd', 'fhd']
 
     def test_quality_sort_without_a_profile_falls_back_to_the_identifier(self):
         """A movie with no profile must still sort, not crash."""
