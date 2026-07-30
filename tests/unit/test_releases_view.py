@@ -233,6 +233,58 @@ class TestSortReleases:
         controls = dict(DEFAULT_CONTROLS, sort = 'name', dir = 'asc')
         assert _ids(filter_and_sort_releases(releases, controls)) == ['A', 'b']
 
+    def test_size_sort_is_numeric_even_when_sizes_arrive_as_mixed_types(self):
+        """Regression: `tryFloat('700')` (a numeric string with no '.') returns
+        the Python `int` 700, while `tryFloat(15360.5)` and `tryFloat(1500)`
+        (a float and a plain int) both return `float`s. A release list mixing
+        those shapes therefore produced sort keys of two different Python
+        types, which tripped `_sorted`'s mixed-type guard and fell back to
+        lexicographic `str()` comparison -- size desc came out
+        ['string_size', 'int_size', 'float_size'] (i.e. '700' > '15360.5' as
+        strings) instead of biggest-first.
+
+        Reachable in production: torrentpotato.py:100,102 puts the tracker's
+        raw JSON size/seeders straight into `info` with no coercion, so
+        different providers can hand back different shapes for the same
+        field.
+        """
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [
+            _release('string_size', size = '700'),   # numeric string, no '.'
+            _release('float_size', size = 15360.5),
+            _release('int_size', size = 1500),
+        ]
+        controls = dict(DEFAULT_CONTROLS, sort = 'size', dir = 'desc')
+
+        assert _ids(filter_and_sort_releases(releases, controls)) == [
+            'float_size', 'int_size', 'string_size',
+        ]
+
+    def test_a_bytes_name_does_not_crash_the_sort_and_falls_back_to_string_order(self):
+        """The mixed-type guard in `_sorted` has no test today -- deleting it
+        leaves the whole suite green -- so this pins the one real case it
+        defends: `_display_name` can legitimately return `bytes` rather than
+        `str` if `info.name` arrives undecoded from legacy data (the same
+        reason couchpotato/ui/__init__.py carries a `to_str` filter and a
+        `_BytesEncoder`). `bytes.lower()` succeeds without raising, so a
+        release with a bytes name and one with a str name both land in the
+        "present" group with genuinely different key types -- sorting them
+        directly raises `TypeError: '<' not supported between instances of
+        'bytes' and 'str'`.
+        """
+        from couchpotato.ui.releases_view import filter_and_sort_releases
+
+        releases = [
+            _release('bytes_name', name = b'Alpha.release'),
+            _release('str_name', name = 'Beta.release'),
+        ]
+        controls = dict(DEFAULT_CONTROLS, sort = 'name', dir = 'asc')
+
+        got = filter_and_sort_releases(releases, controls)  # must not raise
+
+        assert set(_ids(got)) == {'bytes_name', 'str_name'}
+
     def test_source_and_status_sort_alphabetically_by_their_displayed_value(self):
         """B4."""
         from couchpotato.ui.releases_view import filter_and_sort_releases

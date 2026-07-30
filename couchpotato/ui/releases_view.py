@@ -101,7 +101,21 @@ def _display_name(release):
 def _numeric(field):
     def extract(release, _profile_qualities):
         value = _info(release).get(field)
-        return None if value is None else tryFloat(value)
+        if value is None:
+            return None
+        # `float(...)`, not bare `tryFloat(...)`: tryFloat returns a Python
+        # `int` for an integral numeric STRING (tryFloat('700') -> 700) but a
+        # `float` for everything else, including a non-string int
+        # (tryFloat(700) -> 700.0). A release list mixing a string size (a
+        # provider that hands back JSON strings) with a plain int/float size
+        # (torrentpotato.py:100 passes the tracker's raw JSON size straight
+        # through with no coercion) then produced keys of two Python types,
+        # which trips the mixed-type guard below and falls back to
+        # lexicographic str() comparison -- e.g. size desc came out
+        # ['700', '1500.0', '15360.5'] instead of biggest-first. Wrapping in
+        # float() makes every numeric key the same type regardless of what
+        # shape the value arrived in.
+        return float(tryFloat(value))
     return extract
 
 
@@ -159,6 +173,13 @@ def _sorted(releases, controls, profile_qualities):
         (present if key is not None else missing).append((key, release))
 
     # Mixed key types would raise on comparison; only sort when they agree.
+    # This is not hypothetical: `name`'s key can be `bytes` rather than `str`
+    # if `info.name` arrives undecoded from legacy data (the same reason
+    # couchpotato/ui/__init__.py has a `to_str` filter and a `_BytesEncoder`),
+    # and `bytes.lower()` succeeds without raising, so it reaches here rather
+    # than the per-release try/except above -- sorting a `bytes` key against
+    # a `str` key directly raises `TypeError: '<' not supported between
+    # instances of 'bytes' and 'str'`.
     if len({type(key) for key, _ in present}) > 1:
         present.sort(key = lambda pair: str(pair[0]), reverse = controls['dir'] == 'desc')
     else:
