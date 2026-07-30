@@ -49,8 +49,13 @@ def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
 
     A deliberately small hand parser rather than ``tomllib``: this repo supports
     Python 3.10, where ``tomllib`` is absent, and the values needed are simple
-    string arrays. Raises ConfigError rather than returning [] so a renamed key
-    cannot masquerade as an empty scope.
+    string arrays.
+
+    NEVER returns an empty list — every failure raises ConfigError. "Mutated
+    nothing" and "found no survivors" are indistinguishable in the output, so a
+    renamed key, a comment that truncates the array, or a genuinely empty array
+    must all be loud. That guarantee is the entire justification for hand-rolling
+    this instead of depending on a TOML library, so it is asserted in the tests.
     """
     section_re = re.compile(
         rf"^\[{re.escape(section)}\]\s*$(.*?)(?=^\[|\Z)",
@@ -60,7 +65,11 @@ def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
     if not match:
         raise ConfigError(f"section [{section}] not found")
 
-    body = match.group(1)
+    # Strip `#` comments from the section body BEFORE locating the array. A `]`
+    # inside a trailing comment (e.g. `"a.py",  # also see [tool.stryker]`) ends
+    # the non-greedy `\[(.*?)\]` early and silently drops every entry after it.
+    body = "\n".join(re.sub(r"#.*$", "", line) for line in match.group(1).split("\n"))
+
     key_re = re.compile(rf"^\s*{re.escape(key)}\s*=\s*\[(.*?)\]", re.MULTILINE | re.DOTALL)
     key_match = key_re.search(body)
     if not key_match:
@@ -70,7 +79,14 @@ def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
             f"rather than letting it mutate nothing"
         )
 
-    return re.findall(r"""['"]([^'"]+)['"]""", key_match.group(1))
+    values = re.findall(r"""['"]([^'"]+)['"]""", key_match.group(1))
+    if not values:
+        raise ConfigError(
+            f"key '{key}' in [{section}] yielded no paths (raw: "
+            f"{key_match.group(1)!r}) — an empty scope would report a clean "
+            f"mutation run having mutated nothing"
+        )
+    return values
 
 
 def python_scope(repo_root: Path) -> list[str]:
@@ -97,11 +113,37 @@ def js_scope(repo_root: Path) -> list[str]:
 # ── Changed files ───────────────────────────────────────────────────────────
 
 
+def git_toplevel(cwd: Path) -> Path:
+    """Repo root for ``cwd``.
+
+    Both git commands below must run from the root: ``git diff --name-only``
+    always prints repo-relative paths, but ``git ls-files --others`` prints
+    paths relative to the CWD. Run from a subdirectory, the two disagree and
+    untracked files get mis-scoped (`new.py` instead of `sub/new.py`), so they
+    silently fall outside the mutation scope.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=cwd, capture_output=True, text=True,
+    )
+    if result.returncode != 0:
+        raise SystemExit(
+            f"mutation_changed: not inside a git repository ({cwd}): {result.stderr.strip()}"
+        )
+    return Path(result.stdout.strip())
+
+
 def changed_files(base: str, cwd: Path) -> list[str]:
-    """Files differing from the merge-base with ``base``, plus untracked files."""
+    """Files differing from the merge-base with ``base``, plus untracked files.
+
+    Deletions are excluded (``--diff-filter=d``): a deleted file is not a
+    mutation target, and pointing stryker at a nonexistent path is an error.
+    """
+    root = git_toplevel(cwd)
+
     merge_base = subprocess.run(
         ["git", "merge-base", "HEAD", base],
-        cwd=cwd, capture_output=True, text=True,
+        cwd=root, capture_output=True, text=True,
     )
     if merge_base.returncode != 0:
         raise SystemExit(
@@ -110,12 +152,12 @@ def changed_files(base: str, cwd: Path) -> list[str]:
         )
 
     diff = subprocess.run(
-        ["git", "diff", "--name-only", merge_base.stdout.strip()],
-        cwd=cwd, capture_output=True, text=True, check=True,
+        ["git", "diff", "--name-only", "--diff-filter=d", merge_base.stdout.strip()],
+        cwd=root, capture_output=True, text=True, check=True,
     )
     untracked = subprocess.run(
         ["git", "ls-files", "--others", "--exclude-standard"],
-        cwd=cwd, capture_output=True, text=True, check=True,
+        cwd=root, capture_output=True, text=True, check=True,
     )
 
     files = {ln.strip() for ln in diff.stdout.splitlines() if ln.strip()}
@@ -150,16 +192,53 @@ def python_targets(files: list[str], scope: list[str]) -> list[str]:
     return sorted(set(targets))
 
 
+def _find_brace_group(pattern: str) -> tuple[int, int, list[str]] | None:
+    """Locate the FIRST brace group, matching braces by depth.
+
+    `re.search(r"\\{([^}]*)\\}")` stops at the first `}`, so a nested group like
+    `{js,{ts,tsx}}` is split as `js` / `{ts` / `tsx`, leaving a stray `}` glued
+    onto later alternatives. Depth tracking also means options are split only on
+    top-level commas.
+    """
+    start = pattern.find("{")
+    if start == -1:
+        return None
+
+    depth = 0
+    options: list[str] = []
+    current = ""
+    for index in range(start, len(pattern)):
+        ch = pattern[index]
+        if ch == "{":
+            depth += 1
+            if depth == 1:
+                continue
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                options.append(current)
+                return start, index, options
+        elif ch == "," and depth == 1:
+            options.append(current)
+            current = ""
+            continue
+        current += ch
+
+    return None  # unbalanced — treat the pattern as literal
+
+
 def _expand_braces(pattern: str) -> list[str]:
-    """`*.{js,ts}` -> ['*.js', '*.ts'] so fnmatch can handle it."""
-    match = re.search(r"\{([^}]*)\}", pattern)
-    if not match:
+    """`*.{js,ts}` -> ['*.js', '*.ts'] so fnmatch can handle it.
+
+    Handles nesting and sequential groups.
+    """
+    found = _find_brace_group(pattern)
+    if not found:
         return [pattern]
+    start, end, options = found
     expanded = []
-    for option in match.group(1).split(","):
-        expanded.extend(
-            _expand_braces(pattern[: match.start()] + option + pattern[match.end():])
-        )
+    for option in options:
+        expanded.extend(_expand_braces(pattern[:start] + option + pattern[end + 1:]))
     return expanded
 
 

@@ -116,13 +116,19 @@ The second half of that rule is the one earned locally, on
 nothing, so the test "passed" against code that was never actually reverted. It
 was caught only because *passing was the wrong answer*. A no-op mutation is
 indistinguishable from a passing test unless you check the edit applied — so
-`git diff` (or hash) the file after mutating and before running. Two failure
-modes, one mitigation:
+`git diff` (or hash) the file after mutating and before running.
 
-| What you think happened | What actually happened | Check |
-|---|---|---|
-| Test failed → guard is real | Guard is real | — |
-| Test passed → guard is vacuous | The mutation never applied | `git diff` shows the mutation |
+A passing test after a mutation has **two** possible causes, and they call for
+opposite responses — which is why the check is not optional:
+
+| Mutation applied? | Test result | What it means | Action |
+|---|---|---|---|
+| Yes (`git diff` non-empty) | **Failed** | The guard is real | Restore and move on |
+| Yes (`git diff` non-empty) | **Passed** | The guard is genuinely vacuous | Fix the test |
+| **No** (`git diff` empty) | Passed | You learned nothing at all | Re-apply the mutation |
+
+The third row is the trap: it is indistinguishable from the second unless you
+check, and it reads as reassuring.
 
 **After three failed fixes, question the frame (rule 11).** The tripwire that
 prompted writing this down: on `feat/release-list-sort-filter`, four fixes each
@@ -157,11 +163,20 @@ exists on `master`; the PR that introduces/edits it is a no-op (expected).
 
 ## Required CI checks
 
+Required (i.e. enforced by branch protection on `master`, verified via
+`gh api repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks`):
+
 `lint` (ruff **+ the test-trap guard**), `test-summary`, `ui-unit-tests`,
 `ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
 `dependency-review`, `docker`, `accessibility` (axe), `conformance`
-(`scripts/check_conformance.py` — design-system drift gate, added in #147),
-`secrets` (gitleaks).
+(`scripts/check_conformance.py` — design-system drift gate, added in #147).
+
+**Runs but does NOT gate:** `secrets` (gitleaks) and `security-lint`. A PR can
+merge with either of them red. `secrets` is a deliberate one-line addition away
+from being required — its job `name:` is already `secrets`, so adding that
+context to the protection rule is all it takes — but until that is done, do not
+describe secret scanning as *enforced*: it is *reported*. (`security-lint` is
+informational by design; see below.)
 
 `ci.yml` uses `concurrency: cancel-in-progress: true` — a new push supersedes the
 in-flight run. Note this is deliberately **false** in `docker.yml` and
@@ -203,7 +218,7 @@ behaviour) should be noted and skipped rather than chased.
 
 | Command | Scope |
 |---|---|
-| `make mutation-changed` | **Only files changed vs `master`** — fast enough to run per-change. `BASE=origin/master` to compare elsewhere; `--dry-run` prints the commands. |
+| `make mutation-changed` | **Only files changed vs `master`** — fast enough to run per-change. `BASE=origin/master` to compare elsewhere. To see the commands without running them, invoke the script directly: `python scripts/mutation_changed.py --dry-run` (`make mutation-changed --dry-run` does not work — make consumes `--dry-run` as its own `-n`). |
 | `make mutation-py` | Everything in `[tool.mutmut] source_paths` (mutmut) |
 | `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`, ~96% score) |
 
@@ -313,10 +328,13 @@ cd /var/lib/plexmediaserver/CouchPotato
 
 # 2. Record what is running now, so rollback has a target.
 #    The digest is the only reliable handle — the tag :latest is about to move.
-docker inspect couchpotato --format '{{index .Config.Image}} {{.Image}}'
-docker exec couchpotato python -c "import couchpotato; print(couchpotato.__version__)" 2>/dev/null \
-  || docker logs couchpotato 2>&1 | grep -i -m1 version
-# Note both down. The version gives you the immutable :X.Y.0 tag to roll back to.
+docker inspect couchpotato --format '{{.Config.Image}} {{.Image}}'
+#    The version is baked in as CP_VERSION at build time; it gives you the
+#    immutable :X.Y.0 tag. (Don't reach for couchpotato.__version__ — there is
+#    no such attribute — and the image has python3, not python.)
+docker exec couchpotato printenv CP_VERSION \
+  || docker inspect couchpotato --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -i version
+# Note BOTH the digest and the version down before continuing.
 
 # 3. Pull and restart.
 docker compose pull
@@ -342,25 +360,39 @@ healthy container reports nothing about:
 Because every promoted version keeps its immutable tag, rollback is a tag pin —
 no rebuild, no registry surgery:
 
+**Edit the compose file's image line — do not hand-roll a `docker run`.** The
+container needs `/config` *and* `/data` plus the media/download mounts
+(`Dockerfile:84` declares `VOLUME ["/config", "/data"]`; `Dockerfile:97` runs with
+`--data_dir=/data --config_file=/config/config.ini`, and the database lives under
+`/data`, not `/config`). A `docker run` that mounts only `/config` gives the
+rolled-back container a **fresh anonymous `/data`** — i.e. it comes up on an
+empty database, during an incident, which is the worst possible moment to
+discover it. Compose already has every mount right; change one line:
+
 ```bash
 cd /var/lib/plexmediaserver/CouchPotato
 
 # Pin the previous good version explicitly (do NOT rely on :latest — it has moved).
-# Either edit the compose image line to ghcr.io/bassings/couchpotatoserver:X.Y.0,
-# or override without editing the file:
-docker compose down
-docker run -d --name couchpotato \
-  --restart unless-stopped \
-  -p 5050:5050 \
-  -v /var/lib/plexmediaserver/CouchPotato/config:/config \
-  ghcr.io/bassings/couchpotatoserver:X.Y.0   # or the digest from step 2 above
+# In docker-compose.yml, set:
+#   image: ghcr.io/bassings/couchpotatoserver:X.Y.0
+# (or the digest from step 2: ghcr.io/bassings/couchpotatoserver@sha256:...)
+$EDITOR docker-compose.yml
 
-# If the DB also needs restoring (only if a migration or a write corrupted it):
-docker stop couchpotato
+docker compose up -d
+docker logs couchpotato --tail=50
+
+# If the DB also needs restoring (only if a migration or a write corrupted it).
+# Note the path: the DB is under the /data mount, NOT /config.
+docker compose stop
 cp <BACKUP_DIR>/<timestamp>/couchpotato.db \
    /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db
-docker start couchpotato
+docker compose start
 ```
+
+Confirm the compose mounts before relying on the path above —
+`docker inspect couchpotato --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{println}}{{end}}'`
+prints exactly where `/data` lands on this host. The prod compose file is not in
+this repo, so that is the authority, not this document.
 
 Prefer re-pinning the image alone first — restoring the DB discards anything
 added since the backup. Once the pinned old version is confirmed healthy, revert
@@ -373,16 +405,26 @@ otherwise the next `docker compose pull` silently re-deploys the broken image.
 ### Backups
 
 `scripts/backup.sh` snapshots the SQLite DB (via `sqlite3 .backup`, or Python's
-`sqlite3` backup API when the CLI is absent — both are safe against a live
-database; a plain `cp` of an in-use SQLite file is not) plus `config.ini`, into a
-timestamped directory under `BACKUP_DIR`. It never touches `config.bak/` and
-prunes only its own timestamped output.
+`sqlite3` backup API when the CLI is absent or broken — both are safe against a
+live database; a plain `cp` of an in-use SQLite file is not) plus `config.ini`,
+into a timestamped directory under `BACKUP_DIR`. It never touches `config.bak/`
+and prunes only its own timestamped output.
 
-Both paths default to the prod layout, so on the server it takes no arguments:
+`config.ini` is looked for in **both** `$CP_DATA_DIR/config.ini` (where
+`couchpotato/runner.py:48` defaults it) and `$CP_DATA_DIR/../config.ini` (where
+the Docker image puts it — `Dockerfile:97` runs
+`--config_file=/config/config.ini` with `--data_dir=/data`, so it sits one level
+above the data dir). Checking only the first would have meant prod snapshots
+quietly containing the database alone: the script warns and exits 0, so a nightly
+cron would report success forever while never capturing settings.
+
+Both paths default to the prod layout, so on the server it takes no arguments
+(`make backup` is a shortcut for the no-argument form):
 
 ```bash
-./scripts/backup.sh                # snapshot, keep everything
+./scripts/backup.sh                # snapshot, keep everything (= make backup)
 ./scripts/backup.sh --retain 14    # snapshot, then keep the 14 newest
+./scripts/backup.sh --help         # full usage
 
 # Override the paths (this is how the tests drive it):
 CP_DATA_DIR=/var/lib/plexmediaserver/CouchPotato/config/data \
@@ -393,7 +435,7 @@ BACKUP_DIR=/var/lib/plexmediaserver/CouchPotato/backups \
 Snapshots land in `<BACKUP_DIR>/<YYYYMMDD-HHMMSS>/{couchpotato.db,config.ini}`.
 `--retain 0` is rejected rather than treated as "keep nothing", and retention
 only ever deletes directories matching its own timestamp pattern — behaviour
-pinned by `tests/unit/test_backup_script.py` (7/7 mutations killed, including
+pinned by `tests/unit/test_backup_script.py` (28 tests; 23/23 mutations killed, including
 "replace `.backup` with `cp`", which the WAL-mode fixture catches).
 
 Two manual steps, both on the server — neither is automated by this repo:

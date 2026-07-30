@@ -75,7 +75,8 @@
   the interpreter bug below was fixed, because the local E2E stage never actually
   started:
   - `interactions.e2e.spec.ts:35 › Navigation › sidebar links navigate correctly`
-    — fails deterministically locally (3/3 runs). Previously noted as "flaky";
+    — fails deterministically locally (3/3 runs). Carried in project memory as
+    "flaky" rather than in any doc;
     locally it is not flaky, it is consistent, which makes it tractable.
   - `interactions.e2e.spec.ts:298 › Suggestions Page › tabs switch content` —
     genuinely flaky locally (1/3 runs).
@@ -84,16 +85,20 @@
   a push needs either these two triaged or an explicit, stated bypass — don't let
   "verify is red anyway" become the normal state, which is how a gate dies.
 - **E2E specs are not worker-independent, so the suite runs single-worker.**
-  `categories.spec.ts`, `profiles.spec.ts`, `search.spec.ts` and
-  `interactions.e2e.spec.ts` mutate *global* server state (categories, quality
-  profiles) on one shared app instance, so parallel workers clobber each other's
-  fixtures. `playwright.config.ts` previously used
+  `categories.spec.ts`, `profiles.spec.ts`, `search.spec.ts`,
+  `interactions.e2e.spec.ts` and `release_controls.spec.ts` mutate *global* server
+  state (categories, quality profiles) on one shared app instance, so parallel
+  workers clobber each other's fixtures. `playwright.config.ts` previously used
   `workers: process.env.CI ? 1 : undefined`, which hid this: CI serialised and was
-  green while a local run used one worker per core and failed 21 of 142 specs —
+  green while a local run used one worker per core and failed ~20 of 142 specs —
   i.e. `make verify` could never pass locally, in direct conflict with hard rule
-  2. Pinned to `workers: 1` everywhere on 2026-07-30 (verified: the same 21 fail
-  on a clean tree with default workers, and 0 fail with one worker). The real fix
-  is per-worker isolation — a fixture that namespaces the categories/profiles it
+  2. Pinned to `workers: 1` everywhere on 2026-07-30.
+
+  Verified on a clean tree: with default workers ~20 fail (the exact count varies
+  run to run — it is a race), spread across categories×11, interactions×3,
+  profiles×3, search×2, release_controls×1; with one worker, **all of those
+  pass** and only the two unrelated failures above remain. The real fix is
+  per-worker isolation — a fixture that namespaces the categories/profiles it
   creates, or a server per worker — after which `fullyParallel` can be restored
   and the suite gets its wall-clock back.
 - **Two hardcoded third-party API keys inherited from upstream** — both
@@ -106,12 +111,33 @@
     read the setting and drop the literal — a behaviour change (existing installs
     with no key set would lose fanart lookups), hence its own commit.
   - `couchpotato/core/media/movie/_base/static/movie.actions.js:378` — YouTube
-    Data API key in a trailer-lookup URL, in the legacy `/old` UI's static JS.
-    Goes away with UI-CLEANUP-02 when the legacy asset layer is deleted; no
-    separate work needed.
-  Full git history additionally holds ~37 upstream findings from 2011–2012
-  (`make check-secrets-history`); they are upstream's committed keys, not ours,
-  and rewriting 5,800 commits of history to purge them is not proposed.
+    Data API key in a trailer-lookup URL. **This needs its own deliberate
+    deletion — it will NOT resolve itself.** The file is an orphan that both UI
+    cleanups left behind: UI-CLEANUP-02 shipped (`02d2eece`, merged as #148),
+    `specs/UI-MIGRATION.md` records the legacy asset layer as fully retired,
+    `/old/*` is now a bare 302, and `grep -rn "movie\.actions"` finds no live
+    reference anywhere — yet the file and its key are still tracked. An earlier
+    version of this entry claimed it "goes away with UI-CLEANUP-02, no separate
+    work needed", which parked a live item behind a completed task. Deleting an
+    unreferenced legacy file is a small change but a real one, so it belongs in
+    its own commit rather than riding along with tooling work.
+  Full git history holds ~37 findings in total (`make check-secrets-history`).
+  Verified breakdown as of 2026-07-30 — the "all upstream, all pre-2013" framing
+  that first accompanied this entry was wrong on both counts:
+  - 29 by `ruud@crashdummy.nl` (upstream) spanning **2011–2017**, not 2011–2012;
+  - 2 by other upstream contributors;
+  - **6 by `bassings@gmail.com` — this fork's own commits.** One is the
+    per-install `api_key` in `QA/QA_SESSION_2026-02-19.md` (redacted from HEAD on
+    2026-07-30; still in history, which is why rotation rather than redaction is
+    the remedy for anything that matters). The other five are under
+    `migration_backup/` (2025-07-30) and are *copies* of the same upstream
+    provider keys; that directory is no longer tracked.
+
+  So there is no fork-introduced credential in history beyond the throwaway
+  api_key. Rewriting history to purge upstream's keys is not proposed. What was
+  worth fixing was the guidance: telling the next person to expect "~37 pre-2013
+  upstream hits" would have filed this fork's own committed key under expected
+  noise.
 
 ## Lessons learned
 

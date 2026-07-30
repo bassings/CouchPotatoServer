@@ -65,11 +65,15 @@ jobs:
     - name: Run UI conformance check
       run: python scripts/check_conformance.py
 
-  # Secret scanning. Gitleaks over the working tree, pinned by image digest tag.
+  # Secret scanning. Gitleaks over the working tree, pinned to an immutable
+  # version tag (:v8.30.1 — a tag, not a @sha256 digest; bump it deliberately,
+  # since an unpinned :latest changes the ruleset under you).
   #
-  # WORKING TREE, NOT FULL HISTORY, deliberately: this repo has 5,800+ commits
-  # inherited from upstream CouchPotato, and a full-history scan reports 37
-  # findings from 2011-2012 (upstream's own committed provider keys). A gate that
+  # WORKING TREE, NOT FULL HISTORY, deliberately: this repo carries ~5,250
+  # commits inherited from upstream CouchPotato (5,813 total), and a
+  # full-history scan reports 37 findings, 31 of them upstream's own committed
+  # provider keys spanning 2011-2017. See `make check-secrets-history` for the
+  # full breakdown, including the 6 authored by this fork. A gate that
   # is red on arrival gets ignored or disabled, so the blocking check answers the
   # question that can actually be actioned — "is there a secret in the code as it
   # stands?" — and the two known upstream keys still present are baselined by

@@ -68,21 +68,40 @@ def test_missing_key_raises_rather_than_silently_mutating_nothing():
     assert "source_paths" in str(exc.value)
 
 
-def test_scope_is_read_from_the_real_configs():
-    """Guards against this script drifting from pyproject.toml / stryker.conf.json.
+def _write_configs(root: Path, py_paths: str, js_mutate: str) -> None:
+    (root / "pyproject.toml").write_text(f"[tool.mutmut]\nsource_paths = [{py_paths}]\n")
+    (root / "stryker.conf.json").write_text(json.dumps({"mutate": json.loads(js_mutate)}))
 
-    Asserts the scope resolves, is non-empty, and every entry it names actually
-    exists — so a renamed config key, an emptied list, or a path deleted by a
-    refactor all fail here instead of silently mutating nothing.
+
+def test_scope_is_actually_read_from_the_config_files(tmp_path):
+    """The headline claim: scope comes from the configs, not a second copy here.
+
+    Both functions take a repo root, so pointing them at a temp root with
+    *distinctive* values is what proves they parse the files. Comparing against
+    `json.loads(stryker.conf.json)["mutate"]` — which is literally `js_scope`'s
+    implementation — is a tautology that passes with the scope hardcoded
+    (confirmed by mutation: hardcoding either scope survived that assertion).
     """
+    _write_configs(
+        tmp_path,
+        '"sentinel/py/module.py", "sentinel/py/other.py"',
+        '["sentinel/js/**/*.ts"]',
+    )
+
+    assert mutation_changed.python_scope(tmp_path) == [
+        "sentinel/py/module.py",
+        "sentinel/py/other.py",
+    ]
+    assert mutation_changed.js_scope(tmp_path) == ["sentinel/js/**/*.ts"]
+
+
+def test_real_repo_scope_resolves_and_names_files_that_exist():
+    """Complements the above: the committed config must not be stale."""
     py_scope = mutation_changed.python_scope(REPO_ROOT)
     js_scope = mutation_changed.js_scope(REPO_ROOT)
 
     assert py_scope, "mutmut scope is empty — a run would mutate nothing"
     assert js_scope, "stryker mutate is empty — a run would mutate nothing"
-
-    expected_js = json.loads((REPO_ROOT / "stryker.conf.json").read_text())["mutate"]
-    assert js_scope == expected_js
 
     for entry in py_scope:
         assert (REPO_ROOT / entry).exists(), (
@@ -90,22 +109,86 @@ def test_scope_is_read_from_the_real_configs():
         )
 
 
-def test_python_scope_accepts_the_deprecated_paths_to_mutate_key():
+def test_python_scope_accepts_the_deprecated_paths_to_mutate_key(tmp_path):
     """mutmut 3.6 renamed `paths_to_mutate` to `source_paths`; support both.
 
-    The repo is on the modern key, but a config written against either mutmut
-    generation must resolve rather than raise — otherwise a version bump turns
-    into a silent "nothing to mutate".
+    Calls `python_scope` — the thing with the fallback — rather than
+    `parse_toml_string_array` with the key the test itself chose, which only
+    proved "parsing the key you asked for works" and left the fallback entirely
+    uncovered (confirmed by mutation: deleting `paths_to_mutate` from the
+    fallback tuple survived).
     """
-    old = "[tool.mutmut]\npaths_to_mutate = ['couchpotato/api.py']\n"
-    new = "[tool.mutmut]\nsource_paths = ['couchpotato/api.py']\n"
+    (tmp_path / "stryker.conf.json").write_text('{"mutate": ["x/**/*.js"]}')
 
-    for text in (old, new):
-        assert mutation_changed.parse_toml_string_array(
-            text,
-            "tool.mutmut",
-            "paths_to_mutate" if "paths_to_mutate" in text else "source_paths",
-        ) == ["couchpotato/api.py"]
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.mutmut]\npaths_to_mutate = ['legacy/only.py']\n"
+    )
+    assert mutation_changed.python_scope(tmp_path) == ["legacy/only.py"]
+
+    (tmp_path / "pyproject.toml").write_text(
+        "[tool.mutmut]\nsource_paths = ['modern/only.py']\n"
+    )
+    assert mutation_changed.python_scope(tmp_path) == ["modern/only.py"]
+
+
+def test_python_scope_raises_when_neither_key_is_present(tmp_path):
+    (tmp_path / "pyproject.toml").write_text("[tool.mutmut]\nrunner = 'pytest'\n")
+
+    with pytest.raises(mutation_changed.ConfigError) as exc:
+        mutation_changed.python_scope(tmp_path)
+    assert "source_paths" in str(exc.value)
+
+
+def test_js_scope_raises_when_mutate_is_missing(tmp_path):
+    (tmp_path / "stryker.conf.json").write_text('{"testRunner": "vitest"}')
+
+    with pytest.raises(mutation_changed.ConfigError) as exc:
+        mutation_changed.js_scope(tmp_path)
+    assert "mutate" in str(exc.value)
+
+
+def test_a_comment_containing_a_bracket_does_not_truncate_the_array(tmp_path):
+    """A `]` in a trailing comment used to silently drop every later entry."""
+    text = (
+        "[tool.mutmut]\n"
+        "source_paths = [\n"
+        '  "couchpotato/core/db/sqlite_adapter.py",  # also see [tool.stryker]\n'
+        '  "couchpotato/api.py",\n'
+        "]\n"
+    )
+
+    assert mutation_changed.parse_toml_string_array(text, "tool.mutmut", "source_paths") == [
+        "couchpotato/core/db/sqlite_adapter.py",
+        "couchpotato/api.py",
+    ]
+
+
+def test_an_empty_array_raises_rather_than_silently_mutating_nothing(tmp_path):
+    """"Mutated nothing" and "no survivors found" look identical in the output."""
+    text = "[tool.mutmut]\nsource_paths = []\n"
+
+    with pytest.raises(mutation_changed.ConfigError) as exc:
+        mutation_changed.parse_toml_string_array(text, "tool.mutmut", "source_paths")
+    assert "no paths" in str(exc.value)
+
+
+def test_a_key_in_a_later_section_is_not_used_for_an_earlier_one():
+    """Section body must stop at the next `[section]` header.
+
+    The decoy is placed AFTER the target here: with it before, an over-running
+    section body is undetectable, and dropping the terminating lookahead survived
+    (confirmed by mutation).
+    """
+    text = (
+        "[tool.mutmut]\n"
+        "runner = 'pytest'\n"
+        "\n"
+        "[tool.other]\n"
+        'source_paths = ["wrong/leaked.py"]\n'
+    )
+
+    with pytest.raises(mutation_changed.ConfigError):
+        mutation_changed.parse_toml_string_array(text, "tool.mutmut", "source_paths")
 
 
 # ── Mapping changed files to mutation targets ───────────────────────────────
@@ -136,10 +219,19 @@ def test_directory_scope_matches_files_beneath_it():
 
 
 def test_ignores_tests_and_non_python_files():
+    """Each exclusion is pinned by a case that ONLY it can exclude.
+
+    `tests/unit/test_sqlite_adapter.py` alone satisfies both the `tests/` prefix
+    check and the `test_` name check, so either could be deleted undetected; and
+    `docs/README.md` is excluded by scope rather than by the `.py` filter
+    (confirmed by mutation — all three survived). Hence the extra cases.
+    """
     targets = mutation_changed.python_targets(
         [
-            "tests/unit/test_sqlite_adapter.py",
-            "docs/README.md",
+            "tests/unit/test_sqlite_adapter.py",  # excluded twice over
+            "tests/unit/helpers.py",  # ONLY the tests/ prefix excludes this
+            "couchpotato/core/test_helper.py",  # ONLY the test_ name check
+            "couchpotato/README.md",  # ONLY the .py extension check
             "couchpotato/core/db/sqlite_adapter.py",
         ],
         scope=["couchpotato/", "tests/"],
@@ -159,12 +251,40 @@ def test_maps_changed_ui_scripts_to_stryker_mutate_paths():
     assert targets == ["couchpotato/static/scripts/ui/movie-filter.js"]
 
 
-def test_js_scope_glob_matches_nested_directories():
-    targets = mutation_changed.js_targets(
-        ["couchpotato/static/scripts/ui/nested/deep/thing.ts"],
-        scope=["couchpotato/static/scripts/ui/**/*.{js,ts}"],
-    )
-    assert targets == ["couchpotato/static/scripts/ui/nested/deep/thing.ts"]
+def test_js_scope_glob_matches_both_nested_and_top_level_files():
+    """`ui/**/*.js` must match `ui/a.js` (zero directories) AND `ui/x/y/a.js`.
+
+    fnmatch's `*` crosses `/`, so the nested case alone is satisfied by the
+    `**/`-stripped pattern and pins neither half of the expansion (confirmed by
+    mutation: dropping either pattern survived). Asserting both in one call is
+    what makes both halves load-bearing.
+    """
+    scope = ["couchpotato/static/scripts/ui/**/*.{js,ts}"]
+    files = [
+        "couchpotato/static/scripts/ui/top.js",
+        "couchpotato/static/scripts/ui/nested/deep/thing.ts",
+        "couchpotato/static/scripts/other/skip.js",
+    ]
+
+    assert mutation_changed.js_targets(files, scope) == [
+        "couchpotato/static/scripts/ui/nested/deep/thing.ts",
+        "couchpotato/static/scripts/ui/top.js",
+    ]
+
+
+def test_expand_braces_handles_nesting_and_sequential_groups():
+    """Nested groups produced stray `}` with the old first-`}` regex."""
+    assert mutation_changed._expand_braces("a.{js,ts}") == ["a.js", "a.ts"]
+    assert mutation_changed._expand_braces("a.{js,{ts,tsx}}") == ["a.js", "a.ts", "a.tsx"]
+    assert mutation_changed._expand_braces("{ui,src}/*.{js,ts}") == [
+        "ui/*.js",
+        "ui/*.ts",
+        "src/*.js",
+        "src/*.ts",
+    ]
+    assert mutation_changed._expand_braces("plain.js") == ["plain.js"]
+    # Unbalanced braces must be treated literally rather than crashing.
+    assert mutation_changed._expand_braces("a.{js") == ["a.{js"]
 
 
 # ── Command construction ────────────────────────────────────────────────────
@@ -209,10 +329,19 @@ def test_builds_no_commands_when_nothing_is_in_scope():
     assert mutation_changed.build_commands(python_targets=[], js_targets=[]) == []
 
 
-def test_runner_env_puts_vendored_libs_on_the_pythonpath():
+def test_runner_env_puts_vendored_libs_on_the_pythonpath(monkeypatch):
     """mutmut re-runs pytest from its `mutants/` sandbox, where collection fails
     with an ImportError unless `libs/` is on the path — observed for real, not
-    hypothetical."""
+    hypothetical.
+
+    PYTHONPATH is cleared first: `scripts/verify.sh` exports an ABSOLUTE
+    `<root>/libs`, so under `make verify` this assertion was satisfied by the
+    ambient environment and passed with `runner_env` gutted to
+    `return dict(os.environ)` (confirmed by mutation). The test must not depend
+    on how it was invoked.
+    """
+    monkeypatch.delenv("PYTHONPATH", raising=False)
+
     env = mutation_changed.runner_env()
     libs = str(REPO_ROOT / "libs")
     assert libs in env["PYTHONPATH"].split(os.pathsep)
@@ -329,3 +458,149 @@ def test_fails_clearly_on_an_unknown_base_ref(temp_repo):
 
     assert result.returncode != 0
     assert "no-such-branch" in (result.stdout + result.stderr)
+
+
+def test_untracked_files_are_scoped_from_the_repo_root_not_the_cwd(tmp_path):
+    """`git ls-files --others` prints CWD-relative paths; `git diff` prints
+    root-relative ones. Run from a subdirectory the two disagree, and an
+    untracked in-scope file gets mis-scoped out of the mutation set.
+
+    Uses a bare repo (not `temp_repo`) so the scoped path is genuinely absent at
+    baseline and therefore genuinely untracked.
+    """
+    _git(tmp_path, "init", "-b", "master")
+    _git(tmp_path, "config", "user.email", "test@example.com")
+    _git(tmp_path, "config", "user.name", "Test")
+    (tmp_path / "README.md").write_text("hello\n")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "baseline")
+
+    scoped = mutation_changed.python_scope(REPO_ROOT)[0]
+    new_file = tmp_path / scoped
+    new_file.parent.mkdir(parents=True, exist_ok=True)
+    new_file.write_text("def get(key):\n    return key\n")
+
+    subdir = new_file.parent
+    result = run_script(subdir, "--base", "master", "--dry-run")
+
+    expected = scoped[: -len(".py")].replace("/", ".") + "*"
+    assert result.returncode == 0, result.stderr
+    assert expected in result.stdout, (
+        f"running from {subdir} mis-scoped the untracked file:\n{result.stdout}"
+    )
+
+
+def test_deleted_files_are_not_offered_as_mutation_targets(temp_repo):
+    """A deleted file cannot be mutated, and stryker errors on a missing path.
+
+    `temp_repo` already committed the scoped file on master, so deleting it on
+    the branch is exactly the scenario.
+    """
+    scoped = mutation_changed.python_scope(REPO_ROOT)[0]
+    target = temp_repo / scoped
+    assert target.is_file(), "fixture should have committed the scoped file"
+
+    target.unlink()
+    _git(temp_repo, "commit", "-am", "delete scoped file")
+
+    result = run_script(temp_repo, "--base", "master", "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert "nothing" in result.stdout.lower(), (
+        f"a deleted file was offered as a mutation target:\n{result.stdout}"
+    )
+
+
+# ── The execution path (previously untested end to end) ─────────────────────
+
+
+def test_executes_the_built_commands_with_the_libs_pythonpath(monkeypatch, tmp_path):
+    """Without --dry-run the runners must actually be invoked, with the env.
+
+    The three `runner_env` unit tests passed while nothing proved the env ever
+    reached a subprocess — dropping `env=runner_env()` from the call survived
+    (confirmed by mutation), which would silently reintroduce the mutmut
+    collection ImportError.
+    """
+    calls = []
+
+    def fake_run(argv, cwd=None, env=None, **kwargs):
+        calls.append({"argv": argv, "cwd": cwd, "env": env})
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(mutation_changed.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        mutation_changed, "changed_files", lambda base, cwd: ["couchpotato/api.py"]
+    )
+    monkeypatch.setattr(mutation_changed, "python_scope", lambda root: ["couchpotato/"])
+    monkeypatch.setattr(mutation_changed, "js_scope", lambda root: ["nothing/**/*.js"])
+
+    exit_code = mutation_changed.main(["--base", "master"])
+
+    assert exit_code == 0
+    assert len(calls) == 1, calls
+    assert "couchpotato.api*" in calls[0]["argv"]
+    assert calls[0]["cwd"] == mutation_changed.REPO_ROOT
+    assert str(mutation_changed.REPO_ROOT / "libs") in calls[0]["env"]["PYTHONPATH"].split(
+        os.pathsep
+    )
+
+
+def test_dry_run_executes_nothing(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        mutation_changed.subprocess, "run", lambda *a, **k: calls.append(a) or None
+    )
+    monkeypatch.setattr(
+        mutation_changed, "changed_files", lambda base, cwd: ["couchpotato/api.py"]
+    )
+    monkeypatch.setattr(mutation_changed, "python_scope", lambda root: ["couchpotato/"])
+    monkeypatch.setattr(mutation_changed, "js_scope", lambda root: ["nothing/**/*.js"])
+
+    assert mutation_changed.main(["--base", "master", "--dry-run"]) == 0
+    assert calls == [], "--dry-run must not invoke a runner"
+
+
+def test_a_failing_runner_still_exits_zero_because_mutation_is_informational(monkeypatch):
+    """The documented contract: survivors are for review, not a build failure."""
+
+    class Failed:
+        returncode = 1
+
+    monkeypatch.setattr(mutation_changed.subprocess, "run", lambda *a, **k: Failed())
+    monkeypatch.setattr(
+        mutation_changed, "changed_files", lambda base, cwd: ["couchpotato/api.py"]
+    )
+    monkeypatch.setattr(mutation_changed, "python_scope", lambda root: ["couchpotato/"])
+    monkeypatch.setattr(mutation_changed, "js_scope", lambda root: ["nothing/**/*.js"])
+
+    assert mutation_changed.main(["--base", "master"]) == 0
+
+
+def test_a_config_error_exits_two_rather_than_pretending_there_was_nothing_to_do(monkeypatch):
+    def boom(root):
+        raise mutation_changed.ConfigError("source_paths went missing")
+
+    monkeypatch.setattr(mutation_changed, "changed_files", lambda base, cwd: ["x.py"])
+    monkeypatch.setattr(mutation_changed, "python_scope", boom)
+
+    assert mutation_changed.main(["--base", "master", "--dry-run"]) == 2
+
+
+def test_base_defaults_to_master(monkeypatch):
+    """Every other test passes --base explicitly, so the default was uncovered."""
+    seen = {}
+    monkeypatch.setattr(
+        mutation_changed,
+        "changed_files",
+        lambda base, cwd: seen.setdefault("base", base) and [],
+    )
+    monkeypatch.setattr(mutation_changed, "python_scope", lambda root: ["couchpotato/"])
+    monkeypatch.setattr(mutation_changed, "js_scope", lambda root: ["x/**/*.js"])
+
+    mutation_changed.main(["--dry-run"])
+    assert seen["base"] == "master"

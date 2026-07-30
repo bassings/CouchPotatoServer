@@ -63,9 +63,18 @@ check-secrets: ## Secret scan of the working tree (same command CI runs)
 	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
 		detect --source=. --no-git --config=.gitleaks.toml --no-banner --redact -v
 
-check-secrets-history: ## Secret scan of ALL git history (noisy: ~37 pre-2013 upstream hits)
-	@echo "NOTE: expect ~37 findings from upstream CouchPotato's 2011-2012 commits."
-	@echo "      Look for anything NOT authored by ruud@crashdummy.nl / pre-2013."
+check-secrets-history: ## Secret scan of ALL git history (noisy: ~37 known hits, see below)
+	@echo "Expect ~37 findings. As of 2026-07-30 they break down as:"
+	@echo "  * 29 authored by ruud@crashdummy.nl (upstream CouchPotato), spanning"
+	@echo "    2011-2017 -- NOT just pre-2013; 18 of them are 2013 or later."
+	@echo "  *  2 by other upstream contributors."
+	@echo "  *  6 authored by bassings@gmail.com -- THIS FORK's own commits:"
+	@echo "       - QA/QA_SESSION_2026-02-19.md (a per-install api_key, redacted"
+	@echo "         from HEAD 2026-07-30; still in history, hence rotate not redact)"
+	@echo "       - 5 under migration_backup/ (2025-07-30), which are COPIES of the"
+	@echo "         same upstream provider keys; that directory is no longer tracked."
+	@echo "  Triage anything outside that set -- do not assume a finding is upstream"
+	@echo "  noise just because most of them are."
 	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
 		detect --source=. --config=.gitleaks.toml --no-banner --redact -v
 

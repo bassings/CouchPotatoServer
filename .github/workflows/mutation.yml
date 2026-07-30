@@ -11,7 +11,7 @@ on:
   workflow_dispatch:
     inputs:
       paths:
-        description: 'Override paths_to_mutate (space-separated, optional)'
+        description: 'Override source_paths (space-separated, optional)'
         required: false
         default: ''
 

@@ -125,10 +125,14 @@ ignore = [
 # `paths_to_mutate` name is deprecated. scripts/mutation_changed.py reads this
 # list rather than keeping its own copy, and accepts either name.
 source_paths = ["couchpotato/core/db/sqlite_adapter.py"]
-# NOTE: mutmut 3.6 also deprecates `tests_dir` in favour of
-# `pytest_add_cli_args_test_selection`. Left as-is deliberately: `runner` below
-# already pins the exact pytest invocation, so this key is doing nothing except
-# emitting a warning, and changing it is untested here. Drop or migrate it when
-# the mutation config is next revisited.
+# `tests_dir` is LOAD-BEARING despite the deprecation warning: mutmut 3.6 folds it
+# into `pytest_add_cli_args_test_selection` (configuration.py:110) and uses it to
+# select tests (__main__.py:424, :475). Migrate the key when convenient, but do
+# not simply delete it.
 tests_dir = ["tests/unit/"]
+# `runner`, by contrast, is INERT on mutmut 3.6 — `_load_config()` never reads it
+# and __main__.py hardcodes `runner = PytestRunner()` under a `# TODO:
+# config/option for runner`. It is kept only as documentation of which tests
+# cover the mutated module; editing it changes nothing, so if you need to narrow
+# the test selection, change `tests_dir` (or the modern key) instead.
 runner = "python -m pytest -x -q tests/unit/test_sqlite_adapter.py tests/unit/test_sqlite_transactions.py tests/unit/test_db_factory.py"

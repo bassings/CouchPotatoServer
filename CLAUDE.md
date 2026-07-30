@@ -18,7 +18,7 @@ the archived CouchPotato, fully modernised.
 | Command | Purpose |
 |---|---|
 | `make setup` | Once per clone: installs deps + git pre-push hook |
-| `make verify` | Full local gate, mirrors CI (ruff → py unit → UI unit → E2E). Runs automatically on push via hook |
+| `make verify` | Full local gate, mirrors CI (ruff → test-trap guard → py unit → UI unit → E2E). Runs automatically on push via hook |
 | `make verify-fast` | Quick gate: lint + unit only, skips E2E |
 | `ruff check .` | Lint (must be clean before every push) |
 | `pytest tests/unit/ -q` | Python unit tests |
@@ -36,7 +36,11 @@ the archived CouchPotato, fully modernised.
    unnecessary mocking.
 2. **Never push untested code.** `make verify` must pass locally before every
    push — don't rely on CI. Emergency hook bypass `git push --no-verify` only
-   sparingly.
+   sparingly. **Known caveat (2026-07-30):** two E2E specs fail locally while
+   passing in CI, so the gate cannot currently go fully green on a dev machine —
+   see `docs/technical-debt.md`. Everything else must still be green, and the two
+   known failures must be named explicitly when you bypass; "verify is red
+   anyway" must not become the normal state.
 3. **Local agent review gate before pushing code changes.** Any code change
    (plus edits to `CLAUDE.md`/`AGENTS.md`/`specs/**`) must pass a clean-agent
    local review before push. Pure docs-only prose may skip. Full rules,
@@ -52,10 +56,13 @@ the archived CouchPotato, fully modernised.
    beta byte-for-byte to `:latest` (stable-only). **Never deploy to
    production until explicitly agreed.**
 7. **Git hygiene:** conventional commits; never commit secrets or test data
-   (`test_data/` is gitignored — keep local backups). Secret scanning is
-   enforced: the `secrets` CI job and `make check-secrets` run gitleaks over the
-   working tree. Adding a fingerprint to `.gitleaksignore` requires a comment
-   justifying it — and rotation, not redaction, is the remedy for a real key.
+   (`test_data/` is gitignored — keep local backups). Secret scanning runs via
+   the `secrets` CI job and `make check-secrets` (gitleaks over the working
+   tree) — it **reports but does not yet block**, as it is not in branch
+   protection, so read it rather than assuming a merge was gated on it. Adding a
+   fingerprint to `.gitleaksignore` requires a comment justifying it (enforced
+   by `tests/unit/test_gitleaks_config.py`) — and rotation, not redaction, is
+   the remedy for a real key.
 8. **Dockerfile is Alpine:** use `apk`/`su-exec`/`adduser`, entrypoint is
    `#!/bin/sh` — never `apt`/`gosu`/`useradd`/bash.
 9. **A sub-agent's report is not evidence.** Validate against the repo, not the
