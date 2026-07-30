@@ -124,8 +124,9 @@
   Full git history holds ~37 findings in total (`make check-secrets-history`).
   Verified breakdown as of 2026-07-30 — the "all upstream, all pre-2013" framing
   that first accompanied this entry was wrong on both counts:
-  - 29 by `ruud@crashdummy.nl` (upstream) spanning **2011–2017**, not 2011–2012;
-  - 2 by other upstream contributors;
+  - 29 by `ruud@crashdummy.nl` (upstream) spanning **2011–2016**, not 2011–2012
+    (10 of those 29 are 2013 or later);
+  - 2 by other upstream contributors, one of which is the only 2017 finding;
   - **6 by `bassings@gmail.com` — this fork's own commits.** One is the
     per-install `api_key` in `QA/QA_SESSION_2026-02-19.md` (redacted from HEAD on
     2026-07-30; still in history, which is why rotation rather than redaction is

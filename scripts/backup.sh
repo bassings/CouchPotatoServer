@@ -32,6 +32,11 @@ set -euo pipefail
 
 CP_DATA_DIR="${CP_DATA_DIR:-/var/lib/plexmediaserver/CouchPotato/config/data}"
 BACKUP_DIR="${BACKUP_DIR:-/var/lib/plexmediaserver/CouchPotato/backups}"
+# Strip a trailing slash immediately. `dirname` normalises it away, so a
+# `BACKUP_DIR=/path/backups/` compared against `$(dirname "$victim")` never
+# matched and retention was silently disabled: exit 0, no warning, disk grows
+# forever. Normalise once here rather than at each use.
+BACKUP_DIR="${BACKUP_DIR%/}"
 RETAIN=""
 
 # The `|| :` on each of these is load-bearing, not defensive noise. Under
@@ -230,8 +235,12 @@ prune_snapshots() {
 
   for entry in "$BACKUP_DIR"/*; do
     [ -d "$entry" ] || continue
-    base="$(basename "$entry")"
-    if [[ "$base" =~ ^[0-9]{8}-[0-9]{6}$ ]]; then
+    base="${entry##*/}"
+    # The optional `-N` matches the same-second collision suffix written below.
+    # Without it, a `<stamp>-2` directory was neither counted nor prunable, so two
+    # runs in one second left a snapshot that retention could never reclaim — two
+    # behaviours added in the same change, mutually inconsistent.
+    if [[ "$base" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]]; then
       snaps+=("$entry")
     fi
   done
@@ -239,15 +248,17 @@ prune_snapshots() {
   local total=${#snaps[@]}
   [ "$total" -gt "$keep" ] || return 0
 
-  # Sort by the stamp (the basename), not the full path, so the directory prefix
-  # cannot influence the order. Bash 3.2: no mapfile, no readarray.
+  # Sort by the stamp (the basename), not the full path. In practice bash's glob
+  # already returns `"$BACKUP_DIR"/*` in sorted order and every entry shares the
+  # same prefix, so this is belt-and-braces rather than load-bearing; it exists so
+  # the ordering does not depend on glob behaviour. Bash 3.2: no mapfile.
   local sorted=()
   local i j tmp
   sorted=("${snaps[@]}")
   for ((i = 1; i < total; i++)); do
     tmp="${sorted[i]}"
     j=$((i - 1))
-    while [ "$j" -ge 0 ] && [ "$(basename "${sorted[j]}")" \> "$(basename "$tmp")" ]; do
+    while [ "$j" -ge 0 ] && [ "${sorted[j]##*/}" \> "${tmp##*/}" ]; do
       sorted[$((j + 1))]="${sorted[j]}"
       j=$((j - 1))
     done
@@ -261,10 +272,14 @@ prune_snapshots() {
     # Belt and braces before an rm -rf: must be a directory, must live directly
     # under BACKUP_DIR, and must still match our own stamp pattern.
     [ -n "$victim" ] && [ -d "$victim" ] || continue
-    [ "$(dirname "$victim")" = "$BACKUP_DIR" ] || continue
-    [[ "$(basename "$victim")" =~ ^[0-9]{8}-[0-9]{6}$ ]] || continue
+    # These two re-checks are unreachable by construction — the collection loop
+    # above already guarantees both — and are kept only as defence-in-depth
+    # against a future refactor of that loop. Being unreachable, they are not
+    # unit-testable; do not read their presence as "tested".
+    [ "${victim%/*}" = "$BACKUP_DIR" ] || continue
+    [[ "${victim##*/}" =~ ^[0-9]{8}-[0-9]{6}(-[0-9]+)?$ ]] || continue
     rm -rf "$victim"
-    info "pruned old snapshot: $(basename "$victim")"
+    info "pruned old snapshot: ${victim##*/}"
   done
 }
 

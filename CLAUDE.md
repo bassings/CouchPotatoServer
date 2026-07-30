@@ -18,7 +18,7 @@ the archived CouchPotato, fully modernised.
 | Command | Purpose |
 |---|---|
 | `make setup` | Once per clone: installs deps + git pre-push hook |
-| `make verify` | Full local gate, mirrors CI (ruff → test-trap guard → py unit → UI unit → E2E). Runs automatically on push via hook |
+| `make verify` | Full local gate, mirrors CI (ruff → test-trap guard → conformance → py unit → UI unit → E2E). Runs automatically on push via hook |
 | `make verify-fast` | Quick gate: lint + unit only, skips E2E |
 | `ruff check .` | Lint (must be clean before every push) |
 | `pytest tests/unit/ -q` | Python unit tests |

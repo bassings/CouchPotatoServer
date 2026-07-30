@@ -26,7 +26,12 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BACKUP_SCRIPT = REPO_ROOT / "scripts" / "backup.sh"
 
-TIMESTAMP_DIR = re.compile(r"^\d{8}-\d{6}$")
+# Accepts the `-N` same-second collision suffix the script writes, so retention
+# tests can actually observe those directories. With the bare pattern they were
+# invisible to BOTH the script's prune and these tests — the collision suffix and
+# the prune regex were added in the same change, mutually inconsistent, and no
+# test could have caught it.
+TIMESTAMP_DIR = re.compile(r"^\d{8}-\d{6}(-\d+)?$")
 
 
 def _make_db(path: Path, rows: int = 3) -> None:
@@ -342,6 +347,51 @@ def test_never_touches_config_bak(prod_layout):
     assert prod_layout["config_bak"].is_dir(), "config.bak/ was removed"
     assert sentinel.is_file(), "config.bak/ contents were removed"
     assert sentinel.read_text() == "do not delete me"
+
+
+def test_retention_still_works_when_backup_dir_has_a_trailing_slash(prod_layout):
+    """A trailing slash silently disabled retention completely.
+
+    `dirname` normalises the slash away while `$BACKUP_DIR` kept it, so every
+    prune candidate was rejected: exit 0, no warning, and the disk grows forever
+    while cron reports success. A regression introduced by the very guard that was
+    meant to make `rm -rf` safer.
+    """
+    backup_dir = prod_layout["backup_dir"]
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("20200101-000000", "20200102-000000", "20200103-000000"):
+        (backup_dir / name).mkdir()
+
+    layout = dict(prod_layout)
+    layout["backup_dir"] = Path(str(backup_dir) + "/")
+    _run(layout, "--retain", "1")
+
+    assert len(_snapshots(backup_dir)) == 1, (
+        "retention did nothing — a trailing slash in BACKUP_DIR disabled it"
+    )
+
+
+def test_same_second_snapshots_remain_prunable(prod_layout):
+    """The collision suffix and the prune pattern must agree.
+
+    They were added in the same change and did not: `<stamp>-2` matched neither
+    the collection regex nor the victim check, so a same-second snapshot could
+    never be reclaimed — retention would leak a directory permanently.
+    """
+    for _ in range(3):
+        _run(prod_layout)
+
+    names = {p.name for p in _snapshots(prod_layout["backup_dir"])}
+    assert len(names) == 3, f"expected three distinct snapshots, got {sorted(names)}"
+    assert any("-" in n.split("-", 2)[-1] or n.count("-") == 2 for n in names), (
+        f"expected at least one collision-suffixed snapshot, got {sorted(names)}"
+    )
+
+    _run(prod_layout, "--retain", "1")
+    remaining = _snapshots(prod_layout["backup_dir"])
+    assert len(remaining) == 1, (
+        f"suffixed snapshots were not prunable: {[p.name for p in remaining]}"
+    )
 
 
 def test_prune_never_deletes_outside_the_backup_dir(tmp_path):

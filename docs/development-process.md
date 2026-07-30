@@ -191,8 +191,10 @@ image.
 - **Trivy** image scan in the `docker` job — fails on fixable HIGH/CRITICAL
   CVEs (`ignore-unfixed`, `.trivyignore` for the DS-0002 false positive).
 - **secrets** (gitleaks, pinned `v8.30.1`) — scans the **working tree**, not full
-  history. Full history holds 37 findings from upstream CouchPotato's 2011–2012
-  commits, and a gate that is red on arrival gets disabled; the blocking check
+  history. Full history holds 37 findings — 31 of them upstream CouchPotato's own
+  committed provider keys spanning 2011–2017, and 6 authored by this fork (see
+  `make check-secrets-history` for the breakdown) — and a gate that is red on
+  arrival gets disabled; the working-tree check
   answers "is there a secret in the code as it stands?". Two known upstream
   provider keys still in the tree are baselined by fingerprint, each with a
   justification, in `.gitleaksignore` — **an entry there without a comment is
@@ -329,11 +331,13 @@ cd /var/lib/plexmediaserver/CouchPotato
 # 2. Record what is running now, so rollback has a target.
 #    The digest is the only reliable handle — the tag :latest is about to move.
 docker inspect couchpotato --format '{{.Config.Image}} {{.Image}}'
-#    The version is baked in as CP_VERSION at build time; it gives you the
-#    immutable :X.Y.0 tag. (Don't reach for couchpotato.__version__ — there is
-#    no such attribute — and the image has python3, not python.)
-docker exec couchpotato printenv CP_VERSION \
-  || docker inspect couchpotato --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -i version
+#    The version is written into /app/version.py at build time (Dockerfile:74-76
+#    bakes the CP_VERSION *build arg* into that file). Read the file:
+docker exec couchpotato cat /app/version.py     # -> VERSION = '3.18.0'
+#    NOT `printenv CP_VERSION` — CP_VERSION is an ARG, not an ENV, so it is absent
+#    from the running container. And do not fall back to grepping the env for
+#    /version/i: that matches PYTHON_VERSION and hands you the interpreter version
+#    (3.14.6) as a rollback tag, silently and plausibly, mid-incident.
 # Note BOTH the digest and the version down before continuing.
 
 # 3. Pull and restart.
@@ -382,7 +386,10 @@ docker compose up -d
 docker logs couchpotato --tail=50
 
 # If the DB also needs restoring (only if a migration or a write corrupted it).
-# Note the path: the DB is under the /data mount, NOT /config.
+# Note: INSIDE the container the DB is under /data, not /config. On the host it
+# happens to live beneath .../CouchPotato/config/data — the prod compose maps that
+# host directory to the container's /data. Confirm with the docker inspect below
+# rather than trusting either path.
 docker compose stop
 cp <BACKUP_DIR>/<timestamp>/couchpotato.db \
    /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db
@@ -435,8 +442,14 @@ BACKUP_DIR=/var/lib/plexmediaserver/CouchPotato/backups \
 Snapshots land in `<BACKUP_DIR>/<YYYYMMDD-HHMMSS>/{couchpotato.db,config.ini}`.
 `--retain 0` is rejected rather than treated as "keep nothing", and retention
 only ever deletes directories matching its own timestamp pattern — behaviour
-pinned by `tests/unit/test_backup_script.py` (28 tests; 23/23 mutations killed, including
-"replace `.backup` with `cp`", which the WAL-mode fixture catches).
+pinned by `tests/unit/test_backup_script.py`. The `.backup`-vs-`cp` distinction in
+particular is caught by the WAL-mode fixture.
+
+A note on mutation scores quoted anywhere in this repo: they describe *the set of
+mutants that was run*, not adequacy. A 23/23 on a hand-picked set and 16/25 on an
+independently-chosen one are both true of the same suite — reviewers found
+survivors this way twice. Treat a score as "these specific behaviours are pinned",
+never as "the tests are sufficient".
 
 Two manual steps, both on the server — neither is automated by this repo:
 

@@ -7,9 +7,11 @@
 # Stages (fail-fast, single exit code):
 #   1. ruff lint
 #   2. test-trap check (false-green guard — see scripts/check_test_traps.py)
-#   3. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
-#   4. UI unit tests (vitest)
-#   5. E2E tests (Playwright/chromium — server auto-starts via playwright.config.ts)
+#   3. UI conformance check (design-system drift — a REQUIRED CI check that this
+#      gate used to omit, so "green locally" did not imply "green in CI")
+#   4. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
+#   5. UI unit tests (vitest)
+#   6. E2E tests (Playwright/chromium — server auto-starts via playwright.config.ts)
 #
 # Usage:
 #   ./scripts/verify.sh            # full gate
@@ -56,34 +58,38 @@ if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
 fi
 
 # ── 1. Lint ─────────────────────────────────────────────────────────────────
-step "1/5 ruff lint"
+step "1/6 ruff lint"
 "$PYTHON" -m ruff check . || fail "ruff found issues"
 
 # ── 2. False-green guard ────────────────────────────────────────────────────
-step "2/5 test-trap check"
+step "2/6 test-trap check"
 "$PYTHON" scripts/check_test_traps.py || fail "test-trap check found issues"
 
-# ── 3. Python unit tests ────────────────────────────────────────────────────
-step "3/5 Python unit tests"
+# ── 3. UI conformance ───────────────────────────────────────────────────────
+step "3/6 UI conformance check"
+"$PYTHON" scripts/check_conformance.py || fail "conformance check found issues"
+
+# ── 4. Python unit tests ────────────────────────────────────────────────────
+step "4/6 Python unit tests"
 "$PYTHON" -m pytest tests/unit/ -q --tb=short -W ignore::SyntaxWarning \
   || fail "Python unit tests failed"
 
-# ── 4. UI unit tests ────────────────────────────────────────────────────────
-step "4/5 UI unit tests (vitest)"
+# ── 5. UI unit tests ────────────────────────────────────────────────────────
+step "5/6 UI unit tests (vitest)"
 if [[ ! -d node_modules ]]; then
   echo "node_modules missing — running npm ci..."
   npm ci
 fi
 npm run test:unit || fail "UI unit tests failed"
 
-# ── 5. E2E tests ────────────────────────────────────────────────────────────
+# ── 6. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
-  step "5/5 E2E tests (Playwright/chromium)"
+  step "6/6 E2E tests (Playwright/chromium)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
   npm run test:e2e -- --project=chromium || fail "E2E tests failed"
 else
-  step "5/5 E2E tests — SKIPPED (--no-e2e)"
+  step "6/6 E2E tests — SKIPPED (--no-e2e)"
 fi
 
 # ── Informational: static security lint (bandit S rules) ────────────────────

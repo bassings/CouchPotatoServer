@@ -66,8 +66,8 @@ check-secrets: ## Secret scan of the working tree (same command CI runs)
 check-secrets-history: ## Secret scan of ALL git history (noisy: ~37 known hits, see below)
 	@echo "Expect ~37 findings. As of 2026-07-30 they break down as:"
 	@echo "  * 29 authored by ruud@crashdummy.nl (upstream CouchPotato), spanning"
-	@echo "    2011-2017 -- NOT just pre-2013; 18 of them are 2013 or later."
-	@echo "  *  2 by other upstream contributors."
+	@echo "    2011-2016 -- NOT just pre-2013; 10 of the 29 are 2013 or later."
+	@echo "  *  2 by other upstream contributors (one of them the lone 2017 hit)."
 	@echo "  *  6 authored by bassings@gmail.com -- THIS FORK's own commits:"
 	@echo "       - QA/QA_SESSION_2026-02-19.md (a per-install api_key, redacted"
 	@echo "         from HEAD 2026-07-30; still in history, hence rotate not redact)"

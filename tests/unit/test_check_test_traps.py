@@ -13,8 +13,11 @@ report success while guarding nothing:
      `tail`, which is 0 essentially always. Without `pipefail` a failing suite
      looks like a passing one — this has actually happened here when piping
      Playwright output.
-  3. **`set -e` alone is not enough.** A shell gate missing `pipefail`/`-u`
-     silently continues past a failed pipeline or a typo'd variable.
+  3. **`set -e` alone is not enough.** A shell gate missing `-u`, or missing
+     `pipefail` while containing a pipeline, silently continues past a typo'd
+     variable or a failed pipeline stage.
+  4. **A git hook that is not executable** is silently ignored by git, so the
+     gate it implements never runs at all.
 
 The tests below drive the checker over synthetic files (so each rule is pinned
 independently of the current tree) and also assert it is clean on the real tree,
@@ -252,12 +255,19 @@ def test_does_not_flag_a_non_runner_pipe_as_an_exit_code_eater(tmp_path):
 
 
 def test_flags_a_shell_script_with_only_set_e(tmp_path):
+    """`set -e` alone is not enough: -u and pipefail must both be demanded.
+
+    Asserts on the named OPTIONS rather than on the advice sentence, so it cannot
+    be satisfied by remediation wording alone.
+    """
     script = tmp_path / "gate.sh"
     script.write_text("#!/bin/bash\nset -e\nls | wc -l\npytest tests/unit\n")
 
-    messages = messages_for(script)
-    assert any("pipefail" in m for m in messages)
-    assert any("-u" in m or "nounset" in m for m in messages)
+    findings = findings_for(script)
+    assert len(findings) == 1, findings
+    message = findings[0][1]
+    assert "-u (error on unset variable)" in message
+    assert "pipefail (a failing command in a pipeline is otherwise ignored)" in message
 
 
 def test_does_not_demand_pipefail_from_a_script_with_no_pipelines(tmp_path):
@@ -551,6 +561,37 @@ def test_the_repos_own_hooks_are_executable():
         )
 
 
+def test_strip_shell_comments_respects_quotes():
+    """Quote-awareness is claimed in the docstring but was never asserted."""
+    strip = check_test_traps.strip_shell_comments
+
+    assert strip('echo "a # b" # real comment').rstrip() == 'echo "a # b"'
+    assert strip("echo 'a # b' # real").rstrip() == "echo 'a # b'"
+    # A backslash is NOT an escape inside single quotes in shell, so this string
+    # ends at the second quote and the `#` that follows IS a comment.
+    assert "pytest" not in strip("PAT='\\'  # pytest tests/ | tail -1")
+    # blank_strings mode blanks contents but keeps the delimiters.
+    blanked = strip('echo "set -o pipefail"', blank_strings=True)
+    assert "pipefail" not in blanked
+    assert blanked.count('"') == 2
+
+
+def test_pipefail_is_detected_in_every_real_form_and_not_when_disabled():
+    has = check_test_traps._has_pipefail
+    for setting in (
+        "set -o pipefail",
+        "set -euo pipefail",
+        "set -eu -o pipefail",
+        "set -o errexit -o pipefail",
+        "set -eox pipefail",
+    ):
+        assert has(setting), f"missed a real pipefail form: {setting!r}"
+
+    assert not has("set +o pipefail"), "disabling pipefail must not count as setting it"
+    assert not has("# set -o pipefail"), "a comment must not count"
+    assert not has('echo "set -o pipefail"'), "a string literal must not count"
+
+
 def test_makefile_pipe_outside_a_recipe_line_is_not_flagged(tmp_path):
     """A variable assignment is not a shell command."""
     makefile = tmp_path / "Makefile"
@@ -572,9 +613,11 @@ def test_posix_sh_scripts_are_not_asked_for_pipefail(tmp_path):
     The Docker entrypoint is `#!/bin/sh` by hard rule 8, so this exemption is
     load-bearing, not hypothetical.
 
-    The fixture MUST contain a pipeline. Without one the POSIX branch is never
-    reached, and the test passes with the exemption deleted (confirmed by
-    mutation: dropping `not is_posix_sh` survived).
+    The fixture contains a pipeline so the POSIX branch is actually reached.
+    (Note: the reachability claim is only meaningful while rule 3 demands
+    pipefail — it does so again as of the second remediation. The stronger
+    guarantee lives in the next test, which pins the *advice* a /bin/sh script
+    gets and fails if the POSIX branch is removed.)
     """
     script = tmp_path / "entrypoint.sh"
     script.write_text("#!/bin/sh\nset -eu\ncat a | sort > b\nexec \"$@\"\n")
@@ -612,7 +655,7 @@ def test_checker_is_clean_on_the_real_tree():
 
     match = re.search(r"passed \((\d+) file\(s\) scanned\)", result.stdout)
     assert match, f"no scan count in output: {result.stdout!r}"
-    assert int(match.group(1)) >= 50, (
+    assert int(match.group(1)) >= 100, (
         f"only {match.group(1)} files scanned — the walk is broken, so 'passed' is "
         f"meaningless. Expected the whole of tests/unit + scripts + .githooks + "
         f".github/workflows + Makefile."
@@ -631,15 +674,26 @@ def test_default_roots_all_exist_and_are_covered():
 
     scanned = check_test_traps.iter_files(check_test_traps.DEFAULT_ROOTS)
     scanned_str = {str(p) for p in scanned}
-    # One representative file per root, so a dropped root fails here.
+    # One representative file per root, so a dropped root fails here. At least one
+    # must be NESTED: with only top-level files listed, downgrading the walk from
+    # rglob to glob passed while dropping all six tests/unit/ui/*.spec.ts — i.e.
+    # every vitest spec in the repo, which is rule 1's entire target set.
     for expected in (
         REPO_ROOT / "tests" / "unit" / "test_check_test_traps.py",
+        REPO_ROOT / "tests" / "unit" / "ui" / "movie-filter.spec.ts",  # nested
         REPO_ROOT / "scripts" / "verify.sh",
+        REPO_ROOT / "scripts" / "release" / "next_beta_version.py",  # nested
         REPO_ROOT / ".githooks" / "pre-push",
         REPO_ROOT / ".github" / "workflows" / "ci.yml",
         REPO_ROOT / "Makefile",
     ):
         assert str(expected) in scanned_str, f"{expected} was not scanned"
+
+    # And explicitly: every vitest spec must be in scope, by discovery not by list.
+    specs = sorted((REPO_ROOT / "tests" / "unit").rglob("*.spec.ts"))
+    assert specs, "no vitest specs found at all — check the glob"
+    missing = [str(s) for s in specs if str(s) not in scanned_str]
+    assert not missing, f"vitest specs not scanned (rule 1 would be dead for them): {missing}"
 
 
 def test_exits_nonzero_and_prints_file_line_message_on_a_finding(tmp_path):

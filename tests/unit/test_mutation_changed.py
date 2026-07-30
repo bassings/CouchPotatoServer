@@ -10,8 +10,10 @@ The important property under test is that scope comes from the *real* configs
 (`[tool.mutmut] source_paths` in pyproject.toml, `mutate` in stryker.conf.json)
 rather than a second hard-coded copy of them. A duplicated list rots silently:
 someone widens `source_paths`, this script keeps mutating the old set, and the
-gap is invisible. `test_scope_is_read_from_the_real_configs` fails if the two
-ever drift apart.
+gap is invisible. `test_scope_is_actually_read_from_the_config_files` pins it, by
+pointing the loaders at a temp root with distinctive values — an earlier version
+compared `js_scope()` against `json.loads(...)["mutate"]`, which is literally its
+own implementation, and so passed with the scope hardcoded.
 """
 
 import json
@@ -237,6 +239,29 @@ def test_ignores_tests_and_non_python_files():
         scope=["couchpotato/", "tests/"],
     )
     assert targets == ["couchpotato.core.db.sqlite_adapter"]
+
+
+def test_scope_entry_without_a_trailing_slash_matches_the_file_and_below():
+    """A `source_paths` entry can be a bare file OR a dir without a trailing slash.
+
+    The non-trailing-slash branch was entirely untested: reducing it to
+    `path == entry` survived, which would make a `source_paths = ["couchpotato"]`
+    entry silently match nothing.
+    """
+    # Exact file match.
+    assert mutation_changed.python_targets(
+        ["couchpotato/api.py"], scope=["couchpotato/api.py"]
+    ) == ["couchpotato.api"]
+
+    # Directory named without a trailing slash must still match files beneath it.
+    assert mutation_changed.python_targets(
+        ["couchpotato/core/db/sqlite_adapter.py"], scope=["couchpotato"]
+    ) == ["couchpotato.core.db.sqlite_adapter"]
+
+    # But it must not match a sibling that merely shares the prefix.
+    assert mutation_changed.python_targets(
+        ["couchpotatoextra/thing.py"], scope=["couchpotato"]
+    ) == []
 
 
 def test_maps_changed_ui_scripts_to_stryker_mutate_paths():

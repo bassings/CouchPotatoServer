@@ -44,6 +44,26 @@ class ConfigError(RuntimeError):
 # ── Config ──────────────────────────────────────────────────────────────────
 
 
+def _strip_toml_comment(line: str) -> str:
+    """Remove a `#` comment, ignoring `#` inside quoted strings."""
+    out = []
+    quote = None
+    for ch in line:
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            out.append(ch)
+            continue
+        if ch == "#":
+            break
+        out.append(ch)
+    return "".join(out)
+
+
 def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
     """Extract ``key = ["a", "b"]`` from ``[section]`` of a TOML document.
 
@@ -68,7 +88,11 @@ def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
     # Strip `#` comments from the section body BEFORE locating the array. A `]`
     # inside a trailing comment (e.g. `"a.py",  # also see [tool.stryker]`) ends
     # the non-greedy `\[(.*?)\]` early and silently drops every entry after it.
-    body = "\n".join(re.sub(r"#.*$", "", line) for line in match.group(1).split("\n"))
+    #
+    # Quote-aware, because a naive `re.sub(r"#.*$", ...)` silently dropped any
+    # entry whose PATH contains a `#` (`"odd/c#d.py"`) — the same silent
+    # scope-shrink this stripping exists to prevent.
+    body = "\n".join(_strip_toml_comment(line) for line in match.group(1).split("\n"))
 
     key_re = re.compile(rf"^\s*{re.escape(key)}\s*=\s*\[(.*?)\]", re.MULTILINE | re.DOTALL)
     key_match = key_re.search(body)
@@ -79,7 +103,8 @@ def parse_toml_string_array(text: str, section: str, key: str) -> list[str]:
             f"rather than letting it mutate nothing"
         )
 
-    values = re.findall(r"""['"]([^'"]+)['"]""", key_match.group(1))
+    values = [v.strip() for v in re.findall(r"""['"]([^'"]*)['"]""", key_match.group(1))]
+    values = [v for v in values if v]
     if not values:
         raise ConfigError(
             f"key '{key}' in [{section}] yielded no paths (raw: "

@@ -81,6 +81,11 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:  # pragma: no cover - CI installs it; see .github/workflows/ci.yml
+    yaml = None
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_ROOTS = [
@@ -134,8 +139,17 @@ RUNNER_RE = re.compile(
 # Filters that discard the upstream exit status when they succeed.
 FILTER_RE = re.compile(r"\|\s*(tail|head|grep|tee|awk|sed|sort|uniq|wc|cat|less|more|jq)\b")
 
-# `set -o pipefail`, `set -euo pipefail`, `set -eu -o pipefail`, ...
-PIPEFAIL_RE = re.compile(r"set\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*o\s+pipefail\b")
+# Matches `set -o pipefail`, `set -euo pipefail`, `set -eu -o pipefail`,
+# `set -o errexit -o pipefail`, `set -eox pipefail`. Anything containing an `o`
+# in the flag cluster (or a preceding `-o word`) followed by the literal
+# `pipefail` counts; `set +o pipefail` deliberately does not.
+# Note `o` may sit ANYWHERE in the flag cluster: `set -eox pipefail` really does
+# enable pipefail (verified: `set -eox pipefail; set -o | grep pipefail` -> on),
+# so anchoring on a cluster that *ends* in `o` missed it and flagged a correct
+# script.
+PIPEFAIL_RE = re.compile(
+    r"set\s+(?:[+-][a-zA-Z]*(?:\s+[a-z]+)?\s+)*-[a-zA-Z]*o[a-zA-Z]*\s+pipefail\b"
+)
 
 SHELL_SUFFIXES = (".sh",)
 WORKFLOW_SUFFIXES = (".yml", ".yaml")
@@ -147,23 +161,47 @@ NON_SHELL_INTERPRETERS = ("python", "pwsh", "powershell", "node", "ruby", "perl"
 # ── Comment stripping (correctness-critical — see module docstring) ──────────
 
 
-def strip_shell_comments(line: str) -> str:
-    """Remove a `#` comment, respecting single and double quotes."""
+def strip_shell_comments(line: str, blank_strings: bool = False) -> str:
+    """Remove a `#` comment, respecting single and double quotes.
+
+    ``blank_strings`` additionally replaces string *contents* with spaces. That
+    matters for pipefail detection: `echo "hint: add set -o pipefail"` silenced
+    rule 2 for a whole file — the same false-green class as the `# TODO`
+    comment that prompted the comment-stripping in the first place.
+
+    Shell quoting rules, not C's: a backslash is NOT an escape inside single
+    quotes, so `'\\'` is a complete string.
+    """
     out = []
     quote = None
-    for i, ch in enumerate(line):
+    i = 0
+    while i < len(line):
+        ch = line[i]
         if quote:
-            out.append(ch)
-            if ch == quote and (i == 0 or line[i - 1] != "\\"):
+            if quote == '"' and ch == "\\" and i + 1 < len(line):
+                out.append("  " if blank_strings else line[i : i + 2])
+                i += 2
+                continue
+            if ch == quote:
                 quote = None
+                out.append(ch)
+            else:
+                out.append(" " if blank_strings else ch)
+            i += 1
             continue
         if ch in ("'", '"'):
             quote = ch
             out.append(ch)
+            i += 1
+            continue
+        if ch == "\\" and i + 1 < len(line):
+            out.append(line[i : i + 2])
+            i += 2
             continue
         if ch == "#":
             break
         out.append(ch)
+        i += 1
     return "".join(out)
 
 
@@ -185,6 +223,15 @@ def strip_js_comments(text: str) -> list[str]:
         line = lines[row]
         if col >= len(line):
             if state == "line_comment":
+                state = "code"
+            # A single- or double-quoted JS string cannot contain a raw newline,
+            # so an unterminated one means we mis-detected the opening quote —
+            # most often a quote inside a regex literal such as /['"]/. Reset at
+            # end of line so the damage is bounded to that line instead of
+            # latching for the rest of the file (which turned real `//` comments
+            # into reported geometry reads). Template literals DO span lines, so
+            # they are deliberately not reset.
+            if state in ("squote", "dquote"):
                 state = "code"
             row += 1
             col = 0
@@ -245,6 +292,7 @@ def strip_js_comments(text: str) -> list[str]:
     return out
 
 
+
 def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
     """Join backslash-continued lines, keeping the FIRST line's number.
 
@@ -269,8 +317,14 @@ def join_continuations(lines: list[str]) -> list[tuple[int, str]]:
 
 
 def _has_pipefail(text: str) -> bool:
-    """True only if `pipefail` is actually SET — a mention in a comment is not."""
-    cleaned = "\n".join(strip_shell_comments(ln) for ln in text.split("\n"))
+    """True only if `pipefail` is actually SET.
+
+    A mention in a comment does not count, and neither does one inside a string
+    literal — both were live false-green holes.
+    """
+    cleaned = "\n".join(
+        strip_shell_comments(ln, blank_strings=True) for ln in text.split("\n")
+    )
     return bool(PIPEFAIL_RE.search(cleaned))
 
 
@@ -287,6 +341,10 @@ def _stubbed_properties(text: str) -> set[str]:
     for match in re.finditer(r"""Object\.defineProperty\s*\([^,]+,\s*['"]([A-Za-z]+)['"]""", text):
         stubbed.add(match.group(1))
     for match in re.finditer(r"""\.([A-Za-z]+)\s*=\s*(?:function\b|\([^)]*\)\s*=>|vi\.fn)""", text):
+        stubbed.add(match.group(1))
+    # `vi.spyOn(window, 'getComputedStyle')` is the idiomatic vitest stub and was
+    # being flagged as unstubbed.
+    for match in re.finditer(r"""(?:vi|jest)\.spyOn\s*\([^,]+,\s*['"]([A-Za-z]+)['"]""", text):
         stubbed.add(match.group(1))
     return stubbed
 
@@ -323,6 +381,21 @@ def _runner_pipe_message(is_posix_sh: bool) -> str:
     )
 
 
+def _has_real_pipeline(lines: list[str]) -> bool:
+    """Is there an actual `cmd | cmd` pipeline?
+
+    Excludes `||`, `|` inside quotes, and `case a|b)` alternations — the three
+    things that made a naive `"|" in line` check reject correct scripts.
+    """
+    for raw in lines:
+        line = strip_shell_comments(raw, blank_strings=True)
+        if re.match(r"\s*case\s", line) or re.search(r"^\s*[^()]*\)\s*$", line):
+            continue
+        if re.search(r"(?<!\|)\|(?!\|)", line):
+            return True
+    return False
+
+
 def check_shell_script(path: Path, text: str):
     """Rules 2 and 3 for a shell script."""
     lines = text.split("\n")
@@ -330,8 +403,25 @@ def check_shell_script(path: Path, text: str):
     is_posix_sh = "/bin/sh" in shebang and "bash" not in shebang
     has_pipefail = _has_pipefail(text)
 
-    # Rule 3 — the gate's own options. pipefail is intentionally not required
-    # here; rule 2 reports the pipelines that actually matter, at their line.
+    # Rule 2 candidates are computed first: when a runner pipe is present, the
+    # specific finding is reported at its line and `pipefail` is dropped from the
+    # generic rule-3 message, so one fix is never reported twice.
+    runner_pipes = []
+    if not has_pipefail:
+        for line_no, logical in join_continuations(lines):
+            cleaned = strip_shell_comments(logical)
+            if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
+                runner_pipes.append(line_no)
+
+    # Rule 3 — the gate's own options.
+    #
+    # `pipefail` IS required when the script contains a real pipeline. That
+    # requirement was briefly dropped because it false-positived on `case a|b)`
+    # and on `|` inside quoted strings — but that lost genuine coverage: a
+    # `docker build ... | tee` or `./guardrails.sh | grep -c FAIL` swallows its
+    # exit code just as thoroughly as pytest does, and RUNNER_RE will never list
+    # every command. Now that comment/string stripping is quote-aware, the
+    # requirement is back without the false positives.
     if shebang.startswith("#!") and ("bash" in shebang or "/bin/sh" in shebang):
         missing = []
         set_lines = " ".join(
@@ -341,6 +431,8 @@ def check_shell_script(path: Path, text: str):
             missing.append("-e (exit on error)")
         if not re.search(r"set\s+-[a-zA-Z]*u|nounset", set_lines):
             missing.append("-u (error on unset variable)")
+        if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
+            missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
         if missing:
             yield (
                 1,
@@ -350,12 +442,8 @@ def check_shell_script(path: Path, text: str):
                 + ("`set -eu`." if is_posix_sh else "`set -euo pipefail`."),
             )
 
-    # Rule 2 — piped runners.
-    if not has_pipefail:
-        for line_no, logical in join_continuations(lines):
-            line = strip_shell_comments(logical)
-            if RUNNER_RE.search(line) and FILTER_RE.search(line):
-                yield (line_no, _runner_pipe_message(is_posix_sh))
+    for line_no in runner_pipes:
+        yield (line_no, _runner_pipe_message(is_posix_sh))
 
 
 def check_makefile(path: Path, text: str):
@@ -376,15 +464,6 @@ def check_makefile(path: Path, text: str):
             )
 
 
-# A YAML block scalar: | or > with any chomping/indentation indicator.
-BLOCK_SCALAR_RE = re.compile(r"^[|>](?:[+-]?\d*|\d*[+-]?)$")
-
-# The optional `-?` matters: a step's first key carries the list dash, as in
-# `- shell: bash`, and anchoring on `shell:` alone silently misses it — which
-# made the guard flag correct `shell: bash` steps.
-SHELL_KEY_RE = re.compile(r"^\s*-?\s*shell:\s*(.+?)\s*$")
-
-
 def _shell_sets_pipefail(shell_value: str) -> bool | None:
     """Does this `shell:` value have pipefail set?
 
@@ -402,110 +481,96 @@ def _shell_sets_pipefail(shell_value: str) -> bool | None:
     return "pipefail" in value
 
 
+def _iter_run_steps(node, inherited_shell=None):
+    """Yield (run_scalar_node, effective_shell) for every `run:` in a workflow.
+
+    Walks the composed YAML node graph, so `shell:` is resolved by real document
+    structure and `defaults.run.shell` inheritance — not by scanning nearby lines.
+
+    This replaced a hand-rolled scanner that walked backwards to the nearest
+    `- ` to find a step boundary. Two review rounds each found a fresh way to
+    break it: a `- ` at the start of a block-scalar body truncated the step and
+    hid a `shell:` declared after `run:` (flagging a CORRECT workflow), and a
+    `# comment` after `shell: bash` made it misread the value. Both are
+    structural mistakes that a real parser cannot make, which is why the parser
+    won over a third round of patches.
+    """
+    if isinstance(node, yaml.MappingNode):
+        keys = {k.value: v for k, v in node.value if isinstance(k, yaml.ScalarNode)}
+
+        # `defaults: run: shell:` at this level applies to everything below it.
+        shell_here = inherited_shell
+        defaults = keys.get("defaults")
+        if isinstance(defaults, yaml.MappingNode):
+            for dk, dv in defaults.value:
+                if dk.value == "run" and isinstance(dv, yaml.MappingNode):
+                    for rk, rv in dv.value:
+                        if rk.value == "shell" and isinstance(rv, yaml.ScalarNode):
+                            shell_here = rv.value
+
+        # A step: `run:` plus optionally its own `shell:`, in any key order.
+        run_node = keys.get("run")
+        if isinstance(run_node, yaml.ScalarNode):
+            step_shell = shell_here
+            own = keys.get("shell")
+            if isinstance(own, yaml.ScalarNode):
+                step_shell = own.value
+            yield run_node, step_shell
+
+        for _k, value in node.value:
+            yield from _iter_run_steps(value, shell_here)
+
+    elif isinstance(node, yaml.SequenceNode):
+        for item in node.value:
+            yield from _iter_run_steps(item, inherited_shell)
+
+
 def check_workflow(path: Path, text: str):
     """GitHub's DEFAULT shell is `bash -e` — pipefail is not set unless asked for."""
-    lines = text.split("\n")
+    if yaml is None:
+        yield (
+            1,
+            "cannot check this workflow: PyYAML is not installed, so the "
+            "exit-code-eating-pipe check cannot run. Install it "
+            "(`pip install 'pyyaml>=6.0'`, and it is in requirements-dev.txt). "
+            "Failing loudly rather than skipping silently — a check that quietly "
+            "does nothing is the exact failure this script exists to prevent.",
+        )
+        return
 
-    # A workflow- or job-level `defaults: run: shell:` applies to every step that
-    # does not override it. Detected coarsely: any `defaults:` block declaring a
-    # pipefail-setting shell suppresses the check for the file. A false negative
-    # here is far cheaper than a blocking gate rejecting a correct workflow.
-    defaults_pipefail = False
-    in_defaults = False
-    defaults_indent = 0
-    for raw in lines:
-        stripped = raw.strip()
-        indent = len(raw) - len(raw.lstrip())
-        if stripped.startswith("defaults:"):
-            in_defaults = True
-            defaults_indent = indent
-            continue
-        if in_defaults:
-            if stripped and indent <= defaults_indent:
-                in_defaults = False
-            else:
-                match = SHELL_KEY_RE.match(raw)
-                if match and _shell_sets_pipefail(match.group(1)):
-                    defaults_pipefail = True
+    try:
+        root = yaml.compose(text)
+    except yaml.YAMLError as exc:
+        yield (1, f"could not parse as YAML, so it was not checked for piped runners: {exc}")
+        return
+    if root is None:
+        return
 
-    findings: list[tuple[int, str]] = []
-
-    def step_shell_pipefail(run_index: int) -> bool | None:
-        """Find a `shell:` in the same step as the `run:` at ``run_index``.
-
-        A step spans from the nearest preceding `- ` list item to the next one.
-        """
-        start = 0
-        for i in range(run_index, -1, -1):
-            if re.match(r"^\s*-\s", lines[i]):
-                start = i
-                break
-        end = len(lines)
-        for i in range(run_index + 1, len(lines)):
-            if re.match(r"^\s*-\s", lines[i]):
-                end = i
-                break
-        for i in range(start, end):
-            match = SHELL_KEY_RE.match(lines[i])
-            if match:
-                return _shell_sets_pipefail(match.group(1))
-        return False
-
-    def scan_block(block: list[tuple[int, str]], pipefail: bool | None) -> None:
+    for run_node, shell_value in _iter_run_steps(root):
+        pipefail = _shell_sets_pipefail(shell_value) if shell_value else False
         if pipefail is None:
-            return  # not a shell whose pipeline status we police
-        body = "\n".join(body_line for _n, body_line in block)
+            continue  # not a shell whose pipeline status we police
+        body = run_node.value
         if pipefail or _has_pipefail(body):
-            return
-        # Map the joined logical line back to its real file line number.
-        for local_no, logical in join_continuations([b for _n, b in block]):
-            actual = block[local_no - 1][0] if 0 < local_no <= len(block) else block[0][0]
+            continue
+
+        # For a block scalar (`|`/`>`) the value starts on the line AFTER the
+        # indicator; for an inline value it starts on the mark's own line.
+        block = run_node.style in ("|", ">")
+        first_content_line = run_node.start_mark.line + (1 if block else 0)
+
+        lines = body.split("\n")
+        for local_no, logical in join_continuations(lines):
             cleaned = strip_shell_comments(logical)
             if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
-                findings.append(
-                    (
-                        actual,
-                        "workflow step pipes a test/verification command into a filter "
-                        "without `pipefail` — GitHub's default shell is `bash -e`, which "
-                        "does not set it, so the step passes even when the runner fails. "
-                        "Add `set -o pipefail` at the top of the run block, or declare "
-                        "`shell: bash` (which is `-eo pipefail`).",
-                    )
+                yield (
+                    first_content_line + local_no,
+                    "workflow step pipes a test/verification command into a filter "
+                    "without `pipefail` — GitHub's default shell is `bash -e`, which "
+                    "does not set it, so the step passes even when the runner fails. "
+                    "Add `set -o pipefail` at the top of the run block, or declare "
+                    "`shell: bash` (which is `-eo pipefail`).",
                 )
-
-    i = 0
-    while i < len(lines):
-        raw = lines[i]
-        run_match = re.match(r"(\s*)-?\s*run:\s*(.*)$", raw)
-        if not run_match:
-            i += 1
-            continue
-
-        indent = len(raw) - len(raw.lstrip())
-        inline = run_match.group(2).strip()
-        pipefail = step_shell_pipefail(i)
-        if pipefail is False and defaults_pipefail:
-            pipefail = True
-
-        if inline and not BLOCK_SCALAR_RE.match(inline):
-            scan_block([(i + 1, inline)], pipefail)  # single-line `run:`
-            i += 1
-            continue
-
-        block: list[tuple[int, str]] = []
-        j = i + 1
-        while j < len(lines):
-            body_line = lines[j]
-            if body_line.strip():
-                body_indent = len(body_line) - len(body_line.lstrip())
-                if body_indent <= indent:
-                    break
-            block.append((j + 1, body_line))
-            j += 1
-        scan_block(block, pipefail)
-        i = max(j, i + 1)
-
-    yield from findings
 
 
 def check_git_hook(path: Path):

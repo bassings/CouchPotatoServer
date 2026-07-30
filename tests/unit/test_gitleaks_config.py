@@ -61,12 +61,51 @@ EXCLUDED_PATHS = [
 ]
 
 
+LITERAL_STRING_RE = re.compile(r"'{3}(.*?)'{3}", re.DOTALL)
+
+
 def allowlist_patterns() -> list[str]:
-    """Extract the `paths = [...]` entries from the [allowlist] table."""
+    """Extract the `paths = [...]` entries from the [allowlist] table.
+
+    Matches TOML literal strings AND ordinary basic/single-quoted strings.
+    Extracting only the literal form left a real hole: adding a plain
+    `paths = ["couchpotato/reports/"]` — perfectly valid gitleaks config — widened
+    the allowlist to exclude application code with every test still green.
+    """
     text = CONFIG.read_text(encoding="utf-8")
     match = re.search(r"^paths\s*=\s*\[(.*?)^\]", text, re.MULTILINE | re.DOTALL)
     assert match, "could not find a `paths = [...]` array in .gitleaks.toml"
-    return re.findall(r"'''(.*?)'''", match.group(1), re.DOTALL)
+
+    body = match.group(1)
+    patterns = LITERAL_STRING_RE.findall(body)
+    # Blank the literal strings out first so the two styles cannot double-count.
+    remainder = LITERAL_STRING_RE.sub("", body)
+    patterns += re.findall(r'"([^"\n]*)"', remainder)
+    patterns += re.findall(r"'([^'\n]*)'", remainder)
+    return [p for p in patterns if p.strip()]
+
+
+def test_no_other_suppression_mechanism_slips_in_unnoticed():
+    """`paths` is not the only way to suppress findings.
+
+    A `commits = [...]` allowlist, a `regexes`/`stopwords` entry, or a per-rule
+    `[[rules.allowlists]]` block all silence findings without appearing in
+    `paths`, so this file's application-code assertions would not see them. Fail
+    loudly if one appears — not because it is necessarily wrong, but so it gets
+    reviewed and the assertions extended.
+    """
+    text = CONFIG.read_text(encoding="utf-8")
+    for mechanism, pattern in (
+        ("commits", r"^\s*commits\s*="),
+        ("regexes", r"^\s*regexes\s*="),
+        ("stopwords", r"^\s*stopwords\s*="),
+        ("per-rule allowlists", r"^\s*\[\[rules"),
+    ):
+        assert not re.search(pattern, text, re.MULTILINE), (
+            f"a `{mechanism}` suppression was added to .gitleaks.toml. It bypasses "
+            f"the application-code assertions in this file — extend them to cover "
+            f"it, then update this test."
+        )
 
 
 def test_config_and_ignore_files_exist():

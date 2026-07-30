@@ -37,6 +37,12 @@ jobs:
     - name: Run ruff
       run: ruff check .
 
+    # pyyaml: check_test_traps.py parses workflow files with a real YAML parser
+    # rather than a hand-rolled scanner. Cheap, and it removes a whole class of
+    # false positives/negatives around block scalars and inline comments.
+    - name: Install test-trap guard deps
+      run: pip install 'pyyaml>=6.0'
+
     # False-green guard: jsdom layout-zero reads in vitest specs, test runners
     # piped into filters without pipefail (the pipeline reports the filter's exit
     # status), and shell gates missing `set -euo pipefail`. Pure stdlib, so it
@@ -69,12 +75,16 @@ jobs:
   # version tag (:v8.30.1 — a tag, not a @sha256 digest; bump it deliberately,
   # since an unpinned :latest changes the ruleset under you).
   #
+  # NOTE: this job is NOT in branch protection, so it reports rather than blocks.
+  # Adding `secrets` to the required contexts is the one-line change that makes it
+  # a gate; until then do not describe secret scanning as enforced.
+  #
   # WORKING TREE, NOT FULL HISTORY, deliberately: this repo carries ~5,250
   # commits inherited from upstream CouchPotato (5,813 total), and a
   # full-history scan reports 37 findings, 31 of them upstream's own committed
   # provider keys spanning 2011-2017. See `make check-secrets-history` for the
   # full breakdown, including the 6 authored by this fork. A gate that
-  # is red on arrival gets ignored or disabled, so the blocking check answers the
+  # is red on arrival gets ignored or disabled, so this check answers the
   # question that can actually be actioned — "is there a secret in the code as it
   # stands?" — and the two known upstream keys still present are baselined by
   # fingerprint, with justification, in .gitleaksignore.
