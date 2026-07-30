@@ -1,29 +1,110 @@
 {# Movie detail release list. Rendered inline by movie_detail.html for first
    paint, and standalone by GET /partial/movie/<id>/releases for htmx swaps,
-   so it must not depend on anything movie_detail.html computes locally. #}
-{% if releases %}
+   so it must not depend on anything movie_detail.html computes locally --
+   every variable it uses (movie_id, title, releases, total_releases,
+   controls, options, columns) is supplied by _releases_ctx() in
+   couchpotato/ui/__init__.py for both callers.
+
+   The container itself always renders so it stays a stable htmx swap target
+   and the controls never disappear out from under the user:
+     - total_releases == 0 (nothing matches the movie's quality profile, or
+       the movie simply has no releases yet): controls are omitted --
+       there is nothing to filter (FEAT-007 B14).
+     - total_releases > 0 but the current filter matches nothing: controls
+       stay visible with a "Clear filters" escape hatch, plus a
+       "0 of N releases" live-region count.
+
+   The releaseDownloader() Alpine component lives in movie_detail.html (loaded
+   once per full page render), not here -- see the comment there for why. #}
 <div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
+  {% if total_releases %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
+
+  <form class="flex flex-wrap items-end gap-3 mb-3"
+        hx-get="{{ new_base }}partial/movie/{{ movie_id }}/releases"
+        hx-target="#movie-releases"
+        hx-swap="outerHTML"
+        hx-trigger="change"
+        aria-label="Filter releases">
+    <input type="hidden" name="sort" value="{{ controls.sort }}">
+    <input type="hidden" name="dir" value="{{ controls.dir }}">
+
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-source">Source</label>
+      <select id="rel-source" name="source"
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+        <option value="all" {% if controls.source == 'all' %}selected{% endif %}>All sources</option>
+        {% for value in options.source %}
+        <option value="{{ value }}" {% if controls.source == value %}selected{% endif %}>
+          {{ 'NZB' if value == 'nzb' else 'Torrent' }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-quality">Quality</label>
+      <select id="rel-quality" name="quality"
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+        <option value="all" {% if controls.quality == 'all' %}selected{% endif %}>All qualities</option>
+        {% for value in options.quality %}
+        <option value="{{ value }}" {% if controls.quality == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] uppercase tracking-wider text-cp-muted" for="rel-status">Status</label>
+      <select id="rel-status" name="status"
+              class="min-h-[44px] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs text-cp-text focus:outline-none focus:border-cp-accent/30">
+        <option value="all" {% if controls.status == 'all' %}selected{% endif %}>All statuses</option>
+        {% for value in options.status %}
+        <option value="{{ value }}" {% if controls.status == value %}selected{% endif %}>{{ value }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <noscript>
+      <button type="submit"
+              class="min-h-[44px] px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-lg text-xs transition-colors">
+        Apply
+      </button>
+    </noscript>
+
+    <p class="text-[11px] text-cp-muted ml-auto" aria-live="polite">
+      {{ releases|length }} of {{ total_releases }} release{{ '' if total_releases == 1 else 's' }}
+    </p>
+  </form>
+
   <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
     <table class="w-full text-xs">
       <caption class="sr-only">Available releases for {{ title }}</caption>
       <thead>
         <tr class="border-b border-white/[0.05] text-cp-muted text-left">
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Name</th>
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Quality</th>
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Score</th>
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Source</th>
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Status</th>
-          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Age</th>
+          {% for column in columns %}
+          <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider"
+              aria-sort="{{ column.aria_sort }}">
+            <a href="{{ column.href }}"
+               hx-get="{{ column.hx_get }}"
+               hx-target="#movie-releases"
+               hx-swap="outerHTML"
+               hx-push-url="{{ column.href }}"
+               class="inline-flex items-center gap-1 min-h-[44px] hover:text-cp-text focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cp-accent">
+              {{ column.label }}
+              {% if column.is_active %}<span aria-hidden="true">{{ '▾' if controls.dir == 'desc' else '▴' }}</span>{% endif %}
+            </a>
+          </th>
+          {% endfor %}
           <th scope="col" class="px-4 py-2.5 font-medium text-[10px] uppercase tracking-wider">Action</th>
         </tr>
       </thead>
       <tbody>
-        {% for r in matching_releases %}
+        {% for r in releases %}
         {% set r_info = r.get('info', {}) %}
         {% set r_quality = r.get('quality', '') %}
         {% set r_protocol = r_info.get('protocol', 'unknown') %}
         {% set r_score = r_info.get('score', 0) %}
+        {% set r_seeders = r_info.get('seeders') %}
         {% set r_age = r_info.get('age', 0) %}
         {% set r_id = r.get('_id', '') %}
         {% set r_files = r.get('files', {}) %}
@@ -44,6 +125,18 @@
             {% endif %}
           </td>
           <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>
+          <td class="px-4 py-2.5 text-cp-muted font-light font-mono">{{ (r_info.get('size') or 0)|round|int }} MB</td>
+          <td class="px-4 py-2.5 font-mono">
+            {%- if r_seeders is not none -%}
+              {% if r_seeders >= 5 %}
+              <span class="text-cp-success">{{ r_seeders }}</span>
+              {% elif r_seeders >= 1 %}
+              <span class="text-cp-warning">{{ r_seeders }}</span>
+              {% else %}
+              <span class="text-cp-danger">{{ r_seeders }}</span>
+              {% endif %}
+            {%- endif -%}
+          </td>
           <td class="px-4 py-2.5">
             {% if r_protocol == 'nzb' %}
             <span class="px-1.5 py-0.5 rounded text-[9px] bg-cp-blue/10 text-cp-blue">NZB</span>
@@ -110,15 +203,21 @@
           </td>
         </tr>
         {% endfor %}
-        {% if not matching_releases %}
+        {% if not releases %}
         <tr>
-          <td colspan="7" class="px-4 py-4 text-cp-muted text-center">
-            No releases match the selected profile qualities.
+          <td colspan="9" class="px-4 py-4 text-cp-muted text-center">
+            No releases match the selected filters.
+            <a href="{{ new_base }}movie/{{ movie_id }}"
+               hx-get="{{ new_base }}partial/movie/{{ movie_id }}/releases"
+               hx-target="#movie-releases"
+               hx-swap="outerHTML"
+               hx-push-url="{{ new_base }}movie/{{ movie_id }}"
+               class="text-cp-accent hover:text-cp-accentHover underline ml-1">Clear filters</a>
           </td>
         </tr>
         {% endif %}
       </tbody>
     </table>
   </div>
+  {% endif %}
 </div>
-{% endif %}

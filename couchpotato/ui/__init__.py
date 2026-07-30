@@ -14,6 +14,15 @@ from starlette.concurrency import run_in_threadpool
 from couchpotato.environment import Env
 from couchpotato.core.logger import CPLog
 
+# Re-exported so `from couchpotato.ui import require_auth` works: the releases
+# partial route (create_router, below) receives the identical function as its
+# `require_auth` parameter -- that parameter only shadows this name locally,
+# inside create_router's body, so it does not affect which function actually
+# guards any route. Safe from a circular import: `couchpotato.ui` is a
+# submodule of `couchpotato`, so importing it always fully initialises
+# `couchpotato/__init__.py` (where require_auth is defined) first.
+from couchpotato import require_auth  # noqa: F401
+
 log = CPLog(__name__)
 
 _template_dir = os.path.join(os.path.dirname(__file__), 'templates')
@@ -78,6 +87,48 @@ def _absolute_base(request: Request) -> str:
     return '%s://%s%s' % (scheme, netloc, web_base)
 
 
+def _releases_ctx(movie, movie_id, params):
+    """Everything the releases partial (partials/movie_releases.html) needs,
+    computed once so the full-page render and the standalone htmx route agree.
+
+    Also returns `title`: the standalone `/partial/movie/{id}/releases` route
+    has no other source for the table's `<caption>`. When this is merged into
+    `partials/movie_detail.html`'s own render (which sets its own `title` from
+    the same movie before `{% include %}` runs), the local `{% set title %}`
+    simply wins -- harmless duplication there, load-bearing for the
+    standalone route.
+    """
+    from couchpotato.ui.releases_view import (
+        filter_and_sort_releases, filter_options, normalise_controls, sort_columns,
+    )
+
+    movie = movie or {}
+    profile = movie.get('profile') or {}
+    profile_qualities = profile.get('qualities') or []
+
+    all_releases = movie.get('releases') or []
+    # Same profile-matching rule the template used to apply inline.
+    matching = [r for r in all_releases
+                if not profile_qualities or r.get('quality') in profile_qualities]
+
+    controls = normalise_controls(params)
+    web_base = Env.get('web_base') or '/'
+
+    info = movie.get('info') or {}
+    titles = info.get('titles') or ['Unknown']
+    title = titles[0] if titles else 'Unknown'
+
+    return {
+        'movie_id': movie_id,
+        'title': title,
+        'releases': filter_and_sort_releases(matching, controls, profile_qualities),
+        'total_releases': len(matching),
+        'controls': controls,
+        'options': filter_options(matching, profile_qualities),
+        'columns': sort_columns(controls, movie_id, web_base),
+    }
+
+
 def create_router(require_auth) -> APIRouter:
     """Create the /new/ router. require_auth is the FastAPI dependency."""
     router = APIRouter()
@@ -107,7 +158,14 @@ def create_router(require_auth) -> APIRouter:
     @router.get('/movie/{movie_id}')
     async def movie_detail(movie_id: str, request: Request, user=Depends(require_auth)):
         tmpl = _jinja.get_template('detail.html')
-        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id})))
+        # Forward the release-list controls (source/quality/sort/dir/...) into
+        # the initial hx-get, so a filtered/sorted URL like
+        # /movie/{id}?source=nzb&sort=size is bookmarkable and shareable
+        # (FEAT-007 B8) -- detail.html is an htmx shell with no other way to
+        # apply them on first paint.
+        query = request.url.query
+        detail_query = ('?' + query) if query else ''
+        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id, 'detail_query': detail_query})))
 
     @router.get('/suggestions/')
     @router.get('/suggestions')
@@ -186,8 +244,33 @@ def create_router(require_auth) -> APIRouter:
         except Exception:
             log.error('Failed to fetch movie detail')
             movie = {}
+        movie = movie or {}
         tmpl = _jinja.get_template('partials/movie_detail.html')
-        return HTMLResponse(tmpl.render(movie=movie, **_ctx()))
+        # Same builder the standalone releases route uses, so the inline
+        # first paint and a later htmx swap of #movie-releases agree, and so
+        # a bookmarked/shared filtered URL (FEAT-007 B8) renders filtered on
+        # first paint too.
+        releases_ctx = _releases_ctx(movie, movie_id, dict(request.query_params))
+        return HTMLResponse(tmpl.render(movie=movie, **releases_ctx, **_ctx()))
+
+    @router.get('/partial/movie/{movie_id}/releases')
+    async def partial_movie_releases(movie_id: str, request: Request, user=Depends(require_auth)):
+        """Return the release list, filtered and sorted per the query params.
+
+        Behind htmx: the sort/filter controls in partials/movie_releases.html
+        target #movie-releases with hx-swap="outerHTML" against this route.
+        """
+        from couchpotato.api import callApiHandler
+        movie = {}
+        try:
+            result = await run_in_threadpool(callApiHandler, 'media.get', id=movie_id)
+            if isinstance(result, dict):
+                movie = result.get('media', result) or {}
+        except Exception:
+            log.error('Failed to fetch movie for release list')
+        tmpl = _jinja.get_template('partials/movie_releases.html')
+        releases_ctx = _releases_ctx(movie, movie_id, dict(request.query_params))
+        return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()))
 
     @router.get('/partial/search')
     async def partial_search(request: Request, q: str = '', user=Depends(require_auth)):

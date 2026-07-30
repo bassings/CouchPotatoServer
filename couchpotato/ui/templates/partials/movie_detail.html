@@ -13,11 +13,15 @@
 {% set status = movie.get('status', '') %}
 {% set profile = movie.get('profile', {}) %}
 {% set quality_label = profile.get('label', '') if profile else '' %}
-{% set releases = movie.get('releases', []) or [] %}
-{% set profile_qualities = profile.get('qualities', []) if profile else [] %}
-{% set matching_releases = releases|selectattr('quality', 'in', profile_qualities)|list if profile_qualities else releases %}
+{# NOTE: `all_releases` is the RAW, unfiltered list -- used only for the
+   completed-release badge above. It is deliberately NOT named `releases`:
+   that name is a render kwarg supplied by _releases_ctx() (the
+   filtered/sorted list for partials/movie_releases.html, included below),
+   and a {% set releases = ... %} here would silently shadow it before the
+   include ever sees it. #}
+{% set all_releases = movie.get('releases', []) or [] %}
 {% set completed_statuses = ['done', 'seeding', 'downloaded'] %}
-{% set completed_releases = releases|selectattr('status', 'in', completed_statuses)|list %}
+{% set completed_releases = all_releases|selectattr('status', 'in', completed_statuses)|list %}
 {% set completed_release = completed_releases[0] if completed_releases else None %}
 {% set downloaded_quality = completed_release.get('quality', '') if completed_release else '' %}
 {% set completed_status = completed_release.get('status', '') if completed_release else '' %}
