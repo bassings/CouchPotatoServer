@@ -299,8 +299,21 @@ this bullet said "buttons"; that was wrong even at the design stage, since
 the sort links carry `href`s that must work with `hx-push-url` for B8's
 bookmarkability, which a `<button>` cannot do without extra JS. The filter
 controls are a labelled `<form>` group. A result count lives in an
-`aria-live="polite"` region so a filter change is announced. Touch targets on
-the controls meet the 44px floor from the global standards.
+`aria-live="polite"` region, hosted in `detail.html`'s static shell (not
+inside the swapped `#movie-releases`, and updated via
+`hx-swap-oob="innerHTML"` -- see the B10 correction below),
+so a filter change is announced. **Correction (found during the pre-push
+review that also fixed B13/B14 below):** "touch targets meet the 44px
+floor from the global standards" overstated it for the sort links. Measured
+(Playwright `boundingBox()` against the seeded fixture): every sort link is
+44px tall (`min-h-[44px]` holds), but width varies by column label length --
+from about 20px (`Age`) up to 44px (`Seeders`), several columns (`Age`,
+`Size`, `Name`, `Score`) well under a 44×44 square. They meet WCAG 2.5.8
+(Target Size, Level AA -- 24×24px minimum) only via that criterion's
+spacing exception (adjacent targets are far enough apart), not on raw
+target size; they do not meet the stricter 44×44 floor CLAUDE.md's global
+standards ask for on their own. The filter `<select>`s (`min-h-[44px]`,
+full-width-ish column) are not affected by this.
 
 **Error handling.** Unrecognised `sort`, `dir`, `source`, `quality` or `status`
 values fall back to their defaults rather than raising — these values arrive
@@ -333,7 +346,14 @@ from URLs that can be bookmarked, shared or hand-edited. Releases missing
       `test_source_and_status_sort_alphabetically_by_their_displayed_value`,
       `test_quality_sorts_by_profile_order_not_alphabetically`,
       `test_quality_sort_without_a_profile_falls_back_to_the_identifier`,
-      `test_sorting_is_stable_for_equal_values`)
+      `test_sorting_is_stable_for_equal_values`). **Correction:**
+      `test_quality_sorts_by_profile_order_not_alphabetically` originally used
+      a profile of `['1080p', '720p']`, whose order already IS alphabetical,
+      so it passed even with `_quality_key`'s profile-index lookup replaced
+      outright by `return identifier.lower()` (confirmed with that exact
+      substitution). It now uses `['720p', '1080p']`, where profile order and
+      alphabetical order disagree, so only a genuine profile-index lookup
+      passes.
 - [x] B5: releases missing the sorted-on field sort last in both directions and
       never raise.
       (`test_releases_missing_the_sorted_field_go_last_in_both_directions`
@@ -376,7 +396,33 @@ from URLs that can be bookmarked, shared or hand-edited. Releases missing
       (`test_aria_sort_marks_only_the_active_column`,
       `test_no_column_is_marked_under_the_default_sort` in `test_releases_view.py`;
       `test_aria_sort_reflects_the_active_column`,
-      `test_the_result_count_is_in_a_live_region` in `test_releases_partial_route.py`)
+      `test_the_result_count_live_region_lives_in_the_static_shell`,
+      `test_the_live_region_survives_a_swap_via_hx_swap_oob` in
+      `test_releases_partial_route.py`). **Correction (found in pre-push
+      review, then a second bug caught while verifying the fix live in a
+      browser):** the `aria-live` region originally lived INSIDE
+      `#movie-releases`, which `hx-swap="outerHTML"` destroys and recreates
+      on every filter/sort change — screen readers announce mutations to a
+      region already registered in the accessibility tree, not a brand-new
+      node, so the count was never actually announced. The first fix moved
+      a screen-reader-only copy to a sibling of `#movie-releases`, updated
+      via `hx-swap-oob="innerHTML"` (deliberately not the bare
+      `hx-swap-oob="true"` outerHTML shorthand, which would recreate the
+      node's identity and reproduce the exact same bug) — but defined only
+      inside `partials/movie_releases.html`. That still didn't work: htmx's
+      OOB swap only updates a target id that ALREADY EXISTS in the
+      document, and even the very FIRST render of the detail body arrives
+      via an htmx swap (`detail.html`'s own `hx-trigger="load"`), so on that
+      first render there was no pre-existing node for the OOB fragment to
+      match — htmx fires `htmx:oobErrorNoTarget` and silently drops it
+      (confirmed: `curl` saw the announcer in the raw response; the
+      browser's rendered DOM did not). The announcer now lives in
+      `detail.html`'s STATIC shell instead, so it exists before any swap
+      ever happens. Verified live in a browser: a JS marker property set on
+      the node survives a subsequent filter/sort swap (proving it is the
+      SAME DOM node throughout, not recreated), and its text updates
+      correctly (e.g. "6 of 6 releases" → "2 of 6 releases" after filtering
+      to NZB).
 - [x] B11: E2E — filter to NZB, confirm only NZB rows remain; sort by size,
       confirm row order and that `aria-sort` updated (CLAUDE.md rule 5).
       (`tests/e2e/release_controls.spec.ts`: `'filtering by source shows only
@@ -393,21 +439,35 @@ from URLs that can be bookmarked, shared or hand-edited. Releases missing
 - [x] B13: Download and Skip still work on a row after an htmx swap (the Alpine
       component rebinds).
       (`tests/e2e/release_controls.spec.ts`: `'Download and Skip still work
-      after a swap (B13)'` — asserts the action buttons are present and
-      enabled after a sort-triggered swap without actually clicking Download/
-      Skip, since that would snatch or ignore a real release in whatever
-      library the suite happens to run against; skips if the library has no
-      movie with releases)
+      after a swap (B13)'`; skips explicitly, with a stated reason, if the
+      library has no movie with releases). **Correction:** the original
+      version asserted `toBeEnabled()` on the action button, but `:disabled`
+      is an Alpine binding, not an HTML attribute, so that assertion passed
+      whether or not Alpine ever rebound the component after the swap — it
+      was also wrapped in `if (count > 0)`, so a missing button silently
+      no-opped instead of failing or skipping with a reason. It now asserts
+      `Alpine.$data(document.querySelector('#movie-releases'))` is the
+      rebound `releaseDownloader()` scope (has `downloading`/`ignoring` as
+      objects) after the swap, which is `undefined`/wrong-shaped if the
+      component failed to rebind; the button-count guard is an explicit
+      `test.skip()` with a reason rather than a silent no-op. Still does NOT
+      click Download/Skip themselves.
 - [x] B14: a movie with no releases still renders the existing empty state,
       with controls either hidden or inert.
       (`test_a_movie_with_no_releases_renders_the_empty_state` in
-      `test_releases_partial_route.py` — asserts 200, not the specific
-      hidden-controls markup; the hidden-controls behaviour itself is
-      exercised structurally by every other route test's implicit contrast:
-      `_releases_ctx()` gates the controls+table on `total_releases`, which is
-      `0` in this scenario, and the template's `{% if total_releases %}` is
-      unconditional Python-level logic rather than something that needs a
-      per-branch unit test of Jinja rendering)
+      `test_releases_partial_route.py`). **Correction:** the original version
+      asserted only `status_code == 200`, which also passes for an unrelated
+      error page, and so named nothing about what the empty state actually
+      looks like. It now also asserts there is no `<table>`, no "Releases"
+      heading, and no profile-hidden message — i.e. the container is truly
+      empty, not just any 200 response. A second regression test
+      (`test_releases_hidden_by_the_profile_are_distinguished_from_no_releases`)
+      pins the DIFFERENT case this one must not be confused with: releases
+      exist but all are hidden by the movie's quality profile, which renders
+      a heading + explanatory message rather than nothing (see the
+      `raw_release_count` fix in `couchpotato/ui/__init__.py`'s
+      `_releases_ctx`, added after `total_releases` became the
+      profile-matching count and silently swallowed this distinction).
 
 **E2E coverage-gap note (B11-B13):** CI and local e2e always start from a
 fresh, empty `.e2e-data`/`.config` (see the same gap documented in
@@ -448,11 +508,16 @@ not one introduced by this plan.
   `sort_by_protocol_preference()`
 - new: `couchpotato/ui/releases_view.py` — `filter_and_sort_releases`
 - `couchpotato/ui/__init__.py` — new partial route; full-page route accepts the
-  same params
+  same params, and (post-review) branches on the `HX-Request` header so the
+  filter form can target its own bookmarkable path instead of the standalone
+  partial route (see the B8/hx-push-url correction above)
 - new: `couchpotato/ui/templates/partials/movie_releases.html` — extracted from
   `movie_detail.html`
 - `couchpotato/ui/templates/partials/movie_detail.html` — include the partial;
   Size/Seeders columns; controls
+- `couchpotato/ui/templates/detail.html` — (post-review) hosts the persistent
+  `#release-count-announcer` live region in the static shell (see the B10
+  correction above)
 - new: `tests/unit/` — helper tests (Part A), `filter_and_sort_releases` tests
   and route tests (Part B)
 - `tests/e2e/` — filter/sort coverage per CLAUDE.md rule 5
