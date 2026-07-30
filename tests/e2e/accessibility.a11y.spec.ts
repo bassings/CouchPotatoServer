@@ -160,46 +160,33 @@ test.describe('Accessibility', () => {
   // unseeded instance, but say plainly that the seed didn't run rather than
   // looking like a routine, expected skip.
   test('Movie Detail page with a release filter applied should be accessible', async ({ page }) => {
-    await page.goto('/');
-    await page.waitForLoadState('networkidle');
+    // Navigate straight to the seeded movie, like release_controls.spec.ts
+    // does, rather than clicking whichever poster card happens to be first.
+    // "First card" is not stable across a full run: another spec clicks
+    // "Mark as Done", which moves the seeded movie out of the Wanted view
+    // that '/' renders, and search.spec.ts adds real movies that have no
+    // releases -- so this test would land on the wrong movie and skip with
+    // "this movie has no releases". It only passed at all because
+    // 'accessibility' happens to sort first alphabetically; that is luck, not
+    // a design. A fixed id removes the dependency on both ordering and
+    // library state.
+    await page.goto('/movie/e2e-seed-movie-001');
 
-    const movieGrid = page.locator('#movie-grid');
-    await expect(movieGrid).toBeVisible({ timeout: 10000 });
-
-    // #movie-grid is the static htmx shell (present before its hx-get load
-    // even fires), so checking .poster-card's count immediately after the
-    // grid becomes "visible" races the swap and can misreport "no movie in
-    // the test library" for a seed that ran but just hadn't landed yet (the
-    // same race proven for release_controls.spec.ts's beforeEach). Wait for
-    // an actual card to attach, with a real timeout, tolerating it so a
-    // genuine load timeout gets a distinct message from a genuinely empty
-    // library.
-    const cardLoaded = await movieGrid.locator('.poster-card').first()
-      .waitFor({ state: 'attached', timeout: 10000 })
+    // The release table arrives via detail.html's hx-trigger="load" swap, so
+    // wait for the swapped-in content itself -- never for #movie-detail-container,
+    // which is in the static shell and so resolves instantly, waiting for
+    // nothing.
+    const releasesLoaded = await page.locator('#movie-releases table')
+      .waitFor({ state: 'attached', timeout: 15000 })
       .then(() => true)
       .catch(() => false);
 
-    test.skip(!cardLoaded, 'timed out after 10s waiting for the movie grid ' +
-      'htmx load to swap in a .poster-card -- this is a load/perf problem, ' +
-      'not a missing seed/movie');
-
-    const firstCard = movieGrid.locator('.poster-card').first();
-    test.skip(
-      await firstCard.count() === 0,
-      'no movie in the test library -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
-    await firstCard.click();
-    await expect(page).toHaveURL(/.*movie\/.+/);
-    await expect(page.locator('h1')).toBeVisible({ timeout: 5000 });
+    test.skip(!releasesLoaded,
+      'no seeded movie with releases at /movie/e2e-seed-movie-001 -- either ' +
+      'the seed did not run (scripts/seed_e2e_data.py --data_dir=<dir> before ' +
+      'starting the server), or the detail partial took over 15s to load');
 
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
 
     // Apply a sort so the active-column aria-sort state is exercised too.
     await releases.getByRole('link', { name: /^Score/ }).click();
