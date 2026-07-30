@@ -5,6 +5,8 @@ Follows the TestClient pattern in tests/unit/test_fastapi_web.py: build the
 real app, register a stub `media.get` handler, and drive the route.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -480,3 +482,77 @@ class TestMovieDetailHtmxBranch:
         assert 'tabindex="0"' in resp.text
         assert 'role="region"' in resp.text
         assert 'aria-label="Releases table' in resp.text
+
+
+class TestSeederHealthColour:
+    """docs/design-system/README.md:149 / CONFORMANCE.md require seed colour
+    by health (success / muted / warning). The now-accessible :root.light
+    overrides in base.html (5.48:1 / 5.02:1 against the light theme's white
+    cp-card) make the bare text-cp-success/warning tokens safe here.
+
+    The Seeders <td> is found by COLUMN POSITION (regex over every
+    `font-mono whitespace-nowrap` cell -- Size is first, Seeders second),
+    not by text search: the row also contains a Source badge that
+    legitimately uses text-cp-warning/success for unrelated reasons (NZB/
+    Torrent colouring), so searching the whole row's text would false-match.
+    """
+
+    def _seeders_cell_class(self, resp_text):
+        cells = re.findall(r'<td class="([^"]*font-mono whitespace-nowrap[^"]*)"', resp_text)
+        assert len(cells) == 2, 'expected exactly Size then Seeders as font-mono whitespace-nowrap cells'
+        return cells[1]
+
+    def _movie_with_seeders(self, seeders):
+        return dict(MOVIE, releases = [
+            _release('r', 'torrent', '1080p', 'available', 10, 5000, seeders = seeders),
+        ])
+
+    def test_zero_seeders_is_warning(self, client):
+        def handler(**kwargs):
+            return {'media': self._movie_with_seeders(0)}
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            assert 'text-cp-warning' in self._seeders_cell_class(resp.text)
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_healthy_seeders_is_success(self, client):
+        def handler(**kwargs):
+            return {'media': self._movie_with_seeders(50)}
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            assert 'text-cp-success' in self._seeders_cell_class(resp.text)
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_a_weak_but_live_swarm_stays_muted_not_warning(self, client):
+        """1-4 seeders is weak but not dead -- not alarming enough to warrant
+        the warning colour."""
+        def handler(**kwargs):
+            return {'media': self._movie_with_seeders(2)}
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            cell_class = self._seeders_cell_class(resp.text)
+            assert 'text-cp-warning' not in cell_class
+            assert 'text-cp-success' not in cell_class
+            assert 'text-cp-muted' in cell_class
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)

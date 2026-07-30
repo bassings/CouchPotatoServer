@@ -217,11 +217,26 @@
              read as a torrent nobody is seeding. The sr-only label keeps a
              screen reader from announcing an unlabelled empty cell as just
              "blank" with no indication that is the correct, expected value
-             here. No health colouring here -- it was not asked for, nothing
-             tests it, and it applied text-cp-success/warning/danger, which
-             fail WCAG AA contrast on the light theme (see the :root.light
-             overrides in base.html). #}
-          <td class="px-4 py-2.5 text-cp-muted font-light font-mono whitespace-nowrap">
+             here.
+
+             Health colouring by seed count (docs/design-system/README.md:149,
+             CONFORMANCE.md's "seed color by health"): 0 = warning (a dead
+             swarm), 1-4 = the cell's own default muted (a weak but live
+             swarm -- not alarming enough for warning), 5+ = success (a
+             healthy swarm). This was previously removed because it used the
+             bare text-cp-success/warning tokens, which fail WCAG AA
+             contrast over a light background -- that rationale is now
+             stale: base.html's :root.light overrides (:not(.on-dark),
+             computed 5.48:1 / 5.02:1 against the light theme's white
+             cp-card) exist precisely so these tokens ARE safe here, and this
+             cell sits on that same light bg-cp-card in the light theme (not
+             the dark poster backdrop the `on-dark` exception carves out
+             for), so no `on-dark` class is warranted. #}
+          <td class="px-4 py-2.5 font-light font-mono whitespace-nowrap {{
+                'text-cp-warning' if r_seeders == 0 else
+                'text-cp-success' if r_seeders is not none and r_seeders >= 5 else
+                'text-cp-muted'
+              }}">
             {%- if r_seeders is not none -%}
             {{ r_seeders }}
             {%- else -%}
