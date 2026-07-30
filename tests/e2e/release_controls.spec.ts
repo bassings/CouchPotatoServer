@@ -145,7 +145,9 @@ test.describe('Release list controls', () => {
       for (const source of sources) {
         expect(source.trim()).toMatch(/NZB/i);
       }
-    }).toPass();
+      // Bounded: an unbounded toPass() is capped only by the 30s test timeout,
+      // so a genuine regression takes 30s to report instead of failing fast.
+    }).toPass({ timeout: 5000 });
   });
 
   test('the result count is announced in a live region', async ({ page }) => {

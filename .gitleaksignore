@@ -1,20 +1,33 @@
-# Gitleaks fingerprint baseline — known, assessed, pre-existing findings.
+# Gitleaks fingerprint baseline — known, assessed, INTENTIONAL findings.
 #
 # Rules for this file: one entry per finding, each with a comment saying what it
-# is and why it is accepted. Never add an entry to make CI green without
-# assessing it — an unexplained fingerprint here is indistinguishable from a
-# suppressed real leak. Prefer fixing or rotating the credential over adding a
-# line. Regenerate/refresh fingerprints with:
+# is and why it is accepted (enforced by tests/unit/test_gitleaks_config.py — an
+# unexplained fingerprint is indistinguishable from a suppressed real leak).
+# Prefer fixing or rotating a credential over adding a line here.
 #
-#   make check-secrets
+# Refresh fingerprints with:  make check-secrets
 #
-# No findings are currently baselined here. Two used to be:
+# NOTE ON SHIPPED APPLICATION KEYS — read before "cleaning these up".
+# CouchPotato is self-hosted software that is expected to work out of the box, so
+# it deliberately ships public application keys for the third-party services it
+# reads. themoviedb.py carries a pool of them (`ak`, base64) and falls back to
+# them whenever the user has not configured their own; tmdb_charts.py logs
+# "using built-in" when it does. These are ordinary application defaults, public
+# in every copy of upstream CouchPotato, granting access to third-party *public*
+# read APIs and to nothing of this project's.
 #
-# - The fanart.tv v3 API key baked into
-#   couchpotato/core/media/movie/providers/info/fanarttv.py:18 was removed and
-#   replaced with the existing per-install `fanart.tv` `api_key` setting (see
-#   docs/technical-debt.md) — fixed rather than suppressed, so its baseline
-#   entry is gone too.
-# - The YouTube key that used to be listed here is gone: its file,
-#   movie.actions.js, was an orphan left behind by UI-CLEANUP-02 and has now been
-#   deleted outright, which is the better fix than suppressing it.
+# Removing one does not improve security. It silently costs every existing
+# install the feature behind it. That mistake was made once here (the fanart.tv
+# key was removed, which disabled all extra artwork for anyone who had not
+# registered their own key) and reverted — see the comment in fanarttv.py.
+# If you want a per-install key, ADD a setting that takes precedence; keep the
+# shipped fallback.
+
+# No fingerprints are currently suppressed.
+#
+# Be careful reading that as "there are no keys in the tree": the shipped
+# fanart.tv key is base64-encoded (fanarttv.py `ak`, matching themoviedb.py's
+# idiom), so gitleaks' hex-literal rules do not match it. The scan being clean
+# reflects the encoding, not the absence of a shipped key. It is documented in
+# the source, above, and in docs/technical-debt.md — nothing is hidden, and the
+# encoding predates this repo as the upstream convention.

@@ -39,6 +39,14 @@ export async function waitForPageReady(page: Page): Promise<void> {
  * this first. Without it the test depends on third-party chart providers being
  * reachable and fast — an external dependency in a supposedly hermetic suite,
  * and the difference between an 85s page and an instant one.
+ *
+ * FIDELITY MATTERS HERE more than for most stubs: `accessibility.a11y.spec.ts`
+ * runs axe against this markup, so an a11y-relevant attribute the stub omits is
+ * an a11y-relevant attribute nothing checks. It previously dropped `data-imdb`
+ * (which charts.html's movie-skipped listener selects on) and the focus-ring
+ * classes — i.e. axe was asserting a visible focus indicator that the stub did
+ * not have. `tests/unit/test_charts_template.py` pins these against the real
+ * template.
  */
 export async function mockSuggestionsCharts(page: Page): Promise<void> {
   await page.route('**/partial/charts', route => route.fulfill({
@@ -48,7 +56,8 @@ export async function mockSuggestionsCharts(page: Page): Promise<void> {
       <div class="mb-8">
         <h2 class="text-sm font-medium mb-3">Featured</h2>
         <button type="button"
-                class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full"
+                class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full cursor-pointer hover:border-white/[0.12] transition-colors focus:outline-none focus:ring-2 focus:ring-cp-accent/50 focus:ring-offset-2 focus:ring-offset-cp-bg"
+                data-imdb="tt0137523"
                 aria-label="View details for Example Movie (2026)">
           <div class="relative aspect-[2/3] overflow-hidden bg-white">
             <div class="absolute top-2 left-2">
@@ -147,11 +156,4 @@ export function checkNoErrors(errors: string[]): void {
     e.includes('bytes-like object')
   );
   expect(criticalErrors, `Console errors: ${criticalErrors.join(' | ')}`).toHaveLength(0);
-}
-
-/** Collect console errors for the lifetime of the page. */
-export function collectConsoleErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
-  return errors;
 }

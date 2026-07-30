@@ -55,12 +55,36 @@ def html():
     return render(FIXTURE_MOVIES)
 
 
+def _card_tags(html: str) -> list[str]:
+    """The opening tags of the result CARDS, identified by `data-imdb`.
+
+    Cards are located by `data-imdb` rather than by class, because the class is
+    the very thing under test.
+    """
+    return re.findall(r"<div\b[^>]*\bdata-imdb=\"[^\"]+\"[^>]*>", html)
+
+
 def test_renders_one_card_per_movie_with_the_selector_the_specs_use(html):
-    """`search.spec.ts` locates results via `.rounded-md` inside #search-results."""
-    cards = re.findall(r'class="[^"]*\brounded-md\b[^"]*"', html)
-    assert len(cards) >= len(FIXTURE_MOVIES), (
-        f"expected at least {len(FIXTURE_MOVIES)} `.rounded-md` cards, found {len(cards)}"
+    """`search.spec.ts` locates results via `.rounded-md` inside #search-results.
+
+    Asserts the CARD ELEMENT carries the class — not that the string appears
+    somewhere in the document. Counting occurrences document-wide passed even
+    with the card's own class renamed, because four other elements (the hover
+    hint, the profile `select`, the Add button) also use `rounded-md`. That made
+    this — the one assertion standing between the E2E stub and drift on the
+    selector the specs actually use — satisfied incidentally. Confirmed by
+    mutation: renaming the card class left all 7 tests green.
+    """
+    cards = _card_tags(html)
+    assert len(cards) == len(FIXTURE_MOVIES), (
+        f"expected {len(FIXTURE_MOVIES)} result cards (matched by data-imdb), "
+        f"found {len(cards)}"
     )
+    for tag in cards:
+        assert re.search(r'class="[^"]*\brounded-md\b[^"]*"', tag), (
+            f"a result card does not carry the `.rounded-md` class that "
+            f"search.spec.ts selects on: {tag[:120]}"
+        )
 
 
 def test_first_paragraph_in_a_card_is_the_year(html):

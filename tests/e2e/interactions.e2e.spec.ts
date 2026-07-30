@@ -19,17 +19,18 @@ import { test, expect, Page } from '@playwright/test';
 // duplicate that used to live here waited on `networkidle`, which never settles
 // on the suggestions page because /partial/charts fetches external providers.
 // See helpers.ts for the full explanation.
-import { mockSuggestionsCharts, waitForPageReady } from './helpers';
+import {
+  checkNoErrors as sharedCheckNoErrors,
+  mockSuggestionsCharts,
+  waitForPageReady,
+} from './helpers';
 
-// Local shim so the 19 existing call sites keep their signature. `page` is
-// unused; the assertion is synchronous so failures attribute to this test.
+// Thin shim so the 19 existing call sites keep their `(page, errors)` signature.
+// It DELEGATES rather than reimplementing: a second copy of the filter list is
+// exactly the duplication that let a good helper and a broken one coexist in
+// this suite. `page` is unused.
 function checkNoErrors(_page: Page, errors: string[]) {
-  const criticalErrors = errors.filter(e =>
-    e.includes('TypeError') ||
-    e.includes('ReferenceError') ||
-    e.includes('bytes-like object')
-  );
-  expect(criticalErrors, `Console errors: ${criticalErrors.join(' | ')}`).toHaveLength(0);
+  sharedCheckNoErrors(errors);
 }
 
 test.describe('Navigation', () => {

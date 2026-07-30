@@ -95,73 +95,41 @@
   Remaining, not currently a problem: the suite still shares one server, so a
   spec that mutates global config must declare serial mode. A server per worker
   would remove that constraint entirely.
-- **Two hardcoded third-party API keys inherited from upstream** — both
-  baselined in `.gitleaksignore` (added 2026-07-30 with the `secrets` gate) and
-  both already public in every copy of the upstream repo, so they leak nothing
-  that is not already out:
-  - ~~`couchpotato/core/media/movie/providers/info/fanarttv.py:18` — fanart.tv
-    v3 key baked into the request URL.~~ **Fixed 2026-07-31:** the literal is
-    gone; `getArt`/`isDisabled` now read the existing per-install `fanart.tv`
-    `api_key` setting and skip the request cleanly (logged at WARNING, not
-    ERROR — an unset key is an expected, recoverable state) when it's blank.
-    Existing installs that never set a key will lose fanart lookups until they
-    set one — a deliberate, accepted behaviour change, since there is no
-    longer a shared fallback key to fall back to. A `config` block was added
-    registering `fanarttv.api_key` the same way `themoviedb.py` does, but note
-    that does **not** currently make it reachable in the settings UI: the
-    Alpine settings panel (`couchpotato/ui/templates/partials/settings/scripts.html`)
-    hardcodes `hiddenTabs: new Set(['providers', 'automation'])` with no remap
-    for `providers`, so `tab: 'providers'` groups — `fanarttv` and the
-    pre-existing `themoviedb` one — can never appear in `tabOrder` and are
-    unreachable from any tab button. This is a pre-existing gap (themoviedb's
-    key has been in the same boat all along, just masked by its `self.ak`
-    fallback), not introduced by this fix, and fixing it is out of scope here
-    (no UI was invented for this task). Until someone un-hides the `providers`
-    tab, admins must set `api_key` directly under `[fanarttv]` in `config.ini`
-    — which is what the runtime WARNING log now tells them. Its
-    `.gitleaksignore` entry has been removed accordingly.
-  - `couchpotato/core/media/movie/_base/static/movie.actions.js:378` — YouTube
-    Data API key in a trailer-lookup URL. **This needs its own deliberate
-    deletion — it will NOT resolve itself.** The file is an orphan that both UI
-    cleanups left behind: UI-CLEANUP-02 shipped (`02d2eece`, merged as #148),
-    `specs/UI-MIGRATION.md` records the legacy asset layer as fully retired,
-    `/old/*` is now a bare 302, and `grep -rn "movie\.actions"` finds no live
-    reference anywhere — yet the file and its key are still tracked. An earlier
-    version of this entry claimed it "goes away with UI-CLEANUP-02, no separate
-    work needed", which parked a live item behind a completed task. Deleting an
-    unreferenced legacy file is a small change but a real one, so it belongs in
-    its own commit rather than riding along with tooling work.
-  Full git history holds ~37 findings in total (`make check-secrets-history`).
-  Verified breakdown as of 2026-07-30 — the "all upstream, all pre-2013" framing
-  that first accompanied this entry was wrong on both counts:
-  - 29 by `ruud@crashdummy.nl` (upstream) spanning **2011–2016**, not 2011–2012
-    (10 of those 29 are 2013 or later);
-  - 2 by other upstream contributors, one of which is the only 2017 finding;
-  - **6 by `bassings@gmail.com` — this fork's own commits.** One is the
-    per-install `api_key` in `QA/QA_SESSION_2026-02-19.md` (redacted from HEAD on
-    2026-07-30; still in history, which is why rotation rather than redaction is
-    the remedy for anything that matters). The other five are under
-    `migration_backup/` (2025-07-30) and are *copies* of the same upstream
-    provider keys; that directory is no longer tracked.
+- **Shipped public application keys are DELIBERATE — do not "clean them up".**
+  CouchPotato is self-hosted software expected to work out of the box, so it
+  ships public app keys for the third-party read APIs it uses:
+  `themoviedb.py` carries a base64 pool (`ak`) and falls back to it whenever the
+  user has not configured their own, and `tmdb_charts.py` logs "using built-in"
+  when it does. `fanarttv.py` follows the same pattern for extra artwork.
 
-  So there is no fork-introduced credential in history beyond the throwaway
-  api_key. Rewriting history to purge upstream's keys is not proposed. What was
-  worth fixing was the guidance: telling the next person to expect "~37 pre-2013
-  upstream hits" would have filed this fork's own committed key under expected
-  noise.
+  This is recorded as debt because the mistake has already been made once: on
+  2026-07-31 the fanart.tv key was removed and replaced with a required
+  per-install setting. That silently disabled extra artwork (logos, banners,
+  discs) for every existing install, and — because the settings group was
+  registered on the hidden `providers` tab — the replacement key could not even
+  be entered from the UI. It bought nothing: the key is public in every copy of
+  upstream and grants access to fanart.tv's public art API, nothing of this
+  project's. Reverted the same day; `tests/unit/test_providers.py` now pins both
+  the shipped fallback and the user override.
 
+  If you want per-install keys, ADD a setting that takes precedence and KEEP the
+  shipped fallback — which is what `fanarttv.py` now does.
+
+  Note for anyone auditing: `make check-secrets` reports clean, but that reflects
+  the base64 encoding (gitleaks' hex rules do not match it), not the absence of a
+  shipped key. Nothing is hidden — see the comments in `fanarttv.py` and
+  `.gitleaksignore`.
 - **The settings UI hides the `providers` tab, so metadata-provider settings are
   unreachable.** `couchpotato/ui/templates/partials/settings/scripts.html` has
   `hiddenTabs: new Set(['providers', 'automation'])`, and nothing remaps
   `providers`, so any group declaring `'tab': 'providers'` never enters
-  `tabOrder`. That currently affects **TheMovieDB's `api_key`**
-  (`themoviedb.py`), which is masked by its baked-in fallback key — which is
-  exactly why the gap went unnoticed. fanart.tv sidesteps it by registering under
-  `general` instead (see the comment in `fanarttv.py`), and
+  `tabOrder`. That affects **TheMovieDB's `api_key`** (`themoviedb.py`) — masked
+  by its shipped fallback, which is why it went unnoticed. fanart.tv sidesteps it
+  by registering under `general`, and
   `tests/unit/test_providers.py::TestFanartTVSettingIsReachable` fails if that
-  regresses. The real fix is to surface the Providers tab (or remap those groups)
-  so metadata providers are configurable like everything else; that is a UI change
-  and wants its own commit.
+  regresses. The real fix is to surface the Providers tab so metadata providers
+  are configurable like everything else; that is a UI change and wants its own
+  commit.
 
 ## Lessons learned
 

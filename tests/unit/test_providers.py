@@ -8,7 +8,7 @@ import json
 import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock, PropertyMock, Mock
 from base64 import b64encode
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -233,65 +233,82 @@ class TestFanartTVProvider:
             assert 'api_key=differentapikeyvalue' in called_url
             assert 'api_key=configuredapikeyvalue' not in called_url
 
-    def test_getArt_blank_api_key_skips_http_request(self):
-        """A blank/unset key must degrade cleanly: no HTTP call, no crash."""
+    def test_getArt_uses_the_shipped_key_when_none_is_configured(self):
+        """Out of the box, extra artwork must WORK.
+
+        CouchPotato ships public application keys so a fresh install functions
+        without the user registering anywhere — themoviedb.py does the same via
+        its `ak` pool, and tmdb_charts.py logs "using built-in" when it falls
+        back. An earlier version of this provider removed the shipped key and
+        required every install to supply its own; that silently cost every
+        existing user their extra artwork for no security gain, since the key is
+        public in every copy of upstream.
+        """
+        from base64 import b64decode
+
         p = self._make_provider()
-        with patch.object(p, 'conf', return_value=''), \
-             patch.object(p, 'getJsonData') as mock_get_json:
-            result = p.getArt(identifier='tt0137523', extended=True)
+        p.conf = Mock(return_value='')
+        p.getJsonData = Mock(return_value=None)
 
-            mock_get_json.assert_not_called()
-            assert result == {}
+        p.getArt(identifier='tt0137523')
 
-    def test_getArt_missing_api_key_setting_skips_http_request(self):
-        """An entirely unset key (conf returns None, not '') must also degrade cleanly."""
+        p.getJsonData.assert_called_once()
+        url = p.getJsonData.call_args[0][0]
+        shipped = b64decode(p.ak).decode()
+        assert f'api_key={shipped}' in url, (
+            f'expected the shipped fallback key in the request URL, got: {url}'
+        )
+
+    def test_getArt_uses_the_shipped_key_when_the_setting_is_absent(self):
+        """An unset setting reads as None, not ''. Both must fall back."""
+        from base64 import b64decode
+
         p = self._make_provider()
-        with patch.object(p, 'conf', return_value=None), \
-             patch.object(p, 'getJsonData') as mock_get_json:
-            result = p.getArt(identifier='tt0137523', extended=True)
+        p.conf = Mock(return_value=None)
+        p.getJsonData = Mock(return_value=None)
 
-            mock_get_json.assert_not_called()
-            assert result == {}
+        p.getArt(identifier='tt0137523')
 
-    def test_isDisabled_true_when_api_key_blank(self):
+        p.getJsonData.assert_called_once()
+        shipped = b64decode(p.ak).decode()
+        assert f'api_key={shipped}' in p.getJsonData.call_args[0][0]
+
+    def test_a_configured_key_takes_precedence_over_the_shipped_one(self):
+        """The point of the setting: users can use their own quota."""
+        from base64 import b64decode
+
         p = self._make_provider()
-        with patch.object(p, 'conf', return_value=''):
-            assert p.isDisabled() is True
+        p.conf = Mock(return_value='my-own-key')
+        p.getJsonData = Mock(return_value=None)
 
-    def test_isDisabled_true_when_api_key_unset(self):
+        p.getArt(identifier='tt0137523')
+
+        url = p.getJsonData.call_args[0][0]
+        assert 'api_key=my-own-key' in url
+        assert b64decode(p.ak).decode() not in url, 'shipped key leaked into the URL'
+
+    def test_isDisabled_is_false_with_or_without_a_configured_key(self):
+        """There is always a usable key, so the provider is never key-disabled."""
         p = self._make_provider()
-        with patch.object(p, 'conf', return_value=None):
-            assert p.isDisabled() is True
+        for configured in ('', None, 'my-own-key'):
+            p.conf = Mock(return_value=configured)
+            assert p.isDisabled() is False, f'disabled with conf={configured!r}'
 
-    def test_isDisabled_false_when_api_key_configured(self):
+    def test_the_shipped_key_is_present_and_decodes(self):
+        """Regression guard: this key is intentional and must not be 'cleaned up'.
+
+        It was removed once, which broke extra artwork for every install. If a
+        future change deletes it, this fails loudly rather than the breakage
+        showing up as silently missing logos months later.
+        """
+        from base64 import b64decode
+
         p = self._make_provider()
-        with patch.object(p, 'conf', return_value='somekey'):
-            assert p.isDisabled() is False
-
-    def test_isDisabled_blank_key_logs_at_warning_not_error(self):
-        """A missing key is an expected/recoverable condition, not an app fault --
-        it must not be logged at ERROR (which would drown genuine failures)."""
-        p = self._make_provider()
-        with patch.object(p, 'conf', return_value=''), \
-             patch('couchpotato.core.media.movie.providers.info.fanarttv.log') as mock_log:
-            p.isDisabled()
-
-            mock_log.warning.assert_called_once()
-            mock_log.error.assert_not_called()
-
-    def test_no_api_key_literal_in_module_source(self):
-        """Regression guard: no fanart.tv API key literal may be hardcoded in the module."""
-        import inspect
-        from couchpotato.core.media.movie.providers.info import fanarttv
-        source = inspect.getsource(fanarttv)
-
-        # The specific upstream key that used to be baked into the URL.
-        assert 'b28b14e9be662e027cfbc7c3dd600405' not in source
-
-        # Generic guard: no 32-char hex string (fanart.tv key shape) anywhere in the file,
-        # in case a different literal key were introduced instead.
-        import re
-        assert re.search(r'\b[0-9a-f]{32}\b', source) is None
+        assert getattr(p, 'ak', None), 'the shipped fanart.tv key is gone'
+        decoded = b64decode(p.ak).decode()
+        assert len(decoded) == 32 and all(c in '0123456789abcdef' for c in decoded), (
+            f'shipped key is not a 32-char hex API key: {decoded!r}'
+        )
 
     def test_trimDiscs_bluray_only(self):
         p = self._make_provider()
