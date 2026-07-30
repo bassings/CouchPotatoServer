@@ -264,6 +264,46 @@ def seed(data_dir):
         db.close()
 
 
+def _is_safe_seed_target(data_dir):
+    """Refuse to seed into anything that isn't obviously disposable test
+    data, so this can't quietly write fixture rows into a real media
+    library. `ci.yml` invokes this with `--data_dir=.config`; `.config` is
+    also the conventional name for a developer's OWN local CouchPotato data
+    dir (it's gitignored specifically so people can run a real instance
+    from a checkout), so a bare "just don't run against a populated dir"
+    check isn't enough -- copy-pasting that exact CI invocation locally is
+    the realistic mistake this guards against.
+
+    Allowed:
+      - the directory doesn't exist yet, or exists and is empty (a fresh CI
+        checkout, or a first local run) -- nothing to clobber either way;
+      - OR its name matches the disposable-test-data convention (`.e2e*` or
+        exactly `.config`) AND it resolves under this repo's root -- needed
+        so re-running the seed script against an already-seeded, non-empty
+        `.e2e-data` (the normal local dev loop; see the docstring above)
+        keeps working.
+
+    Residual risk, accepted rather than silently overclaimed: a developer's
+    OWN already-populated `.config`, used for real local testing, is -- by
+    this same name/location check -- indistinguishable from disposable test
+    data, and is still accepted. This stops an arbitrary or real library
+    path (a NAS mount, a production data dir) from being seeded into by
+    mistake; it cannot detect "this populated, correctly-named directory
+    happens to hold real data" without asking the user.
+    """
+    path = os.path.abspath(data_dir)
+
+    if not os.path.exists(path):
+        return True
+    if os.path.isdir(path) and not os.listdir(path):
+        return True
+
+    basename = os.path.basename(path.rstrip(os.sep))
+    name_is_disposable = basename == '.config' or basename.startswith('.e2e')
+    under_repo_root = path == _REPO_ROOT or path.startswith(_REPO_ROOT + os.sep)
+    return name_is_disposable and under_repo_root
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description='Seed a deterministic movie + releases for the E2E suite '
@@ -277,6 +317,17 @@ def main(argv=None):
              'couchpotato/runner.py exactly.',
     )
     args = parser.parse_args(argv)
+
+    if not _is_safe_seed_target(args.data_dir):
+        print(
+            'ERROR: refusing to seed %r -- it already exists, is not empty, '
+            'and its name/location does not look like disposable test data '
+            '(an empty/absent dir, or .e2e*/.config under the repo). Point '
+            '--data_dir at an empty or absent directory to avoid seeding '
+            'fixture data into a real library by mistake.' % args.data_dir,
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         result = seed(args.data_dir)

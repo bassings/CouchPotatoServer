@@ -89,6 +89,18 @@
           {{ 'NZB' if value == 'nzb' else 'Torrent' }}
         </option>
         {% endfor %}
+        {# A bookmarked/hand-edited URL can apply a filter value that no
+           CURRENT release offers (the library changed since it was
+           bookmarked). Without this, no <option> matches controls.source,
+           so the browser shows "All sources" selected while the request is
+           actually still filtering to zero results -- the control lies
+           about what's applied. Render the true value as its own selected
+           option instead. #}
+        {% if controls.source != 'all' and controls.source not in options.source %}
+        <option value="{{ controls.source }}" selected>
+          {{ 'NZB' if controls.source == 'nzb' else 'Torrent' }} (no matches)
+        </option>
+        {% endif %}
       </select>
     </div>
 
@@ -100,6 +112,9 @@
         {% for value in options.quality %}
         <option value="{{ value }}" {% if controls.quality == value %}selected{% endif %}>{{ value }}</option>
         {% endfor %}
+        {% if controls.quality != 'all' and controls.quality not in options.quality %}
+        <option value="{{ controls.quality }}" selected>{{ controls.quality }} (no matches)</option>
+        {% endif %}
       </select>
     </div>
 
@@ -111,6 +126,9 @@
         {% for value in options.status %}
         <option value="{{ value }}" {% if controls.status == value %}selected{% endif %}>{{ value }}</option>
         {% endfor %}
+        {% if controls.status != 'all' and controls.status not in options.status %}
+        <option value="{{ controls.status }}" selected>{{ controls.status }} (no matches)</option>
+        {% endif %}
       </select>
     </div>
 
@@ -119,7 +137,13 @@
     </p>
   </form>
 
-  <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto">
+  {# tabindex + role/aria-label so a keyboard user can actually scroll this:
+     a plain overflow-x-auto div is not in the tab order and has no
+     accessible name, so without these a keyboard-only user has no way to
+     reach the columns that scroll off-screen -- worse now that Size and
+     Seeders added two more. #}
+  <div class="bg-cp-card border border-white/[0.05] rounded-md overflow-x-auto"
+       tabindex="0" role="region" aria-label="Releases table, scrolls horizontally">
     <table class="w-full text-xs">
       <caption class="sr-only">Available releases for {{ title }}</caption>
       <thead>
@@ -154,6 +178,7 @@
         {% set r_quality = r.get('quality', '') %}
         {% set r_protocol = r_info.get('protocol', 'unknown') %}
         {% set r_score = r_info.get('score', 0) %}
+        {% set r_size = r_info.get('size') %}
         {% set r_seeders = r_info.get('seeders') %}
         {% set r_age = r_info.get('age', 0) %}
         {% set r_id = r.get('_id', '') %}
@@ -175,14 +200,33 @@
             {% endif %}
           </td>
           <td class="px-4 py-2.5 text-cp-muted">{{ r_score }}</td>
-          <td class="px-4 py-2.5 text-cp-muted font-light font-mono">{{ (r_info.get('size') or 0)|round|int }} MB</td>
+          {# Em-dash (with an sr-only label), not "0 MB", when size is
+             unknown: "0 MB" reads as an actual zero-byte release rather than
+             missing data, inconsistent with the deliberate blank the
+             Seeders cell already used for the same situation.
+             whitespace-nowrap keeps "9999 MB" etc. from wrapping to two
+             lines in the narrow column. #}
+          <td class="px-4 py-2.5 text-cp-muted font-light font-mono whitespace-nowrap">
+            {%- if r_size is not none -%}
+            {{ r_size|round|int }} MB
+            {%- else -%}
+            <span aria-hidden="true">&mdash;</span><span class="sr-only">size not available</span>
+            {%- endif -%}
+          </td>
           {# Blank, not 0, for an NZB: an NZB has no seeders, and "0" would
-             read as a torrent nobody is seeding. No health colouring here --
-             it was not asked for, nothing tests it, and it applied
-             text-cp-success/warning/danger, which fail WCAG AA contrast on
-             the light theme (see the :root.light overrides in base.html). #}
-          <td class="px-4 py-2.5 text-cp-muted font-light font-mono">
-            {%- if r_seeders is not none %}{{ r_seeders }}{% endif -%}
+             read as a torrent nobody is seeding. The sr-only label keeps a
+             screen reader from announcing an unlabelled empty cell as just
+             "blank" with no indication that is the correct, expected value
+             here. No health colouring here -- it was not asked for, nothing
+             tests it, and it applied text-cp-success/warning/danger, which
+             fail WCAG AA contrast on the light theme (see the :root.light
+             overrides in base.html). #}
+          <td class="px-4 py-2.5 text-cp-muted font-light font-mono whitespace-nowrap">
+            {%- if r_seeders is not none -%}
+            {{ r_seeders }}
+            {%- else -%}
+            <span class="sr-only">not applicable</span>
+            {%- endif -%}
           </td>
           <td class="px-4 py-2.5">
             {% if r_protocol == 'nzb' %}

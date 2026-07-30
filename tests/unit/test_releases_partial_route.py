@@ -414,3 +414,69 @@ class TestMovieDetailHtmxBranch:
         assert '<option value="720p" >720p</option>' in resp.text
         assert '<option value="available" >available</option>' in resp.text
         assert '<option value="ignored" >ignored</option>' in resp.text
+
+    def test_a_stale_quality_filter_is_shown_as_the_true_selected_value(self, client, media_get):
+        """(11b) A bookmarked/hand-edited URL can name a quality no CURRENT
+        release offers. Without a fallback option, no <option> matches
+        controls.quality, so the browser shows "All qualities" selected
+        while the request is still actually filtering to zero results --
+        the control would lie about what's applied.
+        """
+        resp = client.get('/partial/movie/movie-1/releases?quality=1440p')
+
+        assert '<option value="all" >All qualities</option>' in resp.text, (
+            "'All qualities' must NOT be marked selected -- it isn't what's applied"
+        )
+        assert '<option value="1440p" selected>1440p (no matches)</option>' in resp.text
+
+    def test_a_stale_status_filter_is_shown_as_the_true_selected_value(self, client, media_get):
+        """(11b) Same as the quality case: 'seeding' is a real, whitelisted
+        status, but none of this movie's releases currently have it.
+        """
+        resp = client.get('/partial/movie/movie-1/releases?status=seeding')
+
+        assert '<option value="seeding" selected>seeding (no matches)</option>' in resp.text
+
+    def test_missing_size_renders_a_dash_not_a_lying_zero(self, client):
+        """(11c) "0 MB" reads as an actual zero-byte release, not "unknown" --
+        inconsistent with the deliberate blank Seeders already used for the
+        same situation. Also asserts the column doesn't wrap (whitespace-nowrap).
+        """
+        def handler(**kwargs):
+            movie = dict(MOVIE, releases = [
+                {'_id': 'nosize', 'quality': '1080p', 'status': 'available',
+                 'info': {'protocol': 'nzb', 'score': 10, 'age': 1, 'name': 'nosize.release.name'}},
+            ])
+            return {'media': movie}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            assert '0 MB' not in resp.text
+            assert 'size not available' in resp.text
+            assert 'whitespace-nowrap' in resp.text
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_missing_seeders_has_an_sr_only_not_applicable_label(self, client, media_get):
+        """(11d) An NZB's blank Seeders cell must not announce as just
+        "blank" to a screen reader with no indication that is expected.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+        assert 'not applicable' in resp.text
+
+    def test_the_scrolling_table_wrapper_is_keyboard_reachable(self, client, media_get):
+        """(11i) A plain overflow-x-auto div is not in the tab order and has
+        no accessible name, so a keyboard-only user has no way to scroll to
+        the columns that overflow -- worse now that Size and Seeders added
+        two more.
+        """
+        resp = client.get('/partial/movie/movie-1/releases')
+        assert 'tabindex="0"' in resp.text
+        assert 'role="region"' in resp.text
+        assert 'aria-label="Releases table' in resp.text
