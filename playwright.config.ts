@@ -33,25 +33,29 @@ export default defineConfig({
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
   /*
-   * ONE worker everywhere — not just on CI.
+   * Parallel everywhere, and the SAME setting locally and on CI.
    *
-   * The suite drives a SINGLE app instance whose categories and quality
-   * profiles are global, mutable server state, so parallel workers create,
-   * reorder and delete each other's fixtures mid-assertion. This was previously
-   * `process.env.CI ? 1 : undefined`, which serialised CI but let a local run
-   * use one worker per core: 21 of 142 specs failed locally
-   * (categories/profiles/search/interactions) while CI was green — verified as
-   * pre-existing on a clean tree, and identical before and after the change
-   * that found it.
+   * History worth keeping, because the shape of the bug recurs: this was
+   * `process.env.CI ? 1 : undefined`, which serialised CI while a local run used
+   * one worker per core. CI was green and local failed ~20 of 142 — so the local
+   * gate could never pass, which defeats CLAUDE.md hard rule 2 ("`make verify`
+   * must pass locally before every push"). A gate that cannot pass gets bypassed.
    *
-   * That divergence broke the premise of the local gate (CLAUDE.md hard rule 2:
-   * `make verify` must pass locally before every push). A gate that cannot pass
-   * locally gets bypassed, so local must mirror CI here rather than be faster
-   * than it. Fixing the specs to be independent (per-worker fixtures, or a
-   * server per worker) is the better long-term answer and is tracked in
-   * docs/technical-debt.md; until then, correctness beats wall-clock.
+   * Pinning `workers: 1` fixed the divergence but cost 3 minutes a run. The specs
+   * are now genuinely worker-independent instead:
+   *   - categories/profiles declare `test.describe.configure({ mode: 'serial' })`,
+   *     because they mutate GLOBAL singleton config (the category/profile list)
+   *     under fixed fixture names and assert on list order. Serial keeps each of
+   *     those files in one worker while other files still run in parallel.
+   *   - the suggestions and search specs stub their third-party lookups
+   *     (`/partial/charts`, `/partial/search`) instead of waiting on Blu-ray.com
+   *     and TMDB. Those were the remaining cross-file races: concurrent live
+   *     lookups were slow enough to blow the expectations.
+   *
+   * Measured: 4.1 min serial -> 1.0 min parallel, 139 passed / 3 skipped in both.
+   * If a race ever reappears, prefer fixing the spec over re-pinning workers —
+   * re-pinning hides it and hands back the wall-clock.
    */
-  workers: 1,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['html', { open: 'never' }],

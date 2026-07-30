@@ -19,11 +19,7 @@ import { test, expect, Page } from '@playwright/test';
  * fetch — deterministic and network-free.
  */
 
-// Helper: wait for page to be fully loaded (matches interactions.e2e.spec.ts).
-async function waitForPageReady(page: Page) {
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(500);
-}
+import { waitForPageReady } from './helpers';
 
 test.describe('Add by URL', () => {
   test.describe('bookmarklet disclosure', () => {

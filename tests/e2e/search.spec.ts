@@ -1,11 +1,20 @@
 import { test, expect } from '@playwright/test';
 
+import { mockMovieSearch } from './helpers';
+
 /**
  * Search functionality tests for CouchPotato new UI.
+ *
+ * The provider lookup is stubbed (see helpers.mockMovieSearch): these tests are
+ * about the search UI, not about TMDB being reachable. Hitting the live provider
+ * made them slow and, once the suite ran in parallel, flaky — concurrent lookups
+ * blew the 10s expectations. tests/unit/test_search_results_template.py keeps the
+ * stub honest against the real template.
  */
 
 test.describe('Movie Search', () => {
   test.beforeEach(async ({ page }) => {
+    await mockMovieSearch(page);
     await page.goto('/add/');
     // Wait for page to load
     await expect(page.locator('h1')).toContainText('Add');

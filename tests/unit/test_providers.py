@@ -158,7 +158,7 @@ class TestFanartTVProvider:
         with patch('couchpotato.core.media.movie.providers.info.fanarttv.addEvent'):
             from couchpotato.core.media.movie.providers.info.fanarttv import FanartTV
             p = FanartTV.__new__(FanartTV)
-            p.urls = {'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=testkey'}
+            p.urls = {'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=%s'}
             p.MAX_EXTRAFANART = 20
             return p
 
@@ -207,6 +207,89 @@ class TestFanartTVProvider:
         p = self._make_provider()
         result = p.getArt(identifier=None)
         assert result == {}
+
+    def test_getArt_builds_url_from_configured_api_key(self):
+        """The request URL must be built from self.conf('api_key'), not a literal."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='configuredapikeyvalue'), \
+             patch.object(p, 'getJsonData', return_value=None) as mock_get_json:
+            p.getArt(identifier='tt0137523', extended=True)
+
+            assert mock_get_json.called
+            called_url = mock_get_json.call_args[0][0]
+            assert 'api_key=configuredapikeyvalue' in called_url
+            assert 'tt0137523' in called_url
+
+    def test_getArt_different_configured_key_changes_url(self):
+        """Changing the configured key must change the request URL (proves it isn't baked in)."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='differentapikeyvalue'), \
+             patch.object(p, 'getJsonData', return_value=None) as mock_get_json:
+            p.getArt(identifier='tt0137523', extended=True)
+
+            called_url = mock_get_json.call_args[0][0]
+            assert 'api_key=differentapikeyvalue' in called_url
+            assert 'api_key=configuredapikeyvalue' not in called_url
+
+    def test_getArt_blank_api_key_skips_http_request(self):
+        """A blank/unset key must degrade cleanly: no HTTP call, no crash."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value=''), \
+             patch.object(p, 'getJsonData') as mock_get_json:
+            result = p.getArt(identifier='tt0137523', extended=True)
+
+            mock_get_json.assert_not_called()
+            assert result == {}
+
+    def test_getArt_missing_api_key_setting_skips_http_request(self):
+        """An entirely unset key (conf returns None, not '') must also degrade cleanly."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value=None), \
+             patch.object(p, 'getJsonData') as mock_get_json:
+            result = p.getArt(identifier='tt0137523', extended=True)
+
+            mock_get_json.assert_not_called()
+            assert result == {}
+
+    def test_isDisabled_true_when_api_key_blank(self):
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value=''):
+            assert p.isDisabled() is True
+
+    def test_isDisabled_true_when_api_key_unset(self):
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value=None):
+            assert p.isDisabled() is True
+
+    def test_isDisabled_false_when_api_key_configured(self):
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='somekey'):
+            assert p.isDisabled() is False
+
+    def test_isDisabled_blank_key_logs_at_warning_not_error(self):
+        """A missing key is an expected/recoverable condition, not an app fault --
+        it must not be logged at ERROR (which would drown genuine failures)."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value=''), \
+             patch('couchpotato.core.media.movie.providers.info.fanarttv.log') as mock_log:
+            p.isDisabled()
+
+            mock_log.warning.assert_called_once()
+            mock_log.error.assert_not_called()
+
+    def test_no_api_key_literal_in_module_source(self):
+        """Regression guard: no fanart.tv API key literal may be hardcoded in the module."""
+        import inspect
+        from couchpotato.core.media.movie.providers.info import fanarttv
+        source = inspect.getsource(fanarttv)
+
+        # The specific upstream key that used to be baked into the URL.
+        assert 'b28b14e9be662e027cfbc7c3dd600405' not in source
+
+        # Generic guard: no 32-char hex string (fanart.tv key shape) anywhere in the file,
+        # in case a different literal key were introduced instead.
+        import re
+        assert re.search(r'\b[0-9a-f]{32}\b', source) is None
 
     def test_trimDiscs_bluray_only(self):
         p = self._make_provider()

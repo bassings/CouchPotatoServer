@@ -8,24 +8,13 @@
 #
 #   make check-secrets
 #
-# Both entries below are hardcoded third-party API keys that upstream
-# CouchPotato committed years before this fork, and both are already public in
-# every copy of the upstream repository — so redacting them here would remove no
-# secrecy that exists. They are ordinary application defaults, not credentials
-# of ours, and neither grants access to anything of this project's. Removing
-# them means giving each provider a settings-backed key first (there is already
-# a `fanart.tv` api_key setting; see couchpotato/core/media/movie/providers/
-# info/fanarttv.py:130 which errors when it is blank), which is a behaviour
-# change and belongs in its own commit — tracked in docs/technical-debt.md.
-
-# fanart.tv v3 API key baked into the request URL by upstream. Public in
-# upstream CouchPotato since the fanart.tv v3 migration.
-couchpotato/core/media/movie/providers/info/fanarttv.py:generic-api-key:18
-
-# YouTube Data API key in a trailer-lookup URL, in what is now an ORPHANED file:
-# UI-CLEANUP-02 has already shipped (02d2eece, #148) and left this behind, and
-# nothing references it (`grep -rn "movie\.actions"` finds no live use). So it
-# will not disappear on its own — it needs a deliberate deletion, tracked in
-# docs/technical-debt.md. Suppressed meanwhile because the key is upstream's and
-# already public in every copy of the upstream repository.
-couchpotato/core/media/movie/_base/static/movie.actions.js:gcp-api-key:378
+# No findings are currently baselined here. Two used to be:
+#
+# - The fanart.tv v3 API key baked into
+#   couchpotato/core/media/movie/providers/info/fanarttv.py:18 was removed and
+#   replaced with the existing per-install `fanart.tv` `api_key` setting (see
+#   docs/technical-debt.md) — fixed rather than suppressed, so its baseline
+#   entry is gone too.
+# - The YouTube key that used to be listed here is gone: its file,
+#   movie.actions.js, was an orphan left behind by UI-CLEANUP-02 and has now been
+#   deleted outright, which is the better fix than suppressing it.

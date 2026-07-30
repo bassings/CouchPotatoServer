@@ -126,14 +126,26 @@ test.describe('Release list controls', () => {
     );
 
     await select.selectOption('nzb');
-    await expect(page.locator('#movie-releases')).toBeVisible();
+
     // Column order is fixed by SORT_COLUMNS in releases_view.py: Name,
     // Quality, Score, Size, Seeders, Source, Status, Age -- Source is the
     // 6th <td>.
-    const sources = await page.locator('#movie-releases tbody tr td:nth-child(6)').allInnerTexts();
-    for (const source of sources) {
-      expect(source.trim()).toMatch(/NZB/i);
-    }
+    //
+    // The assertion RETRIES until the htmx swap lands. `expect(#movie-releases)
+    // .toBeVisible()` used to stand in for that wait, but the container is the
+    // swap TARGET and is already visible, so it passed instantly against the
+    // pre-filter table and the source check then read stale rows. It only
+    // surfaced once the suite ran in parallel and the server got slower —
+    // i.e. the wait had never worked, it just usually won the race.
+    await expect(async () => {
+      const sources = await page
+        .locator('#movie-releases tbody tr td:nth-child(6)')
+        .allInnerTexts();
+      expect(sources.length, 'filter returned no rows at all').toBeGreaterThan(0);
+      for (const source of sources) {
+        expect(source.trim()).toMatch(/NZB/i);
+      }
+    }).toPass();
   });
 
   test('the result count is announced in a live region', async ({ page }) => {

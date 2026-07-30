@@ -137,12 +137,17 @@ DEST="$BACKUP_DIR/$STAMP"
 # (`rm -rf "$DEST"`) would then destroy the FIRST run's perfectly good snapshot.
 # Suffix on collision so a snapshot is never clobbered by a later one.
 if [ -e "$DEST" ]; then
+  # Zero-padded so the suffix sorts chronologically: with a bare `-N`, `-10`
+  # sorts before `-2` and the freshest snapshot can look like the oldest, which
+  # would let `--retain 1` delete the backup this run just took.
   suffix=2
-  while [ -e "${DEST}-${suffix}" ]; do
+  candidate="$(printf '%s-%02d' "$DEST" "$suffix")"
+  while [ -e "$candidate" ]; do
     suffix=$((suffix + 1))
+    candidate="$(printf '%s-%02d' "$DEST" "$suffix")"
   done
-  warn "$DEST already exists — writing ${DEST}-${suffix} instead so the existing snapshot is not touched"
-  DEST="${DEST}-${suffix}"
+  warn "$DEST already exists — writing $candidate instead so the existing snapshot is not touched"
+  DEST="$candidate"
 fi
 
 # ── Database ────────────────────────────────────────────────────────────────
@@ -217,16 +222,6 @@ info "snapshot complete: $DEST"
 # Only ever deletes directories directly under BACKUP_DIR whose names are
 # exactly our own YYYYMMDD-HHMMSS stamp. Unrelated files and directories
 # (and anything outside BACKUP_DIR, e.g. config.bak/) are never candidates.
-#
-# KNOWN LIMITATION, accepted deliberately: the `-N` collision suffix sorts
-# lexically, so with ten or more snapshots inside a single wall-clock second
-# `-10` sorts before `-2` and the freshest directory can look like the oldest —
-# `--retain 1` would then delete the snapshot the run just took. Requires ten
-# runs in one second, which nightly cron plus a manual pre-promotion cannot
-# produce. Excluding `$DEST` from the candidate list fixes it, but changes
-# `--retain N` to "N existing plus the fresh one" and broke seven existing
-# retention tests; not worth that for this trigger. If you ever do run backups in
-# a tight loop, zero-pad the suffix instead.
 #
 # Implementation note — this deliberately does NOT pipe paths into
 # `head | while read`. Two real defects came from that:

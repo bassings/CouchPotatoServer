@@ -36,11 +36,8 @@ the archived CouchPotato, fully modernised.
    unnecessary mocking.
 2. **Never push untested code.** `make verify` must pass locally before every
    push — don't rely on CI. Emergency hook bypass `git push --no-verify` only
-   sparingly. **Known caveat (2026-07-30):** two E2E specs fail locally while
-   passing in CI, so the gate cannot currently go fully green on a dev machine —
-   see `docs/technical-debt.md`. Everything else must still be green, and the two
-   known failures must be named explicitly when you bypass; "verify is red
-   anyway" must not become the normal state.
+   sparingly. The gate goes fully green locally — if it does not, that is a
+   real finding, not a known-bad baseline to work around.
 3. **Local agent review gate before pushing code changes.** Any code change
    (plus edits to `CLAUDE.md`/`AGENTS.md`/`specs/**`) must pass a clean-agent
    local review before push. Pure docs-only prose may skip. Full rules,

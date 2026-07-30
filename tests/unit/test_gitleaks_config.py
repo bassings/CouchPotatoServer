@@ -215,7 +215,9 @@ def test_gitleaksignore_fingerprints_are_well_formed_and_point_at_real_files():
         for ln in IGNORE.read_text(encoding="utf-8").split("\n")
         if ln.strip() and not ln.strip().startswith("#")
     ]
-    assert entries, "no fingerprints in .gitleaksignore (fine if truly none are needed)"
+    # Zero entries is a valid, desired state: it means every known finding was
+    # fixed rather than suppressed. The loop below is a no-op in that case and
+    # still validates any entries that do exist.
 
     for entry in entries:
         parts = entry.rsplit(":", 2)

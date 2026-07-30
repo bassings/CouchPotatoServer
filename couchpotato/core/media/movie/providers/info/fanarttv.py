@@ -15,7 +15,7 @@ autoload = 'FanartTV'
 class FanartTV(MovieProvider):
 
     urls = {
-        'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=b28b14e9be662e027cfbc7c3dd600405'
+        'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=%s'
     }
 
     MAX_EXTRAFANART = 20
@@ -29,10 +29,13 @@ class FanartTV(MovieProvider):
         if not identifier or not extended:
             return {}
 
+        if self.isDisabled():
+            return {}
+
         images = {}
 
         try:
-            url = self.urls['api'] % identifier
+            url = self.urls['api'] % (identifier, self.conf('api_key'))
             fanart_data = self.getJsonData(url, show_error = False)
 
             if fanart_data:
@@ -127,7 +130,43 @@ class FanartTV(MovieProvider):
         return image_urls
 
     def isDisabled(self):
-        if self.conf('api_key') == '':
-            log.error('No API key provided.')
+        if not self.conf('api_key'):
+            # WARNING, not ERROR: fanart.tv requires every install to supply
+            # its own free API key -- there is no shared fallback key any
+            # more (the one previously baked in here was removed, see
+            # docs/technical-debt.md). Running without a key is an expected,
+            # recoverable state for installs that haven't configured one yet,
+            # not an application fault, so ERROR would misrepresent it and
+            # drown genuine failures.
+            log.warning(
+                'No fanart.tv API key configured -- skipping extra art. Get a '
+                'free key at https://fanart.tv/get-an-api-key/ and set '
+                'api_key under [fanarttv] in config.ini (the settings UI\'s '
+                '"Providers" tab is not currently reachable -- see '
+                'docs/technical-debt.md).'
+            )
             return True
         return False
+
+
+config = [{
+    'name': 'fanarttv',
+    'groups': [
+        {
+            'tab': 'providers',
+            'name': 'fanarttv',
+            'label': 'Fanart.tv',
+            'hidden': True,
+            'description': 'Used for extra artwork (logos, banners, discs). '
+                            'Requires a free API key from '
+                            '<a href="https://fanart.tv/get-an-api-key/" target="_blank">fanart.tv</a>.',
+            'options': [
+                {
+                    'name': 'api_key',
+                    'default': '',
+                    'label': 'Api Key',
+                },
+            ],
+        },
+    ],
+}]

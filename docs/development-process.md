@@ -172,11 +172,35 @@ Required (i.e. enforced by branch protection on `master`, verified via
 (`scripts/check_conformance.py` — design-system drift gate, added in #147).
 
 **Runs but does NOT gate:** `secrets` (gitleaks) and `security-lint`. A PR can
-merge with either of them red. `secrets` is a deliberate one-line addition away
-from being required — its job `name:` is already `secrets`, so adding that
-context to the protection rule is all it takes — but until that is done, do not
-describe secret scanning as *enforced*: it is *reported*. (`security-lint` is
-informational by design; see below.)
+merge with either of them red, so do not describe secret scanning as *enforced*
+— it is *reported*. (`security-lint` is informational by design; see below.)
+
+> ### ⚠️ ONE-TIME STEP, immediately after the branch adding the `secrets` job merges
+>
+> Run this to make secret scanning an actual gate:
+>
+> ```bash
+> gh api -X PATCH repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks \
+>   -f 'strict=false' \
+>   -f 'contexts[]=lint' -f 'contexts[]=test-summary' -f 'contexts[]=ui-unit-tests' \
+>   -f 'contexts[]=ui-e2e-tests' -f 'contexts[]=claude-review' \
+>   -f 'contexts[]=Analyze (python)' -f 'contexts[]=Analyze (javascript)' \
+>   -f 'contexts[]=dependency-review' -f 'contexts[]=docker' \
+>   -f 'contexts[]=accessibility' -f 'contexts[]=conformance' \
+>   -f 'contexts[]=secrets'
+> ```
+>
+> Then update this section and CLAUDE.md rule 7 to say *enforced*.
+>
+> **Why after and not before:** a required context that the default branch's
+> workflow does not produce blocks every PR branched from it, forever, waiting
+> for a check that never reports. `secrets` only exists on the branch that adds
+> it, so enabling it early would deadlock any master-based PR opened in the
+> meantime — Dependabot opens those on a schedule. The ordering is the whole
+> point; the command above is safe only once `master` builds the job itself.
+>
+> Verify afterwards with:
+> `gh api repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks --jq '.contexts'`
 
 `ci.yml` uses `concurrency: cancel-in-progress: true` — a new push supersedes the
 in-flight run. Note this is deliberately **false** in `docker.yml` and

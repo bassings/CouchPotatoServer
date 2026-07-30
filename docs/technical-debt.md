@@ -69,47 +69,57 @@
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them
   pile up.
-- **Two E2E specs fail locally but pass in CI — `make verify` cannot currently go
-  green on a dev machine.** Both time out at 30s, both verified pre-existing
-  (identical failures on a clean tree, 2026-07-30), and both were invisible until
-  the interpreter bug below was fixed, because the local E2E stage never actually
-  started:
-  - `interactions.e2e.spec.ts:35 › Navigation › sidebar links navigate correctly`
-    — fails deterministically locally (3/3 runs). Carried in project memory as
-    "flaky" rather than in any doc;
-    locally it is not flaky, it is consistent, which makes it tractable.
-  - `interactions.e2e.spec.ts:298 › Suggestions Page › tabs switch content` —
-    genuinely flaky locally (1/3 runs).
-  CI is green on both (it also has `retries: 2`, which would paper over the
-  flaky one). Until they are fixed, hard rule 2 cannot be satisfied literally, so
-  a push needs either these two triaged or an explicit, stated bypass — don't let
-  "verify is red anyway" become the normal state, which is how a gate dies.
-- **E2E specs are not worker-independent, so the suite runs single-worker.**
-  `categories.spec.ts`, `profiles.spec.ts`, `search.spec.ts`,
-  `interactions.e2e.spec.ts` and `release_controls.spec.ts` mutate *global* server
-  state (categories, quality profiles) on one shared app instance, so parallel
-  workers clobber each other's fixtures. `playwright.config.ts` previously used
-  `workers: process.env.CI ? 1 : undefined`, which hid this: CI serialised and was
-  green while a local run used one worker per core and failed ~20 of 142 specs —
-  i.e. `make verify` could never pass locally, in direct conflict with hard rule
-  2. Pinned to `workers: 1` everywhere on 2026-07-30.
+- **E2E suite: RESOLVED 2026-07-31** (kept as a record because the failure shapes
+  recur). Three separate problems, all root-caused rather than retried away:
+  - *Two specs failed locally and passed in CI.* Both waited on
+    `page.waitForLoadState('networkidle')`, which never settles on the
+    suggestions page: `/partial/charts` fetches external chart providers and was
+    measured at ~85s. They passed in CI only because CI cannot reach those
+    providers, so the request failed fast — green for the wrong reason. Fixed by
+    stubbing the charts route and waiting on the `#main-content` landmark.
+  - *The suite was pinned to `workers: 1`*, costing ~3 min a run, because
+    categories/profiles mutate global singleton config under fixed fixture names.
+    Fixed with `test.describe.configure({ mode: 'serial' })` on those two files
+    (other files still run in parallel) plus stubbing the TMDB search lookup that
+    `search.spec` depended on. **4.1 min -> 1.0 min**, verified green over four
+    consecutive parallel runs.
+  - *`release_controls.spec.ts:111` was flaky* (2 of 3 parallel runs). Its wait
+    was `expect(#movie-releases).toBeVisible()` on the htmx swap *target*, which
+    is already visible — so it passed instantly and the assertion then read
+    stale, pre-filter rows. Replaced with a retrying `expect(...).toPass()`.
+  Shared helpers now live in `tests/e2e/helpers.ts` rather than being copied per
+  spec: the duplication is precisely why the good pattern (mock the slow route,
+  wait on an element) sat in `accessibility.a11y.spec.ts` while the broken one
+  sat in `interactions.e2e.spec.ts`.
 
-  Verified on a clean tree: with default workers ~20 fail (the exact count varies
-  run to run — it is a race), spread across categories×11, interactions×3,
-  profiles×3, search×2, release_controls×1; with one worker, **all of those
-  pass** and only the two unrelated failures above remain. The real fix is
-  per-worker isolation — a fixture that namespaces the categories/profiles it
-  creates, or a server per worker — after which `fullyParallel` can be restored
-  and the suite gets its wall-clock back.
+  Remaining, not currently a problem: the suite still shares one server, so a
+  spec that mutates global config must declare serial mode. A server per worker
+  would remove that constraint entirely.
 - **Two hardcoded third-party API keys inherited from upstream** — both
   baselined in `.gitleaksignore` (added 2026-07-30 with the `secrets` gate) and
   both already public in every copy of the upstream repo, so they leak nothing
   that is not already out:
-  - `couchpotato/core/media/movie/providers/info/fanarttv.py:18` — fanart.tv v3
-    key baked into the request URL. There is already a `fanart.tv` `api_key`
-    setting (the provider errors at line 130 when it is blank), so the fix is to
-    read the setting and drop the literal — a behaviour change (existing installs
-    with no key set would lose fanart lookups), hence its own commit.
+  - ~~`couchpotato/core/media/movie/providers/info/fanarttv.py:18` — fanart.tv
+    v3 key baked into the request URL.~~ **Fixed 2026-07-31:** the literal is
+    gone; `getArt`/`isDisabled` now read the existing per-install `fanart.tv`
+    `api_key` setting and skip the request cleanly (logged at WARNING, not
+    ERROR — an unset key is an expected, recoverable state) when it's blank.
+    Existing installs that never set a key will lose fanart lookups until they
+    set one — a deliberate, accepted behaviour change, since there is no
+    longer a shared fallback key to fall back to. A `config` block was added
+    registering `fanarttv.api_key` the same way `themoviedb.py` does, but note
+    that does **not** currently make it reachable in the settings UI: the
+    Alpine settings panel (`couchpotato/ui/templates/partials/settings/scripts.html`)
+    hardcodes `hiddenTabs: new Set(['providers', 'automation'])` with no remap
+    for `providers`, so `tab: 'providers'` groups — `fanarttv` and the
+    pre-existing `themoviedb` one — can never appear in `tabOrder` and are
+    unreachable from any tab button. This is a pre-existing gap (themoviedb's
+    key has been in the same boat all along, just masked by its `self.ak`
+    fallback), not introduced by this fix, and fixing it is out of scope here
+    (no UI was invented for this task). Until someone un-hides the `providers`
+    tab, admins must set `api_key` directly under `[fanarttv]` in `config.ini`
+    — which is what the runtime WARNING log now tells them. Its
+    `.gitleaksignore` entry has been removed accordingly.
   - `couchpotato/core/media/movie/_base/static/movie.actions.js:378` — YouTube
     Data API key in a trailer-lookup URL. **This needs its own deliberate
     deletion — it will NOT resolve itself.** The file is an orphan that both UI
