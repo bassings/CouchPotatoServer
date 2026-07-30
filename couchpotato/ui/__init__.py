@@ -192,7 +192,16 @@ def create_router(require_auth) -> APIRouter:
         # (fragment) request gets exactly the releases partial -- matching
         # #movie-releases, the form's hx-target -- while a real navigation
         # (no header) still gets the full-page shell below.
-        if request.headers.get('hx-request') == 'true':
+        #
+        # `hx-history-restore-request` must be excluded: on a Back/Forward
+        # whose history snapshot htmx no longer has cached (after a reload, or
+        # once the snapshot is evicted), htmx re-requests the URL with BOTH
+        # headers set and replaces the ENTIRE body with the response. Serving
+        # the bare releases partial there would leave the whole page as just
+        # the release table -- no nav, no movie. A restore wants the full page.
+        is_htmx_fragment = (request.headers.get('hx-request') == 'true'
+                            and request.headers.get('hx-history-restore-request') != 'true')
+        if is_htmx_fragment:
             return await _render_releases_partial(movie_id, dict(request.query_params))
 
         tmpl = _jinja.get_template('detail.html')

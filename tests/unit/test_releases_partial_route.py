@@ -348,6 +348,26 @@ class TestMovieDetailHtmxBranch:
         assert 'id="movie-detail-container"' in resp.text
         assert 'id="movie-releases"' not in resp.text
 
+    def test_a_history_restore_request_gets_the_full_page_not_the_fragment(self, client, media_get):
+        """htmx sends HX-Request on a history restore TOO, and then replaces
+        the ENTIRE body with the response.
+
+        Reachable: filter (hx-push-url pushes /movie/x?source=nzb), navigate
+        away, press Back after a reload or once htmx has evicted its history
+        snapshot -- htmx re-requests the URL with both HX-Request and
+        HX-History-Restore-Request set. Branching on HX-Request alone would
+        answer with the bare releases table, so the whole page would become
+        just that table: no nav, no movie, no way back.
+        """
+        resp = client.get('/movie/movie-1?source=nzb',
+                          headers = {'HX-Request': 'true',
+                                     'HX-History-Restore-Request': 'true'})
+
+        assert resp.status_code == 200
+        assert 'id="movie-detail-container"' in resp.text, \
+            'a history restore must get the full page shell'
+        assert 'id="movie-releases"' not in resp.text
+
     def test_the_filter_form_pushes_a_bookmarkable_url(self, client, media_get):
         """Regression: the form used to target /partial/movie/{id}/releases
         with no hx-push-url at all, so a filter change never touched the
