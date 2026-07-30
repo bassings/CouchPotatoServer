@@ -307,3 +307,107 @@ class TestSortReleases:
         releases = [_release('first', size = 100), _release('second', size = 100)]
         controls = dict(DEFAULT_CONTROLS, sort = 'size', dir = 'desc')
         assert _ids(filter_and_sort_releases(releases, controls)) == ['first', 'second']
+
+
+class TestFilterOptions:
+
+    def test_offers_only_the_values_actually_present(self):
+        from couchpotato.ui.releases_view import filter_options
+
+        releases = [
+            _release('a', 'nzb', '1080p', 'available'),
+            _release('b', 'torrent', '720p', 'ignored'),
+            _release('c', 'nzb', '1080p', 'available'),
+        ]
+        options = filter_options(releases)
+        assert options['quality'] == ['720p', '1080p'] or options['quality'] == ['1080p', '720p']
+        assert set(options['quality']) == {'1080p', '720p'}
+        assert set(options['status']) == {'available', 'ignored'}
+        assert set(options['source']) == {'nzb', 'torrent'}
+
+    def test_orders_qualities_by_profile_when_one_is_given(self):
+        from couchpotato.ui.releases_view import filter_options
+
+        releases = [_release('a', quality = '720p'), _release('b', quality = '1080p')]
+        options = filter_options(releases, profile_qualities = ['1080p', '720p'])
+        assert options['quality'] == ['1080p', '720p']
+
+    def test_ignores_blank_and_unknown_values(self):
+        from couchpotato.ui.releases_view import filter_options
+
+        releases = [{'_id': 'x', 'info': {}, 'quality': '', 'status': ''}]
+        options = filter_options(releases)
+        assert options['quality'] == []
+        assert options['status'] == []
+        assert options['source'] == []
+
+    def test_an_empty_list_yields_empty_options(self):
+        from couchpotato.ui.releases_view import filter_options
+
+        assert filter_options([]) == {'source': [], 'quality': [], 'status': []}
+
+
+class TestSortColumns:
+
+    def test_each_sortable_column_gets_a_link_carrying_the_current_filters(self):
+        from couchpotato.ui.releases_view import sort_columns
+
+        controls = dict(DEFAULT_CONTROLS, source = 'nzb', sort = 'size', dir = 'desc')
+        columns = {c['key']: c for c in sort_columns(controls, 'movie-1', '/')}
+
+        assert 'source=nzb' in columns['score']['href']
+        assert 'sort=score' in columns['score']['href']
+
+    def test_the_active_column_toggles_direction(self):
+        from couchpotato.ui.releases_view import sort_columns
+
+        controls = dict(DEFAULT_CONTROLS, sort = 'size', dir = 'desc')
+        columns = {c['key']: c for c in sort_columns(controls, 'movie-1', '/')}
+
+        assert 'dir=asc' in columns['size']['href'], 'clicking the active column reverses it'
+        assert 'dir=desc' in columns['score']['href'], 'an inactive column starts descending'
+
+    def test_aria_sort_marks_only_the_active_column(self):
+        """B10."""
+        from couchpotato.ui.releases_view import sort_columns
+
+        controls = dict(DEFAULT_CONTROLS, sort = 'size', dir = 'desc')
+        columns = {c['key']: c for c in sort_columns(controls, 'movie-1', '/')}
+
+        assert columns['size']['aria_sort'] == 'descending'
+        assert columns['score']['aria_sort'] == 'none'
+
+        controls = dict(DEFAULT_CONTROLS, sort = 'size', dir = 'asc')
+        columns = {c['key']: c for c in sort_columns(controls, 'movie-1', '/')}
+        assert columns['size']['aria_sort'] == 'ascending'
+
+    def test_no_column_is_marked_under_the_default_sort(self):
+        from couchpotato.ui.releases_view import sort_columns
+
+        columns = sort_columns(DEFAULT_CONTROLS, 'movie-1', '/')
+        assert all(c['aria_sort'] == 'none' for c in columns)
+
+    def test_links_point_at_the_partial_and_push_the_full_page_url(self):
+        """htmx swaps the table; the pushed URL must be the page, not the partial."""
+        from couchpotato.ui.releases_view import sort_columns
+
+        columns = sort_columns(DEFAULT_CONTROLS, 'movie-1', '/')
+        column = columns[0]
+        assert column['hx_get'].startswith('/partial/movie/movie-1/releases?')
+        assert column['href'].startswith('/movie/movie-1?')
+
+    def test_a_web_base_prefix_is_honoured(self):
+        """CouchPotato can be mounted under a sub-path."""
+        from couchpotato.ui.releases_view import sort_columns
+
+        columns = sort_columns(DEFAULT_CONTROLS, 'movie-1', '/cp/')
+        assert columns[0]['hx_get'].startswith('/cp/partial/movie/movie-1/releases?')
+        assert columns[0]['href'].startswith('/cp/movie/movie-1?')
+
+    def test_values_are_url_encoded(self):
+        """A quality identifier could contain characters that need escaping."""
+        from couchpotato.ui.releases_view import sort_columns
+
+        controls = dict(DEFAULT_CONTROLS, quality = '1080p bluray')
+        columns = sort_columns(controls, 'movie-1', '/')
+        assert '1080p+bluray' in columns[0]['href'] or '1080p%20bluray' in columns[0]['href']

@@ -9,6 +9,8 @@ or hand-edited, so `normalise_controls` coerces anything unrecognised to a
 default instead of raising.
 """
 
+from urllib.parse import urlencode
+
 from couchpotato.core.helpers.protocol import protocol_family
 from couchpotato.core.helpers.variable import tryFloat
 
@@ -165,3 +167,86 @@ def _sorted(releases, controls, profile_qualities):
     # Missing values always trail, whichever direction was asked for: absent
     # data must never lead the list.
     return [release for _key, release in present] + [release for _key, release in missing]
+
+
+#: (sort key, column label) for every sortable column, in render order.
+SORT_COLUMNS = (
+    ('name', 'Name'),
+    ('quality', 'Quality'),
+    ('score', 'Score'),
+    ('size', 'Size'),
+    ('seeders', 'Seeders'),
+    ('source', 'Source'),
+    ('status', 'Status'),
+    ('age', 'Age'),
+)
+
+
+def filter_options(releases, profile_qualities = None):
+    """The distinct filter values actually present, for building the controls.
+
+    Only offering what exists keeps the user from picking a filter that can
+    only return nothing.
+    """
+
+    qualities, statuses, sources = set(), set(), set()
+
+    for release in releases:
+        identifier = _quality_identifier(release)
+        if identifier:
+            qualities.add(identifier)
+
+        status = release.get('status')
+        if status:
+            statuses.add(status)
+
+        family = protocol_family(_info(release).get('protocol'))
+        if family:
+            sources.add(family)
+
+    if profile_qualities:
+        ordered_qualities = [q for q in profile_qualities if q in qualities]
+        ordered_qualities += sorted(qualities - set(profile_qualities))
+    else:
+        ordered_qualities = sorted(qualities)
+
+    return {
+        'source': sorted(sources),
+        'quality': ordered_qualities,
+        'status': sorted(statuses),
+    }
+
+
+def _query(controls, **overrides):
+    params = dict(controls)
+    params.update(overrides)
+    # Omit filter defaults so a plain view produces a clean URL. `sort` and
+    # `dir` are deliberately exempt: they are the entire point of a sort
+    # link, so they must stay explicit even when the value happens to equal
+    # the default (e.g. an inactive column's link still says dir=desc).
+    return urlencode({k: v for k, v in params.items() if k in ('sort', 'dir') or v != DEFAULT_CONTROLS[k]})
+
+
+def sort_columns(controls, movie_id, web_base = '/'):
+    """One entry per sortable column: label, links, and aria-sort state."""
+
+    base = web_base if web_base.endswith('/') else web_base + '/'
+    columns = []
+
+    for key, label in SORT_COLUMNS:
+        is_active = controls['sort'] == key
+        # Clicking the active column reverses it; an inactive column starts
+        # descending, which is what "show me the biggest/newest" means.
+        direction = 'asc' if is_active and controls['dir'] == 'desc' else 'desc'
+        query = _query(controls, sort = key, dir = direction)
+
+        columns.append({
+            'key': key,
+            'label': label,
+            'aria_sort': ('descending' if controls['dir'] == 'desc' else 'ascending') if is_active else 'none',
+            'is_active': is_active,
+            'hx_get': '%spartial/movie/%s/releases?%s' % (base, movie_id, query),
+            'href': '%smovie/%s?%s' % (base, movie_id, query),
+        })
+
+    return columns
