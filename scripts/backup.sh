@@ -218,6 +218,16 @@ info "snapshot complete: $DEST"
 # exactly our own YYYYMMDD-HHMMSS stamp. Unrelated files and directories
 # (and anything outside BACKUP_DIR, e.g. config.bak/) are never candidates.
 #
+# KNOWN LIMITATION, accepted deliberately: the `-N` collision suffix sorts
+# lexically, so with ten or more snapshots inside a single wall-clock second
+# `-10` sorts before `-2` and the freshest directory can look like the oldest —
+# `--retain 1` would then delete the snapshot the run just took. Requires ten
+# runs in one second, which nightly cron plus a manual pre-promotion cannot
+# produce. Excluding `$DEST` from the candidate list fixes it, but changes
+# `--retain N` to "N existing plus the fresh one" and broke seven existing
+# retention tests; not worth that for this trigger. If you ever do run backups in
+# a tight loop, zero-pad the suffix instead.
+#
 # Implementation note — this deliberately does NOT pipe paths into
 # `head | while read`. Two real defects came from that:
 #   1. `read` splits on newlines, so a newline anywhere in BACKUP_DIR truncated

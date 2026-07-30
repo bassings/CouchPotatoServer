@@ -5,7 +5,8 @@ The expensive failures on this repo have not been red tests — they have been
 green ones. `CLAUDE.md` rules 9–11 cover the judgement half of that problem;
 this script covers the mechanically detectable half, because a weaker agent
 forgets prose but cannot get past a command that exits non-zero (global standard
-#9). Pure stdlib — no PyYAML, no deps — so it runs in the `lint` CI job as-is.
+#9). Requires PyYAML (in requirements-dev.txt, and pip-installed in the `lint`
+job) to parse workflow files with a real parser; everything else is stdlib.
 
 Checks performed:
 
@@ -35,12 +36,16 @@ Checks performed:
      recipe (every recipe line is its own shell, so pipefail is never
      inherited), or a GitHub workflow ``run:`` block.
 
-  3. **Shell gates missing ``set -e`` / ``set -u``.** ``set -e`` alone continues
-     past a typo'd variable. ``pipefail`` is deliberately NOT demanded here — it
-     is only meaningful for a pipeline, and check 2 already reports the
-     pipelines that matter, at the exact line. (Demanding it generally produced
-     false positives on ``case a|b)`` alternations and on ``|`` inside quoted
-     strings.)
+  3. **Shell gates missing ``set -e`` / ``set -u`` / ``pipefail``.** ``set -e``
+     alone continues past a typo'd variable, and without ``pipefail`` a failing
+     command mid-pipeline is ignored. ``pipefail`` is demanded only when the file
+     actually contains a pipeline, and only when check 2 has not already reported
+     that exact line (one fix, one finding). It covers the pipelines check 2
+     cannot: ``docker build | tee`` and ``./guardrails.sh | grep -c FAIL`` swallow
+     an exit code just as thoroughly as ``pytest`` does, and ``RUNNER_RE`` will
+     never list every command. ``#!/bin/sh`` files are exempt from the
+     ``pipefail`` half — it is not POSIX (hard rule 8 requires a ``sh``
+     entrypoint).
 
   4. **Git hooks must be executable.** A non-executable file under
      ``.githooks/`` is silently ignored by git, so the gate it implements never

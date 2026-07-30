@@ -45,8 +45,9 @@ jobs:
 
     # False-green guard: jsdom layout-zero reads in vitest specs, test runners
     # piped into filters without pipefail (the pipeline reports the filter's exit
-    # status), and shell gates missing `set -euo pipefail`. Pure stdlib, so it
-    # rides along in this job rather than paying for another runner.
+    # status), shell gates missing `set -euo pipefail`, and non-executable git
+    # hooks. Stdlib plus PyYAML (installed above), so it rides along in this job
+    # rather than paying for another runner.
     # See scripts/check_test_traps.py and CLAUDE.md rules 9-11.
     - name: Run test-trap check
       run: python scripts/check_test_traps.py
