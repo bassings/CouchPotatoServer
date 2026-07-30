@@ -90,17 +90,78 @@ def _matches(release, controls):
     return True
 
 
-def filter_and_sort_releases(releases, controls):
+def _display_name(release):
+    return (_info(release).get('name') or release.get('identifier') or '')
+
+
+#: sort key -> (extractor, is_numeric). The extractor returns None when the
+#: release has nothing to sort on, which sends it to the missing group.
+def _numeric(field):
+    def extract(release, _profile_qualities):
+        value = _info(release).get(field)
+        return None if value is None else tryFloat(value)
+    return extract
+
+
+def _quality_key(release, profile_qualities):
+    identifier = _quality_identifier(release)
+    if not identifier:
+        return None
+    if profile_qualities:
+        # Profile order is best-first, so a lower index is a better quality.
+        if identifier in profile_qualities:
+            return profile_qualities.index(identifier)
+        return None
+    return identifier.lower()
+
+
+_SORT_KEYS = {
+    'name': lambda r, _pq: _display_name(r).lower() or None,
+    'quality': _quality_key,
+    'score': _numeric('score'),
+    'size': _numeric('size'),
+    'seeders': _numeric('seeders'),
+    'age': _numeric('age'),
+    'source': lambda r, _pq: protocol_family(_info(r).get('protocol')),
+    'status': lambda r, _pq: (r.get('status') or '').lower() or None,
+}
+
+
+def filter_and_sort_releases(releases, controls, profile_qualities = None):
     """Apply `controls` (already normalised) to `releases`.
 
-    Returns a new list; never mutates the input.
+    Returns a new list; never mutates the input. `profile_qualities` is the
+    movie's profile quality list, ordered best-first, used only by the
+    quality sort.
     """
 
     filtered = [r for r in releases if _matches(r, controls)]
 
-    return _sorted(filtered, controls)
+    return _sorted(filtered, controls, profile_qualities)
 
 
-def _sorted(releases, controls):
-    # Filled in by Task 4; ordering is a separate concern from filtering.
-    return list(releases)
+def _sorted(releases, controls, profile_qualities):
+    extract = _SORT_KEYS.get(controls['sort'])
+    if extract is None:
+        # 'default' -- keep the incoming order, which is Part A's output
+        # (score, then the user's download-source preference). `dir` is
+        # deliberately ignored: reversing here would invert that preference.
+        return list(releases)
+
+    present, missing = [], []
+    for release in releases:
+        try:
+            key = extract(release, profile_qualities)
+        except Exception:
+            key = None
+        (present if key is not None else missing).append((key, release))
+
+    # Mixed key types would raise on comparison; only sort when they agree.
+    if len({type(key) for key, _ in present}) > 1:
+        present.sort(key = lambda pair: str(pair[0]), reverse = controls['dir'] == 'desc')
+    else:
+        present.sort(key = lambda pair: pair[0], reverse = controls['dir'] == 'desc')
+
+    # Missing values always trail, whichever direction was asked for: absent
+    # data must never lead the list.
+    return [release for _key, release in present] + [release for _key, release in missing]
