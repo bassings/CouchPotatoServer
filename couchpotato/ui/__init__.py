@@ -82,12 +82,15 @@ def _releases_ctx(movie, movie_id, params):
     """Everything the releases partial (partials/movie_releases.html) needs,
     computed once so the full-page render and the standalone htmx route agree.
 
-    Also returns `title`: the standalone `/partial/movie/{id}/releases` route
-    has no other source for the table's `<caption>`. When this is merged into
-    `partials/movie_detail.html`'s own render (which sets its own `title` from
-    the same movie before `{% include %}` runs), the local `{% set title %}`
-    simply wins -- harmless duplication there, load-bearing for the
-    standalone route.
+    Also returns `title`, using the SAME chain
+    (`titles[0] or original_title or movie.title or 'Unknown'`) that
+    `partials/movie_detail.html`'s `<h1>` uses -- both the full page and the
+    standalone `/partial/movie/{id}/releases` route (which has no other
+    source for the table's `<caption>`) now agree on one title, computed
+    here only. `movie_detail.html` used to recompute its own copy of this
+    chain and silently shadow this one, which let the two derivations drift:
+    with `titles=[]` and an `original_title` set, the full page showed the
+    real title while the standalone releases route showed "Unknown".
     """
     from couchpotato.ui.releases_view import (
         filter_and_sort_releases, filter_options, normalise_controls, sort_columns,
@@ -106,14 +109,22 @@ def _releases_ctx(movie, movie_id, params):
     web_base = Env.get('web_base') or '/'
 
     info = movie.get('info') or {}
-    titles = info.get('titles') or ['Unknown']
-    title = titles[0] if titles else 'Unknown'
+    titles = info.get('titles') or []
+    title = titles[0] if titles else (info.get('original_title') or movie.get('title') or 'Unknown')
 
     return {
         'movie_id': movie_id,
         'title': title,
         'releases': filter_and_sort_releases(matching, controls, profile_qualities),
+        # Profile-matching count: drives the filter controls, the table, and
+        # the "N of M releases" live region.
         'total_releases': len(matching),
+        # Raw (pre-profile-filter) count: lets the template tell "no releases
+        # exist yet" apart from "releases exist but none match the profile's
+        # quality list" -- the second case is actionable (the profile is
+        # hiding something) and used to render its own message, restoring
+        # what master showed before total_releases became profile-filtered.
+        'raw_release_count': len(all_releases),
         'controls': controls,
         'options': filter_options(matching, profile_qualities),
         'columns': sort_columns(controls, movie_id, web_base),

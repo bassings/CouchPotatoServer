@@ -2,22 +2,36 @@
    paint, and standalone by GET /partial/movie/<id>/releases for htmx swaps,
    so it must not depend on anything movie_detail.html computes locally --
    every variable it uses (movie_id, title, releases, total_releases,
-   controls, options, columns) is supplied by _releases_ctx() in
-   couchpotato/ui/__init__.py for both callers.
+   raw_release_count, controls, options, columns) is supplied by
+   _releases_ctx() in couchpotato/ui/__init__.py for both callers.
 
    The container itself always renders so it stays a stable htmx swap target
-   and the controls never disappear out from under the user:
-     - total_releases == 0 (nothing matches the movie's quality profile, or
-       the movie simply has no releases yet): controls are omitted --
-       there is nothing to filter (FEAT-007 B14).
-     - total_releases > 0 but the current filter matches nothing: controls
-       stay visible with a "Clear filters" escape hatch, plus a
-       "0 of N releases" live-region count.
+   and the controls never disappear out from under the user. There are three
+   distinct states, and they must not collapse into each other -- a movie
+   with releases the profile hides looks identical to "no releases yet" if
+   they do, and the second is the actionable one (the user CAN see it if
+   they widen the profile; there is nothing to do about the first):
+     - raw_release_count == 0 (the movie has no releases at all yet):
+       nothing renders -- there is nothing to filter, nothing to explain
+       (FEAT-007 B14).
+     - raw_release_count > 0 but total_releases == 0 (every release exists
+       but none match the movie's quality profile): a heading plus an
+       explanatory message renders, no controls or table -- filtering/
+       sorting an empty set has nothing to offer.
+     - total_releases > 0: controls + table render as below. If the
+       CURRENT FILTER (not the profile) matches nothing, controls stay
+       visible with a "Clear filters" escape hatch, plus a "0 of N
+       releases" live-region count.
 
    The releaseDownloader() Alpine component lives in movie_detail.html (loaded
    once per full page render), not here -- see the comment there for why. #}
 <div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
-  {% if total_releases %}
+  {% if not total_releases and raw_release_count %}
+  <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
+  <p class="text-xs text-cp-muted" role="status">
+    No releases match the selected profile qualities.
+  </p>
+  {% elif total_releases %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>
 
   <form class="flex flex-wrap items-end gap-3 mb-3"

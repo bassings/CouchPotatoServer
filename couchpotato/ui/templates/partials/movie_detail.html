@@ -1,11 +1,15 @@
 {% set info = movie.get('info', {}) %}
-{# `titles` can be present but EMPTY -- MovieResultModifier.default_info seeds
-   it as [] (providers/info/_modifier.py:21), so any movie whose info was never
-   filled (a failed TMDB refresh, an import) hits that. `.get('titles', [...])`
-   does not help there: the key exists, so the default never applies, and
-   indexing [] yields Undefined and renders an EMPTY <h1>. Fall through the
-   same chain movie_cards.html already uses, plus the document's own title. #}
-{% set title = info.get('titles', [''])[0] or info.get('original_title', '') or movie.get('title', '') or 'Unknown' %}
+{# `title` is computed by couchpotato.ui._releases_ctx() (`titles[0] or
+   original_title or movie.title or 'Unknown'`) and passed into this render
+   -- it used to be recomputed here too, which let the two derivations drift
+   apart (FEAT-007: with titles=[] and an original_title set, this page
+   showed the real title while the standalone releases partial showed
+   "Unknown"). There is now exactly one derivation; this is only a hard
+   floor for a render that skipped _releases_ctx entirely, not a fallback
+   chain -- see _releases_ctx's docstring for why an EMPTY <h1> is the
+   historical bug ("titles" present but [] must not defeat the other
+   fallbacks) that derivation guards against. #}
+{% set title = title if title is defined and title else 'Unknown' %}
 {% set raw_year = info.get('year', 0) %}
 {% set year = raw_year if raw_year and raw_year != 0 else 'TBA' %}
 {% set plot = info.get('plot', '') %}

@@ -177,7 +177,11 @@ class TestReleasesPartialRoute:
         assert client.get('/partial/movie/movie-1/releases').status_code == 200
 
     def test_a_movie_with_no_releases_renders_the_empty_state(self, client):
-        """B14."""
+        """B14: genuinely nothing to show yet -- no heading, no table, no
+        profile-hidden message. A bare 200 (the old assertion) also passes
+        when the route dumps an unrelated error page, so it names nothing
+        about what the empty state actually looks like.
+        """
         def handler(**kwargs):
             return {'media': dict(MOVIE, releases = [])}
 
@@ -187,6 +191,41 @@ class TestReleasesPartialRoute:
         try:
             resp = client.get('/partial/movie/movie-1/releases')
             assert resp.status_code == 200
+            assert '<table' not in resp.text
+            assert 'Releases</h2>' not in resp.text
+            assert 'No releases match the selected profile qualities' not in resp.text
+        finally:
+            if old:
+                api['media.get'] = old
+            else:
+                api.pop('media.get', None)
+
+    def test_releases_hidden_by_the_profile_are_distinguished_from_no_releases(self, client):
+        """Regression: `total_releases` became the profile-matching count, and
+        the template gated the ENTIRE releases block on it -- so a movie
+        whose only release is a quality the profile doesn't want rendered an
+        empty <div id="movie-releases"> with no heading, no table, and no
+        explanation. Master rendered "No releases match the selected profile
+        qualities." here; the user needs to be able to tell "nothing found
+        yet" apart from "found releases your profile is hiding", since only
+        the second is something they can act on (widen the profile).
+        """
+        def handler(**kwargs):
+            movie = dict(MOVIE, releases = [
+                _release('r480', 'nzb', '480p', 'available', 10, 100),
+            ])
+            return {'media': movie}
+
+        old = api.get('media.get')
+        api['media.get'] = handler
+        api_locks['media.get'] = __import__('threading').Lock()
+        try:
+            resp = client.get('/partial/movie/movie-1/releases')
+            assert resp.status_code == 200
+            assert 'No releases match the selected profile qualities' in resp.text
+            assert '<table' not in resp.text, (
+                'nothing matches the profile, so there is nothing to put in a table'
+            )
         finally:
             if old:
                 api['media.get'] = old
