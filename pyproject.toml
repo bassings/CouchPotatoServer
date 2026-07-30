@@ -113,12 +113,22 @@ ignore = [
 "tests/*" = ["B", "UP"]
 
 [tool.mutmut]
-# Mutation testing (mutmut 3.x). Run with: make mutation-py  (or `mutmut run`).
+# Mutation testing (mutmut 3.x). Run with: make mutation-py  (or `mutmut run`),
+# or make mutation-changed for just what the branch touched.
 # Scoped to start at the highest-value, best-covered module — the SQLite
 # adapter, which had two critical _query_index bugs post-migration and is
-# exercised by 5 unit-test files. Widen paths_to_mutate as coverage grows;
+# exercised by 5 unit-test files. Widen source_paths as coverage grows;
 # keep the runner pointed at the tests that actually cover the mutated paths
 # so each run stays fast enough to be useful.
-paths_to_mutate = ["couchpotato/core/db/sqlite_adapter.py"]
+#
+# `source_paths` is the modern key — mutmut 3.6 warns that the old
+# `paths_to_mutate` name is deprecated. scripts/mutation_changed.py reads this
+# list rather than keeping its own copy, and accepts either name.
+source_paths = ["couchpotato/core/db/sqlite_adapter.py"]
+# NOTE: mutmut 3.6 also deprecates `tests_dir` in favour of
+# `pytest_add_cli_args_test_selection`. Left as-is deliberately: `runner` below
+# already pins the exact pytest invocation, so this key is doing nothing except
+# emitting a warning, and changing it is untested here. Drop or migrate it when
+# the mutation config is next revisited.
 tests_dir = ["tests/unit/"]
 runner = "python -m pytest -x -q tests/unit/test_sqlite_adapter.py tests/unit/test_sqlite_transactions.py tests/unit/test_db_factory.py"

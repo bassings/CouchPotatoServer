@@ -100,5 +100,9 @@ KeyError: "No document found in index 'quality' for key: 2160p"
 - Container running on port 5051
 - Fresh database with SQLite (no CodernityDB migration needed)
 - Quality fill bug found and fixed (DEF-010)
-- API key: `40cbf8f9a02a4d889d611ac493098a3e`
+- API key: redacted — CouchPotato generates a fresh `api_key` per install, so
+  the value from that throwaway dev container has no reuse value and is not
+  reproduced here. (It was committed in full until 2026-07-30; it remains in git
+  history, which is why the remedy for a *real* key is rotation, not editing the
+  file. Read it from `config.ini` or the settings API when you need it.)
 - Browser testing via OpenClaw browser automation

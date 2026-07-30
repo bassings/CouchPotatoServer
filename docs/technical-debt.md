@@ -69,6 +69,49 @@
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them
   pile up.
+- **Two E2E specs fail locally but pass in CI — `make verify` cannot currently go
+  green on a dev machine.** Both time out at 30s, both verified pre-existing
+  (identical failures on a clean tree, 2026-07-30), and both were invisible until
+  the interpreter bug below was fixed, because the local E2E stage never actually
+  started:
+  - `interactions.e2e.spec.ts:35 › Navigation › sidebar links navigate correctly`
+    — fails deterministically locally (3/3 runs). Previously noted as "flaky";
+    locally it is not flaky, it is consistent, which makes it tractable.
+  - `interactions.e2e.spec.ts:298 › Suggestions Page › tabs switch content` —
+    genuinely flaky locally (1/3 runs).
+  CI is green on both (it also has `retries: 2`, which would paper over the
+  flaky one). Until they are fixed, hard rule 2 cannot be satisfied literally, so
+  a push needs either these two triaged or an explicit, stated bypass — don't let
+  "verify is red anyway" become the normal state, which is how a gate dies.
+- **E2E specs are not worker-independent, so the suite runs single-worker.**
+  `categories.spec.ts`, `profiles.spec.ts`, `search.spec.ts` and
+  `interactions.e2e.spec.ts` mutate *global* server state (categories, quality
+  profiles) on one shared app instance, so parallel workers clobber each other's
+  fixtures. `playwright.config.ts` previously used
+  `workers: process.env.CI ? 1 : undefined`, which hid this: CI serialised and was
+  green while a local run used one worker per core and failed 21 of 142 specs —
+  i.e. `make verify` could never pass locally, in direct conflict with hard rule
+  2. Pinned to `workers: 1` everywhere on 2026-07-30 (verified: the same 21 fail
+  on a clean tree with default workers, and 0 fail with one worker). The real fix
+  is per-worker isolation — a fixture that namespaces the categories/profiles it
+  creates, or a server per worker — after which `fullyParallel` can be restored
+  and the suite gets its wall-clock back.
+- **Two hardcoded third-party API keys inherited from upstream** — both
+  baselined in `.gitleaksignore` (added 2026-07-30 with the `secrets` gate) and
+  both already public in every copy of the upstream repo, so they leak nothing
+  that is not already out:
+  - `couchpotato/core/media/movie/providers/info/fanarttv.py:18` — fanart.tv v3
+    key baked into the request URL. There is already a `fanart.tv` `api_key`
+    setting (the provider errors at line 130 when it is blank), so the fix is to
+    read the setting and drop the literal — a behaviour change (existing installs
+    with no key set would lose fanart lookups), hence its own commit.
+  - `couchpotato/core/media/movie/_base/static/movie.actions.js:378` — YouTube
+    Data API key in a trailer-lookup URL, in the legacy `/old` UI's static JS.
+    Goes away with UI-CLEANUP-02 when the legacy asset layer is deleted; no
+    separate work needed.
+  Full git history additionally holds ~37 upstream findings from 2011–2012
+  (`make check-secrets-history`); they are upstream's committed keys, not ours,
+  and rewriting 5,800 commits of history to purge them is not proposed.
 
 ## Lessons learned
 

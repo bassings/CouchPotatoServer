@@ -9,7 +9,8 @@
 ```
 make setup → code → make verify → LOCAL agent review (must pass) → push/open PR →
   cloud claude-review → (findings? fix → LOCAL review again → push) → merge →
-  auto beta build (:beta, per-commit) → manual promote to prod (:latest) → deploy
+  auto beta build (:beta, per-commit) → manual promote to prod (:latest) →
+  backup + record rollback tag → deploy → post-deploy checks
 ```
 
 > Merging does **not** ship to production. Every merge auto-publishes a *beta*
@@ -92,6 +93,56 @@ pre-push hook only runs `make verify` and cannot tell whether the local agent
 review ran — honour the gate as a rule, don't rely on the hook to block a
 gate-less push.
 
+## Verification discipline (CLAUDE.md rules 9–11)
+
+Three rules that exist because a green suite has repeatedly *not* meant correct
+on this repo. They are judgement calls, deliberately not mechanical gates — the
+mechanical half of the same problem lives in `scripts/check_test_traps.py`.
+
+**A sub-agent's report is not evidence (rule 9).** Validate against the repo:
+read the diff, run the command. Agents have reported "all green" with a gate
+failing and described fixes they did not make. The orchestrator's sign-off is
+its own verification, not a restatement of the agent's summary. (This is the
+practice `docs/development-process.md` already implied; as of 2026-07-30 it is
+policy, not instinct.)
+
+**Run the mutation, and prove the mutation landed (rule 10).** "Mentally
+mutating" the code does not work — every vacuous test caught here survived
+mental review. Break the guarded behaviour, watch the test fail, restore.
+
+The second half of that rule is the one earned locally, on
+`feat/release-list-sort-filter` (2026-07-30): an attempt to prove a
+`quote(movie_id)` test was load-bearing used a `sed` that silently matched
+nothing, so the test "passed" against code that was never actually reverted. It
+was caught only because *passing was the wrong answer*. A no-op mutation is
+indistinguishable from a passing test unless you check the edit applied — so
+`git diff` (or hash) the file after mutating and before running. Two failure
+modes, one mitigation:
+
+| What you think happened | What actually happened | Check |
+|---|---|---|
+| Test failed → guard is real | Guard is real | — |
+| Test passed → guard is vacuous | The mutation never applied | `git diff` shows the mutation |
+
+**After three failed fixes, question the frame (rule 11).** The tripwire that
+prompted writing this down: on `feat/release-list-sort-filter`, four fixes each
+introduced a fresh defect — `tryInt` truncating scores, a contrast fix rendering
+poster badges illegible, an `HX-Request` branch breaking the Back button, and a
+seeder-health comparison against a raw provider value that 500'd the whole
+movie-detail body. Each was caught by a review round rather than by the suite,
+and each looked obviously correct when written. Two general lessons worth
+carrying beyond that branch:
+
+- **Fixes are new work.** A one-line correction gets the same TDD and the same
+  review as a feature; "it's just a fix" is how all four shipped.
+- **A first-of-its-kind change has no precedent to lean on.** The Back-button
+  defect came from this branch introducing the codebase's first `hx-push-url`,
+  which engaged htmx's history machinery for the first time ever — it snapshots
+  `body.innerHTML` including Alpine's `x-teleport`ed copy, so a cache-hit Back
+  restored a duplicate with no scope (measured: 3 duplicated ids, 42 uncaught
+  page errors, deterministic). When a change is the first use of a mechanism,
+  the blast radius is unknown by definition; go looking for it explicitly.
+
 ## PR gate (cloud review)
 
 Every PR is auto-reviewed by Claude (`.github/workflows/claude-review.yml`,
@@ -106,10 +157,16 @@ exists on `master`; the PR that introduces/edits it is a no-op (expected).
 
 ## Required CI checks
 
-`lint`, `test-summary`, `ui-unit-tests`, `ui-e2e-tests`, `claude-review`,
-`Analyze (python)`, `Analyze (javascript)`, `dependency-review`, `docker`,
-`accessibility` (axe), `conformance` (`scripts/check_conformance.py` —
-design-system drift gate, added in #147).
+`lint` (ruff **+ the test-trap guard**), `test-summary`, `ui-unit-tests`,
+`ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
+`dependency-review`, `docker`, `accessibility` (axe), `conformance`
+(`scripts/check_conformance.py` — design-system drift gate, added in #147),
+`secrets` (gitleaks).
+
+`ci.yml` uses `concurrency: cancel-in-progress: true` — a new push supersedes the
+in-flight run. Note this is deliberately **false** in `docker.yml` and
+`release-to-prod.yml`, where cancelling mid-run could leave a half-published
+image.
 
 ## SAST / security gates
 
@@ -118,16 +175,47 @@ design-system drift gate, added in #147).
   with known high/critical vulns.
 - **Trivy** image scan in the `docker` job — fails on fixable HIGH/CRITICAL
   CVEs (`ignore-unfixed`, `.trivyignore` for the DS-0002 false positive).
+- **secrets** (gitleaks, pinned `v8.30.1`) — scans the **working tree**, not full
+  history. Full history holds 37 findings from upstream CouchPotato's 2011–2012
+  commits, and a gate that is red on arrival gets disabled; the blocking check
+  answers "is there a secret in the code as it stands?". Two known upstream
+  provider keys still in the tree are baselined by fingerprint, each with a
+  justification, in `.gitleaksignore` — **an entry there without a comment is
+  indistinguishable from a suppressed real leak**. Local equivalents:
+  `make check-secrets` (same command CI runs) and `make check-secrets-history`
+  (the noisy full-history scan; use it when a credential is suspected to have
+  been committed and later deleted, which the tree scan cannot see).
+- **test-trap guard** (`scripts/check_test_traps.py`, in the `lint` job and
+  `make verify`) — blocks *false greens*: jsdom layout-zero reads in vitest specs
+  without a stub, test runners piped into filters without `pipefail`, and shell
+  gates missing `set -euo pipefail`. This is the mechanical half of CLAUDE.md
+  rules 9–11; see "Verification discipline" above for the judgement half.
 - **security-lint** (ruff `S`/bandit) — INFORMATIONAL, non-blocking (~169
   legacy findings); ratchet S codes into the blocking `lint` as cleared.
 - Plus the `claude-review` prompt covers security qualitatively.
 
 ## Mutation testing
 
-Runs nightly + on-demand (*Mutation Testing* workflow), informational only:
-`make mutation-py` (mutmut) / `make mutation-js` (Stryker over the extracted UI
-logic in `couchpotato/static/scripts/ui/`, ~96% score). See `[tool.mutmut]` in
-`pyproject.toml` and `stryker.conf.json`.
+Informational only — there is no score threshold. Review the survivor list and
+strengthen the weak assertions; a survivor usually means a missing or weak
+assertion, and genuinely *equivalent* mutants (ones that cannot change observable
+behaviour) should be noted and skipped rather than chased.
+
+| Command | Scope |
+|---|---|
+| `make mutation-changed` | **Only files changed vs `master`** — fast enough to run per-change. `BASE=origin/master` to compare elsewhere; `--dry-run` prints the commands. |
+| `make mutation-py` | Everything in `[tool.mutmut] source_paths` (mutmut) |
+| `make mutation-js` | Everything in stryker's `mutate` (Stryker over the extracted UI logic in `couchpotato/static/scripts/ui/`, ~96% score) |
+
+Also runs nightly + on-demand via the *Mutation Testing* workflow. Config lives
+in `[tool.mutmut]` (`pyproject.toml`) and `stryker.conf.json`;
+`scripts/mutation_changed.py` **reads those** rather than keeping its own copy of
+the scope, so the two cannot drift — pinned by
+`tests/unit/test_mutation_changed.py`.
+
+`make mutation-changed` exists because the full run is slow enough that in
+practice it only happened nightly, which meant survivors went unreviewed and the
+"review the survivor list" half of this rule quietly stopped happening.
 
 ## E2E tests
 
@@ -204,17 +292,119 @@ promotion). Full design: `specs/FEAT-release-channels.md`.
    `docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --scanners vuln ghcr.io/bassings/couchpotatoserver:latest`.
    Target 0 CVEs. `.trivyignore` suppresses only the DS-0002 misconfig false
    positive (gosu/su-exec privilege-drop pattern).
-5. SSH to server, pull the promoted image, restart:
-   ```bash
-   # SSH credentials in Openclaw memory (topics/couchpotato.md)
-   cd /var/lib/plexmediaserver/CouchPotato
-   docker compose pull
-   docker compose up -d
-   docker logs couchpotato --tail=50
+5. Deploy using the procedure below — **back up and record the rollback tag
+   first**. Prod compose stays pinned to `:latest`, which is now guaranteed
+   stable-only, so a `docker compose pull` there can never pick up an untested
+   beta.
+
+### Deploying to prod (backup → rollback tag → restart → verify)
+
+A promotion is reversible only if you capture two things *before* restarting:
+the database, and the digest of the image currently running. Neither is
+recoverable afterwards — `:latest` has already moved by the time you deploy, so
+"just re-pull the old one" is not available.
+
+```bash
+# SSH credentials in Openclaw memory (topics/couchpotato.md)
+cd /var/lib/plexmediaserver/CouchPotato
+
+# 1. Back up the DB + settings (see "Backups" below; ~seconds, live-safe).
+./scripts/backup.sh
+
+# 2. Record what is running now, so rollback has a target.
+#    The digest is the only reliable handle — the tag :latest is about to move.
+docker inspect couchpotato --format '{{index .Config.Image}} {{.Image}}'
+docker exec couchpotato python -c "import couchpotato; print(couchpotato.__version__)" 2>/dev/null \
+  || docker logs couchpotato 2>&1 | grep -i -m1 version
+# Note both down. The version gives you the immutable :X.Y.0 tag to roll back to.
+
+# 3. Pull and restart.
+docker compose pull
+docker compose up -d
+docker logs couchpotato --tail=50
+```
+
+**Post-deploy checks** — do all five; a clean log is not enough, and three of
+the four defects on `feat/release-list-sort-filter` were rendering faults a
+healthy container reports nothing about:
+
+1. `http://homemedia.maeewing.com:5050/` loads and the movie list renders.
+2. Open one movie's detail page — the release table renders (this is the body
+   that a single bad provider value 500'd; a healthy `/` proves nothing about it).
+3. Wanted + Manage pages load; library counts match what they were pre-deploy.
+4. Settings loads and a save round-trips (settings live in `config.ini`, not
+   `settings.conf`).
+5. `docker logs couchpotato --tail=50` shows no tracebacks, and the search /
+   Jackett path returns results (`http://homemedia:9117` reachable).
+
+### Rollback
+
+Because every promoted version keeps its immutable tag, rollback is a tag pin —
+no rebuild, no registry surgery:
+
+```bash
+cd /var/lib/plexmediaserver/CouchPotato
+
+# Pin the previous good version explicitly (do NOT rely on :latest — it has moved).
+# Either edit the compose image line to ghcr.io/bassings/couchpotatoserver:X.Y.0,
+# or override without editing the file:
+docker compose down
+docker run -d --name couchpotato \
+  --restart unless-stopped \
+  -p 5050:5050 \
+  -v /var/lib/plexmediaserver/CouchPotato/config:/config \
+  ghcr.io/bassings/couchpotatoserver:X.Y.0   # or the digest from step 2 above
+
+# If the DB also needs restoring (only if a migration or a write corrupted it):
+docker stop couchpotato
+cp <BACKUP_DIR>/<timestamp>/couchpotato.db \
+   /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db
+docker start couchpotato
+```
+
+Prefer re-pinning the image alone first — restoring the DB discards anything
+added since the backup. Once the pinned old version is confirmed healthy, revert
+the compose file back to `:latest` only after the bad release is superseded,
+otherwise the next `docker compose pull` silently re-deploys the broken image.
+
+> ⚠️ `config.bak/` under `/var/lib/plexmediaserver/CouchPotato/` must **never**
+> be deleted, by a backup script or by hand. It is not a scratch directory.
+
+### Backups
+
+`scripts/backup.sh` snapshots the SQLite DB (via `sqlite3 .backup`, or Python's
+`sqlite3` backup API when the CLI is absent — both are safe against a live
+database; a plain `cp` of an in-use SQLite file is not) plus `config.ini`, into a
+timestamped directory under `BACKUP_DIR`. It never touches `config.bak/` and
+prunes only its own timestamped output.
+
+Both paths default to the prod layout, so on the server it takes no arguments:
+
+```bash
+./scripts/backup.sh                # snapshot, keep everything
+./scripts/backup.sh --retain 14    # snapshot, then keep the 14 newest
+
+# Override the paths (this is how the tests drive it):
+CP_DATA_DIR=/var/lib/plexmediaserver/CouchPotato/config/data \
+BACKUP_DIR=/var/lib/plexmediaserver/CouchPotato/backups \
+  ./scripts/backup.sh
+```
+
+Snapshots land in `<BACKUP_DIR>/<YYYYMMDD-HHMMSS>/{couchpotato.db,config.ini}`.
+`--retain 0` is rejected rather than treated as "keep nothing", and retention
+only ever deletes directories matching its own timestamp pattern — behaviour
+pinned by `tests/unit/test_backup_script.py` (7/7 mutations killed, including
+"replace `.backup` with `cp`", which the WAL-mode fixture catches).
+
+Two manual steps, both on the server — neither is automated by this repo:
+
+1. The server holds a compose + config directory, **not** a repo checkout, so
+   copy `scripts/backup.sh` there once (`scp scripts/backup.sh
+   homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/`).
+2. Schedule it with `crontab -e`:
+   ```cron
+   0 3 * * * cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh --retain 14 >> /var/log/couchpotato-backup.log 2>&1
    ```
-   Prod compose stays pinned to `:latest`, which is now guaranteed
-   stable-only — a `docker compose pull` there can never pick up an
-   untested beta.
 
 ### Beta testers
 
@@ -230,6 +420,15 @@ toggle.
 | `pytest tests/unit/ -q` | All unit tests (see PYTHONPATH note below) |
 | `ruff check .` | Linting |
 | `./scripts/test-local.sh` | Full Docker container test |
+| `scripts/check_test_traps.py` | False-green guard — stage 2 of `make verify` |
+| `scripts/check_conformance.py` | Design-system drift gate |
+| `scripts/mutation_changed.py` | Mutation testing scoped to changed files |
+| `scripts/backup.sh` | Prod DB + settings snapshot (pre-deploy and nightly) |
+
+Each of these is itself unit-tested (`tests/unit/test_check_test_traps.py`,
+`test_check_conformance.py`, `test_mutation_changed.py`, `test_backup_script.py`)
+— a guard script that silently stops guarding is the exact failure mode they
+exist to prevent, so they do not get to be the untested part of the suite.
 
 - Unit tests use `pytest` + the `tmp_path` fixture — no Docker needed locally.
 - SQLiteAdapter tests instantiate against a temp path:

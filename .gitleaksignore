@@ -1,0 +1,28 @@
+# Gitleaks fingerprint baseline — known, assessed, pre-existing findings.
+#
+# Rules for this file: one entry per finding, each with a comment saying what it
+# is and why it is accepted. Never add an entry to make CI green without
+# assessing it — an unexplained fingerprint here is indistinguishable from a
+# suppressed real leak. Prefer fixing or rotating the credential over adding a
+# line. Regenerate/refresh fingerprints with:
+#
+#   make check-secrets
+#
+# Both entries below are hardcoded third-party API keys that upstream
+# CouchPotato committed years before this fork, and both are already public in
+# every copy of the upstream repository — so redacting them here would remove no
+# secrecy that exists. They are ordinary application defaults, not credentials
+# of ours, and neither grants access to anything of this project's. Removing
+# them means giving each provider a settings-backed key first (there is already
+# a `fanart.tv` api_key setting; see couchpotato/core/media/movie/providers/
+# info/fanarttv.py:130 which errors when it is blank), which is a behaviour
+# change and belongs in its own commit — tracked in docs/technical-debt.md.
+
+# fanart.tv v3 API key baked into the request URL by upstream. Public in
+# upstream CouchPotato since the fanart.tv v3 migration.
+couchpotato/core/media/movie/providers/info/fanarttv.py:generic-api-key:18
+
+# YouTube Data API key in a trailer-lookup URL in the LEGACY /old UI's static
+# JS (mootools era). Slated for deletion with the legacy asset layer — see
+# UI-CLEANUP-02 and the legacy-asset-live-chain note; the key goes with it.
+couchpotato/core/media/movie/_base/static/movie.actions.js:gcp-api-key:378

@@ -1,9 +1,29 @@
+import { existsSync } from 'node:fs';
+
 import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Playwright configuration for CouchPotato E2E tests.
  * See https://playwright.dev/docs/test-configuration
  */
+
+/*
+ * Interpreter used to start the app for local runs (see `webServer` below).
+ *
+ * Resolution order, most specific first:
+ *   1. $PYTHON — what scripts/verify.sh exports, so the gate starts the app with
+ *      the same interpreter it ran the unit tests with.
+ *   2. ./.venv/bin/python — so a bare `npm run test:e2e` works without the caller
+ *      having to know about the venv. The app needs bcrypt/httpx, which a system
+ *      python3 typically lacks, and the failure mode is an opaque
+ *      "ModuleNotFoundError: No module named 'bcrypt'" from a background process.
+ *   3. python3 — PEP 394's guaranteed name. A bare `python` is deliberately NOT
+ *      used: it does not exist on a stock macOS + Homebrew setup, which made the
+ *      local E2E stage die with "python: command not found" before any test ran.
+ */
+const VENV_PYTHON = '.venv/bin/python';
+const PYTHON =
+  process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
 export default defineConfig({
   testDir: './tests/e2e',
   /* Run tests in files in parallel */
@@ -12,8 +32,26 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /* Opt out of parallel tests on CI. */
-  workers: process.env.CI ? 1 : undefined,
+  /*
+   * ONE worker everywhere — not just on CI.
+   *
+   * The suite drives a SINGLE app instance whose categories and quality
+   * profiles are global, mutable server state, so parallel workers create,
+   * reorder and delete each other's fixtures mid-assertion. This was previously
+   * `process.env.CI ? 1 : undefined`, which serialised CI but let a local run
+   * use one worker per core: 21 of 142 specs failed locally
+   * (categories/profiles/search/interactions) while CI was green — verified as
+   * pre-existing on a clean tree, and identical before and after the change
+   * that found it.
+   *
+   * That divergence broke the premise of the local gate (CLAUDE.md hard rule 2:
+   * `make verify` must pass locally before every push). A gate that cannot pass
+   * locally gets bypassed, so local must mirror CI here rather than be faster
+   * than it. Fixing the specs to be independent (per-worker fixtures, or a
+   * server per worker) is the better long-term answer and is tracked in
+   * docs/technical-debt.md; until then, correctness beats wall-clock.
+   */
+  workers: 1,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['html', { open: 'never' }],
@@ -82,7 +120,11 @@ export default defineConfig({
   webServer: process.env.CI
     ? undefined
     : {
-        command: '(python scripts/seed_e2e_data.py --data_dir=.e2e-data || true) && python CouchPotato.py --data_dir=.e2e-data',
+        // Interpreter resolution is explained at the top of this file (PYTHON).
+        // CI is unaffected — it skips webServer entirely and starts its own server.
+        command:
+          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=.e2e-data || true) && ` +
+          `${PYTHON} CouchPotato.py --data_dir=.e2e-data`,
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
         reuseExistingServer: true,

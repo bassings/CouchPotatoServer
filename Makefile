@@ -2,7 +2,7 @@
 # Path to production: make setup → code → make verify (auto-enforced on push)
 #                     → PR → Claude review + remediate → merge → release.
 
-.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint mutation mutation-py mutation-js
+.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -44,3 +44,30 @@ mutation-py: ## Python mutation testing (mutmut)
 
 mutation-js: ## JS mutation testing (Stryker)
 	npm run test:mutation
+
+# BASE defaults to master; override for a different comparison point, e.g.
+#   make mutation-changed BASE=origin/master
+BASE ?= master
+
+mutation-changed: ## Mutation testing on changed files only (fast enough per-change)
+	python3 scripts/mutation_changed.py --base $(BASE)
+
+check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates)
+	python3 scripts/check_test_traps.py
+
+# Pinned version: an unpinned :latest changes the ruleset under you, so a clean
+# scan today can fail tomorrow with no code change. Bump deliberately.
+GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.30.1
+
+check-secrets: ## Secret scan of the working tree (same command CI runs)
+	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
+		detect --source=. --no-git --config=.gitleaks.toml --no-banner --redact -v
+
+check-secrets-history: ## Secret scan of ALL git history (noisy: ~37 pre-2013 upstream hits)
+	@echo "NOTE: expect ~37 findings from upstream CouchPotato's 2011-2012 commits."
+	@echo "      Look for anything NOT authored by ruud@crashdummy.nl / pre-2013."
+	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
+		detect --source=. --config=.gitleaks.toml --no-banner --redact -v
+
+backup: ## Snapshot the SQLite DB + settings (see docs/development-process.md)
+	./scripts/backup.sh

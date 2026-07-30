@@ -23,7 +23,11 @@ the archived CouchPotato, fully modernised.
 | `ruff check .` | Lint (must be clean before every push) |
 | `pytest tests/unit/ -q` | Python unit tests |
 | `./scripts/test-local.sh` | Python unit in clean Alpine Docker (optional) |
-| `make mutation-py` / `make mutation-js` | Mutation testing (informational) |
+| `make mutation-py` / `make mutation-js` | Mutation testing, everything in scope (informational, slow) |
+| `make mutation-changed` | Mutation testing on changed files only — use this per-change |
+| `make check-traps` | False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates) |
+| `make check-secrets` | Secret scan of the working tree (same command CI runs) |
+| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings — run before every deploy |
 
 ## Hard rules — never break these
 
@@ -48,9 +52,27 @@ the archived CouchPotato, fully modernised.
    beta byte-for-byte to `:latest` (stable-only). **Never deploy to
    production until explicitly agreed.**
 7. **Git hygiene:** conventional commits; never commit secrets or test data
-   (`test_data/` is gitignored — keep local backups).
+   (`test_data/` is gitignored — keep local backups). Secret scanning is
+   enforced: the `secrets` CI job and `make check-secrets` run gitleaks over the
+   working tree. Adding a fingerprint to `.gitleaksignore` requires a comment
+   justifying it — and rotation, not redaction, is the remedy for a real key.
 8. **Dockerfile is Alpine:** use `apk`/`su-exec`/`adduser`, entrypoint is
    `#!/bin/sh` — never `apt`/`gosu`/`useradd`/bash.
+9. **A sub-agent's report is not evidence.** Validate against the repo, not the
+   summary: read the diff, run the command yourself. When a report and the repo
+   disagree, the repo wins. A report that omits something you asked for (a paste,
+   a test count, a mutation result) is unverified, not done.
+10. **When a test is the deliverable, run the mutation — and prove the mutation
+    landed.** Break the thing the test claims to guard, watch it fail, restore.
+    Then confirm the break actually applied (`git diff` / hash the file) before
+    trusting either outcome — a `sed` that silently matched nothing produces a
+    passing test against code you believe you reverted, which is a false green
+    that looks exactly like success.
+11. **After three failed fixes, question the frame, not the fix.** Each attempt
+    surfacing a new defect elsewhere means the shape is wrong. Stop, say so, and
+    re-open the approach instead of trying a fourth. On any branch where a fix
+    has itself introduced a defect twice, treat the next fix as suspect and
+    review it as new work, not as a correction.
 
 ## Key technical decisions
 

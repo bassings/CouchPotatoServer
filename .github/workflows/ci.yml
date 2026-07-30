@@ -9,6 +9,15 @@ on:
 permissions:
   contents: read
 
+# Supersede an in-flight run when a branch is pushed again — CI on the old commit
+# is already irrelevant by then, and this suite runs ~10 jobs including E2E and a
+# Docker build. `cancel-in-progress` is safe HERE (a read-only test suite) but
+# deliberately false in docker.yml / release-to-prod.yml, where a cancelled run
+# would leave a half-published image.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -27,6 +36,14 @@ jobs:
 
     - name: Run ruff
       run: ruff check .
+
+    # False-green guard: jsdom layout-zero reads in vitest specs, test runners
+    # piped into filters without pipefail (the pipeline reports the filter's exit
+    # status), and shell gates missing `set -euo pipefail`. Pure stdlib, so it
+    # rides along in this job rather than paying for another runner.
+    # See scripts/check_test_traps.py and CLAUDE.md rules 9-11.
+    - name: Run test-trap check
+      run: python scripts/check_test_traps.py
 
   # Fast static guardrail for the modern UI (couchpotato/ui/templates/**):
   # off-spec toggle sizing, legacy icon-font classes, raw hex colors. Pure
@@ -47,6 +64,38 @@ jobs:
 
     - name: Run UI conformance check
       run: python scripts/check_conformance.py
+
+  # Secret scanning. Gitleaks over the working tree, pinned by image digest tag.
+  #
+  # WORKING TREE, NOT FULL HISTORY, deliberately: this repo has 5,800+ commits
+  # inherited from upstream CouchPotato, and a full-history scan reports 37
+  # findings from 2011-2012 (upstream's own committed provider keys). A gate that
+  # is red on arrival gets ignored or disabled, so the blocking check answers the
+  # question that can actually be actioned — "is there a secret in the code as it
+  # stands?" — and the two known upstream keys still present are baselined by
+  # fingerprint, with justification, in .gitleaksignore.
+  #
+  # Trade-off worth knowing: a secret added and then deleted within the same
+  # branch is not caught here (it is gone from the tree but alive in history).
+  # `make check-secrets-history` does the full-history scan for that case; run it
+  # if a credential is ever suspected to have been committed.
+  #
+  # A range-based scan was considered and rejected: if the base/head range ever
+  # computes empty, gitleaks scans nothing and the job passes green — a
+  # false-green in the very gate meant to prevent them (cf. CLAUDE.md rule 10).
+  # The tree scan always has files, so it cannot silently no-op.
+  secrets:
+    name: secrets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Gitleaks (working tree)
+      run: |
+        docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:v8.30.1 \
+          detect --source=. --no-git --config=.gitleaks.toml --no-banner --redact -v
 
   # Static security lint (ruff's flake8-bandit "S" rules). INFORMATIONAL for now:
   # the legacy codebase has ~169 S findings, so this does not gate merges yet.
