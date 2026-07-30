@@ -287,4 +287,75 @@ function profileEditor() {
     }
   };
 }
+
+// releaseDownloader() lives here (loaded once per full movie-detail render)
+// rather than in partials/movie_releases.html: the filter/sort controls swap
+// that partial's markup via hx-swap="outerHTML" on every click, so a <script>
+// tag inside it would be re-injected into the DOM (and the function
+// redefined) on every single interaction. Defining it here means it exists
+// once in the page's global scope; Alpine's mutation observer picks up the
+// x-data="releaseDownloader()" attribute on each freshly-swapped-in
+// #movie-releases element and rebinds it automatically (FEAT-007 B13).
+function releaseDownloader() {
+  return {
+    downloading: {},
+    downloadErrors: {},
+    ignoring: {},
+    markingReleaseFailed: {},
+
+    init() {},
+
+    async downloadRelease(releaseId) {
+      this.downloading[releaseId] = true;
+      this.downloadErrors[releaseId] = null;
+
+      try {
+        const res = await fetch(CP.apiBase + '/release.manual_download/?id=' + releaseId);
+        const data = await res.json();
+
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          // Show error - likely no downloader enabled
+          this.downloadErrors[releaseId] = 'Failed';
+          this.downloading[releaseId] = false;
+
+          // Clear error after 3 seconds
+          setTimeout(() => {
+            this.downloadErrors[releaseId] = null;
+          }, 3000);
+        }
+      } catch (e) {
+        console.error('Download failed:', e);
+        this.downloadErrors[releaseId] = 'Error';
+        this.downloading[releaseId] = false;
+
+        setTimeout(() => {
+          this.downloadErrors[releaseId] = null;
+        }, 3000);
+      }
+    },
+
+    async ignoreRelease(releaseId) {
+      this.ignoring[releaseId] = true;
+
+      try {
+        const res = await fetch(CP.apiBase + '/release.ignore/?id=' + releaseId);
+        const data = await res.json();
+
+        if (data.success) {
+          // Reload to show updated status
+          location.reload();
+        } else {
+          console.error('Failed to ignore release');
+          this.ignoring[releaseId] = false;
+        }
+      } catch (e) {
+        console.error('Ignore failed:', e);
+        this.ignoring[releaseId] = false;
+      }
+    }
+  };
+}
 </script>
