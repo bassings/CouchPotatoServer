@@ -1,6 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Movie Detail — CouchPotato{% endblock %}
 {% block content %}
+{# Persistent home for the release list's live-announced result count
+   (FEAT-007, WCAG 4.1.3). It must exist here, in the STATIC shell, before
+   the first htmx swap ever happens: partials/movie_releases.html updates
+   it via hx-swap-oob="innerHTML" on every render, but htmx's OOB swap only
+   works against an id that ALREADY EXISTS in the document -- if no match
+   is found (htmx:oobErrorNoTarget), it silently drops the fragment rather
+   than inserting it. Since even the very FIRST render of the detail body
+   arrives via this div's own hx-trigger="load" swap, an announcer defined
+   only inside movie_releases.html would never appear at all: there is
+   nothing for that very first OOB swap to match against. Sits OUTSIDE
+   #movie-detail-container so neither its own innerHTML swap nor any later
+   #movie-releases swap ever replaces this node -- only its text changes. #}
+<p id="release-count-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></p>
 <div class="fade-in"
      hx-get="{{ new_base }}partial/movie/{{ movie_id }}{{ detail_query|default('') }}"
      hx-trigger="load"

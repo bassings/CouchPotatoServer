@@ -32,17 +32,20 @@
    interaction -- screen readers do not announce a node they never saw
    "change" (they only announce mutations to a region that was already
    registered in the accessibility tree). The visible "N of M releases"
-   count below stays where it is (sighted users see the swap happen), but a
-   second, screen-reader-only copy lives as a SIBLING of `#movie-releases`,
-   never touched by that swap, and is updated via `hx-swap-oob="innerHTML"`
-   -- htmx scans the whole response for out-of-band targets regardless of
-   the primary hx-target, so this same response updates both. `innerHTML`
-   (not the bare `hx-swap-oob="true"` outerHTML shorthand) is deliberate:
-   outerHTML would still destroy and recreate the announcer node itself on
-   every swap, which is exactly the bug this exists to fix -- only a swap
-   that leaves the node's identity alone and changes just its text content
-   is announced reliably. #}
-<p id="release-count-announcer" class="sr-only" aria-live="polite" aria-atomic="true" hx-swap-oob="innerHTML">{% if total_releases %}{{ releases|length }} of {{ total_releases }} release{{ '' if total_releases == 1 else 's' }}{% endif %}</p>
+   count below stays where it is (sighted users see the swap happen), but
+   this OOB fragment updates a second, screen-reader-only copy that lives
+   OUTSIDE this whole partial, in the STATIC shell (templates/detail.html)
+   -- see that file's comment for why it must live there and not be
+   defined here: htmx's `hx-swap-oob` only updates an id that ALREADY
+   EXISTS in the document, and even the very first render of this partial
+   arrives via an htmx swap, so an announcer whose only copy was inside
+   this file would never have an existing target to match on that first
+   render. `innerHTML` (not the bare `hx-swap-oob="true"` outerHTML
+   shorthand) is deliberate too: outerHTML would destroy and recreate the
+   target node on every swap, reproducing the exact bug this exists to fix
+   -- only a swap that leaves the node's identity alone and changes just
+   its text content is announced reliably. #}
+<p id="release-count-announcer" hx-swap-oob="innerHTML">{% if total_releases %}{{ releases|length }} of {{ total_releases }} release{{ '' if total_releases == 1 else 's' }}{% endif %}</p>
 <div id="movie-releases" class="mt-8 max-w-5xl" x-data="releaseDownloader()" x-init="init()">
   {% if not total_releases and raw_release_count %}
   <h2 class="text-sm font-semibold mb-3 tracking-tight">Releases</h2>

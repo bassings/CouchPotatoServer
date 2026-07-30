@@ -129,19 +129,37 @@ class TestReleasesPartialRoute:
         resp = client.get('/partial/movie/movie-1/releases?sort=size&dir=asc')
         assert 'aria-sort="ascending"' in resp.text
 
-    def test_the_result_count_is_in_a_live_region(self, client, media_get):
-        """B10: a filter change must be announced, not silent."""
-        resp = client.get('/partial/movie/movie-1/releases')
-        assert 'aria-live="polite"' in resp.text
+    def test_the_result_count_live_region_lives_in_the_static_shell(self):
+        """B10: aria-live must exist in detail.html's STATIC markup, not only
+        inside movie_releases.html. htmx's hx-swap-oob only updates an id
+        that already exists in the document (htmx:oobErrorNoTarget silently
+        drops it otherwise) -- and even the very FIRST render of the detail
+        body arrives via detail.html's own hx-trigger="load" swap, so an
+        announcer defined only inside the swapped-in partial would have no
+        existing target on that first render and would never appear at all.
+        Verified live in a browser: a marker property set on the node
+        survives a subsequent filter/sort swap, proving it is the SAME DOM
+        node throughout, and its text updates.
+        """
+        import pathlib
+
+        template = (
+            pathlib.Path(__file__).resolve().parents[2]
+            / 'couchpotato' / 'ui' / 'templates' / 'detail.html'
+        )
+        content = template.read_text()
+        assert 'id="release-count-announcer"' in content
+        assert 'aria-live="polite"' in content
 
     def test_the_live_region_survives_a_swap_via_hx_swap_oob(self, client, media_get):
         """Regression: the aria-live count used to live INSIDE #movie-releases,
         which hx-swap="outerHTML" destroys and recreates on every filter/sort
         change -- a screen reader does not announce a brand-new node, only a
         mutation to one already in the accessibility tree. A persistent
-        sr-only announcer outside #movie-releases, updated via
-        hx-swap-oob="innerHTML" (not the bare "true" outerHTML shorthand,
-        which would recreate it too), fixes that.
+        sr-only announcer outside #movie-releases (in detail.html's static
+        shell -- see the test above), updated via hx-swap-oob="innerHTML"
+        (not the bare "true" outerHTML shorthand, which would recreate the
+        target node too), fixes that.
         """
         resp = client.get('/partial/movie/movie-1/releases')
         assert 'id="release-count-announcer"' in resp.text
