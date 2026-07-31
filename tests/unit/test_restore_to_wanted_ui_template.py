@@ -116,7 +116,15 @@ class TestRestoreToWantedButtonWiring:
         assert 'location.reload()' not in body, (
             'AC6: the whole detail body must update in place, not via reload'
         )
-        assert 'htmx.ajax' in body
+        # cpSwap, not a bare htmx.ajax: htmx.ajax() RESOLVES on an HTTP
+        # error, so the catch that is supposed to clear the "Moving..."
+        # spinner never ran and the control stuck forever. cpSwap wraps it so
+        # the promise reflects the real outcome.
+        assert 'cpSwap(' in body, 'the swap must go through the error-aware wrapper'
+        assert 'htmx.ajax' not in body, (
+            'a bare htmx.ajax here cannot report failure -- its promise '
+            'resolves on a 500, which is what left the button stuck'
+        )
 
 
 class TestRestoreToWantedAlpineComponent:

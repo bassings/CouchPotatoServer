@@ -52,6 +52,31 @@ async function gotoSeededMovie(page: Page) {
   ).toBe(true);
 }
 
+
+/**
+ * The seeded movie's CURRENT profile id.
+ *
+ * The restore picker defaults to the first profile in profile.list, which is a
+ * single-quality default profile -- not the seeded one (2160p/1080p/720p). A
+ * restore that accepts that default reassigns the movie to a profile none of
+ * its seeded releases match, so partials/movie_releases.html renders no table
+ * at all and every release_controls test then test.skip()s with "the seed did
+ * not run" -- six tests silently dropped from a green run.
+ *
+ * So the restore tests below pick the movie's existing profile explicitly.
+ * That is also the more realistic action: a user moving a movie back to wanted
+ * usually keeps its profile.
+ */
+async function seededMovieProfileId(page: Page): Promise<string> {
+  const id = await page.evaluate(async (movieId) => {
+    const res = await fetch(`${(window as any).CP.apiBase}/media.get/?id=${movieId}`);
+    const data = await res.json();
+    return (data?.media ?? data)?.profile_id ?? '';
+  }, SEEDED_MOVIE_ID);
+  expect(id, 'seeded movie has no profile to preserve').toBeTruthy();
+  return id;
+}
+
 test.describe('Movie Detail', () => {
   test('should navigate to movie detail from wanted list', async ({ page }) => {
     await page.goto('/');
@@ -385,12 +410,13 @@ test.describe('Movie Detail', () => {
 
     // A toast reporting the outcome must have appeared (AC5's "reports which
     // of the three outcomes occurred"). Scoped to the toast region's own
-    // fixed-position wrapper (base.html), not just [aria-live="polite"]
-    // alone -- the sr-only release-count announcer (detail.html) carries
-    // that same attribute for an unrelated purpose, and role="status" alone
-    // would also match the release list's own unrelated status text (e.g.
-    // "No releases match the selected profile qualities").
-    const toastRegion = page.locator('div.fixed.top-4.right-4[aria-live="polite"]');
+    // own wrapper (base.html), addressed by data-testid -- role="status"
+    // alone would also match the release list's own unrelated status text
+    // (e.g. "No releases match the selected profile qualities"), and the
+    // sr-only release-count announcer in detail.html is live too. Liveness
+    // now sits on each toast rather than the wrapper, so the wrapper is no
+    // longer identifiable by aria-live.
+    const toastRegion = page.locator('[data-testid="toast-region"]');
     // Either role: error toasts are role="alert" (they carry actionable
     // failure reasons and should interrupt), everything else role="status".
     // Which one appears depends on the environment, so match both.
@@ -448,6 +474,9 @@ test.describe('Movie Detail', () => {
     // AC6: shown only for a done movie, with a profile picker.
     await expect(restoreBtn).toBeVisible();
     await restoreBtn.click();
+
+    const keepProfile = await seededMovieProfileId(page);
+    await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
 
     const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
     await expect(confirmBtn).toBeVisible({ timeout: 5000 });
@@ -566,5 +595,64 @@ test.describe('Movie Detail', () => {
     await page.keyboard.press('Escape');
     await expect(picker).toHaveCount(0, { timeout: 5000 });
     await expect(trigger).toBeFocused();
+  });
+
+  /*
+   * Both error-recovery paths were DEAD CODE until cpSwap() was introduced:
+   * htmx.ajax() resolves on an HTTP error rather than rejecting (measured
+   * directly against a stubbed 500), so `htmx.ajax(...).catch(...)` never ran
+   * and the failure each catch was written to handle happened anyway.
+   */
+  test('a failed release-list refresh is reported, not silently ignored (FEAT-008)', async ({ page }) => {
+    await gotoSeededMovie(page);
+    const searchBtn = page.locator('[data-testid="search-releases"]');
+    await expect(searchBtn).toBeVisible({ timeout: 5000 });
+
+    // The search itself succeeds; only the follow-up list refresh fails.
+    await page.route(/partial\/movie\/[^/]+\/releases/, (route) =>
+      route.fulfill({ status: 500, body: 'boom' }));
+
+    await searchBtn.click();
+
+    // The user must be told the list is stale rather than shown a stale list
+    // as though it were fresh.
+    const toastRegion = page.locator('[data-testid="toast-region"]');
+    await expect(toastRegion).toContainText(/could not refresh/i, { timeout: 15000 });
+
+    // And the control must not be left stuck in its busy state.
+    await expect(searchBtn).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
+  });
+
+  test('a failed post-restore refresh does not leave the control stuck (FEAT-008)', async ({ page }) => {
+    await gotoSeededMovie(page);
+
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
+      await markDoneBtn.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+    await trigger.click();
+
+    const keepProfile = await seededMovieProfileId(page);
+    await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
+
+    const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
+    await expect(confirmBtn).toBeEnabled({ timeout: 10000 });
+
+    // The restore succeeds server-side; only the detail refresh fails. This is
+    // the dangerous case: the movie HAS moved, so a stuck spinner hides a
+    // change that already happened.
+    await page.route(/partial\/movie\/[^/]+(\?|$)/, (route) =>
+      route.fulfill({ status: 500, body: 'boom' }));
+
+    await confirmBtn.click();
+
+    await expect(page.locator('[data-testid="restore-to-wanted-confirm"]'))
+      .toBeEnabled({ timeout: 15000 });
+    await expect(page.locator('[data-testid="toast-region"]'))
+      .toContainText(/could not refresh|reload/i, { timeout: 5000 });
   });
 });

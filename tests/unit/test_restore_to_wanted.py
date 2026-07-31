@@ -11,6 +11,7 @@ that can never be found.
 """
 
 import logging
+import time
 from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
@@ -390,3 +391,130 @@ class TestAnActiveMovieWithADanglingProfileIsRepaired:
             'the dangling profile reference was left in place, so the movie is '
             'still unsearchable while the call reported success'
         )
+
+
+class TestTheRestoreMarkerIsWritten:
+    """The status/profile write is only half of a working restore. Without
+    `restored_to_wanted_at`, media.restatus still counts the preserved 'done'
+    release as finishing the movie and pushes it straight back out of Wanted
+    on the next sweep (see test_restore_to_wanted_survives_restatus.py).
+
+    Caught by mutation: deleting the marker assignment left all 15 tests in
+    this file green, so the half that makes AC5 true was unpinned.
+    """
+
+    def test_it_stamps_when_the_movie_was_restored(self):
+        movie = _movie(status='done', profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        before = time.time()
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+            plugin.restoreToWanted('movie-1')
+        after = time.time()
+
+        stamp = movie.get('restored_to_wanted_at')
+        assert stamp is not None, (
+            'no restore marker written -- media.restatus will treat the '
+            'preserved done release as finishing the movie and eject it from '
+            'Wanted on the next sweep'
+        )
+        assert before <= stamp <= after, (
+            'the marker must be the restore time: releases edited before it '
+            'are discounted, so a wrong value either discounts nothing or '
+            'discounts the upgrade the user is waiting for'
+        )
+
+    def test_a_refused_restore_does_not_stamp(self):
+        """AC2: a refused restore must not touch the movie at all."""
+        movie = _movie(status='done', profile_id=None)
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids=set())
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = lambda name, *a, **k: None
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is False
+        assert 'restored_to_wanted_at' not in movie
+
+
+class TestACallerSuppliedProfileIdIsNotTrusted:
+    """The caller's profile_id is validated before use, but nothing pinned it:
+    replacing `existingProfileId(db, {'profile_id': profile_id})` with a bare
+    `profile_id` left the entire 1880-test suite green. Every other test that
+    passes a profile_id passes a RESOLVABLE one, so the guard that stops AC2's
+    unsearchable Wanted entry -- when a user's picker is showing a profile that
+    has since been deleted -- was completely unconstrained.
+    """
+
+    def test_a_stale_id_from_the_caller_falls_back_instead_of_being_stored(self):
+        movie = _movie(status='done', profile_id=None)
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        # The caller's pick no longer exists; only the default does.
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'default-profile'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = lambda name, *a, **k: (
+                {'_id': 'default-profile'} if name == 'profile.default' else None
+            )
+            result = plugin.restoreToWanted('movie-1', profile_id='profile-deleted-in-another-tab')
+
+        assert result['success'] is True
+        assert movie['profile_id'] == 'default-profile', (
+            "stored the caller's dangling profile_id, creating exactly the "
+            'unsearchable Wanted entry AC2 exists to prevent'
+        )
+
+
+class TestRestoreIsScopedToStatusesItMakesSenseFor:
+    """`markFailedAndResearch` deliberately refuses unless the movie is in the
+    status it is written for, so a confirmed movie is never silently reopened.
+    This had no such guard: any non-active status was flipped to 'active'.
+
+    The UI only offers the control for a 'done' movie, so this is API reach --
+    but flipping a SNATCHED movie to active makes the searcher eligible to grab
+    a second copy while the first is still downloading.
+    """
+
+    def test_a_snatched_movie_is_refused(self):
+        movie = _movie(status='snatched', profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is False
+        assert 'snatched' in result.get('error', '').lower() or result.get('error')
+        assert movie['status'] == 'snatched', 'a refused restore must not write'
+        assert not db.update_with_retry.called
+
+    @pytest.mark.parametrize('status', ['done', 'downloaded'])
+    def test_the_statuses_the_feature_exists_for_are_still_allowed(self, status):
+        """The other direction -- the guard must not block the feature itself.
+        'downloaded' is the review gate, which a user may equally want to send
+        back to wanted."""
+        movie = _movie(status=status, profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is True, 'refused the case the feature is for'
+        assert movie['status'] == 'active'

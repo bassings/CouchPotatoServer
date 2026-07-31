@@ -350,7 +350,7 @@ test.describe('Accessibility', () => {
       // Scoped to the toast region's own wrapper: the loading skeleton
       // (#loading) also carries role="status", so a bare [role="status"]
       // matched 4 elements and the count assertion failed for the wrong reason.
-      const region = 'div.fixed.top-4.right-4[aria-live="polite"]';
+      const region = '[data-testid="toast-region"]';
       await expect(
         page.locator(`${region} [role="status"], ${region} [role="alert"]`),
       ).toHaveCount(3, { timeout: 5000 });

@@ -561,6 +561,37 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return {'success': False, 'searched': False, 'found': 0,
                      'reason': 'An unexpected error occurred while searching'}
 
+    def _resolvableProfileId(self, profile_id):
+        """The profile this search would actually use, or None.
+
+        Mirrors the resolution single() performs: the movie's own profile if it
+        still exists, else the default. Used by _searchReleases to pre-flight
+        AC4 -- "could not search" needs to cover a DANGLING profile reference,
+        not just a missing one, because both end with single() returning
+        without contacting a provider.
+        """
+        db = get_db()
+
+        if profile_id:
+            try:
+                db.get('id', profile_id)
+                return profile_id
+            except (RecordNotFound, KeyError):
+                pass
+            except Exception:
+                log.error('Failed resolving profile %s: %s', profile_id, traceback.format_exc())
+                return None
+
+        default_profile = fireEvent('profile.default', single = True)
+        fallback_id = (default_profile or {}).get('_id')
+        if not fallback_id:
+            return None
+        try:
+            db.get('id', fallback_id)
+        except (RecordNotFound, KeyError):
+            return None
+        return fallback_id
+
     def _searchReleases(self, media_id):
         """FEAT-008 AC3: the response distinguishes three outcomes so the UI
         can tell them apart -- they used to collapse into the same
@@ -583,15 +614,20 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # search" with a reason -- rather than calling single(), having it
         # silently do nothing, and this method reporting a misleading
         # 'searched: true, found: 0' for a search that never ran.
-        if not media.get('profile_id'):
-            default_profile = fireEvent('profile.default', single = True)
-            if not default_profile or not default_profile.get('_id'):
-                return {
-                    'success': False,
-                    'searched': False,
-                    'found': 0,
-                    'reason': 'No quality profile is configured, so nothing could be searched',
-                }
+        # Note this asks whether the profile RESOLVES, not merely whether the
+        # id is truthy. A movie carrying a profile_id that points at a DELETED
+        # profile used to skip this check entirely, enter single(), fall
+        # through the stale-profile branch, find no default, and return having
+        # contacted zero providers -- while this method went on to report
+        # 'searched: true, found: 0'. That is AC4's own scenario reported as a
+        # completed search, which is the exact lie FEAT-008 exists to remove.
+        if not self._resolvableProfileId(media.get('profile_id')):
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'No quality profile is configured, so nothing could be searched',
+            }
 
         # No enabled downloader/protocol means single() will call search() with
         # an EMPTY protocol list, which iterates nothing and contacts no

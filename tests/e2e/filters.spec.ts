@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, Page } from '@playwright/test';
 
 /**
  * Filter functionality tests for CouchPotato new UI.
@@ -148,14 +148,62 @@ test.describe('Filters', () => {
  * Measured before the fix: /library?q=<no match> gives 1 card in the DOM, 0
  * visible, and an empty #movie-grid on screen.
  */
+/**
+ * Serve a FIXED movie grid, so these tests do not depend on library state.
+ *
+ * The filtered-to-empty behaviour is pure client-side logic: movieList()
+ * reads `.poster-card` elements out of the DOM and toggles their display. It
+ * needs cards, not a real library -- so stubbing the partial is both simpler
+ * and honest about what is under test.
+ *
+ * It is also the only stable option here. Earlier versions read the seeded
+ * movie's status to pick a page, and then forced it into a known status via
+ * the API. Both were flaky in a full run, for reasons that are properties of
+ * the suite rather than of this feature: the specs share one server and one
+ * database, movie-detail.spec.ts DELETES the seeded movie (so anything after
+ * it sees an empty library), other specs add movies, and forcing status is
+ * itself shared-state mutation. playwright.config.ts already documents this
+ * coupling as why the suite runs single-worker. Stubbing opts out of all of
+ * it. The suggestions and search specs stub their partials for the same
+ * reason.
+ */
+function stubMovieGrid(page: Page, movies: Array<{ title: string; status: string; hasReleases?: boolean }>) {
+  const cards = movies
+    .map(
+      (m, i) => `
+        <div class="poster-card" data-title="${m.title}" data-status="${m.status}"
+             data-has-releases="${m.hasReleases ? 'true' : 'false'}"
+             data-movie-id="stub-${i}">
+          <a class="block" href="/movie/stub-${i}/">${m.title}</a>
+        </div>`,
+    )
+    .join('');
+  return page.route(/\/partial\/movies/, (route) =>
+    route.fulfill({ status: 200, contentType: 'text/html', body: cards }),
+  );
+}
+
+/** Wait for the htmx grid load to have actually completed. */
+async function waitForGridLoaded(page: Page) {
+  // #movie-count is written by filterMovies(), which only runs on
+  // htmx:afterSwap for #movie-grid -- so non-empty text is proof the swap
+  // landed. A fixed waitForTimeout is not a wait: it let an earlier version of
+  // the empty-library test count 0 cards on a grid that had not loaded yet and
+  // then "pass".
+  await expect(page.locator('#movie-count')).not.toBeEmpty({ timeout: 15000 });
+}
+
 test.describe('Filtered-to-empty state', () => {
   test('explains why the grid is empty and offers a way out', async ({ page }) => {
-    await page.goto('/library');
-    const grid = page.locator('#movie-grid');
-    await expect(grid).toBeVisible({ timeout: 10000 });
-    await expect(page.locator('#movie-grid .poster-card').first())
-      .toBeAttached({ timeout: 10000 });
+    await stubMovieGrid(page, [
+      { title: 'Tinsel Town', status: 'done', hasReleases: true },
+      { title: 'Another Movie', status: 'done', hasReleases: true },
+    ]);
+    await page.goto('/');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await waitForGridLoaded(page);
     const total = await page.locator('#movie-grid .poster-card').count();
+    expect(total).toBe(2);
 
     await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
 
@@ -175,15 +223,53 @@ test.describe('Filtered-to-empty state', () => {
   });
 
   test('a genuinely empty library is not reported as a filter problem', async ({ page }) => {
-    // The Wanted page is empty in the seeded fixture (the seeded movie is
-    // 'done'), so this covers total === 0 with no filter applied: the
-    // filter-specific empty state must NOT claim a filter is hiding things.
+    /*
+     * An empty library: total === 0 with no filter applied. The
+     * filter-specific empty state must NOT claim a filter is hiding things.
+     *
+     * It used to test.skip() when the page happened to have movies, which on a
+     * fresh seed meant it never ran at all. That is the same skip-instead-of-
+     * fail pattern this branch removed from gotoSeededMovie.
+     */
+    await stubMovieGrid(page, []);
+    await page.goto('/');
+    // toBeAttached, not toBeVisible: with zero cards the grid is an empty div
+    // with no height, which Playwright reports as hidden. waitForGridLoaded
+    // below is what actually proves the swap happened.
+    await expect(page.locator('#movie-grid')).toBeAttached({ timeout: 10000 });
+    await waitForGridLoaded(page);
+
+    const total = await page.locator('#movie-grid .poster-card').count();
+    expect(total, 'the stub serves an empty library').toBe(0);
+    await expect(page.locator('[data-testid="filter-empty-state"]')).toBeHidden();
+  });
+
+  test('clearing from the empty state keeps keyboard focus (WCAG 2.4.3)', async ({ page }) => {
+    /*
+     * Activating "Clear filters" hides its own container via x-show, so the
+     * focused button gets display:none and focus falls to <body> -- the next
+     * Tab restarts at the top of the document. This is the same defect found
+     * on the two movie-detail controls; it was reintroduced here because this
+     * control shipped without a guard.
+     */
+    // Active -> the Wanted page ('/') lists it.
+    await stubMovieGrid(page, [{ title: 'Tinsel Town', status: 'done', hasReleases: true }]);
     await page.goto('/');
     await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
-    await page.waitForTimeout(1500);
-    const total = await page.locator('#movie-grid .poster-card').count();
-    test.skip(total > 0, 'wanted list is not empty in this run');
+    await waitForGridLoaded(page);
 
-    await expect(page.locator('[data-testid="filter-empty-state"]')).toBeHidden();
+    await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+    const clearBtn = page.locator('[data-testid="clear-filters"]');
+    await expect(clearBtn).toBeVisible({ timeout: 5000 });
+
+    await clearBtn.focus();
+    await page.keyboard.press('Enter');
+
+    // toBeFocused (which retries), NOT a one-shot activeElement read: focus
+    // moves on the tick AFTER the empty state is hidden, so a single read
+    // races that and saw whatever had focus mid-transition. A non-retrying
+    // read standing in for a wait is the same trap documented in
+    // release_controls.spec.ts.
+    await expect(page.locator('#filter-movies')).toBeFocused({ timeout: 5000 });
   });
 });

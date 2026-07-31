@@ -31,6 +31,23 @@ def searcher():
     return s
 
 
+@pytest.fixture(autouse=True)
+def _db_available():
+    """A working database for every test in this module.
+
+    _searchReleases' AC4 pre-flight now resolves the profile through the DB
+    rather than trusting a truthy profile_id (a DANGLING id used to skip the
+    check and be reported as a completed search). The view tests previously
+    patched only fireEvent, so they had no db at all. Tests that care about
+    specific db behaviour patch get_db themselves; an inner patch wins, so this
+    only supplies the boring "profiles exist" default.
+    """
+    db = MagicMock()
+    db.get.return_value = _profile()
+    with patch('couchpotato.core.media.movie.searcher.get_db', return_value=db):
+        yield db
+
+
 def _movie(status='done', releases=None):
     return {
         '_id': 'movie-1',
@@ -440,7 +457,11 @@ class TestSearchButtonUpdatesInPlace:
     def test_the_search_button_refreshes_the_release_list_via_htmx(self):
         handler = self._search_button_handler(self._render('done'))
 
-        assert 'htmx.ajax' in handler
+        # See the restore-template test for why this must be cpSwap: a bare
+        # htmx.ajax cannot report failure, so the release list could silently
+        # stay stale after a failed refresh.
+        assert 'cpSwap(' in handler, 'the swap must go through the error-aware wrapper'
+        assert 'htmx.ajax' not in handler
         assert 'partial/movie/movie-1/releases' in handler
         assert '#movie-releases' in handler
         # The endpoint's own root element already has id="movie-releases"
@@ -986,3 +1007,70 @@ class TestARestoredMovieIsPickedUpByTheAutomaticSearcher:
         calls = _drive(searcher, not_restored)
 
         assert 'searcher.search' not in calls
+
+
+class TestADanglingProfileIsNotReportedAsASuccessfulSearch:
+    """AC4 hole (review, second round). The pre-flight only fired when
+    `profile_id` was FALSY. A movie whose profile_id is truthy but points at a
+    DELETED profile skipped it entirely, entered single(), hit the stale-profile
+    fallback, found no default, and returned without contacting a provider --
+    and _searchReleases then reported `searched: True, found: 0`.
+
+    That is precisely AC4's named scenario ("every profile deleted") and
+    precisely the lie FEAT-008 exists to remove: the UI showed
+    "No new releases", so the user was told a search had happened when zero
+    providers were queried.
+    """
+
+    def _drive_view(self, searcher, movie, known_profiles, default_profile=None):
+        def _fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'searcher.protocols':
+                return ['nzb']
+            if name == 'profile.default':
+                return default_profile
+            return None
+
+        def _get(index_name, key):
+            if key in known_profiles:
+                return _profile()
+            raise KeyError('Document not found: %s' % key)
+
+        db = MagicMock()
+        db.get.side_effect = _get
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=_fire), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+        return result, single
+
+    def test_a_stale_profile_with_no_default_refuses_instead_of_claiming_success(self, searcher):
+        movie = _movie(status='done')
+        movie['profile_id'] = 'deleted-profile'
+
+        result, single = self._drive_view(searcher, movie, known_profiles=set())
+
+        assert result['searched'] is False, (
+            'reported a completed search for a movie whose profile no longer '
+            'exists and for which no default could be resolved -- no provider '
+            'was contacted'
+        )
+        assert result.get('reason'), 'a refusal must say why'
+        assert single.called is False, 'single() was called despite nothing being searchable'
+
+    def test_a_stale_profile_that_can_fall_back_to_a_default_still_searches(self, searcher):
+        """The other direction: the fallback exists precisely so this case
+        DOES search. Refusing here would break the repair path."""
+        movie = _movie(status='done')
+        movie['profile_id'] = 'deleted-profile'
+
+        result, single = self._drive_view(
+            searcher, movie,
+            known_profiles={'default-profile-1'},
+            default_profile={'_id': 'default-profile-1'})
+
+        assert result['searched'] is True, (
+            'refused a search that the stale-profile fallback can perform'
+        )
+        assert single.called is True

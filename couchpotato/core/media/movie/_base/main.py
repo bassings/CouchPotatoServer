@@ -207,6 +207,27 @@ class MovieBase(MovieTypeBase):
             if media.get('status') == 'active' and self.existingProfileId(db, media):
                 return {'success': True, 'media': media}
 
+            # Scope guard, mirroring markFailedAndResearch's discipline: only
+            # the statuses this feature is written for. Without it ANY
+            # non-active status was flipped to 'active' -- including
+            # 'snatched', which would make the searcher eligible to grab a
+            # second copy while the first was still downloading. The UI only
+            # renders the control for a 'done' movie, so this closes API reach
+            # rather than a path a user can click. 'downloaded' is included
+            # deliberately: that is the manual-review gate, and sending a movie
+            # awaiting review back to wanted is a reasonable thing to want.
+            # 'active' is in the list because reaching here means the movie is
+            # active with NO resolvable profile -- i.e. unsearchable. That is
+            # the repair path the pre-check above deliberately falls through
+            # to, and refusing it would reinstate the very bug this method
+            # grew a profile guarantee to fix.
+            if media.get('status') not in ('done', 'downloaded', 'active'):
+                return {
+                    'success': False,
+                    'error': "Only a 'done' or 'downloaded' movie can be moved back to "
+                              "wanted; this one is '%s'" % media.get('status'),
+                }
+
             resolved_profile_id = (
                 self.existingProfileId(db, {'profile_id': profile_id})
                 or self.existingProfileId(db, media)
@@ -249,6 +270,14 @@ class MovieBase(MovieTypeBase):
                     return False
                 m['status'] = 'active'
                 m['profile_id'] = resolved_profile_id
+                # Marks the releases the movie ALREADY held as "not good
+                # enough", so media.restatus stops treating them as finishing
+                # it. Without this the next automatic sweep pushed the movie
+                # straight back out of Wanted -- and, on a manual_confirmation
+                # profile (the default), into the review gate with a false
+                # "downloaded -- awaiting review" notification. See
+                # tests/unit/test_restore_to_wanted_survives_restatus.py.
+                m['restored_to_wanted_at'] = time.time()
 
             try:
                 updated = db.update_with_retry(_restore, media_id)

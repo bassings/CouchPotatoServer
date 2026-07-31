@@ -146,6 +146,24 @@ export default defineConfig({
           `${PYTHON} CouchPotato.py --data_dir=.e2e-data`,
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
-        reuseExistingServer: true,
+        /*
+         * NOT reuseExistingServer.
+         *
+         * This was `true`, and it produced two false greens on one branch. A
+         * server left running from an earlier session keeps serving its OWN
+         * data dir: template edits reach it (Jinja reloads from disk) but
+         * PYTHON edits do not, and the database is whatever prior specs left
+         * behind. A filters test that depends on the seeded movie's status
+         * passed locally against that stale state and failed on a genuinely
+         * fresh seed -- i.e. the local gate said "safe to open a PR" for a
+         * CI-breaking test.
+         *
+         * With `false`, Playwright starts its own server and fails loudly if
+         * the port is occupied, which is the correct outcome: a leftover
+         * server means the run would not have tested the code on disk.
+         * If you get "port 5050 is used", stop the stray server
+         * (`pkill -f CouchPotato.py`) rather than reinstating this flag.
+         */
+        reuseExistingServer: false,
       },
 });

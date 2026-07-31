@@ -128,11 +128,12 @@
       <span x-show="search">
         Nothing here is called &ldquo;<span class="text-cp-text" x-text="search"></span>&rdquo;.
       </span>
-      <span x-show="filterStatus && !search">
-        No movies have the status &ldquo;<span class="text-cp-text" x-text="filterStatus"></span>&rdquo;.
+      <span x-show="filterStatus">
+        No movies here have the status &ldquo;<span class="text-cp-text" x-text="filterStatus"></span>&rdquo;.
       </span>
       <span class="block mt-1">
-        Your library still has <span x-text="totalCount"></span> movies.
+        This list still has <span x-text="totalCount"></span>
+        <span x-text="totalCount === 1 ? 'movie' : 'movies'"></span>.
       </span>
     </p>
     <button @click="clearFilters()"
@@ -230,6 +231,11 @@ function movieList() {
       this.search = '';
       this.filterStatus = '';
       this.filterMovies();
+      // Activating this button hides its own container (x-show), so the
+      // focused element gets display:none and focus falls to <body> -- the
+      // next Tab restarts at the top of the document. Hand focus to the
+      // filter box, which is the control the user needs next anyway.
+      this.$nextTick(() => document.getElementById('filter-movies')?.focus());
     },
 
     filterMovies() {

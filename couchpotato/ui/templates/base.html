@@ -110,10 +110,13 @@ tailwind.config = {
      re-points it at var(--cp-text), so the error toast rendered dark text on
      bg-red-600 in the light theme -- measured 3.60:1, a real failure that
      shipped because the a11y suite only asserted on axe's `critical` impact
-     and contrast is reported as `serious`. Both rules are needed so this wins
-     against that override in light mode and applies unchanged in dark. */
+     and contrast is reported as `serious`.
+     A distinct class is all that is needed: the light-theme override matches
+     `.text-white` specifically and never sees this one. (An earlier version
+     carried a `:root.light .cp-toast-fg` companion rule and a comment saying
+     both were required -- it was dead, and removing it left both toast
+     contrast tests green.) */
   .cp-toast-fg { color: #ffffff; }
-  :root.light .cp-toast-fg { color: #ffffff; }
   /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
   :root.light .text-cp-accent { color: #0e7490; }
   /* A11Y (WCAG 2.2 AA, 1.4.3): the status tokens are chosen for the dark
@@ -396,7 +399,12 @@ tailwind.config = {
 {% include "partials/movie_info_modal.html" %}
 
 <!-- FEAT-005: Toast notifications -->
-<div aria-live="polite" aria-atomic="false" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+<!-- Liveness lives on each TOAST, not this wrapper. With aria-live on the
+     wrapper, an error toast's role="alert" was nested inside an
+     already-live polite region, which makes its interrupt semantics
+     unreliable -- errors now carry actionable reasons, so they need to
+     land. -->
+<div data-testid="toast-region" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
   <template x-for="t in toasts" :key="t.id">
     <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
          :class="{
@@ -404,7 +412,9 @@ tailwind.config = {
            'bg-red-700 cp-toast-fg': t.type === 'error',
            'bg-cp-accent text-black': t.type === 'info'
          }"
-         :role="t.type === 'error' ? 'alert' : 'status'">
+         :role="t.type === 'error' ? 'alert' : 'status'"
+         :aria-live="t.type === 'error' ? 'assertive' : 'polite'"
+         aria-atomic="true">
       <span x-text="t.message" class="flex-1"></span>
       <button @click="dismissToast(t.id)" class="opacity-70 hover:opacity-100 ml-1" aria-label="Dismiss">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

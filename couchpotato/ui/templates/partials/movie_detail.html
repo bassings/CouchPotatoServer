@@ -158,7 +158,7 @@
              -- that partial's own root element already carries this id, so an
              innerHTML swap would nest a duplicate) instead of a full page
              reload. -->
-        <button @click="if (searchingReleases) return; searchingReleases = true; searchStatus = 'Searching for releases, please wait'; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { searchingReleases = false; searchStatus = ''; if(d.searched) { var msg = d.found ? ('Found ' + d.found + ' new release' + (d.found === 1 ? '' : 's')) : ('No new releases' + (d.available ? ' — ' + d.available + ' already available' : '')); toast(msg, d.found ? 'success' : 'info'); } else { toast(d.reason || 'Could not search for releases', 'error'); } htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/releases' + window.location.search, { target: '#movie-releases', swap: 'outerHTML' }).catch(() => toast('Search finished, but the release list could not refresh — reload to see it', 'error')); }).catch(() => { searchingReleases = false; searchStatus = ''; toast('Search failed', 'error'); })"
+        <button @click="if (searchingReleases) return; searchingReleases = true; searchStatus = 'Searching for releases, please wait'; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.searched) { var msg = d.found ? ('Found ' + d.found + ' new release' + (d.found === 1 ? '' : 's')) : ('No new releases' + (d.available ? ' — ' + d.available + ' already available' : '')); toast(msg, d.found ? 'success' : 'info'); } else { toast(d.reason || 'Could not search for releases', 'error'); } cpSwap('{{ new_base }}partial/movie/{{ movie_id }}/releases' + window.location.search, '#movie-releases', 'outerHTML').catch(() => toast('Search finished, but the release list could not refresh — reload to see it', 'error')).finally(() => { searchingReleases = false; searchStatus = ''; }); }).catch(() => { searchingReleases = false; searchStatus = ''; toast('Search failed', 'error'); })"
                 class="px-3.5 py-1.5 bg-cp-blue/10 text-cp-blue hover:bg-cp-blue/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 data-testid="search-releases"
                 :class="searchingReleases ? 'opacity-50 cursor-wait' : ''"
@@ -168,6 +168,21 @@
           <span x-show="!searchingReleases">Search for releases</span>
           <span x-show="searchingReleases">Searching…</span>
         </button>
+        <!--
+          Announces that the search STARTED. The label swapping to "Searching…"
+          is a visual-only signal, so without this a screen reader user could
+          not distinguish running from finished (AC6).
+
+          Honest limitation, measured: against a local server with no
+          downloader enabled the whole request completes in ~45ms, so the
+          announcement is set and cleared faster than any screen reader will
+          voice it. It is load-bearing exactly when it matters -- a real
+          provider search taking seconds -- and in the fast case the OUTCOME is
+          still announced, by the toast's own live region. It is deliberately
+          not padded with an artificial minimum duration: that would delay the
+          result announcement to dress up a signal the user does not need when
+          the answer arrives instantly.
+        -->
         <span class="sr-only" aria-live="polite" x-text="searchStatus" data-testid="search-announcer"></span>
         {% if status == 'done' %}
         <!-- FEAT-008: the only route back from 'done' to wanted used to be
@@ -378,6 +393,35 @@ function profileEditor() {
 // without losing release history). Own component rather than folding into
 // the Actions-bar's plain x-data object (like profileEditor(), it needs
 // async init/confirm methods, not just a couple of booleans).
+/*
+ * htmx.ajax() RESOLVES on an HTTP error rather than rejecting -- measured
+ * directly against a stubbed 500: `htmx.ajax(...).catch(...)` never runs. Both
+ * error-recovery paths below were therefore dead code, and the failure they
+ * were written to handle happened anyway: a failed post-restore swap left the
+ * Confirm button disabled on "Moving..." forever with the move already
+ * committed server-side, and a failed release-list refresh showed the user a
+ * stale list with no error at all.
+ *
+ * This wraps htmx.ajax so the returned promise reflects what actually
+ * happened. htmx dispatches its failure modes as events rather than rejecting,
+ * so they are captured over the life of the request.
+ */
+function cpSwap(url, target, swap) {
+  var FAILURES = ['htmx:responseError', 'htmx:sendError', 'htmx:targetError', 'htmx:swapError'];
+  return new Promise(function (resolve, reject) {
+    var failure = null;
+    function onFailure(evt) { failure = failure || evt.type; }
+    FAILURES.forEach(function (name) { document.body.addEventListener(name, onFailure); });
+    function cleanup() {
+      FAILURES.forEach(function (name) { document.body.removeEventListener(name, onFailure); });
+    }
+    htmx.ajax('GET', url, { target: target, swap: swap }).then(
+      function () { cleanup(); failure ? reject(new Error(failure)) : resolve(); },
+      function (err) { cleanup(); reject(err); }
+    );
+  });
+}
+
 function restoreToWanted() {
   return {
     showPicker: false,
@@ -469,7 +513,7 @@ function restoreToWanted() {
           // server-side, so clear the spinner and tell the user to reload
           // rather than leaving a permanently disabled "Moving…".
           try {
-            await htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, { target: '#movie-detail-container', swap: 'innerHTML' });
+            await cpSwap('{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, '#movie-detail-container', 'innerHTML');
           } catch (swapError) {
             console.error('Failed to refresh after restore:', swapError);
             this.restoring = false;
