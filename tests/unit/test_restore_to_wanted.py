@@ -50,12 +50,11 @@ def _make_update_with_retry(doc, writes=None):
 
 
 def _fire_stub(isfinish=False, releases=None):
-    """fireEvent stand-in for tests that do not care about the profile check.
+    """fireEvent stand-in for tests that do not care about release marking.
 
     A bare MagicMock returns a truthy Mock for EVERY event, including
-    quality.isfinish -- which the restore pre-check correctly reads as "this
-    profile is already satisfied" and refuses. Tests that are about something
-    else need to say which answer they want.
+    release.for_media -- which restoreToWanted then iterates. Tests that are
+    about something else need to say what that call returns.
     """
     def _fire(name, *a, **k):
         if name == 'quality.isfinish':
@@ -397,8 +396,8 @@ class TestLosingTheCasRaceReportsTheWinnersState:
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
-            # Explicit: a bare Mock return for quality.isfinish reads as
-            # "profile already satisfied" and refuses before the race matters.
+            # Explicit: restoreToWanted iterates release.for_media, which a
+            # bare Mock would return a non-iterable Mock for.
             fire.side_effect = _fire_stub()
             result = plugin.restoreToWanted('movie-1', profile_id='profile-winner')
 
@@ -450,15 +449,6 @@ class TestAnActiveMovieWithADanglingProfileIsRepaired:
             'the dangling profile reference was left in place, so the movie is '
             'still unsearchable while the call reported success'
         )
-
-
-# The class that stood here (TestTheHeldReleasesAreIgnored) tested an
-# ABANDONED design in which restore rewrote the movie's held releases to
-# 'ignored'. A library rescan undid that (release_identifier is a quality
-# RUNG, not a per-copy key), and the attempt to make the scanner preserve it
-# broke 'Try next release' and 'Mark Failed & re-search'. Restore no longer
-# touches releases at all -- see
-# TestRestoreUsesTheProfileInsteadOfRewritingReleases.
 
 
 class TestACallerSuppliedProfileIdIsNotTrusted:

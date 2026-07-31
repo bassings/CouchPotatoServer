@@ -162,38 +162,6 @@ class Release(Plugin):
                         'profile_id': None,
                     }, search_after = False, update_after = update_info, notify_after = False, status = 'done', single = True)
 
-                # The file set this scan found, normalised the same way it is
-                # stored below, so the two can be compared.
-                scanned_files = dict(
-                    (k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)
-
-                def _scanned_status(existing_doc):
-                    """'done', unless this is the very copy the user set aside.
-
-                    A rescan must not resurrect a release that was deliberately
-                    ignored or failed -- doing so silently undoes 'Try next
-                    release', 'Mark Failed & re-search' and 'Move back to
-                    wanted', all of which mark by status. The resurrected
-                    release then re-finishes the movie via media.restatus and
-                    re-blocks the search via single()'s has_better_quality loop.
-
-                    But the comparison MUST be per-copy. `release_identifier`
-                    is '<imdb>.<audio>.<quality>' -- a quality RUNG, so keying
-                    on it alone would mean "never record any copy at this
-                    quality again": a re-downloaded 1080p lands on disk, is
-                    filed as 'ignored', the movie never completes, and the
-                    searcher grabs it again on the next sweep. Comparing the
-                    FILES distinguishes "the same copy, rescanned" from "a
-                    different copy at the same quality", which must complete
-                    normally.
-                    """
-                    existing_doc = existing_doc or {}
-                    if existing_doc.get('status') not in ('ignored', 'failed'):
-                        return 'done'
-                    if existing_doc.get('files') != scanned_files:
-                        return 'done'
-                    return existing_doc['status']
-
                 release = None
                 if update_id:
                     try:
@@ -201,7 +169,7 @@ class Release(Plugin):
                         release.update({
                             'identifier': release_identifier,
                             'last_edit': int(time.time()),
-                            'status': _scanned_status(release),
+                            'status': 'done',
                         })
                     except Exception:
                         log.error('Failed updating existing release: %s', traceback.format_exc())
@@ -222,11 +190,6 @@ class Release(Plugin):
                     try:
                         r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
                         r['media_id'] = media['_id']
-                        # `release` was built fresh above with status 'done';
-                        # carry a deliberate set-aside status across, but only
-                        # when this scan found the same files it was set aside
-                        # with.
-                        release['status'] = _scanned_status(r)
                     except (RecordNotFound, KeyError):
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
