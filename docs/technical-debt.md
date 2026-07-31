@@ -146,6 +146,45 @@
   putting the network call back. If it is ever worth closing, fake the provider
   *inside the server* so the real handler and template run with no internet.
 
+- **E2E specs are state-coupled to each other, so the suite is intermittently red
+  even at one worker.** This is the root problem; the parallelism entry below is a
+  symptom of it.
+
+  Evidence: `release_controls.spec.ts` passes **6/6 when run alone**, but inside
+  the full suite it intermittently fails — B8 ("bookmarked filtered URL renders
+  filtered on first paint") timing out waiting for `#movie-releases table`, and
+  separately "sorting by size". The movie-detail partial itself responds in ~2 ms
+  and contains the table, so the endpoint is not at fault. The spec's own header
+  already names the cause: other specs mutate shared app state (one clicks "Mark
+  as Done"), and `movie.clean_releases` purges available releases for a `done`
+  movie. So whether release_controls sees a release table depends on what ran
+  before it.
+
+  Consequence: `make verify` passes most runs and occasionally reds for reasons
+  unrelated to the change under test. CI masks this with `retries: 2`. Do not
+  "fix" it locally by adding retries — that hides coupling rather than removing it.
+
+  The durable fix is per-spec isolation: a fresh data dir (or a fresh server) per
+  spec file, so no spec can observe another's mutations. That also removes the
+  need for `mode: 'serial'` and unblocks parallelism, making this and the entry
+  below one job rather than two.
+
+- **E2E parallelism is blocked by cross-file contention (~20% flake).** The suite
+  runs at `workers: 1`. `test.describe.configure({ mode: 'serial' })` on
+  categories/profiles fixed races *within* those files, but they still run
+  concurrently with each other and with `release_controls`, and all three mutate
+  global singleton state (categories, quality profiles, release list) on one
+  shared server. Measured at that commit, n=5 parallel: 4 green, 1 red. Serial:
+  green every run.
+
+  Worth ~3 minutes a run if fixed. Two viable routes: merge the state-mutating
+  specs into a single serial file, or give each worker its own server + data dir
+  (the durable answer — it also removes the need for serial mode at all).
+
+  Method note for whoever picks this up: n=3 and n=4 both came back all-green
+  before the n=5 run found the flake. Do not conclude "parallel is safe" from a
+  handful of runs — this failure mode needs ten or more.
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.

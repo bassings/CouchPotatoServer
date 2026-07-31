@@ -129,5 +129,30 @@ def test_empty_results_render_the_no_results_state():
 
 def test_identifying_info_is_present_for_def_007(html):
     """DEF-007: results must carry enough to tell two same-titled films apart."""
-    assert "tt0133093" in html, "imdb id missing from the card"
+    # Assert on the visible LINK, not the bare id: `data-imdb="tt0133093"` is a
+    # hidden attribute, so `"tt0133093" in html` stayed true even with the
+    # user-facing IMDb link deleted (confirmed by mutation). DEF-007 is about
+    # what the user can see to tell two same-titled films apart.
+    assert re.search(r'<a[^>]+imdb\.com/title/tt0133093', html), (
+        "the visible IMDb link is missing from the card"
+    )
     assert "Lana Wachowski" in html, "director missing when the provider supplies one"
+
+
+def test_the_e2e_stub_mirrors_the_contract_this_file_asserts():
+    """The search stub is what the E2E specs actually assert against.
+
+    Without this, template->drift is caught but stub->drift is not: the stub
+    could lose the `select` or the Add button and the E2E specs would fail for a
+    reason no unit test explains. Mirrors the equivalent check in
+    test_charts_template.py.
+    """
+    stub_path = REPO_ROOT / "tests" / "e2e" / "helpers.ts"
+    stub = stub_path.read_text(encoding="utf-8")
+    search_stub = stub.split("mockMovieSearch", 1)[1].split("export ", 1)[0]
+
+    for required in ("rounded-md", "data-imdb=", "<select", ">Add<", "imdb.com/title/"):
+        assert required in search_stub, (
+            f"the search stub in tests/e2e/helpers.ts is missing {required!r}, "
+            f"which the real template provides and search.spec.ts selects on"
+        )

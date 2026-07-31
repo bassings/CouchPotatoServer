@@ -66,10 +66,10 @@ class FanartTV(MovieProvider):
                 images = self._parseMovie(fanart_data)
         except HTTPError as e:
             log.debug('Failed getting extra art for %s: %s',
-                      (identifier, e))
+                      identifier, e)
         except Exception:
             log.error('Failed getting extra art for %s: %s',
-                      (identifier, traceback.format_exc()))
+                      identifier, traceback.format_exc())
             return {}
 
         return {
@@ -160,8 +160,11 @@ class FanartTV(MovieProvider):
         installs that never configure one.
         """
         key = self.conf('api_key')
-        if key:
-            return key
+        # .strip(): a whitespace-only value is a user who cleared the field, not
+        # a key. Without this it produced `?api_key=%20%20%20` instead of falling
+        # back to the shipped key.
+        if key and key.strip():
+            return key.strip()
         decoded = bd(self.ak)
         return decoded.decode('utf-8') if isinstance(decoded, bytes) else decoded
 
@@ -202,7 +205,12 @@ config = [{
                 {
                     'name': 'api_key',
                     'default': '',
-                    'label': 'Api Key',
+                    'label': 'API Key',
+                    # Masked in the UI: this is a credential, and unlike
+                    # themoviedb's (which sits on the hidden 'providers' tab)
+                    # this group is visible on General, so it renders for
+                    # everyone. Matches nzbget.py / synology.py.
+                    'type': 'password',
                 },
             ],
         },

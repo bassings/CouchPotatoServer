@@ -33,7 +33,7 @@ export default defineConfig({
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
   /*
-   * Parallel everywhere, and the SAME setting locally and on CI.
+   * ONE worker — and the SAME setting locally and on CI.
    *
    * History worth keeping, because the shape of the bug recurs: this was
    * `process.env.CI ? 1 : undefined`, which serialised CI while a local run used
@@ -41,21 +41,36 @@ export default defineConfig({
    * gate could never pass, which defeats CLAUDE.md hard rule 2 ("`make verify`
    * must pass locally before every push"). A gate that cannot pass gets bypassed.
    *
-   * Pinning `workers: 1` fixed the divergence but cost 3 minutes a run. The specs
-   * are now genuinely worker-independent instead:
+   * Two genuine improvements were made toward parallelism, and they stand:
    *   - categories/profiles declare `test.describe.configure({ mode: 'serial' })`,
    *     because they mutate GLOBAL singleton config (the category/profile list)
-   *     under fixed fixture names and assert on list order. Serial keeps each of
-   *     those files in one worker while other files still run in parallel.
+   *     under fixed fixture names and assert on list order.
    *   - the suggestions and search specs stub their third-party lookups
    *     (`/partial/charts`, `/partial/search`) instead of waiting on Blu-ray.com
-   *     and TMDB. Those were the remaining cross-file races: concurrent live
-   *     lookups were slow enough to blow the expectations.
+   *     and TMDB, which also makes the suite hermetic.
    *
-   * Measured: 4.1 min serial -> 1.0 min parallel, 139 passed / 3 skipped in both.
-   * If a race ever reappears, prefer fixing the spec over re-pinning workers —
-   * re-pinning hides it and hands back the wall-clock.
+   * They were not sufficient: parallel is NOT yet reliable, so this stays at one
+   * worker.
+   *
+   * Measured after the serial-mode change, n=5 at that commit: 4 green, 1 red
+   * (`release_controls` "sorting by size"). Earlier runs of n=3 and n=4 came back
+   * all-green, which is why an earlier version of this comment claimed parallel
+   * was verified — that was under-powered evidence, not a verification. At one
+   * worker the suite has been green on every run.
+   *
+   * The residual failures are CROSS-FILE: `mode: 'serial'` fixed races within
+   * categories/profiles, but those files still run concurrently with each other
+   * and with release_controls, and all three mutate global singleton state on one
+   * shared server. Playwright has no "these files must not run concurrently"
+   * primitive, so the real fixes are (a) merge the state-mutating specs into one
+   * serial file, or (b) a server per worker. Both are real work; see
+   * docs/technical-debt.md.
+   *
+   * Cost of this decision: ~4.1 min instead of ~1.0 min. Worth it. A gate that
+   * spuriously reds one run in five teaches everyone to re-run and ignore it,
+   * which is how a gate stops being a gate.
    */
+  workers: 1,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['html', { open: 'never' }],

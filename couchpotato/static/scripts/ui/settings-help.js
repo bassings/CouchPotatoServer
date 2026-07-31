@@ -1,3 +1,10 @@
+// SECURITY CONTRACT: settings `description` values are TRUSTED HTML.
+// They are injected with x-html (see partials/settings/provider_card.html) and
+// concatenated here without escaping, so a description may contain markup such
+// as a <a href> to provider docs. That is safe ONLY because every description is
+// a static literal in a plugin's `config` block -- none is user- or
+// provider-supplied. If you ever render a description that comes from remote
+// data or user input, escape it here or switch that field to x-text.
 // Pure description-builder for settings fields (used via x-html in
 // partials/settings/field_types.html). Extracted from settingsPanel so the
 // HTML-assembly logic can be unit- and mutation-tested.

@@ -59,8 +59,25 @@ test.describe('Release list controls', () => {
       'load to swap in #movie-releases -- this is a load/perf problem, not a ' +
       'missing seed');
 
+    // Wait for the TABLE, not just the container. `#movie-releases` is attached
+    // as soon as the outer partial swaps in, but its <table> is rendered a beat
+    // later -- so a non-retrying `.count() === 0` read here raced the render and
+    // skipped the test with "the seed did not run", which was FALSE: sibling
+    // tests in the same run passed against the same seeded data.
+    //
+    // Under parallel workers the server is slower and this fired in 3 of 4 runs,
+    // each time silently dropping a DIFFERENT test from the suite while the gate
+    // stayed green. A skip that lies is worse than a failure: it erodes coverage
+    // invisibly and sends the next person to re-run a seed that already worked.
+    // Same bug class as the one fixed 80 lines below -- a non-retrying read
+    // standing in for a wait.
+    const hasTable = await page.locator('#movie-releases table')
+      .waitFor({ state: 'attached', timeout: 10000 })
+      .then(() => true)
+      .catch(() => false);
+
     test.skip(
-      await page.locator('#movie-releases table').count() === 0,
+      !hasTable,
       `no seeded movie with releases at /movie/${SEEDED_MOVIE_ID} -- the seed ` +
       'did not run: scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
     );

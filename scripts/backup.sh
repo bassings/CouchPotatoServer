@@ -24,6 +24,12 @@
 #
 # Writes <BACKUP_DIR>/<YYYYMMDD-HHMMSS>/{couchpotato.db,config.ini}.
 #
+# RUN THIS ON THE HOST, NOT INSIDE THE CONTAINER. `COPY . ${APP_DIR}` ships this
+# file into the image, but the runtime image is Alpine with NEITHER bash NOR
+# sqlite3 (verified), so `docker exec couchpotato scripts/backup.sh` fails with
+# "not found" — which is a bad thing to discover mid-incident. Use the host copy:
+#   ssh <host> && cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh
+#
 # NOTE: `config.bak/` in the prod directory must NEVER be deleted. This script
 # only ever prunes its own timestamped output directories, never anything else
 # in BACKUP_DIR and nothing at all outside it — see the regex in prune_snapshots.
@@ -222,6 +228,15 @@ info "snapshot complete: $DEST"
 # Only ever deletes directories directly under BACKUP_DIR whose names are
 # exactly our own YYYYMMDD-HHMMSS stamp. Unrelated files and directories
 # (and anything outside BACKUP_DIR, e.g. config.bak/) are never candidates.
+#
+# RESIDUAL LIMITATION (narrowed, not gone). The `-NN` collision suffix is
+# zero-padded so same-second snapshots sort chronologically. A BACKUP_DIR that
+# still holds an UNPADDED `-N` directory from an older version of this script can
+# still mis-sort: with `<stamp>` and a legacy `<stamp>-2` present, `--retain 1`
+# keeps `-2` and prunes the fresh `<stamp>-02` (reproduced). Unreachable under
+# the documented usage — nightly `--retain 14` plus one manual pre-promotion run
+# would need 15+ snapshots inside a single second. If you ever hit it, delete or
+# rename the legacy unpadded directories once and it cannot recur.
 #
 # Implementation note — this deliberately does NOT pipe paths into
 # `head | while read`. Two real defects came from that:

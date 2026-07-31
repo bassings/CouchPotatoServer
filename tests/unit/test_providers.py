@@ -160,7 +160,12 @@ class TestFanartTVProvider:
         with patch('couchpotato.core.media.movie.providers.info.fanarttv.addEvent'):
             from couchpotato.core.media.movie.providers.info.fanarttv import FanartTV
             p = FanartTV.__new__(FanartTV)
-            p.urls = {'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=%s'}
+            # Deliberately does NOT override p.urls. Overriding it meant the
+            # class's real URL template was never exercised: a key hardcoded
+            # straight back into the shipped template passed all 45 tests
+            # (confirmed by mutation), which is exactly what the URL assertions
+            # below claim to prevent. __new__ skips __init__, so the class
+            # attribute is the one under test.
             p.MAX_EXTRAFANART = 20
             return p
 
@@ -733,6 +738,28 @@ class TestFanartTVSettingIsReachable:
             f"fanart.tv settings are registered on the '{group['tab']}' tab, which "
             f"the settings UI hides ({sorted(hidden)}). The api_key would be "
             f"unreachable, leaving config.ini as the only way to set it."
+        )
+
+    def _hidden_sections(self):
+        text = self.SCRIPTS.read_text(encoding="utf-8")
+        match = re.search(r"hiddenSections:\s*new Set\(\[(.*?)\]\)", text, re.DOTALL)
+        assert match, "could not find hiddenSections in the settings UI script"
+        return set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+
+    def test_section_is_not_in_hiddenSections(self):
+        """`hiddenTabs` is not the only way to hide it.
+
+        Adding 'fanarttv' to `hiddenSections` makes the card unreachable just as
+        thoroughly, and that path was uncovered — the mutation left all tests
+        green. Both filters are checked now.
+        """
+        from couchpotato.core.media.movie.providers.info import fanarttv
+
+        section = fanarttv.config[0]["name"]
+        hidden = self._hidden_sections()
+        assert section not in hidden, (
+            f"the '{section}' section is listed in hiddenSections {sorted(hidden)}, "
+            f"so the settings card never renders and the api_key is unreachable."
         )
 
     def test_group_is_not_marked_hidden(self):
