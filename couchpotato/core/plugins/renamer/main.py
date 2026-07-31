@@ -111,87 +111,37 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
 
 
-    def _mayReplace(self, dst, group):
-        """May the incoming file overwrite what is already at `dst`?
-
-        Only when it is at least as good. The setting is "Remove LOWER/EQUAL
-        quality copies of a release after downloading" -- the comparison is the
-        whole point of it, and an earlier version of this method ignored it,
-        which turned an upgrade into data destruction: measured, a 720p
-        download overwrote a 2160p remux, unrecoverably.
-
-        That is reachable straight from FEAT-008. Restoring a movie marks the
-        held release 'ignored', so single()'s has_better_quality gate is 0 on
-        EVERY profile rung; the searcher walks the profile best-first, and if
-        the top rung finds nothing a lower rung downloads. The default naming
-        template carries no quality token, so it lands on exactly the path the
-        better copy occupies.
-
-        Fails SAFE: if the existing copy's quality cannot be determined, the
-        file on disk is kept. The caller then treats this as a skip, so the
-        download is left in place rather than deleted by cleanup -- the user
-        keeps both and can decide.
-        """
-        if not self.conf('remove_lower_quality_copies', default = True):
-            log.warning('Destination already exists and "Delete Others" is off, keeping it: %s', dst)
-            return False
-
-        incoming = (group.get('meta_data') or {}).get('quality') or {}
-        if not incoming.get('identifier'):
-            log.warning('Incoming quality unknown, keeping the existing file: %s', dst)
-            return False
-
-        media_info = group.get('media') or {}
-        existing = None
-        for release in media_info.get('releases') or []:
-            files = (release.get('files') or {}).get('movie') or []
-            if dst in files:
-                existing = release
-                break
-
-        if not existing or not existing.get('quality'):
-            log.warning('Cannot tell what quality %s is, keeping it', dst)
-            return False
-
-        try:
-            profile = fireEvent('profile.default', single = True)
-            if media_info.get('profile_id'):
-                profile = get_db().get('id', media_info['profile_id'])
-        except Exception:
-            profile = None
-
-        comparison = fireEvent(
-            'quality.ishigher',
-            {'identifier': incoming['identifier'], 'is_3d': incoming.get('is_3d', False)},
-            {'identifier': existing['quality'], 'is_3d': existing.get('is_3d', False)},
-            profile, single = True)
-
-        if comparison in ('higher', 'equal'):
-            return True
-
-        log.warning('Keeping the better copy at %s: incoming %s is %s than %s',
-                    dst, incoming['identifier'], comparison, existing['quality'])
-        return False
-
     def _moveRenamedFiles(self, rename_files, group):
         """Move each renamed file into the library, then clean up -- but only
         if there is nothing left behind.
 
-        Two defects this replaces:
+        Scope note. This method used to also REPLACE an existing destination,
+        implementing the long-declared-but-never-read
+        `remove_lower_quality_copies` setting. That was removed after two
+        failed attempts, both of which put the user's irreplaceable library at
+        risk:
 
-        1. `if os.path.exists(dst): continue` meant a replacement copy was
-           never moved in while the old file was there. With the default naming
-           template (`<namethe> (<year>)` / `<thename><cd>.<ext>`, no
-           quality/group/source token) EVERY copy of a movie renames to the
-           same path, so an upgrade essentially never landed.
+          - the first had no quality comparison at all, so a 720p download
+            overwrote a 2160p remux (measured);
+          - the second compared with `quality.ishigher`, which is a SEARCH
+            heuristic: it answers 'higher' when the existing quality is not a
+            rung of the profile ("anything beats a rung I do not want"). The
+            default Best profile excludes 2160p, so it still authorised
+            destroying a remux -- while simultaneously being inert, because the
+            scanner-supplied `group['media']` carries no `releases` key
+            (`media.get` attaches that, and the scanner never calls it).
 
-        2. `cleanup` then deleted the source folder regardless -- so the file
-           the user had just downloaded was skipped AND destroyed. Data loss on
-           the happy path of every upgrade.
+        Replacement needs a total quality ranking that does not exist in this
+        codebase today, on the one code path that deletes files from the user's
+        library. It is therefore its own piece of work, specified in
+        specs/FEAT-009-durable-set-aside-and-upgrade-replacement.md, and not a
+        detail of this method.
 
-        Replacement is gated on `remove_lower_quality_copies` ("Delete Others",
-        default True), which renamer/api.py has always declared and nothing has
-        ever read.
+        What remains is the half that was always a straight bug fix: an
+        existing destination means the incoming file is SKIPPED (as it always
+        was), and a skip now suppresses `cleanup` -- because deleting the
+        source folder after skipping a file destroyed the download the user had
+        just made.
         """
         skipped = False
         moved_any = False
@@ -202,65 +152,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 skipped = True
                 continue
 
-            replacing = os.path.exists(dst)
-            if replacing and not self._mayReplace(dst, group):
+            if os.path.exists(dst):
+                log.warning('Destination already exists, keeping it: %s', dst)
                 skipped = True
                 continue
 
             try:
-                if replacing:
-                    # Follow a symlinked destination to the file it points at.
-                    # Split libraries (small SSD + NAS) symlink library entries
-                    # at the real storage; os.replace on the LINK would swap in
-                    # a real file, orphaning the target and filling the small
-                    # volume. Replace what the user actually stores.
-                    target = os.path.realpath(dst) if os.path.islink(dst) else dst
-
-                    # Stage beside the destination and swap atomically. The
-                    # existing copy must not be destroyed until the incoming
-                    # one is fully in place, or a failure mid-way leaves the
-                    # user with neither. A sibling path keeps os.replace on one
-                    # filesystem; the cross-device work is inside moveFile.
-                    staged = '%s.cp_incoming' % target
-                    try:
-                        # Clear any staging file left by an interrupted run.
-                        # moveFile refuses to write over an existing
-                        # destination, so without this ONE interrupted
-                        # replacement wedged this movie forever: every later
-                        # scan failed identically, and a full-size orphan the
-                        # scanner cannot see sat in the library folder.
-                        if os.path.exists(staged):
-                            log.warning('Removing a staging file left by an earlier run: %s', staged)
-                            os.remove(staged)
-                        self.moveFile(src, staged, use_default = True)
-                        os.replace(staged, target)
-
-                        # moveFile's `symlink_reversed` and hardlink-fallback
-                        # actions point the DOWNLOAD back at whatever `dest`
-                        # they were handed -- here the staging path, which the
-                        # swap above has just renamed away. Re-point it at the
-                        # real file so a seeding torrent is not left with a
-                        # broken link.
-                        if os.path.islink(src) and not os.path.exists(src):
-                            os.unlink(src)
-                            os.symlink(target, src)
-                    finally:
-                        if os.path.exists(staged):
-                            try:
-                                os.remove(staged)
-                            except OSError:
-                                log.error('Failed removing staging file %s', staged)
-                    log.info('Replaced: %s -> %s', os.path.basename(src), dst)
-                else:
-                    self.moveFile(src, dst, use_default = True)
-                    log.info('Moved: %s -> %s', os.path.basename(src), dst)
+                self.moveFile(src, dst, use_default = True)
+                log.info('Moved: %s -> %s', os.path.basename(src), dst)
                 moved_any = True
             except Exception as e:
                 log.error('Failed to move %s: %s', src, e)
                 skipped = True
 
-        # Never delete the source folder when anything was left behind -- that
-        # is how a download the user just made gets discarded.
+        # Never delete the source folder when anything was left behind. This is
+        # the data-loss half: previously a skipped move was followed by cleanup,
+        # so the file the user had just downloaded was skipped AND destroyed.
         if skipped:
             log.info('Leaving source folder in place: not every file was moved')
             return

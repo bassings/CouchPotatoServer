@@ -79,6 +79,36 @@ are already promised is unimplemented. That is Part B.
 
 ## Part B — an upgrade must be able to replace what is there
 
+> **STATUS: the replacement half is NOT IMPLEMENTED and is deferred.** Only the
+> safety half shipped: a skipped move no longer lets `cleanup` destroy the
+> download. Replacement was attempted twice and withdrawn both times, because
+> each attempt put the user's irreplaceable library at risk —
+>
+> 1. No quality comparison at all. Measured: a 720p download overwrote a 2160p
+>    remux. This moved the loss from the replaceable side (the download) to the
+>    irreplaceable side, which is worse than the bug it fixed.
+> 2. Comparison via `quality.ishigher`. That is a SEARCH heuristic — it returns
+>    `'higher'` when the existing quality is not a rung of the profile
+>    ("anything beats a rung I do not want", `quality/main.py`). The default
+>    `Best` profile excludes 2160p, so it still authorised destroying a remux.
+>    It was also inert: the scanner-supplied `group['media']` has no `releases`
+>    key (`media.get` attaches that, and the scanner never calls it), so the
+>    gate always refused. Fixing the inertness would have ACTIVATED the
+>    destruction, on the default profile.
+>
+> **What a third attempt needs, and does not currently have:** a total ordering
+> over qualities that is independent of any profile. `QualityPlugin.qualities`
+> is such a list, and ranking by index in it is probably the right primitive —
+> "is this file better than what is on disk" is a global question, not a profile
+> question. It also needs the media's releases attached at the call site, and a
+> rule for which release owns a given path when two legitimately claim it.
+>
+> None of that is a detail of `_moveRenamedFiles`. It is its own change, on the
+> one code path that deletes files from the user's library, and it must be
+> reviewed as such. **FEAT-008 does not require it:** without replacement the
+> app behaves as it always has (skip and warn), and the download now survives.
+
+
 ### Acceptance criteria
 
 1. When the destination exists and `remove_lower_quality_copies` is on (its
