@@ -3,9 +3,10 @@ import sqlite3
 import traceback
 import time
 
-from CodernityDB.database import RecordNotFound
+from CodernityDB.database import RecordDeleted, RecordNotFound
 from couchpotato import get_db
 from couchpotato.api import addApiView
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import fireEvent, fireEventAsync, addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getTitle, getImdb, getIdentifier
@@ -121,9 +122,25 @@ class MovieBase(MovieTypeBase):
             }
         })
 
+        addApiView('movie.restore_to_wanted', self.restoreToWantedView, docs = {
+            'desc': "FEAT-008: move a 'done' movie back to 'active' (wanted) "
+                    "without losing its release history -- today the only "
+                    "route back is delete + re-add. Always ensures the movie "
+                    "has a real, resolvable profile (the caller's profile_id, "
+                    "else the movie's existing one, else the default) before "
+                    "writing 'active', and refuses rather than create a "
+                    "Wanted entry the searcher can never pick up.",
+            'params': {
+                'media_id': {'desc': 'The id of the media'},
+                'profile_id': {'desc': 'Optional profile id to assign. Defaults to the '
+                                        "movie's existing profile, then the default profile."},
+            },
+        })
+
         addEvent('movie.add', self.add)
         addEvent('movie.update', self.update)
         addEvent('movie.update_release_dates', self.updateReleaseDate)
+        addEvent('movie.restore_to_wanted', self.restoreToWanted)
 
     def existingProfileId(self, db, m):
         """Return the media doc's current profile_id if it still resolves to a
@@ -143,6 +160,94 @@ class MovieBase(MovieTypeBase):
         except Exception:
             log.error('Failed getting previous profile: %s', traceback.format_exc())
             return None
+
+    def restoreToWantedView(self, media_id = None, **kwargs):
+        return self.restoreToWanted(media_id, profile_id = kwargs.get('profile_id'))
+
+    def restoreToWanted(self, media_id, profile_id = None):
+        """FEAT-008: move a movie back to 'active' (wanted) without losing its
+        release history -- today the only route back from 'done' is deleting
+        and re-adding the movie, which throws that history away.
+
+        The same profile_id=None fact that broke "Search for releases"
+        (searcher.py:172, this feature's other half) matters here too: a
+        movie moved to wanted with no profile is unsearchable -- it would sit
+        in Wanted forever, and single()'s own gate would skip it right back
+        out. So this always ensures a real, resolvable profile before writing
+        'active' -- preferring, in order, the caller's profile_id, the
+        movie's existing one (only if it still resolves to a real profile --
+        a stale/deleted reference is not trusted), then the default profile
+        -- and refuses (AC2) rather than create an unsearchable entry.
+
+        Releases are never touched: only `status`/`profile_id` change, so a
+        'done' release survives exactly as AC3 requires.
+        """
+        if not media_id:
+            return {'success': False, 'error': 'No media_id given'}
+
+        try:
+            db = get_db()
+
+            try:
+                media = db.get('id', media_id)
+            except (RecordNotFound, KeyError):
+                return {'success': False, 'error': 'Media not found'}
+
+            # AC4: idempotent -- calling this on an already-active movie is a
+            # no-op success (no profile resolution, no write) rather than an
+            # error, so a UI that doesn't track local state precisely can
+            # call it freely.
+            if media.get('status') == 'active':
+                return {'success': True, 'media': media}
+
+            resolved_profile_id = (
+                self.existingProfileId(db, {'profile_id': profile_id})
+                or self.existingProfileId(db, media)
+            )
+
+            if not resolved_profile_id:
+                default_profile = fireEvent('profile.default', single = True)
+                resolved_profile_id = default_profile.get('_id') if default_profile else None
+
+            if not resolved_profile_id:
+                # AC2: refuse rather than create an unsearchable Wanted entry.
+                return {
+                    'success': False,
+                    'error': 'No quality profile is available -- create one before '
+                              'restoring this movie to wanted',
+                }
+
+            # CAS mutator, mirroring markDone/markFailedAndResearch: re-checks
+            # the status-guard against the freshly re-read doc on every retry
+            # (not just the pre-check above), so a concurrent write that beat
+            # us to 'active' between our read and our write is a no-op, not a
+            # clobber.
+            def _restore(m):
+                if m.get('status') == 'active':
+                    return False
+                m['status'] = 'active'
+                m['profile_id'] = resolved_profile_id
+
+            try:
+                updated = db.update_with_retry(_restore, media_id)
+            except (RecordNotFound, RecordDeleted, KeyError):
+                return {'success': False, 'error': 'Media not found'}
+            except ConflictError:
+                log.warning('Gave up restoring media %s to wanted after retries due to persistent contention', media_id)
+                return {'success': False, 'error': 'Database busy, please retry'}
+
+            # None means the mutator's CAS re-check found the movie already
+            # active on a retry (lost the race to another writer) -- still a
+            # success, just nothing further to report beyond the movie as-is.
+            media = updated or media
+
+            fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
+            fireEvent('notify.frontend', type = 'movie.update', data = media)
+
+            return {'success': True, 'media': media}
+        except Exception:
+            log.error('Failed restoring media %s to wanted: %s', media_id, traceback.format_exc())
+            return {'success': False, 'error': 'Unexpected error'}
 
     def add(self, params = None, force_readd = True, search_after = True, update_after = True, notify_after = True, status = None):
         if not params: params = {}
