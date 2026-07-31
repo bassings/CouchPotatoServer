@@ -140,7 +140,7 @@ All examples use existing Tailwind/`cp.*` tokens. Hover/focus states are require
 Pill `px-1.5 py-0.5 rounded text-[9px] font-medium`: wanted `bg-cp-blue/20 text-cp-blue` · done `bg-cp-success/20 text-cp-success` · snatched `bg-cp-warning/20 text-cp-warning` · quality `bg-white/10 text-white/80 backdrop-blur-sm` · downloaded/review `bg-cp-warning/20 text-cp-warning`.
 
 ### Toasts
-Global Alpine `toast(msg, type, duration)` queue, top-right, `aria-live="polite"`. `bg-green-600`/`bg-red-600`/`bg-cp-accent text-cp-bg` for success/error/info. Auto-dismiss (default 3000ms) + manual close.
+Global Alpine `toast(msg, type, duration)` queue, top-right. `bg-green-700 cp-toast-fg`/`bg-red-700 cp-toast-fg`/`bg-cp-accent text-black` for success/error/info — the 700 weights and the theme-independent `.cp-toast-fg` are required for WCAG 1.4.3 (the 600 weights with `text-white` measured 3.30:1 for success in dark and 3.60:1 for error in light). Announcement is handled by two persistent `sr-only` live regions in the shell (polite + assertive), not by the toast nodes, which are `aria-hidden`: a screen reader announces a mutation to an existing element, not a brand-new one. Auto-dismiss (default 3000ms) + manual close.
 
 ### Poster card (`partials/movie_cards.html`)
 `poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group`. `aspect-[2/3]` poster with lazy `<img>` + gradient fallback; status badge top-right, quality badge over a bottom `from-black/90` gradient; title `text-xs font-medium truncate`, year `text-[10px] text-cp-muted`. Hover reveals a bulk-select checkbox (top-left) and a refresh button (bottom-right). Hover glow on `.poster-card`.

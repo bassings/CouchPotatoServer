@@ -790,30 +790,6 @@ class MediaPlugin(MediaBase):
                         media_releases = fireEvent('release.for_media', m['_id'], single = True)
                         done_releases = [release for release in media_releases if release.get('status') == 'done']
 
-                        # FEAT-008: a movie the user explicitly moved back to
-                        # wanted must STAY wanted. restoreToWanted preserves the
-                        # existing 'done' release (AC3), and that release still
-                        # satisfies quality.isfinish -- so without this the very
-                        # next sweep wrote the movie straight back out of
-                        # Wanted, and with manual_confirmation (the default) it
-                        # landed in the 'downloaded' review gate and fired a
-                        # false "downloaded -- awaiting review" notification for
-                        # something the user never re-downloaded.
-                        #
-                        # Only releases the movie ALREADY HELD are discounted:
-                        # the user is saying "what I have is not good enough",
-                        # not "stop upgrading me forever". Anything obtained
-                        # after the restore completes the movie normally.
-                        #
-                        # Absent marker -> 0 -> nothing is skipped, so every
-                        # movie that was never restored behaves exactly as before.
-                        restored_at = m.get('restored_to_wanted_at') or 0
-                        if restored_at:
-                            done_releases = [
-                                release for release in done_releases
-                                if release.get('last_edit', 0) > restored_at
-                            ]
-
                         if done_releases:
 
                             # Check if we are finished with the media

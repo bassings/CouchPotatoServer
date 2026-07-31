@@ -985,9 +985,19 @@ class TestARestoredMovieIsPickedUpByTheAutomaticSearcher:
     """
 
     def test_a_movie_in_the_state_restore_to_wanted_leaves_it_gets_searched(self, searcher):
-        # Exactly what restoreToWanted writes: status 'active', a resolvable
-        # profile. Nothing else about the movie changes.
-        restored = _movie(status='active')
+        # Exactly what restoreToWanted leaves behind -- INCLUDING the
+        # preserved 'done' release AC3 requires it to keep.
+        #
+        # The release is the whole point. This test used to use _movie()'s
+        # default of releases=[], a state restoreToWanted never produces, and
+        # so it certified AC5 against a movie that could not exhibit the
+        # problem: with the held release present, single()'s has_better_quality
+        # loop counts it on the FIRST profile rung and breaks before any
+        # provider is contacted, so the "restored" movie sat in Wanted forever
+        # contacting nothing.
+        restored = _movie(status='active', releases=[
+            {'_id': 'held-1', 'status': 'ignored', 'quality': '2160p', 'is_3d': False},
+        ])
         restored['profile_id'] = 'default-profile-1'
 
         calls = _drive(searcher, restored)
@@ -1073,4 +1083,63 @@ class TestADanglingProfileIsNotReportedAsASuccessfulSearch:
         assert result['searched'] is True, (
             'refused a search that the stale-profile fallback can perform'
         )
+        assert single.called is True
+
+
+class TestAProfileWithNoQualitiesIsNotACompletedSearch:
+    """Residual AC4 hole. The pre-flight checked that the profile RESOLVES, but
+    single() iterates profile['qualities'] -- so a profile with an empty list
+    contacts no provider at all while the view reported
+    'searched: true, found: 0'. forceDefaults strips ''/'-1' entries
+    (plugins/profile/main.py), so an empty qualities list is reachable.
+    """
+
+    def test_it_refuses_rather_than_claiming_a_search(self, searcher):
+        movie = _movie(status='done')
+        movie['profile_id'] = 'empty-profile'
+
+        def _fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'searcher.protocols':
+                return ['nzb']
+            if name == 'profile.default':
+                return None
+            return None
+
+        db = MagicMock()
+        db.get.return_value = {'_id': 'empty-profile', 'qualities': []}
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=_fire), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert result['searched'] is False, (
+            'reported a completed search against a profile with no qualities, '
+            'which iterates nothing and contacts no provider'
+        )
+        assert single.called is False
+
+    def test_a_profile_with_qualities_is_still_accepted(self, searcher):
+        """The other direction -- the check must not refuse a normal profile."""
+        movie = _movie(status='done')
+        movie['profile_id'] = 'profile-1'
+
+        def _fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'searcher.protocols':
+                return ['nzb']
+            return None
+
+        db = MagicMock()
+        db.get.return_value = _profile()
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=_fire), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert result['searched'] is True
         assert single.called is True

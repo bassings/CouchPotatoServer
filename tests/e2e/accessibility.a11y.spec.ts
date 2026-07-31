@@ -352,7 +352,7 @@ test.describe('Accessibility', () => {
       // matched 4 elements and the count assertion failed for the wrong reason.
       const region = '[data-testid="toast-region"]';
       await expect(
-        page.locator(`${region} [role="status"], ${region} [role="alert"]`),
+        page.locator(`${region} [data-testid="toast"]`),
       ).toHaveCount(3, { timeout: 5000 });
 
       /*
@@ -367,7 +367,7 @@ test.describe('Accessibility', () => {
        * computed here from the two colours actually rendered. axe still runs
        * below as a second opinion.
        */
-      const measured = await page.$$eval(`${region} [role="status"], ${region} [role="alert"]`, (els) => {
+      const measured = await page.$$eval(`${region} [data-testid="toast"]`, (els) => {
         const rgb = (s: string) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
         const lum = (c: number[]) => {
           const [r, g, b] = c.map((v) => {
@@ -409,6 +409,54 @@ test.describe('Accessibility', () => {
       expect(results.violations.length, `${theme} theme toast contrast:\n${detail}`).toBe(0);
     });
   }
+
+
+  /*
+   * Toast messages must land in a live region that ALREADY EXISTS.
+   *
+   * Two earlier shapes failed this: aria-live on the toast wrapper (which
+   * nested an error toast's role="alert" inside a polite region), and
+   * aria-live on each toast (which made the live element itself ephemeral --
+   * a screen reader announces a mutation to an element already in the
+   * accessibility tree, not a brand-new node; the same rule
+   * tests/unit/test_releases_partial_route.py pins for the release-count
+   * announcer). Neither could be caught by asserting on roles alone, which is
+   * all the suite did.
+   */
+  test('toast messages are announced through a persistent live region', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+
+    const polite = page.locator('[data-testid="toast-announcer-polite"]');
+    const assertive = page.locator('[data-testid="toast-announcer-assertive"]');
+
+    // Present BEFORE any toast exists — this is the whole point.
+    await expect(polite).toBeAttached();
+    await expect(assertive).toBeAttached();
+    await expect(polite).toHaveAttribute('aria-live', 'polite');
+    await expect(assertive).toHaveAttribute('aria-live', 'assertive');
+    await expect(polite).toBeEmpty();
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'Found 3 new releases', type: 'success' },
+      }));
+    });
+    await expect(polite).toHaveText('Found 3 new releases');
+
+    // Errors go to the assertive region so an actionable failure interrupts.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'No enabled downloader', type: 'error' },
+      }));
+    });
+    await expect(assertive).toHaveText('No enabled downloader');
+
+    // The visual stack must not also be announced, or every message is
+    // spoken twice.
+    await expect(page.locator('[data-testid="toast-region"]'))
+      .toHaveAttribute('aria-hidden', 'true');
+  });
 
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');

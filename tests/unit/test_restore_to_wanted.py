@@ -393,55 +393,93 @@ class TestAnActiveMovieWithADanglingProfileIsRepaired:
         )
 
 
-class TestTheRestoreMarkerIsWritten:
-    """The status/profile write is only half of a working restore. Without
-    `restored_to_wanted_at`, media.restatus still counts the preserved 'done'
-    release as finishing the movie and pushes it straight back out of Wanted
-    on the next sweep (see test_restore_to_wanted_survives_restatus.py).
+class TestTheHeldReleasesAreIgnored:
+    """Setting status='active' is only half of a working restore. The release
+    the movie already holds still counts as satisfying the profile in BOTH
+    media.restatus (which finishes it again on the next sweep) and single()'s
+    has_better_quality loop (which breaks before contacting any provider), so
+    without this the movie either bounced straight back out of Wanted or sat
+    there forever contacting nothing.
 
-    Caught by mutation: deleting the marker assignment left all 15 tests in
-    this file green, so the half that makes AC5 true was unpinned.
+    Marking them 'ignored' is the mechanism the codebase already uses --
+    has_better_quality explicitly skips ('available', 'ignored', 'failed') and
+    restatus only counts 'done' -- and mirrors markFailedAndResearch.
     """
 
-    def test_it_stamps_when_the_movie_was_restored(self):
-        movie = _movie(status='done', profile_id='profile-1')
+    def _restore_with_releases(self, releases, status='done'):
+        movie = _movie(status=status, profile_id='profile-1')
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
         db.update_with_retry.side_effect = make_update_with_retry(movie)
 
-        before = time.time()
+        updates = []
+
+        def _fire(name, *a, **k):
+            if name == 'release.for_media':
+                return releases
+            if name == 'release.update_status':
+                updates.append((a[0] if a else None, k.get('status')))
+            return None
+
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent'):
-            plugin.restoreToWanted('movie-1')
-        after = time.time()
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
+            result = plugin.restoreToWanted('movie-1')
+        return result, updates
 
-        stamp = movie.get('restored_to_wanted_at')
-        assert stamp is not None, (
-            'no restore marker written -- media.restatus will treat the '
-            'preserved done release as finishing the movie and eject it from '
-            'Wanted on the next sweep'
-        )
-        assert before <= stamp <= after, (
-            'the marker must be the restore time: releases edited before it '
-            'are discounted, so a wrong value either discounts nothing or '
-            'discounts the upgrade the user is waiting for'
+    def test_a_held_done_release_is_marked_ignored(self):
+        result, updates = self._restore_with_releases(
+            [{'_id': 'rel-1', 'status': 'done'}])
+
+        assert result['success'] is True
+        assert ('rel-1', 'ignored') in updates, (
+            'the held release still counts as satisfying the profile, so the '
+            'movie is not really wanted -- it will be finished again or never '
+            'searched'
         )
 
-    def test_a_refused_restore_does_not_stamp(self):
-        """AC2: a refused restore must not touch the movie at all."""
-        movie = _movie(status='done', profile_id=None)
+    def test_seeding_and_downloaded_releases_are_ignored_too(self):
+        _, updates = self._restore_with_releases([
+            {'_id': 'rel-seed', 'status': 'seeding'},
+            {'_id': 'rel-dl', 'status': 'downloaded'},
+        ])
+
+        assert ('rel-seed', 'ignored') in updates
+        assert ('rel-dl', 'ignored') in updates
+
+    def test_releases_that_never_completed_are_left_alone(self):
+        """Only what the movie actually HOLDS is discounted. An 'available'
+        release is a search result, not a copy the user has -- rewriting it
+        would throw away the list the UI shows."""
+        _, updates = self._restore_with_releases([
+            {'_id': 'rel-avail', 'status': 'available'},
+            {'_id': 'rel-failed', 'status': 'failed'},
+        ])
+
+        assert updates == [], 'rewrote releases the movie does not hold: %r' % updates
+
+    def test_a_refused_restore_does_not_touch_releases(self):
+        """AC2 / the scope guard: if the movie is not restored, its release
+        history must be left exactly as it was."""
+        movie = _movie(status='chart', profile_id='profile-1')
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
-        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids=set())
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        updates = []
+
+        def _fire(name, *a, **k):
+            if name == 'release.for_media':
+                return [{'_id': 'rel-1', 'status': 'done'}]
+            if name == 'release.update_status':
+                updates.append((a[0] if a else None, k.get('status')))
+            return None
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
-            fire.side_effect = lambda name, *a, **k: None
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is False
-        assert 'restored_to_wanted_at' not in movie
+        assert updates == []
 
 
 class TestACallerSuppliedProfileIdIsNotTrusted:
@@ -478,15 +516,22 @@ class TestACallerSuppliedProfileIdIsNotTrusted:
 class TestRestoreIsScopedToStatusesItMakesSenseFor:
     """`markFailedAndResearch` deliberately refuses unless the movie is in the
     status it is written for, so a confirmed movie is never silently reopened.
-    This had no such guard: any non-active status was flipped to 'active'.
+    This had no such guard: any status was flipped to 'active'.
 
-    The UI only offers the control for a 'done' movie, so this is API reach --
-    but flipping a SNATCHED movie to active makes the searcher eligible to grab
-    a second copy while the first is still downloading.
+    The reachable case is a 'chart' or 'suggested' entry (movie/charts), which
+    an API call would otherwise promote straight into the wanted list. The UI
+    only offers the control for a 'done' movie, so this is API reach.
+
+    It is NOT about 'snatched'. An earlier version of this test used
+    status='snatched' and claimed the guard stopped a second copy being grabbed
+    mid-download -- but nothing in this codebase assigns media status
+    'snatched' (it is a RELEASE status), so the test pinned a state that cannot
+    exist. The mutation killed it, which is exactly why an unreal scenario is
+    worth catching: it read as covered.
     """
 
-    def test_a_snatched_movie_is_refused(self):
-        movie = _movie(status='snatched', profile_id='profile-1')
+    def test_a_chart_entry_is_refused(self):
+        movie = _movie(status='chart', profile_id='profile-1')
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
@@ -497,8 +542,14 @@ class TestRestoreIsScopedToStatusesItMakesSenseFor:
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is False
-        assert 'snatched' in result.get('error', '').lower() or result.get('error')
-        assert movie['status'] == 'snatched', 'a refused restore must not write'
+        # A specific assertion: the earlier form was
+        #   `'snatched' in error.lower() or result.get('error')`
+        # whose second clause passes for ANY non-empty error, so the first
+        # could never fail the test.
+        assert 'chart' in result.get('error', '').lower(), (
+            'the refusal must name the status it refused: %r' % result.get('error')
+        )
+        assert movie['status'] == 'chart', 'a refused restore must not write'
         assert not db.update_with_retry.called
 
     @pytest.mark.parametrize('status', ['done', 'downloaded'])

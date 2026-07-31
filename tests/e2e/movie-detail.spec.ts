@@ -420,7 +420,7 @@ test.describe('Movie Detail', () => {
     // Either role: error toasts are role="alert" (they carry actionable
     // failure reasons and should interrupt), everything else role="status".
     // Which one appears depends on the environment, so match both.
-    const anyToast = toastRegion.getByRole('status').or(toastRegion.getByRole('alert'));
+    const anyToast = toastRegion.locator('[data-testid="toast"]');
     await expect(anyToast.first()).toBeVisible({ timeout: 5000 });
     /*
      * Assert against the outcome the API ACTUALLY reported, not a fixed

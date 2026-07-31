@@ -194,11 +194,23 @@ tailwind.config = {
       version: '',
       darkMode: true,
       toasts: [],
+      // Announcement state for the two PERSISTENT sr-only live regions in the
+      // shell below. Toasts themselves are created by x-for, and a screen
+      // reader announces a MUTATION to an element already in the
+      // accessibility tree -- not the arrival of a brand-new node.
+      politeAnnouncement: '',
+      assertiveAnnouncement: '',
       _toastId: 0,
 
       toast(message, type = 'success', duration = 3000) {
         const id = ++this._toastId;
         this.toasts.push({ id, message, type });
+        // Announce through the persistent regions, not the toast node.
+        if (type === 'error') {
+          this.assertiveAnnouncement = message;
+        } else {
+          this.politeAnnouncement = message;
+        }
         setTimeout(() => this.dismissToast(id), duration);
       },
 
@@ -399,12 +411,24 @@ tailwind.config = {
 {% include "partials/movie_info_modal.html" %}
 
 <!-- FEAT-005: Toast notifications -->
-<!-- Liveness lives on each TOAST, not this wrapper. With aria-live on the
-     wrapper, an error toast's role="alert" was nested inside an
-     already-live polite region, which makes its interrupt semantics
-     unreliable -- errors now carry actionable reasons, so they need to
-     land. -->
-<div data-testid="toast-region" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+<!--
+  Announcement is handled by the two PERSISTENT sr-only regions below, not by
+  the toast nodes. Two earlier shapes were both wrong: aria-live on this
+  wrapper nested an error toast's role="alert" inside an already-live polite
+  region; and moving aria-live onto each toast made the live element itself
+  EPHEMERAL -- a screen reader announces a mutation to an element already in
+  the accessibility tree, not a brand-new node. That is the same rule
+  tests/unit/test_releases_partial_route.py pins for the release-count
+  announcer, and partials/settings/categories.html already follows it.
+
+  The visual stack is therefore aria-hidden, so a message is announced once.
+-->
+<div class="sr-only" aria-live="polite" aria-atomic="true"
+     data-testid="toast-announcer-polite" x-text="politeAnnouncement"></div>
+<div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"
+     data-testid="toast-announcer-assertive" x-text="assertiveAnnouncement"></div>
+
+<div data-testid="toast-region" aria-hidden="true" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
   <template x-for="t in toasts" :key="t.id">
     <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
          :class="{
@@ -412,9 +436,7 @@ tailwind.config = {
            'bg-red-700 cp-toast-fg': t.type === 'error',
            'bg-cp-accent text-black': t.type === 'info'
          }"
-         :role="t.type === 'error' ? 'alert' : 'status'"
-         :aria-live="t.type === 'error' ? 'assertive' : 'polite'"
-         aria-atomic="true">
+         data-testid="toast">
       <span x-text="t.message" class="flex-1"></span>
       <button @click="dismissToast(t.id)" class="opacity-70 hover:opacity-100 ml-1" aria-label="Dismiss">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

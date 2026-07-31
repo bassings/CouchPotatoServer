@@ -394,31 +394,46 @@ function profileEditor() {
 // the Actions-bar's plain x-data object (like profileEditor(), it needs
 // async init/confirm methods, not just a couple of booleans).
 /*
- * htmx.ajax() RESOLVES on an HTTP error rather than rejecting -- measured
- * directly against a stubbed 500: `htmx.ajax(...).catch(...)` never runs. Both
- * error-recovery paths below were therefore dead code, and the failure they
- * were written to handle happened anyway: a failed post-restore swap left the
- * Confirm button disabled on "Moving..." forever with the move already
- * committed server-side, and a failed release-list refresh showed the user a
- * stale list with no error at all.
+ * Fetch the fragment ourselves, then hand it to htmx to swap.
  *
- * This wraps htmx.ajax so the returned promise reflects what actually
- * happened. htmx dispatches its failure modes as events rather than rejecting,
- * so they are captured over the life of the request.
+ * The obvious approach -- htmx.ajax(...).catch(...) -- does not work: its
+ * promise RESOLVES on an HTTP error (measured against a stubbed 500), so the
+ * catch never runs and the caller believes a failed swap succeeded. That left
+ * Confirm disabled on "Moving..." forever with the move already committed
+ * server-side, and showed a stale release list as though it were fresh.
+ *
+ * The first fix wrapped htmx.ajax and inferred the outcome from htmx's error
+ * EVENTS on document.body. Measured against the real vendored htmx 2.0.4,
+ * that was wrong three ways, all of them page-global:
+ *   - a failing request from ANY other element (the release filter <select>,
+ *     a column-sort link, #movie-collections' own hx-trigger="load") bubbles
+ *     to body and made this reject after its own swap had succeeded --
+ *     a false "could not refresh" on a page that had just refreshed;
+ *   - htmx QUEUES a second request against the same element (every
+ *     htmx.ajax with no source element uses document.body), and resolves the
+ *     queued one immediately -- so an overlapping call reported success
+ *     before its swap had happened, and a later failure of that queued
+ *     request arrived after the listeners were gone;
+ *   - htmx:swapError re-throws before settling, so the promise never settled
+ *     at all and the listeners leaked.
+ *
+ * Doing the request here makes the outcome local to this call: one fetch, one
+ * response, no shared queue and no page-global events. htmx.swap() still
+ * performs the swap, so hx-* attributes in the new markup are processed and
+ * Alpine rebinds exactly as before.
  */
 function cpSwap(url, target, swap) {
-  var FAILURES = ['htmx:responseError', 'htmx:sendError', 'htmx:targetError', 'htmx:swapError'];
-  return new Promise(function (resolve, reject) {
-    var failure = null;
-    function onFailure(evt) { failure = failure || evt.type; }
-    FAILURES.forEach(function (name) { document.body.addEventListener(name, onFailure); });
-    function cleanup() {
-      FAILURES.forEach(function (name) { document.body.removeEventListener(name, onFailure); });
+  return fetch(url, { headers: { 'HX-Request': 'true' } }).then(function (res) {
+    if (!res.ok) {
+      throw new Error('HTTP ' + res.status + ' for ' + url);
     }
-    htmx.ajax('GET', url, { target: target, swap: swap }).then(
-      function () { cleanup(); failure ? reject(new Error(failure)) : resolve(); },
-      function (err) { cleanup(); reject(err); }
-    );
+    return res.text();
+  }).then(function (html) {
+    var el = document.querySelector(target);
+    if (!el) {
+      throw new Error('swap target ' + target + ' is not on the page');
+    }
+    htmx.swap(target, html, { swapStyle: swap });
   });
 }
 

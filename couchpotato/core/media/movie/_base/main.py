@@ -208,14 +208,22 @@ class MovieBase(MovieTypeBase):
                 return {'success': True, 'media': media}
 
             # Scope guard, mirroring markFailedAndResearch's discipline: only
-            # the statuses this feature is written for. Without it ANY
-            # non-active status was flipped to 'active' -- including
-            # 'snatched', which would make the searcher eligible to grab a
-            # second copy while the first was still downloading. The UI only
-            # renders the control for a 'done' movie, so this closes API reach
-            # rather than a path a user can click. 'downloaded' is included
-            # deliberately: that is the manual-review gate, and sending a movie
-            # awaiting review back to wanted is a reasonable thing to want.
+            # the statuses this feature is written for. Without it ANY status
+            # was flipped to 'active' -- in practice the reachable case is a
+            # 'chart' or 'suggested' entry (movie/charts/main.py), which would
+            # be promoted into the wanted list by an API call that was only
+            # ever meant to act on a movie you already have.
+            #
+            # It is NOT about 'snatched': nothing in this codebase assigns
+            # media status 'snatched' -- that is a RELEASE status. An earlier
+            # version of this comment (and its test) claimed the guard stopped
+            # the searcher grabbing a second copy mid-download, which was
+            # fiction; a movie with a snatched release has media status
+            # 'active' and is short-circuited by the idempotency check above.
+            #
+            # 'downloaded' is included deliberately: that is the manual-review
+            # gate, and sending a movie awaiting review back to wanted is a
+            # reasonable thing to want.
             # 'active' is in the list because reaching here means the movie is
             # active with NO resolvable profile -- i.e. unsearchable. That is
             # the repair path the pre-check above deliberately falls through
@@ -224,8 +232,9 @@ class MovieBase(MovieTypeBase):
             if media.get('status') not in ('done', 'downloaded', 'active'):
                 return {
                     'success': False,
-                    'error': "Only a 'done' or 'downloaded' movie can be moved back to "
-                              "wanted; this one is '%s'" % media.get('status'),
+                    'error': "Only a movie you already have can be moved back to wanted "
+                              "(done, downloaded, or already wanted); this one is '%s'"
+                              % media.get('status'),
                 }
 
             resolved_profile_id = (
@@ -270,14 +279,6 @@ class MovieBase(MovieTypeBase):
                     return False
                 m['status'] = 'active'
                 m['profile_id'] = resolved_profile_id
-                # Marks the releases the movie ALREADY held as "not good
-                # enough", so media.restatus stops treating them as finishing
-                # it. Without this the next automatic sweep pushed the movie
-                # straight back out of Wanted -- and, on a manual_confirmation
-                # profile (the default), into the review gate with a false
-                # "downloaded -- awaiting review" notification. See
-                # tests/unit/test_restore_to_wanted_survives_restatus.py.
-                m['restored_to_wanted_at'] = time.time()
 
             try:
                 updated = db.update_with_retry(_restore, media_id)
@@ -316,6 +317,38 @@ class MovieBase(MovieTypeBase):
             #     happened to land the change first. Skipping the notify here
             #     would leave the user who pressed the button looking at stale
             #     UI whenever they lost a race they cannot see.
+            # The movie is 'active' now -- but that alone does not make it
+            # WANTED, because the release it already holds still counts as
+            # satisfying the profile in two separate places:
+            #   - media.restatus counts status == 'done' releases and finishes
+            #     the movie again on the next sweep (on a manual_confirmation
+            #     profile, into the review gate, with a false
+            #     "downloaded -- awaiting review" notification);
+            #   - single()'s has_better_quality loop counts it on the FIRST
+            #     profile rung and breaks before contacting any provider.
+            #
+            # Marking them 'ignored' addresses both through the mechanism the
+            # codebase already has: restatus only counts 'done', and
+            # has_better_quality explicitly skips
+            # ['available', 'ignored', 'failed'] (searcher.py). This mirrors
+            # markFailedAndResearch, which marks the landed release 'failed'
+            # for the same reason -- 'ignored' rather than 'failed' because
+            # nothing failed here; the user simply wants something better.
+            #
+            # AC3 still holds: nothing is deleted and the release history stays
+            # visible. An earlier attempt instead stamped a timestamp on the
+            # MEDIA doc and had restatus discount older releases. That was
+            # unsound twice over -- it left has_better_quality untouched, so
+            # the movie sat in Wanted contacting zero providers forever, and
+            # release.add rewrites last_edit on any library rescan, which
+            # silently re-armed the original bug.
+            #
+            # Done after the status write, like markFailedAndResearch: if the
+            # write is a no-op or fails we must not touch releases.
+            for rel in fireEvent('release.for_media', media_id, single = True) or []:
+                if rel.get('status') in ('done', 'seeding', 'downloaded'):
+                    fireEvent('release.update_status', rel.get('_id'), status = 'ignored', single = True)
+
             fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
             fireEvent('notify.frontend', type = 'movie.update', data = media)
 

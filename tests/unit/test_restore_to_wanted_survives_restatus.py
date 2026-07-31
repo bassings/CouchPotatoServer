@@ -1,25 +1,34 @@
-"""FEAT-008 AC5: a movie moved back to wanted must STAY wanted.
+"""FEAT-008 AC5: a movie moved back to wanted must actually BE wanted.
 
-Review finding (2026-07-31, second round). `restoreToWanted` writes
-status='active' and deliberately PRESERVES the existing 'done' release (AC3).
-But `MediaPlugin.restatus` recomputes status from the releases it finds, and
-the preserved release still satisfies `quality.isfinish` -- seeded profiles are
-built with finish=[True]*n and stop_after=[0]*n, so essentially any held
-release finishes the movie.
+`restoreToWanted` sets status='active' and preserves the release the movie
+already holds (AC3). That preserved release counts as satisfying the profile in
+TWO independent places, and both have to be addressed or "restore" is a no-op
+with a friendly toast:
 
-So the very next automatic sweep (`searchAll` selects status='active', then
-`single()` fires media.restatus) wrote the movie straight back out of Wanted.
-Worse, with `manual_confirmation` -- the FEAT-004 DEFAULT -- `previous_status`
-is now 'active' rather than 'done', which routes it to the 'downloaded' review
-gate AND fires a `movie.downloaded` "awaiting review" notification for a movie
-the user never re-downloaded.
+  1. `MediaPlugin.restatus` recomputes status from releases whose status is
+     'done'. The held release finishes the movie again on the next sweep -- and
+     with `manual_confirmation` (the FEAT-004 default) `previous_status` is now
+     'active' rather than 'done', which routes it into the 'downloaded' review
+     gate AND fires a `movie.downloaded` "awaiting review" notification for a
+     movie the user never re-downloaded.
 
-Net effect without this guard: "Move back to wanted" appeared to work, then
-silently undid itself within one search cycle, with a false notification. That
-is AC5 ("the movie appears in the Wanted view afterwards and is picked up by
-the automatic searcher") not holding at all.
+  2. `MovieSearcher.single`'s has_better_quality loop counts any release whose
+     status is not in ('available', 'ignored', 'failed'). A held release at the
+     profile's top rung makes it break on the FIRST quality, before contacting
+     any provider.
+
+Marking the held releases 'ignored' addresses both at once, using the mechanism
+the codebase already has -- and mirrors `markFailedAndResearch`, which marks
+the landed release 'failed' for exactly the same reason.
+
+An earlier attempt stamped `restored_to_wanted_at` on the MEDIA doc and had
+restatus discount older releases. It was unsound twice over: it fixed (1) but
+not (2), so the movie sat in Wanted contacting zero providers forever; and
+`release.add` rewrites `last_edit` on any library rescan, which silently
+re-armed the original bug. This file covers (1); the searcher half is covered
+by test_search_releases_list_only.py::
+TestARestoredMovieIsPickedUpByTheAutomaticSearcher.
 """
-import time
 from unittest.mock import patch
 
 from couchpotato.core.media._base.media.main import MediaPlugin
@@ -47,7 +56,7 @@ def _run_restatus(media_doc, profile_doc, releases):
         if event == 'release.for_media':
             return releases
         if event == 'quality.isfinish':
-            return True          # the held release DOES finish the profile
+            return True          # the release WOULD finish the profile
         return None
 
     with (
@@ -59,24 +68,21 @@ def _run_restatus(media_doc, profile_doc, releases):
     return result, updated, fired
 
 
-def _restored_movie(**extra):
-    """Exactly the document restoreToWanted leaves behind: active, a
-    resolvable profile, and the pre-existing done release untouched."""
-    movie = {
+def _restored_movie():
+    """What restoreToWanted leaves behind: active, with a resolvable profile."""
+    return {
         '_id': 'movie-1',
         'type': 'movie',
         'title': 'Some Movie',
         'status': 'active',
         'profile_id': 'profile-1',
-        'restored_to_wanted_at': time.time(),
     }
-    movie.update(extra)
-    return movie
 
 
-# The release the user already had -- edited BEFORE the restore.
-def _held_release():
-    return [{'status': 'done', 'quality': '1080p', 'last_edit': time.time() - 86400, 'is_3d': False}]
+def _ignored_release():
+    """The held release AFTER restoreToWanted marks it 'ignored'."""
+    return [{'_id': 'held-1', 'status': 'ignored', 'quality': '1080p',
+             'last_edit': 1000, 'is_3d': False}]
 
 
 class TestARestoredMovieStaysWanted:
@@ -85,7 +91,7 @@ class TestARestoredMovieStaysWanted:
         movie = _restored_movie()
         profile = {'_id': 'profile-1', 'qualities': ['1080p'], 'manual_confirmation': True}
 
-        result, updated, fired = _run_restatus(movie, profile, _held_release())
+        result, updated, fired = _run_restatus(movie, profile, _ignored_release())
 
         assert result == 'active', (
             'the restored movie was pushed to %r by the first restatus, so it '
@@ -101,42 +107,41 @@ class TestARestoredMovieStaysWanted:
         movie = _restored_movie()
         profile = {'_id': 'profile-1', 'qualities': ['1080p']}
 
-        result, updated, _ = _run_restatus(movie, profile, _held_release())
+        result, _, _ = _run_restatus(movie, profile, _ignored_release())
 
-        assert result == 'active', (
-            'the restored movie went straight back to %r' % result
-        )
+        assert result == 'active', 'the restored movie went straight back to %r' % result
 
 
 class TestTheGuardIsNarrow:
-    """It must suppress ONLY the release the user already had. A genuinely new
-    download has to complete the movie normally, or restore would break
-    upgrading permanently."""
+    """Ignoring the held release must not stop a genuinely NEW download from
+    completing the movie, or restore would break upgrading permanently."""
 
-    def test_a_release_grabbed_after_the_restore_still_completes_the_movie(self):
-        restored_at = time.time() - 3600
-        movie = _restored_movie(restored_to_wanted_at=restored_at)
+    def test_a_newly_completed_release_still_completes_the_movie(self):
+        movie = _restored_movie()
         profile = {'_id': 'profile-1', 'qualities': ['1080p']}
-        # Edited AFTER the restore -- this is the upgrade the user asked for.
-        new_release = [{'status': 'done', 'quality': '1080p',
-                        'last_edit': restored_at + 60, 'is_3d': False}]
+        releases = _ignored_release() + [
+            {'_id': 'new-1', 'status': 'done', 'quality': '1080p',
+             'last_edit': 2000, 'is_3d': False},
+        ]
 
-        result, _, _ = _run_restatus(movie, profile, new_release)
+        result, updated, _ = _run_restatus(movie, profile, releases)
 
         assert result == 'done', (
             'a release obtained AFTER the restore must finish the movie '
             'normally, got %r' % result
         )
+        assert updated, 'a real transition must write'
 
-    def test_a_movie_that_was_never_restored_is_completely_unaffected(self):
-        """Regression lock for every existing movie: with no restore marker the
-        behaviour must be byte-for-byte what it was before this guard."""
+    def test_a_movie_that_still_holds_a_done_release_is_unaffected(self):
+        """Regression lock for every movie that was never restored: a 'done'
+        release must still finish it, exactly as before."""
         movie = _restored_movie()
-        del movie['restored_to_wanted_at']
         profile = {'_id': 'profile-1', 'qualities': ['1080p'], 'manual_confirmation': True}
+        releases = [{'_id': 'held-1', 'status': 'done', 'quality': '1080p',
+                     'last_edit': 1000, 'is_3d': False}]
 
-        result, updated, fired = _run_restatus(movie, profile, _held_release())
+        result, updated, fired = _run_restatus(movie, profile, releases)
 
         assert result == 'downloaded'
         assert 'movie.downloaded' in fired
-        assert updated, 'a real transition must still write'
+        assert updated

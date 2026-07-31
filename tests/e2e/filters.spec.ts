@@ -210,7 +210,11 @@ test.describe('Filtered-to-empty state', () => {
     // The user must be told the library is filtered, not gone.
     const emptyState = page.locator('[data-testid="filter-empty-state"]');
     await expect(emptyState).toBeVisible({ timeout: 5000 });
-    await expect(emptyState).toContainText('zzz-no-such-movie-zzz');
+    // useInnerText, so display:none copy does NOT count. toContainText reads
+    // textContent: mutating x-show="search" to x-show="false" on the
+    // explanation sentence left the assertion green, which is exactly the
+    // "blank panel with no visible explanation" this test exists to prevent.
+    await expect(emptyState).toContainText('zzz-no-such-movie-zzz', { useInnerText: true });
 
     // ...and be able to get out of it in one click, without having to work
     // out that the filter box is the culprit.
@@ -252,7 +256,8 @@ test.describe('Filtered-to-empty state', () => {
      * on the two movie-detail controls; it was reintroduced here because this
      * control shipped without a guard.
      */
-    // Active -> the Wanted page ('/') lists it.
+    // The stub serves the grid regardless of page/status, so '/' is just a
+    // host for the filter controls here.
     await stubMovieGrid(page, [{ title: 'Tinsel Town', status: 'done', hasReleases: true }]);
     await page.goto('/');
     await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
