@@ -76,9 +76,11 @@ jobs:
   # version tag (:v8.30.1 — a tag, not a @sha256 digest; bump it deliberately,
   # since an unpinned :latest changes the ruleset under you).
   #
-  # NOTE: this job is NOT in branch protection, so it reports rather than blocks.
-  # Adding `secrets` to the required contexts is the one-line change that makes it
-  # a gate; until then do not describe secret scanning as enforced.
+  # NOTE: this job IS a required status check on `master` (enabled 2026-07-31,
+  # right after the PR that added it merged). A red `secrets` blocks the merge.
+  # If you ever remove or rename this job, drop it from branch protection in the
+  # same change — a required context that no workflow produces blocks every PR
+  # forever, waiting for a check that never reports.
   #
   # WORKING TREE, NOT FULL HISTORY, deliberately: this repo carries ~5,250
   # commits inherited from upstream CouchPotato (5,813 total), and a
