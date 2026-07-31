@@ -15,26 +15,32 @@ import { test, expect, Page } from '@playwright/test';
  * - Theme toggle
  */
 
-// Helper: wait for page to be fully loaded
-async function waitForPageReady(page: Page) {
-  await page.waitForLoadState('networkidle');
-  await page.waitForTimeout(500);
-}
+// Helpers are shared (tests/e2e/helpers.ts) rather than copied per spec: the
+// duplicate that used to live here waited on `networkidle`, which never settles
+// on the suggestions page because /partial/charts fetches external providers.
+// See helpers.ts for the full explanation.
+import {
+  checkNoErrors as sharedCheckNoErrors,
+  mockSuggestionsCharts,
+  waitForPageReady,
+} from './helpers';
 
-// Helper: check no JS errors occurred
-async function checkNoErrors(page: Page, errors: string[]) {
-  const criticalErrors = errors.filter(e => 
-    e.includes('TypeError') || 
-    e.includes('ReferenceError') ||
-    e.includes('bytes-like object')
-  );
-  expect(criticalErrors).toHaveLength(0);
+// Thin shim so the 19 existing call sites keep their `(page, errors)` signature.
+// It DELEGATES rather than reimplementing: a second copy of the filter list is
+// exactly the duplication that let a good helper and a broken one coexist in
+// this suite. `page` is unused.
+function checkNoErrors(_page: Page, errors: string[]) {
+  sharedCheckNoErrors(errors);
 }
 
 test.describe('Navigation', () => {
   test('sidebar links navigate correctly', async ({ page }) => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
+
+    // This walk includes Suggestions, whose charts partial hits third-party
+    // providers. Stub it so the test measures navigation, not the internet.
+    await mockSuggestionsCharts(page);
 
     await page.goto('/');
     await waitForPageReady(page);
@@ -299,6 +305,7 @@ test.describe('Suggestions Page', () => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
+    await mockSuggestionsCharts(page);
     await page.goto('/suggestions/');
     await waitForPageReady(page);
 
@@ -317,6 +324,7 @@ test.describe('Suggestions Page', () => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
+    await mockSuggestionsCharts(page);
     await page.goto('/suggestions/');
     await waitForPageReady(page);
 

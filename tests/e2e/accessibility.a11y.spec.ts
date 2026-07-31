@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
 /**
  * Accessibility tests for CouchPotato new UI using axe-core.
@@ -72,44 +73,6 @@ async function checkToggleA11y(page: any, pageName: string) {
   ).toBe(0);
 }
 
-async function waitForSuggestionsReady(page: any) {
-  await expect(page.getByRole('heading', { name: 'Suggestions' })).toBeVisible();
-  await expect(page.getByRole('tablist', { name: 'Suggestion categories' })).toBeVisible();
-  await expect(page.getByRole('tab', { name: 'Charts' })).toHaveAttribute('aria-selected', 'true');
-  await expect(page.locator('#charts-grid')).toBeVisible();
-  // The mocked Charts partial swaps in a poster-card once loaded. Waiting on it
-  // (rather than the #charts-grid htmx-request class, which htmx puts on the
-  // inner [hx-get] child, not the grid) is the real readiness signal. The
-  // redesigned panel also has an always-present hidden error div with
-  // `text-center`, so the old `> .text-center` alternative would match that.
-  await expect(page.locator('#charts-grid .poster-card').first()).toBeVisible();
-}
-
-async function mockSuggestionsCharts(page: any) {
-  await page.route('**/partial/charts', route => route.fulfill({
-    status: 200,
-    contentType: 'text/html',
-    body: `
-      <div class="mb-8">
-        <h2 class="text-sm font-medium mb-3">Featured</h2>
-        <button type="button"
-                class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full"
-                aria-label="View details for Example Movie (2026)">
-          <div class="relative aspect-[2/3] overflow-hidden bg-white">
-            <div class="absolute top-2 left-2">
-              <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning text-black backdrop-blur-sm">chart</span>
-            </div>
-          </div>
-          <div class="p-2.5">
-            <h3 class="font-medium text-xs truncate">Example Movie</h3>
-            <p class="text-cp-muted text-[10px] mt-0.5 font-light">2026</p>
-          </div>
-        </button>
-      </div>
-    `,
-  }));
-}
-
 test.describe('Accessibility', () => {
   test('Wanted page should be accessible', async ({ page }) => {
     await page.goto('/');
@@ -149,6 +112,50 @@ test.describe('Accessibility', () => {
     await page.waitForTimeout(2000); // Settings takes longer to load
 
     await checkA11y(page, 'Settings');
+  });
+
+  // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows
+  // movie-detail.spec.ts's own pattern for reaching the detail page.
+  // scripts/seed_e2e_data.py seeds a movie with releases (wired into
+  // playwright.config.ts's webServer for local runs, and into the
+  // ui-e2e-tests/accessibility CI jobs) so this normally runs rather than
+  // skipping; the skips below stay so this suite still works against an
+  // unseeded instance, but say plainly that the seed didn't run rather than
+  // looking like a routine, expected skip.
+  test('Movie Detail page with a release filter applied should be accessible', async ({ page }) => {
+    // Navigate straight to the seeded movie, like release_controls.spec.ts
+    // does, rather than clicking whichever poster card happens to be first.
+    // "First card" is not stable across a full run: another spec clicks
+    // "Mark as Done", which moves the seeded movie out of the Wanted view
+    // that '/' renders, and search.spec.ts adds real movies that have no
+    // releases -- so this test would land on the wrong movie and skip with
+    // "this movie has no releases". It only passed at all because
+    // 'accessibility' happens to sort first alphabetically; that is luck, not
+    // a design. A fixed id removes the dependency on both ordering and
+    // library state.
+    await page.goto('/movie/e2e-seed-movie-001');
+
+    // The release table arrives via detail.html's hx-trigger="load" swap, so
+    // wait for the swapped-in content itself -- never for #movie-detail-container,
+    // which is in the static shell and so resolves instantly, waiting for
+    // nothing.
+    const releasesLoaded = await page.locator('#movie-releases table')
+      .waitFor({ state: 'attached', timeout: 15000 })
+      .then(() => true)
+      .catch(() => false);
+
+    test.skip(!releasesLoaded,
+      'no seeded movie with releases at /movie/e2e-seed-movie-001 -- either ' +
+      'the seed did not run (scripts/seed_e2e_data.py --data_dir=<dir> before ' +
+      'starting the server), or the detail partial took over 15s to load');
+
+    const releases = page.locator('#movie-releases');
+
+    // Apply a sort so the active-column aria-sort state is exercised too.
+    await releases.getByRole('link', { name: /^Score/ }).click();
+    await expect(page.locator('#movie-releases')).toBeVisible();
+
+    await checkA11y(page, 'Movie Detail (filtered release list)');
   });
 
   // The wizard's provider/downloader/library toggles only render into the DOM

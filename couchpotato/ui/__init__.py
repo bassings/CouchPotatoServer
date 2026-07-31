@@ -42,6 +42,24 @@ def _to_str(value):
 _jinja.filters['to_str'] = _to_str
 
 
+def _to_num(value):
+    """Coerce a release's numeric field to a float, defaulting junk to 0.
+
+    Providers do NOT normalise these: `torrentpotato.py:102` (the Jackett
+    integration) passes the tracker's raw JSON `seeders` straight through, and
+    `scenetime.py:61` stores a scraped **string**. `release/main.py` copies
+    provider fields into `info` preserving type, and `media.get` hands them
+    back uncoerced. Comparing or rounding those in a template raises
+    TypeError, which Jinja does not catch and which happens outside the
+    route's try/except -- so a single string `seeders` 500s the entire
+    movie-detail body, not just one cell.
+    """
+    from couchpotato.core.helpers.variable import tryFloat
+    return tryFloat(value)
+
+_jinja.filters['to_num'] = _to_num
+
+
 def _ctx(extra=None):
     """Common template context."""
     api_key = Env.setting('api_key')
@@ -78,6 +96,84 @@ def _absolute_base(request: Request) -> str:
     return '%s://%s%s' % (scheme, netloc, web_base)
 
 
+def _releases_ctx(movie, movie_id, params):
+    """Everything the releases partial (partials/movie_releases.html) needs,
+    computed once so the full-page render and the standalone htmx route agree.
+
+    Also returns `title`, using the SAME chain
+    (`titles[0] or original_title or movie.title or 'Unknown'`) that
+    `partials/movie_detail.html`'s `<h1>` uses -- both the full page and the
+    standalone `/partial/movie/{id}/releases` route (which has no other
+    source for the table's `<caption>`) now agree on one title, computed
+    here only. `movie_detail.html` used to recompute its own copy of this
+    chain and silently shadow this one, which let the two derivations drift:
+    with `titles=[]` and an `original_title` set, the full page showed the
+    real title while the standalone releases route showed "Unknown".
+    """
+    from couchpotato.ui.releases_view import (
+        filter_and_sort_releases, filter_options, normalise_controls, sort_columns,
+    )
+
+    movie = movie or {}
+    profile = movie.get('profile') or {}
+    profile_qualities = profile.get('qualities') or []
+
+    all_releases = movie.get('releases') or []
+    # Same profile-matching rule the template used to apply inline.
+    matching = [r for r in all_releases
+                if not profile_qualities or r.get('quality') in profile_qualities]
+
+    controls = normalise_controls(params)
+    web_base = Env.get('web_base') or '/'
+
+    info = movie.get('info') or {}
+    titles = info.get('titles') or []
+    title = titles[0] if titles else (info.get('original_title') or movie.get('title') or 'Unknown')
+
+    return {
+        'movie_id': movie_id,
+        'title': title,
+        'releases': filter_and_sort_releases(matching, controls, profile_qualities),
+        # Profile-matching count: drives the filter controls, the table, and
+        # the "N of M releases" live region.
+        'total_releases': len(matching),
+        # Raw (pre-profile-filter) count: lets the template tell "no releases
+        # exist yet" apart from "releases exist but none match the profile's
+        # quality list" -- the second case is actionable (the profile is
+        # hiding something) and used to render its own message, restoring
+        # what master showed before total_releases became profile-filtered.
+        'raw_release_count': len(all_releases),
+        'controls': controls,
+        'options': filter_options(matching, profile_qualities),
+        'columns': sort_columns(controls, movie_id, web_base),
+    }
+
+
+#: `/movie/{id}` is content-negotiated on htmx's request headers (full page vs
+#: releases fragment), so every response from that path must advertise it or a
+#: caching proxy will hand the wrong body to the wrong request.
+_HTMX_VARY = {'Vary': 'HX-Request, HX-History-Restore-Request'}
+
+
+async def _render_releases_partial(movie_id, params):
+    """Render partials/movie_releases.html for `movie_id`, filtered/sorted per
+    `params`. Shared by the standalone GET /partial/movie/{id}/releases route
+    and movie_detail's htmx branch below -- see that route's comment for why
+    a filter change needs this rather than the full-page shell.
+    """
+    from couchpotato.api import callApiHandler
+    movie = {}
+    try:
+        result = await run_in_threadpool(callApiHandler, 'media.get', id=movie_id)
+        if isinstance(result, dict):
+            movie = result.get('media', result) or {}
+    except Exception:
+        log.error('Failed to fetch movie for release list')
+    tmpl = _jinja.get_template('partials/movie_releases.html')
+    releases_ctx = _releases_ctx(movie, movie_id, params)
+    return HTMLResponse(tmpl.render(**releases_ctx, **_ctx()), headers = _HTMX_VARY)
+
+
 def create_router(require_auth) -> APIRouter:
     """Create the /new/ router. require_auth is the FastAPI dependency."""
     router = APIRouter()
@@ -106,8 +202,48 @@ def create_router(require_auth) -> APIRouter:
     @router.get('/movie/{movie_id}/')
     @router.get('/movie/{movie_id}')
     async def movie_detail(movie_id: str, request: Request, user=Depends(require_auth)):
+        # The release-list filter form (partials/movie_releases.html)
+        # targets THIS path with hx-get (not the standalone
+        # /partial/movie/{id}/releases endpoint) specifically so its
+        # hx-push-url="true" pushes a URL that is also valid to land on
+        # directly -- the standalone endpoint returns a bare, unstyled
+        # fragment, which would look broken if it ended up in the address
+        # bar after a filter change (sort links already avoid this by
+        # pushing an explicit href distinct from what they fetch; a form's
+        # values are chosen at submit time, so it cannot pre-compute a
+        # per-selection href the same way). htmx marks every request it
+        # issues with `HX-Request: true`, so branch on that: an htmx
+        # (fragment) request gets exactly the releases partial -- matching
+        # #movie-releases, the form's hx-target -- while a real navigation
+        # (no header) still gets the full-page shell below.
+        #
+        # `hx-history-restore-request` must be excluded: on a Back/Forward
+        # whose history snapshot htmx no longer has cached (after a reload, or
+        # once the snapshot is evicted), htmx re-requests the URL with BOTH
+        # headers set and replaces the ENTIRE body with the response. Serving
+        # the bare releases partial there would leave the whole page as just
+        # the release table -- no nav, no movie. A restore wants the full page.
+        is_htmx_fragment = (request.headers.get('hx-request') == 'true'
+                            and request.headers.get('hx-history-restore-request') != 'true')
+        if is_htmx_fragment:
+            return await _render_releases_partial(movie_id, dict(request.query_params))
+
         tmpl = _jinja.get_template('detail.html')
-        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id})))
+        # Forward the release-list controls (source/quality/sort/dir/...) into
+        # the initial hx-get, so a filtered/sorted URL like
+        # /movie/{id}?source=nzb&sort=size is bookmarkable and shareable
+        # (FEAT-007 B8) -- detail.html is an htmx shell with no other way to
+        # apply them on first paint.
+        query = request.url.query
+        detail_query = ('?' + query) if query else ''
+        # Vary: this URL returns two different bodies (full shell vs releases
+        # fragment) depending on request headers, so anything caching in front
+        # of the app -- a reverse proxy, a CDN -- must key on them or it will
+        # serve a bare table to a browser asking for the page, or vice versa.
+        # Set on BOTH branches; the header has to be present on the cacheable
+        # response, not just the fragment one.
+        return HTMLResponse(tmpl.render(**_ctx({'movie_id': movie_id, 'detail_query': detail_query})),
+                            headers = _HTMX_VARY)
 
     @router.get('/suggestions/')
     @router.get('/suggestions')
@@ -186,8 +322,25 @@ def create_router(require_auth) -> APIRouter:
         except Exception:
             log.error('Failed to fetch movie detail')
             movie = {}
+        movie = movie or {}
         tmpl = _jinja.get_template('partials/movie_detail.html')
-        return HTMLResponse(tmpl.render(movie=movie, **_ctx()))
+        # Same builder the standalone releases route uses, so the inline
+        # first paint and a later htmx swap of #movie-releases agree, and so
+        # a bookmarked/shared filtered URL (FEAT-007 B8) renders filtered on
+        # first paint too.
+        releases_ctx = _releases_ctx(movie, movie_id, dict(request.query_params))
+        return HTMLResponse(tmpl.render(movie=movie, **releases_ctx, **_ctx()))
+
+    @router.get('/partial/movie/{movie_id}/releases')
+    async def partial_movie_releases(movie_id: str, request: Request, user=Depends(require_auth)):
+        """Return the release list, filtered and sorted per the query params.
+
+        Behind htmx: the sort links in partials/movie_releases.html target
+        #movie-releases with hx-swap="outerHTML" against this route (the
+        filter form targets movie_detail's own path instead -- see its
+        comment for why).
+        """
+        return await _render_releases_partial(movie_id, dict(request.query_params))
 
     @router.get('/partial/search')
     async def partial_search(request: Request, q: str = '', user=Depends(require_auth)):

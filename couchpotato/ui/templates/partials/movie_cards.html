@@ -26,9 +26,14 @@
   <!-- Bulk selection checkbox (IMP-005) -->
   <label class="absolute top-2 left-2 z-20 cursor-pointer opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity"
          :class="selected ? 'opacity-100' : ''">
+    {# The wrapping <label> holds only an icon, so it gives the checkbox no
+       accessible name -- axe reports it as an unlabelled form element
+       (critical, WCAG 4.1.2). Name it explicitly after the movie it selects,
+       so a screen reader announces which card is being ticked. #}
     <input type="checkbox"
            class="movie-select-checkbox sr-only"
            data-movie-id="{{ movie_id }}"
+           aria-label="Select {{ title }}"
            x-model="selected"
            @click.stop>
     <span class="flex items-center justify-center w-5 h-5 rounded-md bg-black/60 backdrop-blur-sm border border-white/20 transition-colors"
@@ -67,11 +72,11 @@
       {% endif %}
       <div class="absolute top-2 right-2 flex gap-1">
         {% if status == 'active' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-blue/20 text-cp-blue backdrop-blur-sm">wanted</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-blue/20 text-cp-blue on-dark backdrop-blur-sm">wanted</span>
         {% elif status == 'done' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success backdrop-blur-sm">done</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">done</span>
         {% elif status == 'downloaded' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning backdrop-blur-sm">downloaded / review</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning on-dark backdrop-blur-sm">downloaded / review</span>
         {% else %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
@@ -80,12 +85,12 @@
       <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-white/10 text-white/80 backdrop-blur-sm">{{ quality_label }}</span>
         {% if downloaded_quality %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
         {% endif %}
       </div>
       {% elif downloaded_quality %}
       <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-2.5 pt-8">
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">Downloaded: {{ downloaded_quality }}</span>
       </div>
       {% endif %}
     </div>

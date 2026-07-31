@@ -302,21 +302,33 @@ class TestMovieDetailButton:
     a movie that is already done, since that is the case it exists for."""
 
     def _render(self, status):
-        import pathlib as _p
+        # partials/movie_detail.html {% include %}s partials/movie_releases.html
+        # (FEAT-007 Part B) and gets its `title` from couchpotato.ui._releases_ctx()
+        # rather than recomputing it locally (that recompute was deleted so
+        # there is exactly one title derivation, not two that can drift) --
+        # build the same context the real routes do, mirroring
+        # tests/unit/test_review_actions_ui_template.py's `_render`.
+        from couchpotato.environment import Env
+        from couchpotato.ui import _jinja, _releases_ctx
 
-        from jinja2 import Environment, FileSystemLoader
-
-        root = _p.Path(__file__).resolve().parents[2] / 'couchpotato' / 'ui' / 'templates'
-        env = Environment(loader=FileSystemLoader(str(root)), autoescape=True)
-        tmpl = env.get_template('partials/movie_detail.html')
-        return tmpl.render(movie={
+        Env.set('web_base', '/')
+        movie = {
             '_id': 'movie-1',
             'title': 'Some Movie',
             'status': status,
             'releases': [],
             'info': {'year': 2020},
             'identifiers': {'imdb': 'tt1234567'},
-        }, url_base='/', api_base='/api/key')
+        }
+        ctx = {
+            'api_key': 'test-key',
+            'api_base': '/api/key',
+            'web_base': '/',
+            'new_base': '/',
+            'movie': movie,
+        }
+        ctx.update(_releases_ctx(movie, movie['_id'], {}))
+        return _jinja.get_template('partials/movie_detail.html').render(**ctx)
 
     def test_the_button_is_rendered_for_a_done_movie(self):
         html = self._render('done')

@@ -656,3 +656,41 @@ class TestPreferredMethodRealSettingsPlumbing:
             assert Env.setting('preferred_method', section = 'searcher', default = 'both') == 'both'
         finally:
             Env._settings = original_settings
+
+
+class TestProtocolFamily:
+    """`protocol_family` is the public classifier Part B's source filter uses.
+
+    It exists so the release-list filter and the preference ordering cannot
+    disagree about what counts as a torrent.
+    """
+
+    @pytest.mark.parametrize('protocol, expected', [
+        ('nzb', 'nzb'),
+        ('NZB', 'nzb'),
+        ('  nzb  ', 'nzb'),
+        ('torrent', 'torrent'),
+        ('torrent_magnet', 'torrent'),
+        ('TORRENT_MAGNET', 'torrent'),
+        ('', None),
+        ('   ', None),
+        ('ftp', None),
+        (None, None),
+        (['torrent'], None),
+        (7, None),
+    ])
+    def test_classifies_every_protocol_the_codebase_produces(self, protocol, expected):
+        from couchpotato.core.helpers.protocol import protocol_family
+        assert protocol_family(protocol) == expected
+
+    def test_the_rank_function_is_built_on_the_same_classifier(self):
+        """A regression guard: if _protocol_rank stops using protocol_family,
+        the filter and the ordering can drift apart again.
+        """
+        from unittest.mock import patch
+
+        import couchpotato.core.helpers.protocol as mod
+
+        with patch.object(mod, 'protocol_family', return_value = 'nzb') as family:
+            assert mod._protocol_rank('anything-at-all', 'nzb') == 0
+        assert family.called

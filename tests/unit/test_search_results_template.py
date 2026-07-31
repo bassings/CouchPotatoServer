@@ -1,0 +1,158 @@
+"""Contract test for partials/search_results.html.
+
+`tests/e2e/helpers.ts` stubs `/partial/search` with hand-written HTML so the E2E
+suite does not depend on a live TMDB lookup (an external dependency that made the
+search specs slow and, under parallel workers, flaky). A hand-written stub can
+drift: the template changes shape, the stub keeps the old shape, and the E2E
+assertions keep passing against markup the app no longer produces — a false green.
+
+This test renders the REAL template and asserts the same structural contract the
+E2E specs rely on. If the template stops producing any of it, this fails and the
+stub gets updated with it. It deliberately asserts on the *selectors the specs
+use*, not on exact markup, so ordinary restyling does not break it.
+"""
+
+import re
+from pathlib import Path
+
+import pytest
+
+jinja2 = pytest.importorskip("jinja2")
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+TEMPLATE_DIR = REPO_ROOT / "couchpotato" / "ui" / "templates"
+TEMPLATE = "partials/search_results.html"
+
+# Kept in step with tests/e2e/helpers.ts -> mockMovieSearch().
+FIXTURE_MOVIES = [
+    {
+        "titles": ["The Matrix"],
+        "year": 1999,
+        "imdb": "tt0133093",
+        "directors": ["Lana Wachowski"],
+        "images": {"poster": ["http://example.invalid/p.jpg"]},
+    },
+    {
+        "titles": ["The Matrix Reloaded"],
+        "year": 2003,
+        "imdb": "tt0234215",
+        "directors": [],
+        "images": {},
+    },
+]
+
+
+def render(movies) -> str:
+    env = jinja2.Environment(
+        loader=jinja2.FileSystemLoader(str(TEMPLATE_DIR)),
+        autoescape=True,
+    )
+    return env.get_template(TEMPLATE).render(movies=movies, new_base="/")
+
+
+@pytest.fixture(scope="module")
+def html():
+    return render(FIXTURE_MOVIES)
+
+
+def _card_tags(html: str) -> list[str]:
+    """The opening tags of the result CARDS, identified by `data-imdb`.
+
+    Cards are located by `data-imdb` rather than by class, because the class is
+    the very thing under test.
+    """
+    return re.findall(r"<div\b[^>]*\bdata-imdb=\"[^\"]+\"[^>]*>", html)
+
+
+def test_renders_one_card_per_movie_with_the_selector_the_specs_use(html):
+    """`search.spec.ts` locates results via `.rounded-md` inside #search-results.
+
+    Asserts the CARD ELEMENT carries the class — not that the string appears
+    somewhere in the document. Counting occurrences document-wide passed even
+    with the card's own class renamed, because four other elements (the hover
+    hint, the profile `select`, the Add button) also use `rounded-md`. That made
+    this — the one assertion standing between the E2E stub and drift on the
+    selector the specs actually use — satisfied incidentally. Confirmed by
+    mutation: renaming the card class left all 7 tests green.
+    """
+    cards = _card_tags(html)
+    assert len(cards) == len(FIXTURE_MOVIES), (
+        f"expected {len(FIXTURE_MOVIES)} result cards (matched by data-imdb), "
+        f"found {len(cards)}"
+    )
+    for tag in cards:
+        assert re.search(r'class="[^"]*\brounded-md\b[^"]*"', tag), (
+            f"a result card does not carry the `.rounded-md` class that "
+            f"search.spec.ts selects on: {tag[:120]}"
+        )
+
+
+def test_first_paragraph_in_a_card_is_the_year(html):
+    """`search.spec.ts` reads the year from the card's FIRST <p> (DEF-007).
+
+    If a new <p> is ever added above it, that spec silently starts asserting on
+    the wrong text — so the ordering is part of the contract, not an accident.
+    """
+    body = html.split('class="p-2.5"', 1)[1]
+    first_p = re.search(r"<p[^>]*>(.*?)</p>", body, re.DOTALL)
+    assert first_p, "no <p> found inside the card body"
+    assert "1999" in first_p.group(1), (
+        f"the first <p> in a card should carry the year; got {first_p.group(1)!r}"
+    )
+
+
+def test_each_card_has_a_profile_select(html):
+    """`search.spec.ts` asserts a `select` is visible in the results."""
+    selects = re.findall(r"<select\b", html)
+    assert len(selects) >= len(FIXTURE_MOVIES), (
+        f"expected a profile <select> per card, found {len(selects)}"
+    )
+
+
+def test_each_card_has_an_add_button(html):
+    """`search.spec.ts` filters buttons by the text 'Add'."""
+    assert re.search(r">\s*Add\s*<", html), "no button labelled 'Add' in the rendered card"
+
+
+def test_year_falls_back_to_tba_rather_than_rendering_zero():
+    """A missing year must not render as `0` — that is what DEF-007 fixed."""
+    html = render([{"titles": ["No Year Movie"], "year": 0, "imdb": "tt0000001"}])
+    assert "TBA" in html
+    assert not re.search(r"<p[^>]*>\s*0\s*</p>", html), "rendered a bare 0 as the year"
+
+
+def test_empty_results_render_the_no_results_state():
+    """The specs distinguish 'no results' from 'not loaded yet'."""
+    html = render([])
+    assert "No results found" in html
+
+
+def test_identifying_info_is_present_for_def_007(html):
+    """DEF-007: results must carry enough to tell two same-titled films apart."""
+    # Assert on the visible LINK, not the bare id: `data-imdb="tt0133093"` is a
+    # hidden attribute, so `"tt0133093" in html` stayed true even with the
+    # user-facing IMDb link deleted (confirmed by mutation). DEF-007 is about
+    # what the user can see to tell two same-titled films apart.
+    assert re.search(r'<a[^>]+imdb\.com/title/tt0133093', html), (
+        "the visible IMDb link is missing from the card"
+    )
+    assert "Lana Wachowski" in html, "director missing when the provider supplies one"
+
+
+def test_the_e2e_stub_mirrors_the_contract_this_file_asserts():
+    """The search stub is what the E2E specs actually assert against.
+
+    Without this, template->drift is caught but stub->drift is not: the stub
+    could lose the `select` or the Add button and the E2E specs would fail for a
+    reason no unit test explains. Mirrors the equivalent check in
+    test_charts_template.py.
+    """
+    stub_path = REPO_ROOT / "tests" / "e2e" / "helpers.ts"
+    stub = stub_path.read_text(encoding="utf-8")
+    search_stub = stub.split("mockMovieSearch", 1)[1].split("export ", 1)[0]
+
+    for required in ("rounded-md", "data-imdb=", "<select", ">Add<", "imdb.com/title/"):
+        assert required in search_stub, (
+            f"the search stub in tests/e2e/helpers.ts is missing {required!r}, "
+            f"which the real template provides and search.spec.ts selects on"
+        )

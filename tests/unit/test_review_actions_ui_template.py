@@ -20,7 +20,19 @@ Buttons under test (per spec Phase 3c):
   review-gate Mark Done, and must NOT regress for ``active`` movies).
 """
 
-from couchpotato.ui import _jinja
+import pytest
+
+from couchpotato.environment import Env
+from couchpotato.ui import _jinja, _releases_ctx
+
+
+@pytest.fixture(autouse=True)
+def _env():
+    # _releases_ctx() reads Env.get('web_base') to build sort-link URLs; this
+    # module renders the template directly rather than through create_app(),
+    # so nothing else sets it up.
+    Env.set('web_base', '/')
+    yield
 
 
 # Distinctive rendered substrings. Each is the visible ``<span>`` label so it
@@ -35,6 +47,11 @@ GENERIC_MARK_AS_DONE = '>Mark as Done<'
 
 
 def _render(movie):
+    # partials/movie_detail.html now {% include %}s partials/movie_releases.html
+    # (FEAT-007 Part B), which needs the context couchpotato.ui._releases_ctx()
+    # builds for the real routes (releases, total_releases, controls, options,
+    # columns, title) -- build it the same way here so this fixture matches
+    # production rendering rather than a stale hand-rolled context.
     ctx = {
         'api_key': 'test-key',
         'api_base': '/api/test-key',
@@ -42,6 +59,7 @@ def _render(movie):
         'new_base': '/',
         'movie': movie,
     }
+    ctx.update(_releases_ctx(movie, movie.get('_id', ''), {}))
     return _jinja.get_template('partials/movie_detail.html').render(**ctx)
 
 

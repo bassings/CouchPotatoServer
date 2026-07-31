@@ -69,6 +69,121 @@
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them
   pile up.
+- **E2E suite: RESOLVED 2026-07-31** (kept as a record because the failure shapes
+  recur). Three separate problems, all root-caused rather than retried away:
+  - *Two specs failed locally and passed in CI.* Both waited on
+    `page.waitForLoadState('networkidle')`, which never settles on the
+    suggestions page: `/partial/charts` fetches external chart providers and was
+    measured at ~85s. They passed in CI only because CI cannot reach those
+    providers, so the request failed fast — green for the wrong reason. Fixed by
+    stubbing the charts route and waiting on the `#main-content` landmark.
+  - *The suite was pinned to `workers: 1`*, costing ~3 min a run, because
+    categories/profiles mutate global singleton config under fixed fixture names.
+    Fixed with `test.describe.configure({ mode: 'serial' })` on those two files
+    (other files still run in parallel) plus stubbing the TMDB search lookup that
+    `search.spec` depended on. **4.1 min -> 1.0 min**, verified green over four
+    consecutive parallel runs.
+  - *`release_controls.spec.ts:111` was flaky* (2 of 3 parallel runs). Its wait
+    was `expect(#movie-releases).toBeVisible()` on the htmx swap *target*, which
+    is already visible — so it passed instantly and the assertion then read
+    stale, pre-filter rows. Replaced with a retrying `expect(...).toPass()`.
+  Shared helpers now live in `tests/e2e/helpers.ts` rather than being copied per
+  spec: the duplication is precisely why the good pattern (mock the slow route,
+  wait on an element) sat in `accessibility.a11y.spec.ts` while the broken one
+  sat in `interactions.e2e.spec.ts`.
+
+  Remaining, not currently a problem: the suite still shares one server, so a
+  spec that mutates global config must declare serial mode. A server per worker
+  would remove that constraint entirely.
+- **Shipped public application keys are DELIBERATE — do not "clean them up".**
+  CouchPotato is self-hosted software expected to work out of the box, so it
+  ships public app keys for the third-party read APIs it uses:
+  `themoviedb.py` carries a base64 pool (`ak`) and falls back to it whenever the
+  user has not configured their own, and `tmdb_charts.py` logs "using built-in"
+  when it does. `fanarttv.py` follows the same pattern for extra artwork.
+
+  This is recorded as debt because the mistake has already been made once: on
+  2026-07-31 the fanart.tv key was removed and replaced with a required
+  per-install setting. That silently disabled extra artwork (logos, banners,
+  discs) for every existing install, and — because the settings group was
+  registered on the hidden `providers` tab — the replacement key could not even
+  be entered from the UI. It bought nothing: the key is public in every copy of
+  upstream and grants access to fanart.tv's public art API, nothing of this
+  project's. Reverted the same day; `tests/unit/test_providers.py` now pins both
+  the shipped fallback and the user override.
+
+  If you want per-install keys, ADD a setting that takes precedence and KEEP the
+  shipped fallback — which is what `fanarttv.py` now does.
+
+  Note for anyone auditing: `make check-secrets` reports clean, but that reflects
+  the base64 encoding (gitleaks' hex rules do not match it), not the absence of a
+  shipped key. Nothing is hidden — see the comments in `fanarttv.py` and
+  `.gitleaksignore`.
+- **The settings UI hides the `providers` tab, so metadata-provider settings are
+  unreachable.** `couchpotato/ui/templates/partials/settings/scripts.html` has
+  `hiddenTabs: new Set(['providers', 'automation'])`, and nothing remaps
+  `providers`, so any group declaring `'tab': 'providers'` never enters
+  `tabOrder`. That affects **TheMovieDB's `api_key`** (`themoviedb.py`) — masked
+  by its shipped fallback, which is why it went unnoticed. fanart.tv sidesteps it
+  by registering under `general`, and
+  `tests/unit/test_providers.py::TestFanartTVSettingIsReachable` fails if that
+  regresses. The real fix is to surface the Providers tab so metadata providers
+  are configurable like everything else; that is a UI change and wants its own
+  commit.
+
+- **Accepted: the E2E search specs do not cover the `/partial/search` handler.**
+  Decided 2026-07-31 (Scott). The specs stub the provider response, so their
+  content assertions echo test-supplied markup — blanking
+  `partials/search_results.html` leaves them green. They still exercise the
+  client wiring (typing → debounce → `hx-get` → swap; a typo'd `hx-target` fails
+  four of them), and both sides of the seam are covered:
+  `tests/unit/test_search_results_template.py` pins the template and `movie.search`
+  has unit coverage. What is unguarded is the ~15 lines of handler between them.
+
+  Accepted because the alternative — a live TMDB call in the suite — is what made
+  those tests slow and flaky and blocked parallel runs (4.1 min → 1.0 min). This
+  is a decision, not an oversight: please do not "restore real coverage" by
+  putting the network call back. If it is ever worth closing, fake the provider
+  *inside the server* so the real handler and template run with no internet.
+
+- **E2E specs are state-coupled to each other, so the suite is intermittently red
+  even at one worker.** This is the root problem; the parallelism entry below is a
+  symptom of it.
+
+  Evidence: `release_controls.spec.ts` passes **6/6 when run alone**, but inside
+  the full suite it intermittently fails — B8 ("bookmarked filtered URL renders
+  filtered on first paint") timing out waiting for `#movie-releases table`, and
+  separately "sorting by size". The movie-detail partial itself responds in ~2 ms
+  and contains the table, so the endpoint is not at fault. The spec's own header
+  already names the cause: other specs mutate shared app state (one clicks "Mark
+  as Done"), and `movie.clean_releases` purges available releases for a `done`
+  movie. So whether release_controls sees a release table depends on what ran
+  before it.
+
+  Consequence: `make verify` passes most runs and occasionally reds for reasons
+  unrelated to the change under test. CI masks this with `retries: 2`. Do not
+  "fix" it locally by adding retries — that hides coupling rather than removing it.
+
+  The durable fix is per-spec isolation: a fresh data dir (or a fresh server) per
+  spec file, so no spec can observe another's mutations. That also removes the
+  need for `mode: 'serial'` and unblocks parallelism, making this and the entry
+  below one job rather than two.
+
+- **E2E parallelism is blocked by cross-file contention (~20% flake).** The suite
+  runs at `workers: 1`. `test.describe.configure({ mode: 'serial' })` on
+  categories/profiles fixed races *within* those files, but they still run
+  concurrently with each other and with `release_controls`, and all three mutate
+  global singleton state (categories, quality profiles, release list) on one
+  shared server. Measured at that commit, n=5 parallel: 4 green, 1 red. Serial:
+  green every run.
+
+  Worth ~3 minutes a run if fixed. Two viable routes: merge the state-mutating
+  specs into a single serial file, or give each worker its own server + data dir
+  (the durable answer — it also removes the need for serial mode at all).
+
+  Method note for whoever picks this up: n=3 and n=4 both came back all-green
+  before the n=5 run found the flake. Do not conclude "parallel is safe" from a
+  handful of runs — this failure mode needs ten or more.
 
 ## Lessons learned
 

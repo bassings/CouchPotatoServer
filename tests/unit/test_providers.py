@@ -2,11 +2,13 @@
 
 Uses unittest.mock to avoid real HTTP calls.
 """
+import re
+from pathlib import Path
 import json
 import os
 import sys
 import pytest
-from unittest.mock import patch, MagicMock, PropertyMock
+from unittest.mock import patch, MagicMock, PropertyMock, Mock
 from base64 import b64encode
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -158,7 +160,12 @@ class TestFanartTVProvider:
         with patch('couchpotato.core.media.movie.providers.info.fanarttv.addEvent'):
             from couchpotato.core.media.movie.providers.info.fanarttv import FanartTV
             p = FanartTV.__new__(FanartTV)
-            p.urls = {'api': 'http://webservice.fanart.tv/v3/movies/%s?api_key=testkey'}
+            # Deliberately does NOT override p.urls. Overriding it meant the
+            # class's real URL template was never exercised: a key hardcoded
+            # straight back into the shipped template passed all 45 tests
+            # (confirmed by mutation), which is exactly what the URL assertions
+            # below claim to prevent. __new__ skips __init__, so the class
+            # attribute is the one under test.
             p.MAX_EXTRAFANART = 20
             return p
 
@@ -207,6 +214,106 @@ class TestFanartTVProvider:
         p = self._make_provider()
         result = p.getArt(identifier=None)
         assert result == {}
+
+    def test_getArt_builds_url_from_configured_api_key(self):
+        """The request URL must be built from self.conf('api_key'), not a literal."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='configuredapikeyvalue'), \
+             patch.object(p, 'getJsonData', return_value=None) as mock_get_json:
+            p.getArt(identifier='tt0137523', extended=True)
+
+            assert mock_get_json.called
+            called_url = mock_get_json.call_args[0][0]
+            assert 'api_key=configuredapikeyvalue' in called_url
+            assert 'tt0137523' in called_url
+
+    def test_getArt_different_configured_key_changes_url(self):
+        """Changing the configured key must change the request URL (proves it isn't baked in)."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='differentapikeyvalue'), \
+             patch.object(p, 'getJsonData', return_value=None) as mock_get_json:
+            p.getArt(identifier='tt0137523', extended=True)
+
+            called_url = mock_get_json.call_args[0][0]
+            assert 'api_key=differentapikeyvalue' in called_url
+            assert 'api_key=configuredapikeyvalue' not in called_url
+
+    def test_getArt_uses_the_shipped_key_when_none_is_configured(self):
+        """Out of the box, extra artwork must WORK.
+
+        CouchPotato ships public application keys so a fresh install functions
+        without the user registering anywhere — themoviedb.py does the same via
+        its `ak` pool, and tmdb_charts.py logs "using built-in" when it falls
+        back. An earlier version of this provider removed the shipped key and
+        required every install to supply its own; that silently cost every
+        existing user their extra artwork for no security gain, since the key is
+        public in every copy of upstream.
+        """
+        from base64 import b64decode
+
+        p = self._make_provider()
+        p.conf = Mock(return_value='')
+        p.getJsonData = Mock(return_value=None)
+
+        p.getArt(identifier='tt0137523')
+
+        p.getJsonData.assert_called_once()
+        url = p.getJsonData.call_args[0][0]
+        shipped = b64decode(p.ak).decode()
+        assert f'api_key={shipped}' in url, (
+            f'expected the shipped fallback key in the request URL, got: {url}'
+        )
+
+    def test_getArt_uses_the_shipped_key_when_the_setting_is_absent(self):
+        """An unset setting reads as None, not ''. Both must fall back."""
+        from base64 import b64decode
+
+        p = self._make_provider()
+        p.conf = Mock(return_value=None)
+        p.getJsonData = Mock(return_value=None)
+
+        p.getArt(identifier='tt0137523')
+
+        p.getJsonData.assert_called_once()
+        shipped = b64decode(p.ak).decode()
+        assert f'api_key={shipped}' in p.getJsonData.call_args[0][0]
+
+    def test_a_configured_key_takes_precedence_over_the_shipped_one(self):
+        """The point of the setting: users can use their own quota."""
+        from base64 import b64decode
+
+        p = self._make_provider()
+        p.conf = Mock(return_value='my-own-key')
+        p.getJsonData = Mock(return_value=None)
+
+        p.getArt(identifier='tt0137523')
+
+        url = p.getJsonData.call_args[0][0]
+        assert 'api_key=my-own-key' in url
+        assert b64decode(p.ak).decode() not in url, 'shipped key leaked into the URL'
+
+    def test_isDisabled_is_false_with_or_without_a_configured_key(self):
+        """There is always a usable key, so the provider is never key-disabled."""
+        p = self._make_provider()
+        for configured in ('', None, 'my-own-key'):
+            p.conf = Mock(return_value=configured)
+            assert p.isDisabled() is False, f'disabled with conf={configured!r}'
+
+    def test_the_shipped_key_is_present_and_decodes(self):
+        """Regression guard: this key is intentional and must not be 'cleaned up'.
+
+        It was removed once, which broke extra artwork for every install. If a
+        future change deletes it, this fails loudly rather than the breakage
+        showing up as silently missing logos months later.
+        """
+        from base64 import b64decode
+
+        p = self._make_provider()
+        assert getattr(p, 'ak', None), 'the shipped fanart.tv key is gone'
+        decoded = b64decode(p.ak).decode()
+        assert len(decoded) == 32 and all(c in '0123456789abcdef' for c in decoded), (
+            f'shipped key is not a 32-char hex API key: {decoded!r}'
+        )
 
     def test_trimDiscs_bluray_only(self):
         p = self._make_provider()
@@ -590,3 +697,79 @@ class TestTorrentPotatoJackettIntegration:
         assert result['success'] is True
         assert result['added'] == 0  # Should skip since URL already exists
         assert result['total'] == 1
+
+
+class TestFanartTVSettingIsReachable:
+    """The api_key setting must live on a tab the settings UI actually renders.
+
+    Requiring a key that cannot be entered is worse than the public upstream key
+    it replaced. The first version of this config block copied themoviedb.py's
+    verbatim — `tab: 'providers'`, which `hiddenTabs` filters out entirely — so
+    the only way to set it was hand-editing config.ini on the server. This is the
+    enforced version of that lesson rather than a comment nobody reads.
+    """
+
+    SCRIPTS = (
+        Path(__file__).resolve().parents[2]
+        / "couchpotato/ui/templates/partials/settings/scripts.html"
+    )
+
+    def _hidden_tabs(self):
+        text = self.SCRIPTS.read_text(encoding="utf-8")
+        match = re.search(r"hiddenTabs:\s*new Set\(\[(.*?)\]\)", text, re.DOTALL)
+        assert match, "could not find hiddenTabs in the settings UI script"
+        return set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+
+    def _fanart_group(self):
+        from couchpotato.core.media.movie.providers.info import fanarttv
+
+        groups = fanarttv.config[0]["groups"]
+        assert len(groups) == 1, f"expected one group, got {len(groups)}"
+        return groups[0]
+
+    def test_api_key_option_exists(self):
+        options = {o["name"] for o in self._fanart_group()["options"]}
+        assert "api_key" in options
+
+    def test_group_is_not_on_a_tab_the_ui_hides(self):
+        group = self._fanart_group()
+        hidden = self._hidden_tabs()
+        assert group["tab"] not in hidden, (
+            f"fanart.tv settings are registered on the '{group['tab']}' tab, which "
+            f"the settings UI hides ({sorted(hidden)}). The api_key would be "
+            f"unreachable, leaving config.ini as the only way to set it."
+        )
+
+    def _hidden_sections(self):
+        text = self.SCRIPTS.read_text(encoding="utf-8")
+        match = re.search(r"hiddenSections:\s*new Set\(\[(.*?)\]\)", text, re.DOTALL)
+        assert match, "could not find hiddenSections in the settings UI script"
+        return set(re.findall(r"['\"]([^'\"]+)['\"]", match.group(1)))
+
+    def test_section_is_not_in_hiddenSections(self):
+        """`hiddenTabs` is not the only way to hide it.
+
+        Adding 'fanarttv' to `hiddenSections` makes the card unreachable just as
+        thoroughly, and that path was uncovered — the mutation left all tests
+        green. Both filters are checked now.
+        """
+        from couchpotato.core.media.movie.providers.info import fanarttv
+
+        section = fanarttv.config[0]["name"]
+        hidden = self._hidden_sections()
+        assert section not in hidden, (
+            f"the '{section}' section is listed in hiddenSections {sorted(hidden)}, "
+            f"so the settings card never renders and the api_key is unreachable."
+        )
+
+    def test_group_is_not_marked_hidden(self):
+        assert not self._fanart_group().get("hidden"), (
+            "the group is marked hidden; the key must be discoverable"
+        )
+
+    def test_description_tells_the_user_what_they_lose_and_where_to_get_a_key(self):
+        description = self._fanart_group()["description"]
+        assert "fanart.tv/get-an-api-key" in description
+        assert "Optional" in description, (
+            "the description should make clear the app works without it"
+        )

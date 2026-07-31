@@ -18,12 +18,16 @@ the archived CouchPotato, fully modernised.
 | Command | Purpose |
 |---|---|
 | `make setup` | Once per clone: installs deps + git pre-push hook |
-| `make verify` | Full local gate, mirrors CI (ruff → py unit → UI unit → E2E). Runs automatically on push via hook |
+| `make verify` | Full local gate, mirrors CI (ruff → test-trap guard → conformance → py unit → UI unit → E2E). Runs automatically on push via hook |
 | `make verify-fast` | Quick gate: lint + unit only, skips E2E |
 | `ruff check .` | Lint (must be clean before every push) |
 | `pytest tests/unit/ -q` | Python unit tests |
 | `./scripts/test-local.sh` | Python unit in clean Alpine Docker (optional) |
-| `make mutation-py` / `make mutation-js` | Mutation testing (informational) |
+| `make mutation-py` / `make mutation-js` | Mutation testing, everything in scope (informational, slow) |
+| `make mutation-changed` | Mutation testing on changed files only — use this per-change |
+| `make check-traps` | False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates) |
+| `make check-secrets` | Secret scan of the working tree (same command CI runs) |
+| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings — run before every deploy |
 
 ## Hard rules — never break these
 
@@ -32,7 +36,8 @@ the archived CouchPotato, fully modernised.
    unnecessary mocking.
 2. **Never push untested code.** `make verify` must pass locally before every
    push — don't rely on CI. Emergency hook bypass `git push --no-verify` only
-   sparingly.
+   sparingly. The gate goes fully green locally — if it does not, that is a
+   real finding, not a known-bad baseline to work around.
 3. **Local agent review gate before pushing code changes.** Any code change
    (plus edits to `CLAUDE.md`/`AGENTS.md`/`specs/**`) must pass a clean-agent
    local review before push. Pure docs-only prose may skip. Full rules,
@@ -48,9 +53,30 @@ the archived CouchPotato, fully modernised.
    beta byte-for-byte to `:latest` (stable-only). **Never deploy to
    production until explicitly agreed.**
 7. **Git hygiene:** conventional commits; never commit secrets or test data
-   (`test_data/` is gitignored — keep local backups).
+   (`test_data/` is gitignored — keep local backups). Secret scanning runs via
+   the `secrets` CI job and `make check-secrets` (gitleaks over the working
+   tree) — it **reports but does not yet block**, as it is not in branch
+   protection, so read it rather than assuming a merge was gated on it. Adding a
+   fingerprint to `.gitleaksignore` requires a comment justifying it (enforced
+   by `tests/unit/test_gitleaks_config.py`) — and rotation, not redaction, is
+   the remedy for a real key.
 8. **Dockerfile is Alpine:** use `apk`/`su-exec`/`adduser`, entrypoint is
    `#!/bin/sh` — never `apt`/`gosu`/`useradd`/bash.
+9. **A sub-agent's report is not evidence.** Validate against the repo, not the
+   summary: read the diff, run the command yourself. When a report and the repo
+   disagree, the repo wins. A report that omits something you asked for (a paste,
+   a test count, a mutation result) is unverified, not done.
+10. **When a test is the deliverable, run the mutation — and prove the mutation
+    landed.** Break the thing the test claims to guard, watch it fail, restore.
+    Then confirm the break actually applied (`git diff` / hash the file) before
+    trusting either outcome — a `sed` that silently matched nothing produces a
+    passing test against code you believe you reverted, which is a false green
+    that looks exactly like success.
+11. **After three failed fixes, question the frame, not the fix.** Each attempt
+    surfacing a new defect elsewhere means the shape is wrong. Stop, say so, and
+    re-open the approach instead of trying a fourth. On any branch where a fix
+    has itself introduced a defect twice, treat the next fix as suspect and
+    review it as new work, not as a correction.
 
 ## Key technical decisions
 

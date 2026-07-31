@@ -78,8 +78,10 @@ test.describe('Movie Detail', () => {
       await movieCard.click();
       await page.waitForLoadState('networkidle');
       
-      // Find and click trailer button
-      const trailerBtn = page.locator('button:has-text("Trailer")');
+      // Find and click trailer button. `.first()` because `has-text` matches
+      // more than one button once a movie actually renders (strict mode
+      // violation) -- previously unreachable, as the library was always empty.
+      const trailerBtn = page.locator('button:has-text("Trailer")').first();
       
       if (await trailerBtn.isVisible({ timeout: 3000 })) {
         await trailerBtn.click();

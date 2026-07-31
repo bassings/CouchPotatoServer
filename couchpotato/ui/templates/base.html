@@ -18,6 +18,26 @@
 
 <script src="{{ web_base }}static/scripts/vendor/new-ui/tailwindcss-cdn.js"></script>
 <script src="{{ web_base }}static/scripts/vendor/new-ui/htmx-2.0.4.min.js"></script>
+<script>
+  /* Disable htmx's localStorage history snapshots (WCAG-adjacent correctness,
+     not a perf tweak).
+
+     FEAT-007 Part B introduced the first `hx-push-url` in this codebase, which
+     engaged htmx history for the first time. htmx snapshots
+     `document.body.innerHTML` -- and that snapshot already contains the copy
+     Alpine `x-teleport`ed to <body> (partials/movie_info_modal.html:3). On a
+     Back that hits the cache, htmx restores the snapshot and Alpine teleports
+     a SECOND copy, leaving a scope-less duplicate whose every binding throws
+     (`movie is not defined`, `isOpen is not defined`, ...) and duplicating ids
+     so `<label for="modal-profile-select">` matches two elements. Measured:
+     3 duplicated ids and 42 uncaught page errors, deterministically.
+
+     With the cache off, every Back takes htmx's AJAX restore path instead,
+     which re-requests the URL with HX-History-Restore-Request and gets a
+     clean full page (see the movie_detail route). Measured on that path: 0
+     duplicate ids, 0 page errors, correct rows and announcer. */
+  window.htmx && (htmx.config.historyCacheSize = 0);
+</script>
 <!-- Extracted, unit-tested UI logic. This module script MUST precede the Alpine
      script: deferred scripts (classic defer + modules) run in document order,
      each finishing before the next, so loading it first guarantees CP.ui is
@@ -87,6 +107,26 @@ tailwind.config = {
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
   /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
   :root.light .text-cp-accent { color: #0e7490; }
+  /* A11Y (WCAG 2.2 AA, 1.4.3): the status tokens are chosen for the dark
+     theme and fail badly as text on the light theme's near-white surfaces --
+     measured against #ffffff: success #3ddc84 = 1.78:1, warning #e5a00d =
+     2.24:1, danger #f04848 = 3.67:1, blue #35c5f4 = 2.01:1, all under the
+     4.5:1 minimum. These 700-weight equivalents clear it (5.48, 5.02, 6.47
+     and 5.35:1 respectively) while reading as the same colour, and follow the
+     accent override directly above.
+
+     `:not(.on-dark)` matters: a handful of badges use these same tokens over
+     a surface that is dark in BOTH themes -- the poster gradient
+     (`from-black/90`) and poster artwork itself in movie_cards.html. Darkening
+     those makes them WORSE (#047857 on near-black is about 1.2:1, against
+     about 2.6:1 for the original token), so they opt out via `on-dark` and
+     keep the bright dark-theme colour their backdrop actually needs. Every
+     other usage is a 10% tint over the light card, where white is the worst
+     case. */
+  :root.light .text-cp-success:not(.on-dark) { color: #047857; }
+  :root.light .text-cp-warning:not(.on-dark) { color: #b45309; }
+  :root.light .text-cp-danger:not(.on-dark) { color: #b91c1c; }
+  :root.light .text-cp-blue:not(.on-dark) { color: #0e7490; }
 
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }

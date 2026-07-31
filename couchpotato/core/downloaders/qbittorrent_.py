@@ -307,7 +307,7 @@ class qBittorrent(DownloaderBase):
 
     def processComplete(self, release_download, delete_files):
         log.debug('Requesting qBittorrent to remove the torrent %s%s.',
-                  (release_download['name'], ' and cleanup the downloaded files' if delete_files else ''))
+                  release_download['name'], ' and cleanup the downloaded files' if delete_files else '')
 
         if not self.connect():
             return False

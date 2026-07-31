@@ -2,7 +2,11 @@
 # Run tests locally in Docker before pushing
 # Usage: ./scripts/test-local.sh [python-version]
 
-set -e
+# -u and pipefail as well as -e: `set -e` alone continues past a failed command
+# in a pipeline and past a typo'd variable, either of which turns this into a
+# gate that reports success without running the tests.
+# Enforced by scripts/check_test_traps.py.
+set -euo pipefail
 
 PYTHON_VERSION="${1:-3.12}"
 IMAGE_NAME="couchpotato-test:${PYTHON_VERSION}"

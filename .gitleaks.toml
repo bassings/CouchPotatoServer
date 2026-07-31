@@ -1,0 +1,60 @@
+# Gitleaks config — secret scanning for the `secrets` CI job (see
+# .github/workflows/ci.yml) and for manual scans (`make check-secrets`).
+#
+# Full default ruleset, plus path allowlists for directories that are not our
+# source code. Individual known findings in real source files are suppressed by
+# fingerprint in .gitleaksignore, where each one must carry a justification,
+# rather than by widening these globs.
+#
+# ANCHORING — read before adding a pattern.
+#
+# These are unanchored regexes matched against the whole path, so a bare
+# `reports/` also matches `couchpotato/reports/`, silently excluding application
+# code from the scan. Proven by planting identical credentials in four files:
+# with bare patterns only `couchpotato/core/…` was reported, while
+# `couchpotato/reports/…`, `couchpotato/coverage/…` and `reports/plugin/…` were
+# all skipped.
+#
+# `(^|/)` does NOT fix that — its `/` branch matches the slash *inside*
+# `couchpotato/reports/`, so it is equivalent to no anchor for this purpose
+# (verified: still 1 of 4 reported). Directories that only ever exist at the
+# repo root therefore use a hard `^`, which works because both `make
+# check-secrets` and the CI step scan with `--source=.`, so gitleaks emits
+# repo-relative paths. Only `node_modules/` stays unanchored-ish, because npm
+# legitimately nests it.
+#
+# Prefer a fingerprint in .gitleaksignore over a new path glob.
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Vendored, generated, and local-runtime paths — not our source"
+paths = [
+  # Dependencies and build output. npm nests node_modules, so that one cannot be
+  # root-anchored; everything else here only ever exists at the repo root.
+  '''(^|/)node_modules/''',
+  '''^\.venv/''',
+  '''^coverage/''',
+  '''^reports/''',
+  '''^\.stryker-tmp/''',
+  '''^mutants/''',
+  '''^playwright-report/''',
+  '''^test-results/''',
+
+  # Agent worktrees are full copies of the tree; scanning them double-reports
+  # every finding against a path that is not the real file.
+  '''^\.claude/worktrees/''',
+
+  # LOCAL RUNTIME DATA — these hold genuine secrets (a real config.ini with API
+  # keys, generated media.key/tetchy.key private keys, logs). All four are
+  # gitignored (`git check-ignore -v` reports .gitignore lines 5, 26, 32 and 57
+  # respectively) and verified untracked, so they cannot reach the remote;
+  # excluding them keeps a local `make check-secrets` usable instead of drowning
+  # in 40+ hits from your own dev instance.
+  # If you ever see one of these paths reported as TRACKED, that is a real leak.
+  '''^\.config/''',
+  '''^data/config/''',
+  '''^\.e2e-[^/]*data/''',
+  '''^test_data/''',
+]

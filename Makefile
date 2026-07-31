@@ -2,7 +2,7 @@
 # Path to production: make setup → code → make verify (auto-enforced on push)
 #                     → PR → Claude review + remediate → merge → release.
 
-.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint mutation mutation-py mutation-js
+.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -44,3 +44,39 @@ mutation-py: ## Python mutation testing (mutmut)
 
 mutation-js: ## JS mutation testing (Stryker)
 	npm run test:mutation
+
+# BASE defaults to master; override for a different comparison point, e.g.
+#   make mutation-changed BASE=origin/master
+BASE ?= master
+
+mutation-changed: ## Mutation testing on changed files only (fast enough per-change)
+	python3 scripts/mutation_changed.py --base $(BASE)
+
+check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates)
+	python3 scripts/check_test_traps.py
+
+# Pinned version: an unpinned :latest changes the ruleset under you, so a clean
+# scan today can fail tomorrow with no code change. Bump deliberately.
+GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.30.1
+
+check-secrets: ## Secret scan of the working tree (same command CI runs)
+	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
+		detect --source=. --no-git --config=.gitleaks.toml --no-banner --redact -v
+
+check-secrets-history: ## Secret scan of ALL git history (noisy: ~37 known hits, see below)
+	@echo "Expect ~37 findings. As of 2026-07-30 they break down as:"
+	@echo "  * 29 authored by ruud@crashdummy.nl (upstream CouchPotato), spanning"
+	@echo "    2011-2016 -- NOT just pre-2013; 10 of the 29 are 2013 or later."
+	@echo "  *  2 by other upstream contributors (one of them the lone 2017 hit)."
+	@echo "  *  6 authored by bassings@gmail.com -- THIS FORK's own commits:"
+	@echo "       - QA/QA_SESSION_2026-02-19.md (a per-install api_key, redacted"
+	@echo "         from HEAD 2026-07-30; still in history, hence rotate not redact)"
+	@echo "       - 5 under migration_backup/ (2025-07-30), which are COPIES of the"
+	@echo "         same upstream provider keys; that directory is no longer tracked."
+	@echo "  Triage anything outside that set -- do not assume a finding is upstream"
+	@echo "  noise just because most of them are."
+	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
+		detect --source=. --config=.gitleaks.toml --no-banner --redact -v
+
+backup: ## Snapshot the SQLite DB + settings (see docs/development-process.md)
+	./scripts/backup.sh

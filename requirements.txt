@@ -34,6 +34,8 @@ stevedore==5.8.0  # 5.9.0 dropped Python 3.10 (CP supports 3.10+)
 pysubs2==1.8.1
 pymediainfo==7.0.1
 knowit==0.5.11
+# HELD at 3.2.0: coupled to guessit 3.8.0's expectations — rebulk 6.0.1 fails the
+# whole test suite. Dependabot re-proposes this every cycle; close those PRs.
 rebulk==3.2.0
 srt==3.5.3
 tomlkit==0.15.1

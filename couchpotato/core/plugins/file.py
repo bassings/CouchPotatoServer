@@ -245,7 +245,7 @@ class FileManager(Plugin):
         failed = 0
         for x in tests:
             if isSubFolder(x[0], x[1]) is not tests[x]:
-                log.error('Failed subfolder test %s %s', x)
+                log.error('Failed subfolder test %s %s', x[0], x[1])
                 failed += 1
 
         if failed > 0:

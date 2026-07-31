@@ -11,7 +11,11 @@ on:
   workflow_dispatch:
     inputs:
       paths:
-        description: 'Override paths_to_mutate (space-separated, optional)'
+        # Passed to `mutmut run $MUTMUT_PATHS` below. mutmut 3.x takes MUTANT
+        # NAME filters here, not source paths — a bare module path matches
+        # nothing, so use a glob like 'couchpotato.core.db.sqlite_adapter*'
+        # (same form scripts/mutation_changed.py builds).
+        description: 'Mutant-name filter(s), e.g. couchpotato.api* (space-separated, optional)'
         required: false
         default: ''
 
