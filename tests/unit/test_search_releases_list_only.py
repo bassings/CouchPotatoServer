@@ -350,6 +350,85 @@ class TestMovieDetailButton:
         assert 'data-testid="search-releases"' in html
 
 
+class TestSearchButtonUpdatesInPlace:
+    """FEAT-008 AC5/AC6: the button must update the release list in place and
+    report which of the three outcomes happened -- not reload the whole page
+    and leave the user guessing whether anything ran.
+
+    Renders the real template (not a copy) and inspects the `@click` handler
+    source, mirroring TestMovieDetailButton above.
+    """
+
+    def _render(self, status):
+        from couchpotato.environment import Env
+        from couchpotato.ui import _jinja, _releases_ctx
+
+        Env.set('web_base', '/')
+        movie = {
+            '_id': 'movie-1',
+            'title': 'Some Movie',
+            'status': status,
+            'releases': [],
+            'info': {'year': 2020},
+            'identifiers': {'imdb': 'tt1234567'},
+        }
+        ctx = {
+            'api_key': 'test-key',
+            'api_base': '/api/key',
+            'web_base': '/',
+            'new_base': '/',
+            'movie': movie,
+        }
+        ctx.update(_releases_ctx(movie, movie['_id'], {}))
+        return _jinja.get_template('partials/movie_detail.html').render(**ctx)
+
+    def _search_button_handler(self, html):
+        """Isolate the search-releases button's own onclick markup so
+        assertions can't accidentally pass by matching some OTHER button's
+        handler (e.g. Refresh, which legitimately still reloads)."""
+        idx = html.index('data-testid="search-releases"')
+        # The @click attribute is emitted before data-testid on this button;
+        # walk back to the start of the <button> tag it belongs to.
+        start = html.rindex('<button', 0, idx)
+        end = html.index('</button>', idx)
+        return html[start:end]
+
+    def test_the_search_button_no_longer_forces_a_full_page_reload(self):
+        handler = self._search_button_handler(self._render('done'))
+
+        assert 'location.reload()' not in handler, (
+            'AC5: the release list must update in place, not via a full reload'
+        )
+
+    def test_the_search_button_refreshes_the_release_list_via_htmx(self):
+        handler = self._search_button_handler(self._render('done'))
+
+        assert 'htmx.ajax' in handler
+        assert 'partial/movie/movie-1/releases' in handler
+        assert '#movie-releases' in handler
+        # The endpoint's own root element already has id="movie-releases"
+        # (partials/movie_releases.html) -- an innerHTML swap would nest a
+        # second copy of that id inside the first. outerHTML replaces the
+        # node itself, matching every other swap against this same target
+        # (the filter form / sort links in movie_releases.html).
+        assert 'outerHTML' in handler
+
+    def test_the_search_button_reports_the_three_outcomes(self):
+        """AC3/AC5: the toast text must actually branch on `searched`/
+        `reason`, not just the old `success`/`found` shape -- otherwise a
+        could-not-search outcome (searched: false) would still be reported
+        as if a search ran and found nothing."""
+        handler = self._search_button_handler(self._render('done'))
+
+        assert 'd.searched' in handler, (
+            'the handler must branch on the new searched/found/reason '
+            'contract to tell "found nothing" apart from "could not search"'
+        )
+        assert 'd.reason' in handler, (
+            'a could-not-search outcome must surface its reason to the user'
+        )
+
+
 class TestListOnlyImpliesFreshResults:
     """list_only on its own must not be served from cache, so a future caller
     of the movie.searcher.single event cannot accidentally get stale results
