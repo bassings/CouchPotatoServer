@@ -398,7 +398,11 @@ class TestFoundCount:
         library import with no 'year', which single() indexes directly. Its
         siblings tryNextRelease and markFailedAndResearch both wrap their work;
         this view did not, so a plausible edge case for exactly the movies
-        this feature targets returned a 500 instead of a handled failure."""
+        this feature targets returned a 500 instead of a handled failure.
+
+        FEAT-008: the return shape gained `searched`/`reason` (AC3) -- an
+        exception is a "could not search" outcome, so `searched` must be
+        False here too, not just `success`."""
         movie = _movie(status='done')
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
@@ -406,14 +410,192 @@ class TestFoundCount:
             fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
             result = searcher.searchReleasesView(media_id='movie-1')
 
-        assert result == {'success': False, 'found': 0}
+        assert result['success'] is False
+        assert result['found'] == 0
+        assert result['searched'] is False, (
+            'an exception means no search actually completed -- searched must be False'
+        )
+        assert result.get('reason'), 'a could-not-search outcome must name a reason'
 
     def test_a_movie_that_no_longer_exists_is_reported_as_a_failure(self, searcher):
         """The detail page can be open while the movie is deleted in another
-        tab; the click must not report success for a search that never ran."""
+        tab; the click must not report success for a search that never ran.
+
+        FEAT-008: same shape update as the exception case above -- a movie
+        that vanished is "could not search", not "searched, found 0"."""
         with patch('couchpotato.core.media.movie.searcher.fireEvent', return_value=None), \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
             result = searcher.searchReleasesView(media_id='gone')
 
-        assert result == {'success': False, 'found': 0}
+        assert result['success'] is False
+        assert result['found'] == 0
+        assert result['searched'] is False
+        assert result.get('reason')
         assert not single.called, 'no search should run for a movie that is gone'
+
+
+class TestListOnlyOnAMovieWithNoProfile:
+    """FEAT-008 / the 2026-07-31 bug report.
+
+    `single()`'s first gate is:
+
+        if not movie['profile_id'] or (status in ('done','downloaded')
+                                       and not manual and not list_only):
+
+    `list_only` was threaded through every other gate but NOT through the
+    no-profile clause, which is an independent `or`. Movies imported by the
+    library scanner never get a profile, so on the reporter's production
+    instance **1101 of 1101 movies have profile_id=None** and "Search for
+    releases" returns `{'success': true, 'found': 0}` in 0.0s having searched
+    nothing. That is indistinguishable from a real search that found nothing,
+    which is why it reads as "it doesn't refresh / no way to know it finished".
+    """
+
+    def test_a_profileless_done_movie_is_still_searched(self, searcher):
+        """AC1: the case the feature exists for must actually search."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        calls = _drive(searcher, movie, list_only=True)
+
+        assert 'searcher.search' in calls, (
+            'a list-only search on a movie with no profile never reached the '
+            'providers -- this is the reported bug'
+        )
+
+    def test_a_profileless_movie_uses_the_default_profile(self, searcher):
+        """AC1: fall back the same way movie.add does, via profile.default."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        calls = _drive(searcher, movie, list_only=True)
+
+        assert 'profile.default' in calls, (
+            'expected the default profile to be resolved for a profile-less movie'
+        )
+
+    def test_a_list_only_search_does_not_assign_a_profile_to_the_movie(self, searcher):
+        """AC2: read-only. Answering "what's available?" must not edit the library."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        _drive(searcher, movie, list_only=True)
+
+        assert movie['profile_id'] is None, (
+            'a list-only search assigned a profile to the movie; it must not '
+            'mutate library state'
+        )
+
+    def test_a_list_only_search_does_not_change_status(self, searcher):
+        """AC2: and it must not move the movie out of done."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        _drive(searcher, movie, list_only=True)
+
+        assert movie['status'] == 'done'
+
+    def test_the_automatic_path_still_returns_early_without_a_profile(self, searcher):
+        """Risk guard: the non-list_only behaviour must be unchanged.
+
+        A profile-less movie must still be skipped by the automatic searcher --
+        widening the gate for everyone would start searching the entire library.
+        """
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        calls = _drive(searcher, movie)          # no list_only, no manual
+
+        assert 'searcher.search' not in calls, (
+            'the automatic path now searches profile-less movies; the bypass '
+            'must be limited to list_only'
+        )
+
+
+class TestSearchReleasesThreeWayOutcome:
+    """FEAT-008 AC3/AC4: _searchReleases must let the UI tell apart
+
+        1. searched, found N            -> searched=True,  found=N
+        2. searched, found nothing      -> searched=True,  found=0
+        3. could not search, with why   -> searched=False, reason=<str>
+
+    `{'success': True, 'found': 0}` regardless of which of these happened
+    (the pre-FEAT-008 shape) is exactly the "no way to know when the search
+    is completed" bug report: a movie that was never searched at all looked
+    identical to one that was searched and came up empty.
+    """
+
+    def test_a_completed_search_reports_searched_true_and_the_found_count(self, searcher):
+        movie = _movie(status='done', releases=[
+            {'status': 'available', 'quality': '1080p'},
+            {'status': 'available', 'quality': '720p'},
+            {'status': 'done', 'quality': '2160p'},
+        ])
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.called, 'a movie with a profile must actually be searched'
+        assert result == {'success': True, 'searched': True, 'found': 2}
+
+    def test_a_completed_search_that_finds_nothing_is_still_searched_true(self, searcher):
+        """The specific outcome the bug report described: a search that ran
+        and genuinely found nothing must be distinguishable from one that
+        never ran (both used to report the exact same payload)."""
+        movie = _movie(status='done', releases=[])
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.called
+        assert result == {'success': True, 'searched': True, 'found': 0}
+
+    def test_no_profile_anywhere_reports_could_not_search_with_a_reason(self, searcher):
+        """AC4: a movie with no profile_id, on an install with no default
+        profile either (fresh install / every profile deleted), must refuse
+        with a reason -- never a bare success, and never silently doing
+        nothing while reporting 'found: 0' as if it had searched."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert not single.called, (
+            'with no profile resolvable anywhere, single() must never be '
+            'invoked at all -- there is nothing to search with'
+        )
+        assert result['success'] is False
+        assert result['searched'] is False
+        assert result['found'] == 0
+        assert isinstance(result.get('reason'), str) and result['reason'], (
+            'a could-not-search outcome must name a reason the UI can show'
+        )
+
+    def test_a_profileless_movie_with_a_default_available_still_gets_searched(self, searcher):
+        """The common real-world case (FEAT-008's actual bug): no profile on
+        the movie, but the install has a default profile -- must search, not
+        refuse."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        def fake_fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'profile.default':
+                return {'_id': 'default-profile'}
+            return None
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.called, 'a default profile is available -- the search must run'
+        assert result['searched'] is True
+        assert result['success'] is True

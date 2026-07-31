@@ -169,7 +169,20 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # 'downloaded' is the manual-review gate (workflow phase 1): treat it like
         # 'done' for gating purposes so a movie awaiting review is never searched
         # or upgraded, unless a manual/forced search explicitly overrides it.
-        if not movie['profile_id'] or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
+        #
+        # FEAT-008: `not movie['profile_id']` used to be an unconditional
+        # clause here -- unlike every OTHER gate in this method it was never
+        # threaded with `list_only`, so a movie imported by the library
+        # scanner (which never gets a profile) made "Search for releases"
+        # silently search nothing, for every done/downloaded movie with no
+        # profile. `and not list_only` makes this gate bypass the same way
+        # the others already do: when list_only is True this whole `if` is
+        # always False (the status clause already ends in `and not list_only`
+        # too), so a list-only search is never blocked by either half of it.
+        # AC2: this is purely a gate change -- nothing here writes a profile
+        # back to the movie; see the profile_id resolution below, which is
+        # entirely local.
+        if (not movie['profile_id'] and not list_only) or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
             log.debug('Movie doesn\'t have a profile, is already done, or is awaiting review, assuming in manage tab.')
             fireEvent('media.restatus', movie['_id'], single = True)
             return
@@ -220,7 +233,18 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         db = get_db()
 
-        profile = db.get('id', movie['profile_id'])
+        # FEAT-008: movie['profile_id'] can be None here -- only reachable
+        # when the gate above was bypassed by list_only. Resolve a profile
+        # the same way movie.add already falls back for a new movie
+        # (fireEvent('profile.default'), _base/main.py:200), but PURELY
+        # locally: `profile_id` is a local variable, never written back to
+        # `movie` or persisted (AC2 -- a list-only search stays read-only).
+        profile_id = movie['profile_id']
+        if not profile_id:
+            default_profile = fireEvent('profile.default', single = True)
+            profile_id = (default_profile or {}).get('_id')
+
+        profile = db.get('id', profile_id)
         ret = False
 
         for index, q_identifier in enumerate(profile.get('qualities', [])):
@@ -506,12 +530,43 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # lack it -- exactly the movies this feature targets. A 500 on the
             # detail page is a worse answer than a handled failure.
             log.error('Failed searching releases for %s: %s', media_id, traceback.format_exc())
-            return {'success': False, 'found': 0}
+            # FEAT-008 AC3: an exception means no search actually completed --
+            # report it the same way as any other could-not-search outcome
+            # (searched=False + reason), not just a bare success=False.
+            return {'success': False, 'searched': False, 'found': 0,
+                     'reason': 'An unexpected error occurred while searching'}
 
     def _searchReleases(self, media_id):
+        """FEAT-008 AC3: the response distinguishes three outcomes so the UI
+        can tell them apart -- they used to collapse into the same
+        {'success': True, 'found': 0} payload, which read as "searched,
+        found nothing" even when nothing was ever searched:
+
+          - searched, found N        -> {'success': True,  'searched': True,  'found': N}
+          - searched, found nothing  -> {'success': True,  'searched': True,  'found': 0}
+          - could not search         -> {'success': False, 'searched': False, 'found': 0, 'reason': <str>}
+        """
         media = fireEvent('media.get', media_id, single = True)
         if not media:
-            return {'success': False, 'found': 0}
+            return {'success': False, 'searched': False, 'found': 0,
+                     'reason': 'This movie no longer exists'}
+
+        # AC4: pre-flight the SAME profile fallback single() itself will
+        # attempt (fireEvent('profile.default'), mirroring movie.add at
+        # _base/main.py:200) so a genuinely profile-less install (fresh
+        # install, or every profile deleted) is reported as "could not
+        # search" with a reason -- rather than calling single(), having it
+        # silently do nothing, and this method reporting a misleading
+        # 'searched: true, found: 0' for a search that never ran.
+        if not media.get('profile_id'):
+            default_profile = fireEvent('profile.default', single = True)
+            if not default_profile or not default_profile.get('_id'):
+                return {
+                    'success': False,
+                    'searched': False,
+                    'found': 0,
+                    'reason': 'No quality profile is configured, so nothing could be searched',
+                }
 
         # manual=True as well as list_only: single() derives bypass_cache from
         # `manual`, so without it a user pressing "Search for releases" is
@@ -530,6 +585,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         return {
             'success': True,
+            'searched': True,
             'found': found,
         }
 
