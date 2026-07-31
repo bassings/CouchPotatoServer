@@ -92,8 +92,33 @@ searcher would skip it on the very same gate. So this must assign a profile.
    else the default profile.
 2. It refuses, with a stated reason, if no profile can be resolved — rather than
    creating an unsearchable Wanted entry.
-3. Existing releases are preserved. A `done` release is **not** deleted; the
-   movie simply becomes eligible for searching/upgrading again.
+3. Existing releases are preserved — nothing is deleted, and the release
+   history stays visible on the detail page.
+
+   The releases the movie already **holds** (`done` / `seeding` /
+   `downloaded`) are marked `ignored`. This is required, not incidental: a held
+   release counts as satisfying the profile in two independent places, and the
+   movie is not really "wanted" until both stop counting it —
+
+   - `MediaPlugin.restatus` recomputes status from releases whose status is
+     `done`, so the held one finishes the movie again on the very next sweep.
+     With `manual_confirmation` (the default) `previous_status` is now `active`
+     rather than `done`, which routes it into the `downloaded` review gate
+     **and** fires a `movie.downloaded` "awaiting review" notification for a
+     movie the user never re-downloaded.
+   - `MovieSearcher.single`'s `has_better_quality` loop counts any release
+     whose status is not in `('available', 'ignored', 'failed')`. A held
+     release at the profile's top rung makes it break on the **first** quality,
+     before contacting any provider.
+
+   `ignored` (rather than `failed`) because nothing failed — the user simply
+   wants something better. This mirrors `markFailedAndResearch`, which marks
+   the landed release `failed` for the same structural reason.
+
+   Rejected alternative: stamping a timestamp on the media doc and having
+   `restatus` discount older releases. It addressed only the first of the two
+   consumers above, and `release.add` rewrites `last_edit` on any library
+   rescan, which silently re-armed the bug.
 4. It is idempotent: calling it on an already-active movie is a no-op success.
 5. The movie appears in the Wanted view afterwards and is picked up by the
    automatic searcher (i.e. it passes the `single()` gate).
@@ -122,6 +147,11 @@ searcher would skip it on the very same gate. So this must assign a profile.
   status change. Assert this in a test.
 - **Do not delete anything.** The untitled-movie branch already deletes media;
   the list_only guard there must stay.
+- **Do not change shared `restatus` behaviour.** An attempt to solve AC3 there
+  affected every media type and every caller for the benefit of one feature.
+  The release-status approach above is contained to the movies this action
+  touches; `couchpotato/core/media/_base/media/main.py` is untouched by this
+  branch.
 - Changing the searcher's first gate affects the automatic path too. The
   condition must remain exactly as-is when `list_only` is false — pin with a test
   that a non-list_only search on a profile-less movie still returns early.
