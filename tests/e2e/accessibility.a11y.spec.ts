@@ -351,7 +351,9 @@ test.describe('Accessibility', () => {
       // (#loading) also carries role="status", so a bare [role="status"]
       // matched 4 elements and the count assertion failed for the wrong reason.
       const region = 'div.fixed.top-4.right-4[aria-live="polite"]';
-      await expect(page.locator(`${region} [role="status"]`)).toHaveCount(3, { timeout: 5000 });
+      await expect(
+        page.locator(`${region} [role="status"], ${region} [role="alert"]`),
+      ).toHaveCount(3, { timeout: 5000 });
 
       /*
        * Measure the ratio directly rather than relying on axe alone.
@@ -365,7 +367,7 @@ test.describe('Accessibility', () => {
        * computed here from the two colours actually rendered. axe still runs
        * below as a second opinion.
        */
-      const measured = await page.$$eval(`${region} [role="status"]`, (els) => {
+      const measured = await page.$$eval(`${region} [role="status"], ${region} [role="alert"]`, (els) => {
         const rgb = (s: string) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
         const lum = (c: number[]) => {
           const [r, g, b] = c.map((v) => {

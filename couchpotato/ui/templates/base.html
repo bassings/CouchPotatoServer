@@ -209,8 +209,11 @@ tailwind.config = {
         // methods as ordinary JS, not as Alpine-evaluated directive
         // expressions -- so a bare `toast(...)` call from inside one of
         // those methods is a ReferenceError (it only resolves via Alpine's
-        // scope-walking when written inline in an @click="..." string, the
-        // way every OTHER toast() call in this codebase is). A window
+        // scope-walking when written inline in an @click="..." string).
+        // Other components solve this by defining their OWN component-local
+        // toast() method and calling this.toast(...) -- see
+        // partials/settings/scripts.html and wizard.html -- which is a fine
+        // pattern but duplicates the toast UI per component. A window
         // CustomEvent lets any such component request a toast without a
         // direct reference to this component, matching the existing
         // window.dispatchEvent(new CustomEvent(...)) idiom already used for
@@ -401,7 +404,7 @@ tailwind.config = {
            'bg-red-700 cp-toast-fg': t.type === 'error',
            'bg-cp-accent text-black': t.type === 'info'
          }"
-         role="status">
+         :role="t.type === 'error' ? 'alert' : 'status'">
       <span x-text="t.message" class="flex-1"></span>
       <button @click="dismissToast(t.id)" class="opacity-70 hover:opacity-100 ml-1" aria-label="Dismiss">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

@@ -137,7 +137,7 @@
       {% endif %}
 
       <!-- Actions -->
-      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false, markingReviewDone: false, markingReviewFailed: false, searchingReleases: false }">
+      <div class="flex flex-wrap gap-2 mt-6" x-data="{ refreshing: false, markingDone: false, deleting: false, markingReviewDone: false, markingReviewFailed: false, searchingReleases: false, searchStatus: '' }">
         <button @click="refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; location.reload(); })"
                 class="px-3.5 py-1.5 bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="refreshing">
@@ -158,14 +158,17 @@
              -- that partial's own root element already carries this id, so an
              innerHTML swap would nest a duplicate) instead of a full page
              reload. -->
-        <button @click="searchingReleases = true; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { searchingReleases = false; if(d.searched) { var msg = d.found ? ('Found ' + d.found + ' new release' + (d.found === 1 ? '' : 's')) : ('No new releases' + (d.available ? ' — ' + d.available + ' already available' : '')); toast(msg, d.found ? 'success' : 'success'); } else { toast(d.reason || 'Could not search for releases', 'error'); } htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/releases' + window.location.search, { target: '#movie-releases', swap: 'outerHTML' }); }).catch(() => { searchingReleases = false; toast('Search failed', 'error'); })"
+        <button @click="if (searchingReleases) return; searchingReleases = true; searchStatus = 'Searching for releases, please wait'; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { searchingReleases = false; searchStatus = ''; if(d.searched) { var msg = d.found ? ('Found ' + d.found + ' new release' + (d.found === 1 ? '' : 's')) : ('No new releases' + (d.available ? ' — ' + d.available + ' already available' : '')); toast(msg, d.found ? 'success' : 'info'); } else { toast(d.reason || 'Could not search for releases', 'error'); } htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/releases' + window.location.search, { target: '#movie-releases', swap: 'outerHTML' }).catch(() => toast('Search finished, but the release list could not refresh — reload to see it', 'error')); }).catch(() => { searchingReleases = false; searchStatus = ''; toast('Search failed', 'error'); })"
                 class="px-3.5 py-1.5 bg-cp-blue/10 text-cp-blue hover:bg-cp-blue/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 data-testid="search-releases"
-                :disabled="searchingReleases">
+                :class="searchingReleases ? 'opacity-50 cursor-wait' : ''"
+                :aria-busy="searchingReleases ? 'true' : 'false'"
+                :aria-disabled="searchingReleases ? 'true' : 'false'">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/></svg>
           <span x-show="!searchingReleases">Search for releases</span>
           <span x-show="searchingReleases">Searching…</span>
         </button>
+        <span class="sr-only" aria-live="polite" x-text="searchStatus" data-testid="search-announcer"></span>
         {% if status == 'done' %}
         <!-- FEAT-008: the only route back from 'done' to wanted used to be
              delete + re-add, which throws away release history. Own x-data
@@ -178,9 +181,14 @@
              movie is active again), targeting the same #movie-detail-container
              the initial hx-get="...partial/movie/{{ movie_id }}" in
              detail.html already swaps into on first load. -->
-        <div x-data="restoreToWanted()" x-init="init()" class="inline-flex items-center gap-1.5">
+        <!-- No x-init="init()": Alpine already calls a component's own init()
+               automatically, so declaring it here ran it TWICE -- the same
+               double-registration just removed from base.html's <body>. -->
+          <div x-data="restoreToWanted()" class="inline-flex items-center gap-1.5"
+               @keydown.escape.window="if (showPicker && !restoring) cancel()">
           <template x-if="!showPicker">
-            <button @click="open()"
+            <button @click="open()" data-restore-trigger
+                    x-init="if (returnFocus) { $el.focus(); returnFocus = false; }"
                     class="px-3.5 py-1.5 bg-cp-blue/10 text-cp-blue hover:bg-cp-blue/20 font-medium rounded-md text-xs transition-colors inline-flex items-center gap-1.5"
                     data-testid="restore-to-wanted">
               <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3"/></svg>
@@ -190,7 +198,7 @@
           <template x-if="showPicker">
             <div class="flex items-center gap-1">
               <label for="restore-profile-{{ movie_id }}" class="sr-only">Quality profile</label>
-              <select id="restore-profile-{{ movie_id }}" x-model="selectedProfile"
+              <select id="restore-profile-{{ movie_id }}" x-model="selectedProfile" x-init="$el.focus()"
                       class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
                 <!-- Placeholder ONLY while there is nothing to pick. Bound to
                      state, and removed from the DOM by x-if once profiles
@@ -211,8 +219,8 @@
                 <span x-show="!restoring">Confirm</span>
                 <span x-show="restoring">Moving…</span>
               </button>
-              <button @click="showPicker = false"
-                      class="px-2 py-1.5 rounded-md text-[9px] font-medium bg-white/10 text-cp-muted hover:bg-white/20"
+              <button @click="cancel()"
+                      class="px-3 py-1.5 rounded-md text-xs font-medium bg-white/10 text-cp-muted hover:bg-white/20 disabled:opacity-50"
                       :disabled="restoring">
                 Cancel
               </button>
@@ -373,6 +381,7 @@ function profileEditor() {
 function restoreToWanted() {
   return {
     showPicker: false,
+    returnFocus: false,
     restoring: false,
     loading: false,
     loadError: false,
@@ -391,6 +400,28 @@ function restoreToWanted() {
       window.dispatchEvent(new CustomEvent('cp-toast', { detail: { message, type } }));
     },
 
+    // #14: the trigger button is inside <template x-if="!showPicker">, so
+    // opening the picker DELETES the element that had focus -- activeElement
+    // fell back to <body> and the next Tab resumed from the top of the
+    // document. Focus therefore has to be moved deliberately.
+    //
+    // It is moved by x-init ON the elements themselves (see the markup), not
+    // from here. Two earlier attempts looked the element up after flipping
+    // showPicker: first via $el -- which, inside a method reached from
+    // @click="open()" on the trigger, is that BUTTON, already detached by
+    // then -- and then via $root + $nextTick, which still ran before the
+    // nested <template x-if> content existed. A focus() interceptor on
+    // HTMLElement.prototype logged ZERO calls in both versions. Letting each
+    // element focus itself when it initialises removes the timing question
+    // entirely.
+    //
+    // `returnFocus` is how the re-created trigger knows to take focus back
+    // when the picker closes, rather than stealing it on first render.
+    cancel() {
+      this.returnFocus = true;
+      this.showPicker = false;
+    },
+
     async open() {
       this.showPicker = true;
       if (this.profiles.length === 0) {
@@ -400,11 +431,13 @@ function restoreToWanted() {
           const res = await fetch(CP.apiBase + '/profile.list/');
           const data = await res.json();
           if (data.success && data.list) {
-            // profile.list returns profiles in the same db.all('profile')
-            // order ProfilePlugin.default() reads its own limit=1 pick
-            // from, so the first non-hidden entry here IS the default --
-            // matching what movie.restore_to_wanted will resolve to on the
-            // server if this picker is left untouched.
+            // Ordering matches db.all('profile'), which is also what
+            // ProfilePlugin.default() takes its limit=1 pick from. Note the
+            // two can diverge: default() does NOT filter hidden profiles, so
+            // if the first profile is hidden the preselection below is not
+            // the server's default. That is cosmetic only -- confirmRestore()
+            // always sends an explicit profile_id, so what the user sees
+            // selected is what gets used.
             this.profiles = data.list.filter(p => !p.hide);
             if (this.profiles.length) {
               this.selectedProfile = this.profiles[0]._id;
@@ -416,9 +449,7 @@ function restoreToWanted() {
         } finally {
           this.loading = false;
         }
-        if (!this.profiles.length) {
-          this.loadError = true;
-        }
+
       }
     },
 

@@ -30,10 +30,26 @@ async function gotoSeededMovie(page: Page) {
     .then(() => true)
     .catch(() => false);
 
-  test.skip(!loaded,
-    `no seeded movie at /movie/${SEEDED_MOVIE_ID} -- either the seed did not run ` +
-    '(scripts/seed_e2e_data.py --data_dir=<dir> before starting the server), or ' +
-    'the detail partial took over 15s to load');
+  /*
+   * FAIL, don't skip.
+   *
+   * This used to be test.skip(!loaded, ...), and playwright.config.ts runs the
+   * seed with `|| true`. Between them, a broken seed made every FEAT-008 E2E
+   * test disappear into a green run -- the feature would look covered while
+   * nothing exercised it. The seed is load-bearing now, so its absence is a
+   * failure, not a reason to stand down.
+   *
+   * The message carries the fix, so a genuinely un-seeded environment gets an
+   * actionable error rather than a bare timeout.
+   */
+  expect(
+    loaded,
+    `No seeded movie at /movie/${SEEDED_MOVIE_ID}. Run ` +
+    '`.venv/bin/python scripts/seed_e2e_data.py --data_dir=.e2e-data` BEFORE ' +
+    'starting the server (playwright.config.ts does this for local runs; CI ' +
+    'does it in its own step). If the seed did run, the detail partial took ' +
+    'over 15s to load.',
+  ).toBe(true);
 }
 
 test.describe('Movie Detail', () => {
@@ -262,11 +278,18 @@ test.describe('Movie Detail', () => {
    * location.reload(), 900) on success -- reporting "Found 0" and reloading
    * whether or not a search actually ran. It now updates #movie-releases in
    * place via htmx and reports one of three outcomes (found N / found
-   * nothing / could not search, with a reason). The seeded movie always has
-   * a real profile (scripts/seed_e2e_data.py), so this exercises the
-   * "searched" path end to end; the no-profile / could-not-search path is
-   * covered at the unit level (tests/unit/test_search_releases_list_only.py)
-   * since there is no seed fixture for a profile-less movie.
+   * nothing / could not search, with a reason).
+   *
+   * WHICH outcome this produces depends on the environment, and in CI/local
+   * it is the could-not-search one: no downloader is enabled, so
+   * _searchReleases returns searched:false before contacting any provider.
+   * An earlier version of this comment claimed the seeded movie's real
+   * profile made this exercise the "searched" path end to end -- it does
+   * not, and the "Found N new releases" / "No new releases" message
+   * construction has no E2E coverage in any environment. It is covered at the
+   * unit level (tests/unit/test_search_releases_list_only.py). The assertions
+   * below therefore check the toast against whatever the API actually
+   * returned rather than assuming a branch.
    */
   test('the search action updates the release list in place, without a full page reload (FEAT-008)', async ({ page }) => {
     await gotoSeededMovie(page);
@@ -274,6 +297,23 @@ test.describe('Movie Detail', () => {
     const searchBtn = page.locator('[data-testid="search-releases"]');
     await expect(searchBtn).toBeVisible({ timeout: 5000 });
     const beforeUrl = page.url();
+
+    /*
+     * AC5 needs two things proved, and the URL cannot prove either:
+     * location.reload() does not change the URL, and #movie-releases exists
+     * from the initial render, so `url unchanged` + `#movie-releases visible`
+     * were both satisfied by a full reload AND by no update happening at all.
+     * Deleting the htmx.ajax call entirely, and replacing it with the old
+     * setTimeout(() => location.reload(), 900), both used to pass.
+     *
+     * 1. A sentinel on window: any document-level navigation wipes it.
+     * 2. A handle to the CURRENT #movie-releases node: the swap is
+     *    hx-swap="outerHTML", so a real in-place update REPLACES that node
+     *    and the old handle becomes detached.
+     */
+    await page.evaluate(() => { (window as any).__noReloadSentinel = 'alive'; });
+    const listNodeBefore = await page.locator('#movie-releases').elementHandle();
+    expect(listNodeBefore, 'no #movie-releases to swap').not.toBeNull();
 
     /*
      * Hold the search response open so the running state is OBSERVABLE.
@@ -301,8 +341,13 @@ test.describe('Movie Detail', () => {
     );
     await searchBtn.click();
 
-    // AC6: disabled and says so WHILE the search runs.
-    await expect(searchBtn).toBeDisabled();
+    // AC6: marked busy/disabled and says so WHILE the search runs.
+    // aria-disabled, not the `disabled` attribute: a focused button that
+    // becomes disabled is blurred by the browser, which dropped a keyboard
+    // user back to <body>. The attribute assertions are what the a11y
+    // behaviour now rests on.
+    await expect(searchBtn).toHaveAttribute('aria-disabled', 'true');
+    await expect(searchBtn).toHaveAttribute('aria-busy', 'true');
     // getByText + toBeVisible, NOT toContainText: textContent includes the
     // x-show-hidden "Searching…" span, so toContainText(/Searching/i) passed
     // while the button was idle AND enabled — it asserted nothing.
@@ -317,13 +362,25 @@ test.describe('Movie Detail', () => {
 
     // AC6: re-enables once finished -- "running" and "finished" must be
     // distinguishable.
-    await expect(searchBtn).toBeEnabled({ timeout: 10000 });
-    await expect(searchBtn).toContainText(/Search for releases/i);
+    await expect(searchBtn).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
+    // getByText + toBeVisible for the SAME reason as the "Searching…" check
+    // above: toContainText reads textContent, which includes the x-show-hidden
+    // sibling span, so it passed with the label permanently stuck on
+    // "Searching…". Fixing one instance and leaving the other was an oversight.
+    await expect(searchBtn.getByText('Search for releases')).toBeVisible();
 
-    // AC5: in place, not a reload -- same URL, release list still present
-    // (a reload would briefly navigate away then re-render it from scratch;
-    // an in-place htmx swap never changes the URL at all).
+    // AC5, for real this time: no navigation occurred...
     expect(page.url()).toBe(beforeUrl);
+    expect(
+      await page.evaluate(() => (window as any).__noReloadSentinel),
+      'the page navigated/reloaded — AC5 requires an in-place update',
+    ).toBe('alive');
+
+    // ...and the release list node was genuinely replaced by the outerHTML
+    // swap, so "in place" means updated, not merely "still there".
+    await expect
+      .poll(() => listNodeBefore!.evaluate((n) => n.isConnected), { timeout: 10000 })
+      .toBe(false);
     await expect(page.locator('#movie-releases')).toBeVisible();
 
     // A toast reporting the outcome must have appeared (AC5's "reports which
@@ -334,7 +391,11 @@ test.describe('Movie Detail', () => {
     // would also match the release list's own unrelated status text (e.g.
     // "No releases match the selected profile qualities").
     const toastRegion = page.locator('div.fixed.top-4.right-4[aria-live="polite"]');
-    await expect(toastRegion.getByRole('status').first()).toBeVisible({ timeout: 5000 });
+    // Either role: error toasts are role="alert" (they carry actionable
+    // failure reasons and should interrupt), everything else role="status".
+    // Which one appears depends on the environment, so match both.
+    const anyToast = toastRegion.getByRole('status').or(toastRegion.getByRole('alert'));
+    await expect(anyToast.first()).toBeVisible({ timeout: 5000 });
     /*
      * Assert against the outcome the API ACTUALLY reported, not a fixed
      * regex. AC3's whole point is that the three outcomes are distinguishable,
@@ -421,7 +482,89 @@ test.describe('Movie Detail', () => {
     // and the ordinary "Mark as Done" action (done/downloaded-only-hidden)
     // reappears, leaving the movie back in its original 'active' state for
     // any other spec that reads this same seeded movie.
-    await expect(page.locator('[data-testid="restore-to-wanted"]')).toHaveCount(0, { timeout: 10000 });
-    await expect(page.getByRole('button', { name: 'Mark as Done', exact: true })).toBeVisible({ timeout: 5000 });
+    // NOT toHaveCount(0) on the trigger: it lives inside
+    // <template x-if="!showPicker">, so it had already left the DOM when the
+    // picker opened -- that assertion was satisfied before the request was
+    // even sent. The reappearing "Mark as Done" action is the real signal
+    // that the detail body swapped and the movie is active again.
+    await expect(page.getByRole('button', { name: 'Mark as Done', exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('[data-testid="restore-to-wanted"]')).toHaveCount(0);
+  });
+
+  /*
+   * FEAT-008 a11y. Both behaviours below were broken and unguarded: activating
+   * either control deleted the element that had focus, and the running state
+   * of the search was conveyed only visually.
+   */
+  test('the search control keeps focus and announces that it started (FEAT-008 a11y)', async ({ page }) => {
+    await gotoSeededMovie(page);
+
+    const searchBtn = page.locator('[data-testid="search-releases"]');
+    await expect(searchBtn).toBeVisible({ timeout: 5000 });
+
+    // Hold the response open so the running state is observable at all.
+    let held = false;
+    await page.route(/movie\.searcher\.search_releases/, async (route) => {
+      held = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+
+    await searchBtn.focus();
+    await page.keyboard.press('Enter');
+
+    /*
+     * Focus must SURVIVE. The button used to take the `disabled` attribute
+     * while searching; the browser blurs a focused element when it becomes
+     * disabled, so activeElement fell back to <body> and the next Tab
+     * resumed from the top of the document. aria-disabled conveys the same
+     * state without moving focus.
+     */
+    const focused = await page.evaluate(
+      () => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName,
+    );
+    expect(focused, 'focus was destroyed by activating the search control').toBe('search-releases');
+
+    // And the start of the search must be ANNOUNCED, not just shown: the
+    // label swapping to "Searching…" is invisible to a screen reader.
+    const announcer = page.locator('[data-testid="search-announcer"]');
+    await expect(announcer).toHaveText(/searching/i);
+    await expect(searchBtn).toHaveAttribute('aria-busy', 'true');
+
+    expect(held, 'the search response was never held, so this raced').toBe(true);
+    await expect(searchBtn).toHaveAttribute('aria-disabled', 'false', { timeout: 10000 });
+  });
+
+  test('the restore picker moves focus in, and Escape returns it (FEAT-008 a11y)', async ({ page }) => {
+    await gotoSeededMovie(page);
+
+    /*
+     * Drive the movie to 'done' if it is not already, exactly as the sibling
+     * restore test does. Skipping instead (the first version of this test did)
+     * makes the whole a11y guard vanish green whenever suite ordering leaves
+     * the movie active -- which is what happened on its very first run.
+     */
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
+      await markDoneBtn.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+
+    await trigger.focus();
+    await page.keyboard.press('Enter');
+
+    // Opening removes the trigger (it is inside <template x-if="!showPicker">),
+    // so focus has to be moved deliberately or it lands on <body>.
+    const picker = page.locator('select[id^="restore-profile-"]');
+    await expect(picker).toBeVisible({ timeout: 5000 });
+    await expect(picker).toBeFocused();
+
+    // Escape must close it AND put focus back where it came from.
+    await page.keyboard.press('Escape');
+    await expect(picker).toHaveCount(0, { timeout: 5000 });
+    await expect(trigger).toBeFocused();
   });
 });
