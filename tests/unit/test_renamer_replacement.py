@@ -380,3 +380,91 @@ class TestAMissingSourceMidGroupStopsCleanup:
         assert rec.deleted_folders == [], (
             'cleaned up a source folder even though one file never moved'
         )
+
+
+# --- File actions and symlinked destinations ----------------------------
+#
+# Replacement stages to `<dst>.cp_incoming` and then os.replace()s it into
+# place. Two things follow from that, and both were wrong at first:
+#
+#   1. moveFile's `symlink_reversed` and hardlink-fallback actions point the
+#      DOWNLOAD's link at whatever `dest` they were handed. Handed the staging
+#      path, they leave the seeding torrent pointing at a name that no longer
+#      exists.
+#   2. os.replace() on a symlinked destination replaces the LINK with a real
+#      file, silently orphaning whatever it pointed at -- the split
+#      SSD-plus-NAS layout loses its structure and fills the small volume.
+
+
+class _RealMoverRecorder(_Recorder):
+    """Uses the real MoverMixin.moveFile, so file_action behaviour is genuine
+    rather than approximated by a stub. Test fixtures being gentler than
+    production has already hidden two defects on this branch."""
+
+    def install(self, monkeypatch):
+        monkeypatch.setattr(type(self.plugin), 'conf',
+                            lambda _self, key, default=None, **kw: self._conf.get(key, default),
+                            raising=False)
+        monkeypatch.setattr(type(self.plugin), 'deleteFolder',
+                            lambda _self, folder, **kw: self.deleted_folders.append(folder),
+                            raising=False)
+        monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent',
+                            lambda name, *a, **k: 'higher' if name == 'quality.ishigher' else None)
+
+
+class TestReverseSymlinkSurvivesAReplacement:
+
+    def test_the_download_link_points_at_the_real_file(self, scene, monkeypatch, tmp_path):
+        rec = _RealMoverRecorder(tmp_path, {
+            'remove_lower_quality_copies': True, 'cleanup': False,
+            'default_file_action': 'symlink_reversed', 'file_action': 'move',
+            'ntfs_permission': False,
+        })
+        rec.install(monkeypatch)
+        group = {'parentdir': scene['source_folder'], 'media': scene['media'],
+                 'meta_data': {'quality': {'identifier': '1080p', 'is_3d': 0}}}
+
+        rec.plugin._moveRenamedFiles({scene['src']: scene['dst']}, group)
+
+        assert Path(scene['dst']).read_text() == 'NEW BETTER COPY'
+        assert os.path.islink(scene['src']), 'the reverse symlink was not created'
+        assert os.path.realpath(scene['src']) == os.path.realpath(scene['dst']), (
+            'the seeding torrent points at the staging path, which os.replace '
+            'has already renamed away -- its file is now broken'
+        )
+        assert os.path.exists(scene['src']), 'dangling symlink in the download folder'
+
+
+class TestASymlinkedDestinationKeepsItsShape:
+
+    def test_replacing_through_a_symlink_writes_to_the_target(self, tmp_path, monkeypatch):
+        """A split library (small SSD + NAS) symlinks library entries at the
+        real storage. Replacing must follow the link, not clobber it."""
+        real = _make(tmp_path, 'nas/Some Movie.mkv', 'OLD ON THE NAS')
+        link_dir = tmp_path / 'library/Some Movie (2020)'
+        link_dir.mkdir(parents=True)
+        dst = str(link_dir / 'Some Movie.mkv')
+        os.symlink(real, dst)
+        src = _make(tmp_path, 'downloads/Some.Movie-GRP/movie.mkv', 'NEW BETTER COPY')
+
+        media = {'_id': 'movie-1', 'releases': [
+            {'_id': 'rel-old', 'status': 'done', 'quality': '720p', 'is_3d': False,
+             'files': {'movie': [dst]}},
+        ]}
+        rec = _Recorder(tmp_path, {'remove_lower_quality_copies': True, 'cleanup': True})
+        rec.install(monkeypatch)
+        monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent',
+                            lambda name, *a, **k: 'higher' if name == 'quality.ishigher' else None)
+
+        rec.plugin._moveRenamedFiles(
+            {src: dst},
+            {'parentdir': os.path.dirname(src), 'media': media,
+             'meta_data': {'quality': {'identifier': '1080p', 'is_3d': 0}}})
+
+        assert os.path.islink(dst), (
+            'replaced the symlink with a real file, orphaning the NAS copy and '
+            'filling the small volume'
+        )
+        assert Path(real).read_text() == 'NEW BETTER COPY', (
+            'wrote next to the link instead of through it'
+        )

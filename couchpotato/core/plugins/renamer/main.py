@@ -209,12 +209,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
             try:
                 if replacing:
+                    # Follow a symlinked destination to the file it points at.
+                    # Split libraries (small SSD + NAS) symlink library entries
+                    # at the real storage; os.replace on the LINK would swap in
+                    # a real file, orphaning the target and filling the small
+                    # volume. Replace what the user actually stores.
+                    target = os.path.realpath(dst) if os.path.islink(dst) else dst
+
                     # Stage beside the destination and swap atomically. The
                     # existing copy must not be destroyed until the incoming
                     # one is fully in place, or a failure mid-way leaves the
                     # user with neither. A sibling path keeps os.replace on one
                     # filesystem; the cross-device work is inside moveFile.
-                    staged = '%s.cp_incoming' % dst
+                    staged = '%s.cp_incoming' % target
                     try:
                         # Clear any staging file left by an interrupted run.
                         # moveFile refuses to write over an existing
@@ -226,7 +233,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                             log.warning('Removing a staging file left by an earlier run: %s', staged)
                             os.remove(staged)
                         self.moveFile(src, staged, use_default = True)
-                        os.replace(staged, dst)
+                        os.replace(staged, target)
+
+                        # moveFile's `symlink_reversed` and hardlink-fallback
+                        # actions point the DOWNLOAD back at whatever `dest`
+                        # they were handed -- here the staging path, which the
+                        # swap above has just renamed away. Re-point it at the
+                        # real file so a seeding torrent is not left with a
+                        # broken link.
+                        if os.path.islink(src) and not os.path.exists(src):
+                            os.unlink(src)
+                            os.symlink(target, src)
                     finally:
                         if os.path.exists(staged):
                             try:
