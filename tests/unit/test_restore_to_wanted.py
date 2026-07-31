@@ -22,7 +22,17 @@ from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.media.movie._base.main import MovieBase
 
 
-def make_update_with_retry(doc):
+def make_update_with_retry(doc, writes=None):
+    """As below, but `writes` (a list) records each actual write.
+
+    Needed because "the doc is unchanged" cannot distinguish "the guard
+    short-circuited" from "the mutator rewrote identical values" -- which is
+    exactly what an idempotent restore does. Only a write COUNT can see it.
+    """
+    return _make_update_with_retry(doc, writes)
+
+
+def _make_update_with_retry(doc, writes=None):
     """Mimic SQLiteAdapter.update_with_retry(mutator, doc_id) by applying the
     mutator to `doc` in place and returning it. Mirrors the helper of the
     same name in test_mark_done.py / test_watch_history.py."""
@@ -33,6 +43,8 @@ def make_update_with_retry(doc):
         # change needed" -- no write, return None.
         if result is False:
             return None
+        if writes is not None:
+            writes.append(dict(doc))
         return doc
     return _fake
 
@@ -200,7 +212,8 @@ class TestRestoreToWantedReleasesAndIdempotency:
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
-        db.update_with_retry.side_effect = make_update_with_retry(movie)
+        writes = []
+        db.update_with_retry.side_effect = make_update_with_retry(movie, writes)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
@@ -208,6 +221,7 @@ class TestRestoreToWantedReleasesAndIdempotency:
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True
+        assert writes == [], 'an already-active movie must not be written to'
         assert movie == before, 'an already-active movie must not be modified'
         assert not any(c.args[0] == 'profile.default' for c in fire.call_args_list), (
             'the movie has a valid profile; the default must not be resolved'
@@ -314,7 +328,8 @@ class TestIdempotenceStillHonoursTheProfileGuarantee:
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'existing-profile'})
-        db.update_with_retry.side_effect = make_update_with_retry(movie)
+        writes = []
+        db.update_with_retry.side_effect = make_update_with_retry(movie, writes)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
@@ -322,6 +337,7 @@ class TestIdempotenceStillHonoursTheProfileGuarantee:
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True
+        assert writes == [], 'wrote a movie that needed nothing done'
         assert movie == before, 'changed a movie that needed nothing done'
         assert movie['profile_id'] == 'existing-profile'
         assert not any(c.args[0] == 'profile.default' for c in fire.call_args_list), (

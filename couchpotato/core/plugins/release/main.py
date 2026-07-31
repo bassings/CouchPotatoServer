@@ -162,32 +162,6 @@ class Release(Plugin):
                         'profile_id': None,
                     }, search_after = False, update_after = update_info, notify_after = False, status = 'done', single = True)
 
-                # A rescan must not resurrect a release the user (or the app on
-                # their behalf) deliberately set aside. add() used to hardcode
-                # 'done' without ever reading the current status, so an
-                # unrelated maintenance action -- the Manage tab's "Update
-                # Library" button, or the library_refresh_interval cron --
-                # silently undid:
-                #   - tryNextRelease ("Try next release"), which marks the
-                #     snatched/done release 'ignored' so the searcher picks
-                #     something else;
-                #   - movie.restore_to_wanted (FEAT-008), which marks the held
-                #     releases 'ignored' so the movie is genuinely wanted again.
-                # In both cases the resurrected release re-finishes the movie
-                # via media.restatus and re-blocks the search via single()'s
-                # has_better_quality loop -- and on a manual_confirmation
-                # profile (the default) fires a false "downloaded -- awaiting
-                # review" notification for a movie never re-downloaded.
-                #
-                # 'failed' is preserved for the same reason: markFailedAndResearch
-                # sets it deliberately, and the file still being on disk does
-                # not mean the download was good.
-                DELIBERATE = ('ignored', 'failed')
-
-                def _scanned_status(existing_doc):
-                    current = (existing_doc or {}).get('status')
-                    return current if current in DELIBERATE else 'done'
-
                 release = None
                 if update_id:
                     try:
@@ -195,7 +169,7 @@ class Release(Plugin):
                         release.update({
                             'identifier': release_identifier,
                             'last_edit': int(time.time()),
-                            'status': _scanned_status(release),
+                            'status': 'done',
                         })
                     except Exception:
                         log.error('Failed updating existing release: %s', traceback.format_exc())
@@ -216,9 +190,6 @@ class Release(Plugin):
                     try:
                         r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
                         r['media_id'] = media['_id']
-                        # `release` was built fresh above with status 'done';
-                        # carry the existing doc's deliberate status across.
-                        release['status'] = _scanned_status(r)
                     except (RecordNotFound, KeyError):
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
