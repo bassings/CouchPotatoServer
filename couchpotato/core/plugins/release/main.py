@@ -694,6 +694,23 @@ class Release(Plugin):
             rel['status'] = status
             rel['last_edit'] = int(time.time())
 
+            # Backfill the copy identity at the moment a release is
+            # deliberately SET ASIDE, so a later library scan can tell "the
+            # copy that was set aside" from "a new copy at the same quality".
+            #
+            # Without this the feature is inert on every existing install:
+            # copy_id is only ever written by Release.add, there is no
+            # migration, and the set-aside guard needs a STORED id to compare
+            # against. Measured on a pre-FEAT-009 release doc -- restore,
+            # then a full scan, and the release was back to 'done' with the
+            # false "downloaded -- awaiting review" notification.
+            #
+            # Doing it here rather than in each caller covers all three
+            # features that set releases aside: movie.restore_to_wanted,
+            # tryNextRelease and markFailedAndResearch.
+            if status in ('ignored', 'failed') and not rel.get('copy_id'):
+                rel['copy_id'] = copyIdentity(rel.get('files'))
+
         try:
             db = get_db()
             wrote = db.update_with_retry(_mutate, release_id)

@@ -77,13 +77,25 @@ def world(tmp_path):
 
 
 def _restore(world):
+    """Drives the REAL Release.updateStatus for release.update_status.
+
+    An earlier version of this helper stubbed that event with a one-line
+    `status = ...` assignment -- and so skipped the copy-identity backfill that
+    lives inside the real implementation, hiding a defect that made the whole
+    feature inert on existing installs. A stub at a boundary is exactly where
+    these bugs have been hiding all along; this test exists to cross
+    boundaries, so it must not fake the far side of one.
+    """
     plugin = MovieBase.__new__(MovieBase)
+    release_plugin = Release.__new__(Release)
 
     def _fire(name, *a, **k):
         if name == 'release.for_media':
             return [world['docs']['rel-1']]
         if name == 'release.update_status':
-            world['docs']['rel-1']['status'] = k.get('status')
+            with patch('couchpotato.core.plugins.release.main.get_db', return_value=world['db']), \
+                    patch('couchpotato.core.plugins.release.main.fireEvent', return_value=None):
+                return release_plugin.updateStatus(a[0], status = k.get('status'))
         return None
 
     with patch('couchpotato.core.media.movie._base.main.get_db', return_value=world['db']), \
@@ -166,3 +178,42 @@ class TestTheWholeFlow:
             'the user really did download a new copy; this notification is the '
             'one they should get'
         )
+
+
+class TestAnExistingInstallWithNoCopyIdYet:
+    """The world every real user is actually in on the day this ships.
+
+    `copy_id` is written by Release.add, and there is no migration. So every
+    release doc that predates FEAT-009 has none -- and the set-aside guard
+    requires a STORED id to compare against. Without a backfill at the moment
+    the release is set aside, the very first restore is undone by the next full
+    scan and fires the false "downloaded -- awaiting review" notification this
+    branch has been chasing since round 3.
+
+    The test above did not catch this: its fixture pre-seeds
+    `copy_id`, so it only ever exercised the post-migration world. A fixture
+    that hands the code the state it needs is the "incidentally passing" trap
+    (CLAUDE.md section 11) -- and it hid a CRITICAL in the one test written
+    specifically to catch between-function failures.
+    """
+
+    def test_restore_backfills_the_identity_so_a_rescan_cannot_undo_it(self, world):
+        docs = world['docs']
+        del docs['rel-1']['copy_id']            # a pre-FEAT-009 release doc
+
+        assert _restore(world)['success'] is True
+        assert docs['rel-1']['status'] == 'ignored'
+        assert docs['rel-1'].get('copy_id'), (
+            'no identity recorded when the release was set aside, so the next '
+            'full scan has nothing to compare against and will resurrect it'
+        )
+
+        _library_scan(world)
+        assert docs['rel-1']['status'] == 'ignored', (
+            'a rescan undid the restore on an existing install -- the feature '
+            'is inert for every user who already has a library'
+        )
+
+        fired = _restatus(world)
+        assert docs['movie-1']['status'] == 'active'
+        assert 'movie.downloaded' not in fired, 'fired the false notification again'

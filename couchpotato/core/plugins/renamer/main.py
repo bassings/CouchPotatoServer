@@ -3,6 +3,7 @@ import os
 import traceback
 
 from couchpotato.api import addApiView
+from couchpotato import get_db
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog
@@ -109,6 +110,69 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             self.renaming_started = False
 
 
+
+    def _mayReplace(self, dst, group):
+        """May the incoming file overwrite what is already at `dst`?
+
+        Only when it is at least as good. The setting is "Remove LOWER/EQUAL
+        quality copies of a release after downloading" -- the comparison is the
+        whole point of it, and an earlier version of this method ignored it,
+        which turned an upgrade into data destruction: measured, a 720p
+        download overwrote a 2160p remux, unrecoverably.
+
+        That is reachable straight from FEAT-008. Restoring a movie marks the
+        held release 'ignored', so single()'s has_better_quality gate is 0 on
+        EVERY profile rung; the searcher walks the profile best-first, and if
+        the top rung finds nothing a lower rung downloads. The default naming
+        template carries no quality token, so it lands on exactly the path the
+        better copy occupies.
+
+        Fails SAFE: if the existing copy's quality cannot be determined, the
+        file on disk is kept. The caller then treats this as a skip, so the
+        download is left in place rather than deleted by cleanup -- the user
+        keeps both and can decide.
+        """
+        if not self.conf('remove_lower_quality_copies', default = True):
+            log.warning('Destination already exists and "Delete Others" is off, keeping it: %s', dst)
+            return False
+
+        incoming = (group.get('meta_data') or {}).get('quality') or {}
+        if not incoming.get('identifier'):
+            log.warning('Incoming quality unknown, keeping the existing file: %s', dst)
+            return False
+
+        media_info = group.get('media') or {}
+        existing = None
+        for release in media_info.get('releases') or []:
+            files = (release.get('files') or {}).get('movie') or []
+            if dst in files:
+                existing = release
+                break
+
+        if not existing or not existing.get('quality'):
+            log.warning('Cannot tell what quality %s is, keeping it', dst)
+            return False
+
+        try:
+            profile = fireEvent('profile.default', single = True)
+            if media_info.get('profile_id'):
+                profile = get_db().get('id', media_info['profile_id'])
+        except Exception:
+            profile = None
+
+        comparison = fireEvent(
+            'quality.ishigher',
+            {'identifier': incoming['identifier'], 'is_3d': incoming.get('is_3d', False)},
+            {'identifier': existing['quality'], 'is_3d': existing.get('is_3d', False)},
+            profile, single = True)
+
+        if comparison in ('higher', 'equal'):
+            return True
+
+        log.warning('Keeping the better copy at %s: incoming %s is %s than %s',
+                    dst, incoming['identifier'], comparison, existing['quality'])
+        return False
+
     def _moveRenamedFiles(self, rename_files, group):
         """Move each renamed file into the library, then clean up -- but only
         if there is nothing left behind.
@@ -139,8 +203,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             replacing = os.path.exists(dst)
-            if replacing and not self.conf('remove_lower_quality_copies', default = True):
-                log.warning('Destination already exists and "Delete Others" is off, keeping it: %s', dst)
+            if replacing and not self._mayReplace(dst, group):
                 skipped = True
                 continue
 
@@ -149,10 +212,27 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                     # Stage beside the destination and swap atomically. The
                     # existing copy must not be destroyed until the incoming
                     # one is fully in place, or a failure mid-way leaves the
-                    # user with neither.
+                    # user with neither. A sibling path keeps os.replace on one
+                    # filesystem; the cross-device work is inside moveFile.
                     staged = '%s.cp_incoming' % dst
-                    self.moveFile(src, staged, use_default = True)
-                    os.replace(staged, dst)
+                    try:
+                        # Clear any staging file left by an interrupted run.
+                        # moveFile refuses to write over an existing
+                        # destination, so without this ONE interrupted
+                        # replacement wedged this movie forever: every later
+                        # scan failed identically, and a full-size orphan the
+                        # scanner cannot see sat in the library folder.
+                        if os.path.exists(staged):
+                            log.warning('Removing a staging file left by an earlier run: %s', staged)
+                            os.remove(staged)
+                        self.moveFile(src, staged, use_default = True)
+                        os.replace(staged, dst)
+                    finally:
+                        if os.path.exists(staged):
+                            try:
+                                os.remove(staged)
+                            except OSError:
+                                log.error('Failed removing staging file %s', staged)
                     log.info('Replaced: %s -> %s', os.path.basename(src), dst)
                 else:
                     self.moveFile(src, dst, use_default = True)
