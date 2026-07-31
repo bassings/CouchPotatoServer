@@ -195,6 +195,22 @@ tailwind.config = {
       },
 
       init() {
+        // FEAT-008: components defined as plain x-data factory functions in
+        // <script> (e.g. movie_detail.html's restoreToWanted()) run their
+        // methods as ordinary JS, not as Alpine-evaluated directive
+        // expressions -- so a bare `toast(...)` call from inside one of
+        // those methods is a ReferenceError (it only resolves via Alpine's
+        // scope-walking when written inline in an @click="..." string, the
+        // way every OTHER toast() call in this codebase is). A window
+        // CustomEvent lets any such component request a toast without a
+        // direct reference to this component, matching the existing
+        // window.dispatchEvent(new CustomEvent(...)) idiom already used for
+        // cross-component signalling (partials/movie_info_modal.html,
+        // partials/charts.html, partials/suggestions.html,
+        // partials/search_results.html).
+        window.addEventListener('cp-toast', (evt) => {
+          this.toast(evt.detail?.message, evt.detail?.type, evt.detail?.duration);
+        });
         // FEAT-005: Global htmx toast notifications
         document.addEventListener('htmx:afterRequest', (evt) => {
           const url = evt.detail?.requestConfig?.path || '';

@@ -372,6 +372,16 @@ function restoreToWanted() {
 
     init() {},
 
+    // toast() (base.html's appShell()) is only reachable from an inline
+    // Alpine directive expression (@click="...toast(...)...") via Alpine's
+    // scope-walking -- a bare call from inside a REAL method like this one
+    // (as opposed to an expression string) is a ReferenceError, since it
+    // never goes through Alpine's `with(scope)` evaluation. Request one via
+    // the window CustomEvent appShell() listens for instead.
+    notify(message, type) {
+      window.dispatchEvent(new CustomEvent('cp-toast', { detail: { message, type } }));
+    },
+
     async open() {
       this.showPicker = true;
       if (this.profiles.length === 0) {
@@ -402,18 +412,18 @@ function restoreToWanted() {
         const res = await fetch(CP.apiBase + '/movie.restore_to_wanted/?media_id={{ movie_id }}&profile_id=' + this.selectedProfile);
         const data = await res.json();
         if (data.success) {
-          toast('Moved back to wanted', 'success');
+          this.notify('Moved back to wanted', 'success');
           // The WHOLE detail body changes (status badge, which action
           // buttons show, the release list) -- swap the same container
           // detail.html's initial hx-get targets, not just #movie-releases.
           htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}', { target: '#movie-detail-container', swap: 'innerHTML' });
         } else {
           this.restoring = false;
-          toast(data.error || 'Could not move back to wanted', 'error');
+          this.notify(data.error || 'Could not move back to wanted', 'error');
         }
       } catch (e) {
         this.restoring = false;
-        toast('Could not move back to wanted', 'error');
+        this.notify('Could not move back to wanted', 'error');
       }
     }
   };
