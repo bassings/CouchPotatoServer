@@ -70,8 +70,15 @@
         <input type="text" id="filter-movies" x-model="search" placeholder="Filter movies..." @input="filterMovies()"
                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
         <svg aria-hidden="true" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
-        <button x-show="search" @click="search = ''; filterMovies()" class="absolute right-2 top-1.5 text-cp-muted hover:text-cp-text p-0.5">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        <!-- Pre-existing on master, fixed here because the filtered-to-empty
+             panel makes this the control users reach for: it was an icon-only
+             button with NO accessible name (axe `button-name`, critical) at
+             18x18px (WCAG 2.2 AA 2.5.8 wants 24x24). The hit area is now 24x24
+             via padding while the icon stays the same size. -->
+        <button x-show="search" @click="search = ''; filterMovies()"
+                aria-label="Clear the title filter"
+                class="absolute right-1.5 top-0.5 flex items-center justify-center w-6 h-6 text-cp-muted hover:text-cp-text">
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
     </div>

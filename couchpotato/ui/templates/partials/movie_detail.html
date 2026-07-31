@@ -211,10 +211,15 @@
             </button>
           </template>
           <template x-if="showPicker">
-            <div class="flex items-center gap-1">
+            <!-- flex-wrap and a bounded select: a native <select> sizes to its
+                 WIDEST <option>, so one descriptively-named quality profile
+                 stretched this row to 441px inside a 393px phone viewport and
+                 pushed Cancel off-screen with no scroll affordance. Measured
+                 under the mobile-chrome project. -->
+            <div class="flex flex-wrap items-center gap-1 max-w-full">
               <label for="restore-profile-{{ movie_id }}" class="sr-only">Quality profile</label>
               <select id="restore-profile-{{ movie_id }}" x-model="selectedProfile" x-init="$el.focus()"
-                      class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
+                      class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30 min-w-0 max-w-[10rem] truncate">
                 <!-- Placeholder ONLY while there is nothing to pick. Bound to
                      state, and removed from the DOM by x-if once profiles
                      arrive -- a static "Loading…" option stayed forever, so a

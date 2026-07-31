@@ -273,7 +273,16 @@ class Release(Plugin):
                 release['files'] = dict((k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)
                 # Stored so the NEXT rescan has something to compare against;
                 # without it the guard above can never engage.
-                release['copy_id'] = scanned_copy_id
+                #
+                # Only when we actually computed one. copyIdentity returns None
+                # if a file cannot be stat'ed, and writing that None over a
+                # previously-stored id would destroy the set-aside identity
+                # permanently -- no later scan could recover it, even once the
+                # file is readable again. Narrow window (a file that becomes
+                # unreadable between enumeration and here), silent and
+                # irreversible cost.
+                if scanned_copy_id:
+                    release['copy_id'] = scanned_copy_id
                 db.update(release)
 
                 fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)

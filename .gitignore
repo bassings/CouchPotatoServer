@@ -56,3 +56,4 @@ mutants/
 # E2E test data dirs (any suffix) - never commit test data
 .e2e-*data/
 .claude/worktrees/
+.e2e-data-mobile

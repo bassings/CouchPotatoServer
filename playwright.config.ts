@@ -21,6 +21,18 @@ import { defineConfig, devices } from '@playwright/test';
  *      used: it does not exist on a stock macOS + Homebrew setup, which made the
  *      local E2E stage die with "python: command not found" before any test ran.
  */
+/*
+ * Data directory for the throwaway app instance.
+ *
+ * Overridable because the suite shares one server and one database, and specs
+ * mutate it: movie-detail deletes and re-adds, others change the seeded movie's
+ * status. A second Playwright invocation in the same gate run (scripts/verify.sh
+ * runs chromium, then mobile-chrome) would otherwise inherit whatever the first
+ * left behind — which is exactly how the mobile picker test failed after a
+ * green standalone run. Each invocation gets its own dir.
+ */
+const E2E_DATA_DIR = process.env.CP_E2E_DATA_DIR || '.e2e-data';
+
 const VENV_PYTHON = '.venv/bin/python';
 const PYTHON =
   process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
@@ -110,7 +122,18 @@ export default defineConfig({
     },
     /* Mobile viewport testing */
     {
+      /*
+       * Mobile viewport. Scoped with testMatch to `*.mobile.spec.ts` so this
+       * project runs ONLY the specs written for a small screen, which keeps it
+       * cheap enough to include in the gate (scripts/verify.sh).
+       *
+       * It previously matched every spec and was run by nothing — so the
+       * mobile dimension, which AGENTS.md flags high-priority, had never been
+       * exercised. The first review to check it found the restore picker
+       * overflowing at 441px on a 393px device.
+       */
       name: 'mobile-chrome',
+      testMatch: /.*\.mobile\.spec\.ts/,
       use: { ...devices['Pixel 5'] },
     },
   ],
@@ -142,8 +165,8 @@ export default defineConfig({
         // Interpreter resolution is explained at the top of this file (PYTHON).
         // CI is unaffected — it skips webServer entirely and starts its own server.
         command:
-          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=.e2e-data || true) && ` +
-          `${PYTHON} CouchPotato.py --data_dir=.e2e-data`,
+          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=${E2E_DATA_DIR} || true) && ` +
+          `${PYTHON} CouchPotato.py --data_dir=${E2E_DATA_DIR}`,
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
         /*
