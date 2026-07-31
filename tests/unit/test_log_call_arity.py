@@ -1,6 +1,14 @@
 """Guard: a log call must not pass a tuple where the format expects N arguments.
 
-`log.debug('a=%s b=%s', (a, b))` looks right and is not. Python's logging does
+`log.debug('a=%s b=%s', (a, b))` looks right and is not.
+
+Checked as an ARITY comparison rather than "is the argument a tuple?", because
+the tuple literal is only the most legible spelling of the mistake: a list, a
+variable already holding a pair, or a `tuple(...)` call all fail identically.
+Receivers `log`/`logger`/`self.log`/`self.logger` are all covered — anchoring on
+a bare `log` name missed every `self.log.*` call in the tree. `%(name)s` mapping
+style is exempt (it correctly takes a single dict), and `*args` is skipped as
+statically unknowable. Python's logging does
 `msg % self.args`, gets a 1-tuple containing a tuple, and raises
 ``TypeError: not enough arguments for format string``. Three consequences, all
 bad, and the third is why this is a security guard and not a style rule:
@@ -22,24 +30,50 @@ correct one.
 """
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SOURCE_ROOT = REPO_ROOT / "couchpotato"
+SOURCE_ROOTS = [REPO_ROOT / "couchpotato", REPO_ROOT / "scripts"]
 
 LOG_METHODS = {"debug", "info", "warning", "error", "critical", "exception"}
 
+# `%(name)s` style takes a SINGLE mapping, so one arg is correct there however
+# many placeholders appear. Excluding it is required, not cosmetic: without the
+# carve-out this flags the legitimate call at
+# couchpotato/core/media/_base/providers/base.py:409.
+MAPPING_PLACEHOLDER_RE = re.compile(r"%\([^)]+\)")
+
+# Positional conversions, including width/precision/flags (`%-10s`, `%.2f`).
+POSITIONAL_PLACEHOLDER_RE = re.compile(r"%[-+ #0]*\d*(?:\.\d+)?[hlL]?([diouxXeEfFgGcrsa])")
+
 
 def _placeholder_count(fmt: str) -> int:
-    # %% is a literal percent, not a placeholder.
-    return sum(fmt.replace("%%", "").count(f"%{c}") for c in "sdrifgex")
+    """Positional `%` placeholders only. `%%` is a literal percent."""
+    return len(POSITIONAL_PLACEHOLDER_RE.findall(fmt.replace("%%", "")))
+
+
+def _is_log_receiver(func: ast.Attribute) -> bool:
+    """`log.x`, `logger.x`, `self.log.x`, `cls.logger.x`, `mod.log.x`, ...
+
+    Anchoring on a bare `log` name missed `self.log.*` entirely — eight live
+    multi-placeholder calls in couchpotato/core/settings.py were outside the
+    guard for that reason alone.
+    """
+    recv = func.value
+    if isinstance(recv, ast.Name):
+        return recv.id in {"log", "logger"}
+    if isinstance(recv, ast.Attribute):
+        return recv.attr in {"log", "logger"}
+    return False
 
 
 def iter_bad_log_calls():
     """Yield (path, lineno, source_line) for every tuple-as-single-arg log call."""
-    for path in sorted(SOURCE_ROOT.rglob("*.py")):
+    for root in SOURCE_ROOTS:
+      for path in sorted(root.rglob("*.py")):
         if any(part in {"__pycache__"} for part in path.parts):
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
@@ -54,17 +88,26 @@ def iter_bad_log_calls():
             func = node.func
             if not (isinstance(func, ast.Attribute) and func.attr in LOG_METHODS):
                 continue
-            if not (isinstance(func.value, ast.Name) and func.value.id == "log"):
+            if not _is_log_receiver(func):
                 continue
             if not node.args or not isinstance(node.args[0], ast.Constant):
                 continue
             fmt = node.args[0].value
             if not isinstance(fmt, str):
                 continue
-            if _placeholder_count(fmt) < 2:
+            # `%(name)s` style consumes a single mapping — one arg is correct.
+            if MAPPING_PLACEHOLDER_RE.search(fmt):
                 continue
-            # The bug: exactly one extra arg, and it is a literal tuple.
-            if len(node.args) == 2 and isinstance(node.args[1], ast.Tuple):
+            expected = _placeholder_count(fmt)
+            if expected < 2:
+                continue
+            # Generalised from "is it a literal tuple?" to an ARITY check: any
+            # single argument feeding a multi-placeholder format is the bug,
+            # whether it is written as a tuple literal, a list, a variable, or a
+            # call. `*args` is unknowable statically, so it is left alone.
+            if any(isinstance(a, ast.Starred) for a in node.args):
+                continue
+            if len(node.args) - 1 == 1 and expected >= 2:
                 yield (
                     path.relative_to(REPO_ROOT),
                     node.lineno,
@@ -72,11 +115,11 @@ def iter_bad_log_calls():
                 )
 
 
-def test_no_log_call_passes_a_tuple_where_multiple_args_are_expected():
+def test_no_log_call_underfills_a_multi_placeholder_format():
     bad = list(iter_bad_log_calls())
     assert not bad, (
-        "these log calls pass a tuple as ONE argument to a multi-placeholder "
-        "format. At runtime they raise TypeError inside logging, the message is "
+        "these log calls pass ONE argument to a format expecting several. "
+        "At runtime they raise TypeError inside logging, the message is "
         "never emitted, and the raw arguments are dumped to stderr BYPASSING "
         "PrivacyFilter — which leaks any api_key in the arguments:\n"
         + "\n".join(f"  {p}:{n}: {src}" for p, n, src in bad)
