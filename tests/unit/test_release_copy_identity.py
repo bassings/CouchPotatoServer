@@ -195,3 +195,50 @@ class TestTheIdentityIsStored:
             'without storing it, the next rescan has nothing to compare '
             'against and the guard can never engage'
         )
+
+
+class TestAStoredIdentitySurvivesAScanThatCannotComputeOne:
+    """The identity must survive the path a LIBRARY SCAN actually takes.
+
+    `Release.add` has two write paths. The `update_id` one mutates the stored
+    doc, so anything already on it is carried along. The other builds a FRESH
+    dict, inherits only `_id`/`_rev`, and `SQLiteAdapter.update` replaces the
+    whole document -- so any field not explicitly copied is dropped.
+
+    `manage.updateLibrary` uses the fresh-dict path. So guarding the write with
+    `if scanned_copy_id:` protects nothing there: not writing the field means
+    the field is gone. The stored identity has to be carried forward
+    explicitly.
+
+    Caught by review, and by mutation: reverting the guard to an unconditional
+    write left all 1922 tests green, because every existing test asserted on
+    status and none on `copy_id`.
+    """
+
+    def test_an_unreadable_file_does_not_erase_the_stored_identity(self, tmp_path):
+        written = _run_add('ignored', 'STORED-IDENTITY-123',
+                           {'movie': ['/does/not/exist.mkv']})
+
+        assert written.get('copy_id') == 'STORED-IDENTITY-123', (
+            'a scan that could not stat the file dropped the stored identity, '
+            'so the set-aside marker is gone for good -- no later scan can '
+            'recover it even once the file is readable again'
+        )
+
+    def test_a_scan_with_no_movie_file_does_not_erase_it(self, tmp_path):
+        sub = _write(tmp_path, 'lib/Some Movie.srt', 'subs')
+
+        written = _run_add('ignored', 'STORED-IDENTITY-123', {'subtitle': [sub]})
+
+        assert written.get('copy_id') == 'STORED-IDENTITY-123'
+
+    def test_a_newly_computed_identity_still_replaces_the_stored_one(self, tmp_path):
+        """The other direction: carrying forward must not freeze the identity.
+        A genuinely new copy has to record its own."""
+        movie = _write(tmp_path, 'lib/Some Movie.mkv', 'B' * 9000)
+
+        written = _run_add('ignored', 'STORED-IDENTITY-123', {'movie': [movie]})
+
+        assert written.get('copy_id') == _copy_id_of([movie]), (
+            'kept a stale identity instead of recording the copy just scanned'
+        )

@@ -84,7 +84,7 @@ npm run test:unit || fail "UI unit tests failed"
 
 # ── 6. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
-  step "6/6 E2E tests (Playwright/chromium + mobile)"
+  step "6/6 E2E tests (Playwright: chromium + a11y + mobile)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
   npm run test:e2e -- --project=chromium || fail "E2E tests failed"
@@ -98,6 +98,14 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   rm -rf .e2e-data-mobile
   CP_E2E_DATA_DIR=.e2e-data-mobile npm run test:e2e -- --project=mobile-chrome \
     || fail "Mobile E2E tests failed"
+  # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
+  # the chromium project now testIgnores them -- previously they rode along in
+  # the chromium run, so without this line scoping the projects would have
+  # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
+  # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
+  # gate mirror it, which is the whole contract of this script.
+  rm -rf .e2e-data-a11y
+  CP_E2E_DATA_DIR=.e2e-data-a11y npm run test:a11y || fail "Accessibility tests failed"
 else
   step "6/6 E2E tests — SKIPPED (--no-e2e)"
 fi

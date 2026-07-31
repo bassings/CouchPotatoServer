@@ -55,30 +55,29 @@ test.describe('Small-screen layout', () => {
     await stubLongProfiles(page);
 
     /*
-     * Serve a NARROW release list.
+     * No release-list stub here, deliberately.
      *
-     * This is load-bearing, not tidiness. The real release table is ~940px in
-     * an overflow container, which stretches the layout viewport to ~562px --
-     * and in that stretched state the picker happens to fit, so the test passes
-     * while the bug is present. The state a done movie with no
-     * profile-matching releases actually renders is a genuinely 375px page,
-     * which is where the overflow bites. A fixture that hands the code an
-     * easier world than it meets cannot fail.
+     * An earlier version stubbed /partial/movie/<id>/releases and called it
+     * load-bearing. Instrumented with a hit counter it fired ZERO times: the
+     * release table is server-rendered inline on this route, so the stub never
+     * intercepted anything. Its stated mechanism was wrong too -- the table
+     * does not stretch the LAYOUT viewport (measured clientWidth 393,
+     * scrollWidth 562; only scroll width grows).
+     *
+     * None of that matters to this test, which is the point: the assertion
+     * measures the control row against the DEVICE width, so it holds whatever
+     * else is on the page. Verified by deleting the stub and re-running the
+     * both-fixes-reverted mutation -- still fails at 441px.
      */
-    await page.route(/\/partial\/movie\/[^/]+\/releases/, (route) =>
-      route.fulfill({
-        status: 200,
-        contentType: 'text/html',
-        body: '<div id="movie-releases"><p class="text-xs">No releases</p></div>',
-      }),
-    );
-
     await page.goto(`/movie/${SEEDED_MOVIE_ID}`);
     await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 15000 });
 
-    // Prove the precondition: this really is a 375px-wide page.
+    // The layout viewport matches the device (Pixel 5 is 393px, not 375).
+    // Kept as a sanity check on the device profile, NOT as proof of anything
+    // about the release table -- an earlier comment claimed the latter and was
+    // wrong; scrollWidth grows, clientWidth does not.
     const layoutWidth = await page.evaluate(() => document.documentElement.clientWidth);
-    expect(layoutWidth, 'the page is wider than the device; the overflow case is not being exercised')
+    expect(layoutWidth, 'unexpected layout viewport for this device profile')
       .toBe(page.viewportSize()!.width);
 
     const trigger = page.locator('[data-testid="restore-to-wanted"]');
@@ -139,6 +138,12 @@ test.describe('Small-screen layout', () => {
     await page.goto('/');
     await expect(page.locator('#movie-grid')).toBeAttached({ timeout: 10000 });
     await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+
+    // Wait for the control under test to be VISIBLE before scanning. axe skips
+    // hidden nodes, and Alpine's x-show had not flushed in 6 of 8 measured
+    // iterations immediately after fill() -- so a fast analyze() would pass
+    // with zero coverage, and only ever green. A silent false pass.
+    await expect(page.locator('#filter-movies ~ button')).toBeVisible();
 
     await expectNoHorizontalOverflow(page, 'wanted list with a filter applied');
 

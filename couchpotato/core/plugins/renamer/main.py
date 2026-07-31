@@ -3,7 +3,6 @@ import os
 import traceback
 
 from couchpotato.api import addApiView
-from couchpotato import get_db
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog

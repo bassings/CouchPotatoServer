@@ -262,6 +262,17 @@ jobs:
 
     - name: Run E2E tests
       run: npm run test:e2e -- --project=chromium
+
+    # Small-screen coverage. AGENTS.md treats a mobile layout regression that
+    # blocks a core flow as high-priority, and the mobile-chrome project sat
+    # configured-but-unrun for a long time -- the first review to exercise it
+    # found the restore picker overflowing at 441px on a 393px device. Scoped
+    # by testMatch to *.mobile.spec.ts, so this is seconds, not minutes.
+    # Its own data dir: the run above mutates the shared library.
+    - name: Run mobile E2E tests
+      env:
+        CP_E2E_DATA_DIR: .config-mobile
+      run: npm run test:e2e -- --project=mobile-chrome
     
     - name: Upload test artifacts
       uses: actions/upload-artifact@v7

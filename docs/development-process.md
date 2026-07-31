@@ -52,10 +52,13 @@ even alongside docs — is a **code change** and the gate applies. When in doubt
 run the gate.
 
 Run a clean-agent review on the full branch diff (vs `master`) and make it pass
-*before* pushing to the `claude-review` gate. Spawn ≥2 independent review
-subagents (`general-purpose`, which can both read and reason about the diff —
-not `Explore`, which is search-only) in parallel (e.g. one frontend/a11y, one
-backend/tests) against the diff with the AGENTS.md rubric.
+*before* pushing to the `claude-review` gate. Spawn ≥2 independent
+`code-reviewer` subagents (defined in `.claude/agents/code-reviewer.md`, which
+carries the persona, the evidence discipline and the AGENTS.md rubric) in
+parallel — e.g. one frontend/a11y, one backend/tests. Invoke them BY NAME
+rather than hand-writing a persona: prompts composed from memory are how the
+AGENTS.md rubric came to be skipped for ten consecutive review rounds, leaving
+four of its nine dimensions — including two it flags high-priority — unchecked.
 
 Give the reviewers the **currently-verified facts** below so they don't
 re-litigate things already confirmed *for the code as it stands* — but
@@ -258,10 +261,12 @@ practice it only happened nightly, which meant survivors went unreviewed and the
 
 ## Sonnet agent delegation
 
-Scott (Eggbert) plans and reviews — architecture, specs, QA. Claude Sonnet
-sub-agents do the coding: spawn agents (via the `Agent` tool with
-`model: "sonnet"`) for implementation tasks. Use `general-purpose` agents that
-can both edit and reason about the code.
+Scott (Eggbert) plans and reviews — architecture, specs, QA. Sonnet sub-agents
+do the coding: spawn the `implementer` agent (`Agent` tool,
+`subagent_type: "implementer"`), defined in `.claude/agents/implementer.md`,
+which carries the persona, the TDD and mutation discipline, and the
+commit-locally-never-push boundary. Invoke it by name rather than hand-writing
+a prompt.
 
 Workflow:
 1. Write a clear spec in `specs/` (problem, fix, acceptance criteria, files).

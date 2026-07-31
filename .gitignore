@@ -57,3 +57,4 @@ mutants/
 .e2e-*data/
 .claude/worktrees/
 .e2e-data-mobile
+.e2e-data-a11y

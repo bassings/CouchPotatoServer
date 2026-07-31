@@ -104,6 +104,14 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      /*
+       * Desktop projects must NOT run the small-screen specs. They pass at
+       * 1280px, where their assertions cannot fail -- a green that means
+       * nothing. Worse, the mobile spec's Mark-as-Done fallback mutates the
+       * shared seeded movie, so running it here also pollutes the desktop run.
+       * The a11y specs have their own project for the same reason.
+       */
+      testIgnore: /.*\.(mobile|a11y)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {

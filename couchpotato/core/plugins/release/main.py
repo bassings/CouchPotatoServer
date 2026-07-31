@@ -259,6 +259,14 @@ class Release(Plugin):
                         # when this scan found the same COPY it was set aside
                         # with.
                         release['status'] = _scanned_status(r)
+                        # Carry the stored identity too. This branch builds a
+                        # FRESH dict and db.update replaces the whole document,
+                        # so a field that is not copied is dropped -- and this
+                        # is the branch manage.updateLibrary takes. Guarding the
+                        # write below with `if scanned_copy_id:` protects
+                        # nothing here: not writing it means losing it.
+                        if r.get('copy_id'):
+                            release['copy_id'] = r['copy_id']
                     except (RecordNotFound, KeyError):
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
