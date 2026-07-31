@@ -55,8 +55,8 @@ the archived CouchPotato, fully modernised.
 7. **Git hygiene:** conventional commits; never commit secrets or test data
    (`test_data/` is gitignored — keep local backups). Secret scanning runs via
    the `secrets` CI job and `make check-secrets` (gitleaks over the working
-   tree) — it **reports but does not yet block**, as it is not in branch
-   protection, so read it rather than assuming a merge was gated on it. Adding a
+   tree) — and it is **enforced**: `secrets` is a required status check on
+   `master`, so a PR cannot merge with it red. Adding a
    fingerprint to `.gitleaksignore` requires a comment justifying it (enforced
    by `tests/unit/test_gitleaks_config.py`) — and rotation, not redaction, is
    the remedy for a real key.

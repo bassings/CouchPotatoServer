@@ -169,38 +169,22 @@ Required (i.e. enforced by branch protection on `master`, verified via
 `lint` (ruff **+ the test-trap guard**), `test-summary`, `ui-unit-tests`,
 `ui-e2e-tests`, `claude-review`, `Analyze (python)`, `Analyze (javascript)`,
 `dependency-review`, `docker`, `accessibility` (axe), `conformance`
-(`scripts/check_conformance.py` — design-system drift gate, added in #147).
+(`scripts/check_conformance.py` — design-system drift gate, added in #147),
+`secrets` (gitleaks — enabled 2026-07-31, immediately after #214 merged).
 
-**Runs but does NOT gate:** `secrets` (gitleaks) and `security-lint`. A PR can
-merge with either of them red, so do not describe secret scanning as *enforced*
-— it is *reported*. (`security-lint` is informational by design; see below.)
+**Runs but does NOT gate:** `security-lint` only — informational by design (see
+below). A PR can merge with it red.
 
-> ### ⚠️ ONE-TIME STEP, immediately after the branch adding the `secrets` job merges
->
-> Run this to make secret scanning an actual gate:
->
-> ```bash
-> gh api -X PATCH repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks \
->   -f 'strict=false' \
->   -f 'contexts[]=lint' -f 'contexts[]=test-summary' -f 'contexts[]=ui-unit-tests' \
->   -f 'contexts[]=ui-e2e-tests' -f 'contexts[]=claude-review' \
->   -f 'contexts[]=Analyze (python)' -f 'contexts[]=Analyze (javascript)' \
->   -f 'contexts[]=dependency-review' -f 'contexts[]=docker' \
->   -f 'contexts[]=accessibility' -f 'contexts[]=conformance' \
->   -f 'contexts[]=secrets'
-> ```
->
-> Then update this section and CLAUDE.md rule 7 to say *enforced*.
->
-> **Why after and not before:** a required context that the default branch's
-> workflow does not produce blocks every PR branched from it, forever, waiting
-> for a check that never reports. `secrets` only exists on the branch that adds
-> it, so enabling it early would deadlock any master-based PR opened in the
-> meantime — Dependabot opens those on a schedule. The ordering is the whole
-> point; the command above is safe only once `master` builds the job itself.
->
-> Verify afterwards with:
-> `gh api repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks --jq '.contexts'`
+`secrets` (gitleaks) **is** enforced as of 2026-07-31: it was added to `master`'s
+required status checks immediately after #214 merged, which is the first moment
+it was safe. Enabling it earlier would have deadlocked every PR branched from
+master, because a required context the default branch does not produce blocks
+those PRs forever — and Dependabot opens master-based PRs on a schedule. Verify
+with:
+
+```bash
+gh api repos/bassings/CouchPotatoServer/branches/master/protection/required_status_checks --jq '.contexts'
+```
 
 `ci.yml` uses `concurrency: cancel-in-progress: true` — a new push supersedes the
 in-flight run. Note this is deliberately **false** in `docker.yml` and
