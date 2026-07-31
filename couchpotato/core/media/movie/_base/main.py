@@ -330,34 +330,25 @@ class MovieBase(MovieTypeBase):
             #     happened to land the change first. Skipping the notify here
             #     would leave the user who pressed the button looking at stale
             #     UI whenever they lost a race they cannot see.
-            # The movie is 'active' now -- but that alone does not make it
-            # WANTED, because the release it already holds still counts as
-            # satisfying the profile in two separate places:
-            #   - media.restatus counts status == 'done' releases and finishes
-            #     the movie again on the next sweep (on a manual_confirmation
-            #     profile, into the review gate, with a false
-            #     "downloaded -- awaiting review" notification);
-            #   - single()'s has_better_quality loop counts it on the FIRST
-            #     profile rung and breaks before contacting any provider.
+            # Discount the copy the movie already holds.
             #
-            # Marking them 'ignored' addresses both through the mechanism the
-            # codebase already has: restatus only counts 'done', and
-            # has_better_quality explicitly skips
-            # ['available', 'ignored', 'failed'] (searcher.py). This mirrors
-            # markFailedAndResearch, which marks the landed release 'failed'
-            # for the same reason -- 'ignored' rather than 'failed' because
-            # nothing failed here; the user simply wants something better.
+            # Setting status='active' is not enough on a real install: every
+            # profile this app creates uses finish=True on every rung ("take
+            # the best thing available now, then stop"), so quality.isfinish is
+            # True for ANY held release. media.restatus would finish the movie
+            # again on the next sweep, and single()'s has_better_quality loop
+            # would break before contacting a provider. Marking the held
+            # releases 'ignored' addresses both -- restatus counts only 'done',
+            # and has_better_quality skips ('available', 'ignored', 'failed').
             #
-            # AC3 still holds: nothing is deleted and the release history stays
-            # visible. An earlier attempt instead stamped a timestamp on the
-            # MEDIA doc and had restatus discount older releases. That was
-            # unsound twice over -- it left has_better_quality untouched, so
-            # the movie sat in Wanted contacting zero providers forever, and
-            # release.add rewrites last_edit on any library rescan, which
-            # silently re-armed the original bug.
+            # 'ignored' rather than 'failed': nothing failed, the user just
+            # wants something better. Mirrors tryNextRelease, which marks the
+            # snatched/done release 'ignored' for exactly this reason.
             #
-            # Done after the status write, like markFailedAndResearch: if the
-            # write is a no-op or fails we must not touch releases.
+            # Durability is release.add's job -- see the per-copy rule there.
+            # A rescan used to rewrite this back to 'done', which is a
+            # PRE-EXISTING bug that already breaks tryNextRelease and
+            # markFailedAndResearch, not something this feature introduced.
             for rel in fireEvent('release.for_media', media_id, single = True) or []:
                 if rel.get('status') in ('done', 'seeding', 'downloaded'):
                     fireEvent('release.update_status', rel.get('_id'), status = 'ignored', single = True)

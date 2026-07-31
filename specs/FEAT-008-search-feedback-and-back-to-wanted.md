@@ -115,10 +115,34 @@ searcher would skip it on the very same gate. So this must assign a profile.
    wants something better. This mirrors `markFailedAndResearch`, which marks
    the landed release `failed` for the same structural reason.
 
-   Rejected alternative: stamping a timestamp on the media doc and having
-   `restatus` discount older releases. It addressed only the first of the two
-   consumers above, and `release.add` rewrites `last_edit` on any library
-   rescan, which silently re-armed the bug.
+   **Durability is `release.add`'s job.** A library rescan rebuilds the
+   release doc with a hardcoded `'done'`, so the mark has to survive that. The
+   rule there keys on the **copy**, not the quality rung: the deliberate status
+   is preserved only while the scanned file set is the one that was set aside.
+   This is a pre-existing platform bug, not something this feature introduced —
+   `tryNextRelease` and `markFailedAndResearch` both mark by status and have
+   both been silently undone by rescans.
+
+   **Rejected alternatives**, each of which shipped a new defect before being
+   caught:
+
+   1. *A timestamp on the media doc, with `restatus` discounting older
+      releases.* Addressed only `restatus`, not `has_better_quality`, so the
+      movie sat in Wanted contacting zero providers; and `release.add` rewrites
+      `last_edit` on any rescan, re-arming the bug.
+   2. *Preserving the status in `release.add` keyed on `release_identifier`.*
+      That identifier is `<imdb>.<audio>.<quality>` — a quality RUNG — so it
+      meant "never record any copy at this quality again": a re-downloaded
+      1080p landed on disk and was filed `ignored`, the movie never completed,
+      and the searcher re-grabbed it weekly. It also broke the two shipped
+      features above, `markFailedAndResearch` worst of all because a `failed`
+      row renders no action button.
+   3. *Requiring a profile that leaves room above what is held, and refusing
+      otherwise.* Sound in principle — measured, a movie on `[2160p, 1080p]`
+      holding 1080p searches and stays wanted with no intervention at all. But
+      every profile this app creates uses `finish=True` on every rung, so
+      `isFinish` is true for any held release and the refusal would reject
+      essentially every real restore.
 4. It is idempotent: calling it on an already-active movie is a no-op success.
 5. The movie appears in the Wanted view afterwards and is picked up by the
    automatic searcher (i.e. it passes the `single()` gate).

@@ -49,6 +49,23 @@ def _make_update_with_retry(doc, writes=None):
     return _fake
 
 
+def _fire_stub(isfinish=False, releases=None):
+    """fireEvent stand-in for tests that do not care about the profile check.
+
+    A bare MagicMock returns a truthy Mock for EVERY event, including
+    quality.isfinish -- which the restore pre-check correctly reads as "this
+    profile is already satisfied" and refuses. Tests that are about something
+    else need to say which answer they want.
+    """
+    def _fire(name, *a, **k):
+        if name == 'quality.isfinish':
+            return isfinish
+        if name == 'release.for_media':
+            return releases or []
+        return None
+    return _fire
+
+
 def _movie(status='done', profile_id=None, releases=None):
     return {
         '_id': 'movie-1',
@@ -110,6 +127,7 @@ class TestRestoreToWantedProfileResolution:
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = _fire_stub()
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True
@@ -128,7 +146,7 @@ class TestRestoreToWantedProfileResolution:
         db.update_with_retry.side_effect = make_update_with_retry(movie)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire_stub()):
             result = plugin.restoreToWanted('movie-1', profile_id='chosen-profile')
 
         assert result['success'] is True
@@ -245,7 +263,8 @@ class TestRestoreToWantedReleasesAndIdempotency:
         db.update_with_retry.side_effect = ConflictError('movie-1')
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent'), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent',
+                      side_effect=_fire_stub()), \
                 caplog.at_level(logging.WARNING, logger='couchpotato.core.media.movie._base.main'):
             result = plugin.restoreToWanted('movie-1')
 
@@ -378,6 +397,9 @@ class TestLosingTheCasRaceReportsTheWinnersState:
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            # Explicit: a bare Mock return for quality.isfinish reads as
+            # "profile already satisfied" and refuses before the race matters.
+            fire.side_effect = _fire_stub()
             result = plugin.restoreToWanted('movie-1', profile_id='profile-winner')
 
         assert result['success'] is True
@@ -430,93 +452,13 @@ class TestAnActiveMovieWithADanglingProfileIsRepaired:
         )
 
 
-class TestTheHeldReleasesAreIgnored:
-    """Setting status='active' is only half of a working restore. The release
-    the movie already holds still counts as satisfying the profile in BOTH
-    media.restatus (which finishes it again on the next sweep) and single()'s
-    has_better_quality loop (which breaks before contacting any provider), so
-    without this the movie either bounced straight back out of Wanted or sat
-    there forever contacting nothing.
-
-    Marking them 'ignored' is the mechanism the codebase already uses --
-    has_better_quality explicitly skips ('available', 'ignored', 'failed') and
-    restatus only counts 'done' -- and mirrors markFailedAndResearch.
-    """
-
-    def _restore_with_releases(self, releases, status='done'):
-        movie = _movie(status=status, profile_id='profile-1')
-        plugin = MovieBase.__new__(MovieBase)
-        db = MagicMock()
-        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
-        db.update_with_retry.side_effect = make_update_with_retry(movie)
-
-        updates = []
-
-        def _fire(name, *a, **k):
-            if name == 'release.for_media':
-                return releases
-            if name == 'release.update_status':
-                updates.append((a[0] if a else None, k.get('status')))
-            return None
-
-        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
-            result = plugin.restoreToWanted('movie-1')
-        return result, updates
-
-    def test_a_held_done_release_is_marked_ignored(self):
-        result, updates = self._restore_with_releases(
-            [{'_id': 'rel-1', 'status': 'done'}])
-
-        assert result['success'] is True
-        assert ('rel-1', 'ignored') in updates, (
-            'the held release still counts as satisfying the profile, so the '
-            'movie is not really wanted -- it will be finished again or never '
-            'searched'
-        )
-
-    def test_seeding_and_downloaded_releases_are_ignored_too(self):
-        _, updates = self._restore_with_releases([
-            {'_id': 'rel-seed', 'status': 'seeding'},
-            {'_id': 'rel-dl', 'status': 'downloaded'},
-        ])
-
-        assert ('rel-seed', 'ignored') in updates
-        assert ('rel-dl', 'ignored') in updates
-
-    def test_releases_that_never_completed_are_left_alone(self):
-        """Only what the movie actually HOLDS is discounted. An 'available'
-        release is a search result, not a copy the user has -- rewriting it
-        would throw away the list the UI shows."""
-        _, updates = self._restore_with_releases([
-            {'_id': 'rel-avail', 'status': 'available'},
-            {'_id': 'rel-failed', 'status': 'failed'},
-        ])
-
-        assert updates == [], 'rewrote releases the movie does not hold: %r' % updates
-
-    def test_a_refused_restore_does_not_touch_releases(self):
-        """AC2 / the scope guard: if the movie is not restored, its release
-        history must be left exactly as it was."""
-        movie = _movie(status='chart', profile_id='profile-1')
-        plugin = MovieBase.__new__(MovieBase)
-        db = MagicMock()
-        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
-        updates = []
-
-        def _fire(name, *a, **k):
-            if name == 'release.for_media':
-                return [{'_id': 'rel-1', 'status': 'done'}]
-            if name == 'release.update_status':
-                updates.append((a[0] if a else None, k.get('status')))
-            return None
-
-        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
-            result = plugin.restoreToWanted('movie-1')
-
-        assert result['success'] is False
-        assert updates == []
+# The class that stood here (TestTheHeldReleasesAreIgnored) tested an
+# ABANDONED design in which restore rewrote the movie's held releases to
+# 'ignored'. A library rescan undid that (release_identifier is a quality
+# RUNG, not a per-copy key), and the attempt to make the scanner preserve it
+# broke 'Try next release' and 'Mark Failed & re-search'. Restore no longer
+# touches releases at all -- see
+# TestRestoreUsesTheProfileInsteadOfRewritingReleases.
 
 
 class TestACallerSuppliedProfileIdIsNotTrusted:
@@ -575,7 +517,7 @@ class TestRestoreIsScopedToStatusesItMakesSenseFor:
         db.update_with_retry.side_effect = make_update_with_retry(movie)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire_stub()):
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is False
@@ -601,27 +543,38 @@ class TestRestoreIsScopedToStatusesItMakesSenseFor:
         db.update_with_retry.side_effect = make_update_with_retry(movie)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent'):
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire_stub()):
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True, 'refused the case the feature is for'
         assert movie['status'] == 'active'
 
 
-class TestRestoreIsARepairPathNotJustAStatusWrite:
-    """The idempotency short-circuit returned success BEFORE the release
-    marking ran, so an already-'active' movie whose held release was still
-    'done' could never be repaired: pressing "Move back to wanted" again
-    reported success and changed nothing, which is user-visibly identical to
-    working.
+class TestTheHeldReleasesAreDiscounted:
+    """Setting status='active' is not enough on a real install.
 
-    That state is reachable -- a library rescan used to resurrect the release
-    (fixed in test_release_add_preserves_ignored.py), and the marking loop can
-    partially fail since release.update_status swallows a persistent
-    ConflictError and returns False.
+    Every profile this app creates uses finish=True on every rung
+    (plugins/profile/main.py: "take the best thing available now, then stop"),
+    so quality.isfinish is True for ANY held release. Measured against the real
+    isFinish and the real single():
+
+        profile [1080p]         holding 1080p -> isFinish True,  0 searches
+        profile [2160p, 1080p]  holding 1080p -> isFinish False, 1 search
+
+    So on a default profile the movie would be finished again by the next
+    media.restatus, and single()'s has_better_quality loop would break before
+    contacting a provider. Marking the held releases 'ignored' addresses both:
+    restatus counts only 'done', and has_better_quality skips
+    ('available', 'ignored', 'failed').
+
+    Durability is release.add's job -- see
+    tests/unit/test_release_add_preserves_ignored.py. Relying on a profile that
+    leaves room instead was considered and rejected: it would refuse essentially
+    every real restore, because no default profile leaves room.
     """
 
-    def _restore(self, movie, releases):
+    def _restore(self, releases, status='done'):
+        movie = _movie(status=status, profile_id='profile-1')
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
@@ -638,25 +591,42 @@ class TestRestoreIsARepairPathNotJustAStatusWrite:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
             result = plugin.restoreToWanted('movie-1')
-        return result, updates
+        return result, movie, updates
 
-    def test_an_already_active_movie_with_a_held_release_is_repaired(self):
-        movie = _movie(status='active', profile_id='profile-1')
-
-        result, updates = self._restore(movie, [{'_id': 'rel-1', 'status': 'done'}])
+    def test_a_held_done_release_is_marked_ignored(self):
+        result, _, updates = self._restore([{'_id': 'rel-1', 'status': 'done'}])
 
         assert result['success'] is True
         assert ('rel-1', 'ignored') in updates, (
-            'reported success without discounting the held release, so the '
-            'movie is still not really wanted and there is no way to fix it'
+            'the held release still satisfies the profile, so the next sweep '
+            'finishes the movie again and no search ever runs'
         )
 
-    def test_it_is_still_a_no_op_when_there_is_nothing_to_repair(self):
-        """The other direction: a genuinely-restored movie must not be
-        rewritten on every call."""
-        movie = _movie(status='active', profile_id='profile-1')
+    def test_seeding_and_downloaded_releases_are_discounted_too(self):
+        _, _, updates = self._restore([
+            {'_id': 'rel-seed', 'status': 'seeding'},
+            {'_id': 'rel-dl', 'status': 'downloaded'},
+        ])
 
-        result, updates = self._restore(movie, [{'_id': 'rel-1', 'status': 'ignored'}])
+        assert ('rel-seed', 'ignored') in updates
+        assert ('rel-dl', 'ignored') in updates
 
-        assert result['success'] is True
-        assert updates == [], 'rewrote a release that was already ignored'
+    def test_releases_the_movie_does_not_hold_are_left_alone(self):
+        """An 'available' release is a search RESULT, not a copy the user has --
+        rewriting it would throw away the list the UI shows."""
+        _, _, updates = self._restore([
+            {'_id': 'rel-avail', 'status': 'available'},
+            {'_id': 'rel-failed', 'status': 'failed'},
+        ])
+
+        assert updates == [], 'rewrote releases the movie does not hold: %r' % updates
+
+    def test_a_refused_restore_does_not_touch_releases(self):
+        result, movie, updates = self._restore(
+            [{'_id': 'rel-1', 'status': 'done'}], status='chart')
+
+        assert result['success'] is False
+        assert updates == []
+        assert movie['status'] == 'chart'
+
+
