@@ -180,8 +180,15 @@ class MovieBase(MovieTypeBase):
         a stale/deleted reference is not trusted), then the default profile
         -- and refuses (AC2) rather than create an unsearchable entry.
 
-        Releases are never touched: only `status`/`profile_id` change, so a
-        'done' release survives exactly as AC3 requires.
+        Nothing is deleted, so a 'done' release survives as AC3 requires --
+        but the releases the movie already HOLDS are marked 'ignored', because
+        a held release still counts as satisfying the profile in both
+        media.restatus and single()'s has_better_quality loop. Until both stop
+        counting it the movie is not really wanted: it either bounces straight
+        back out of Wanted (with a false "downloaded -- awaiting review"
+        notification on a manual_confirmation profile) or sits there
+        contacting no providers at all. See the AC3 section of
+        specs/FEAT-008-search-feedback-and-back-to-wanted.md.
         """
         if not media_id:
             return {'success': False, 'error': 'No media_id given'}
@@ -194,18 +201,24 @@ class MovieBase(MovieTypeBase):
             except (RecordNotFound, KeyError):
                 return {'success': False, 'error': 'Media not found'}
 
-            # AC4: idempotent -- calling this on an already-active movie is a
-            # no-op success rather than an error, so a UI that doesn't track
-            # local state precisely can call it freely.
+            # AC4 (idempotence) is enforced by the CAS mutator below, which
+            # returns False -- no write -- when the movie is already active
+            # with a profile. There is deliberately NO early return here.
             #
-            # But only when the movie is genuinely in the state this method
-            # promises. An 'active' movie with no resolvable profile is
-            # UNSEARCHABLE -- single()'s gate skips it -- so returning success
-            # there reported a job done that was not: AC1's profile guarantee
-            # is half of what "wanted" means. Fall through and fix the profile
-            # in that case; the status write is then a no-op anyway.
-            if media.get('status') == 'active' and self.existingProfileId(db, media):
-                return {'success': True, 'media': media}
+            # There used to be, and it made this method a status write rather
+            # than a REPAIR. "Already active" does not mean "already wanted":
+            # the movie can be active while still holding a 'done' release
+            # that re-finishes it through media.restatus and blocks the search
+            # through single()'s has_better_quality loop. Returning early
+            # skipped the release-marking below, so pressing "Move back to
+            # wanted" on such a movie reported success and changed nothing --
+            # indistinguishable from working, with no way to fix it.
+            #
+            # That state is reachable: release.add used to resurrect an
+            # ignored release on any library rescan, and release.update_status
+            # swallows a persistent ConflictError, so the marking can also
+            # partially fail. Making every call converge on the intended state
+            # is what makes this safe to press twice.
 
             # Scope guard, mirroring markFailedAndResearch's discipline: only
             # the statuses this feature is written for. Without it ANY status

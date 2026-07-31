@@ -1143,3 +1143,87 @@ class TestAProfileWithNoQualitiesIsNotACompletedSearch:
 
         assert result['searched'] is True
         assert single.called is True
+
+
+class TestTheMoviesOwnEmptyProfileIsNotMaskedByTheDefault:
+    """Residual half of the AC4 hole, and the reachable configuration.
+
+    _resolvableProfileId falls back to the DEFAULT profile when the movie's own
+    profile has no qualities -- but single() does not: it uses
+    movie['profile_id'] whenever it is truthy and resolvable. So whenever a
+    healthy default exists (the normal case) the pre-flight passed on the
+    default while single() iterated the movie's EMPTY one, contacted no
+    provider, and the view reported 'searched: true, found: 0'.
+
+    The earlier test for this stubbed profile.default -> None, so it only
+    covered the case where BOTH profiles are unusable -- passing for a
+    configuration that is not the reachable one.
+    """
+
+    def test_a_healthy_default_does_not_mask_the_movies_empty_profile(self, searcher):
+        movie = _movie(status='done')
+        movie['profile_id'] = 'empty-profile'
+
+        def _fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'searcher.protocols':
+                return ['nzb']
+            if name == 'profile.default':
+                return {'_id': 'good-default'}      # a perfectly healthy default
+            return None
+
+        def _get(index_name, key):
+            if key == 'empty-profile':
+                return {'_id': 'empty-profile', 'qualities': []}
+            if key == 'good-default':
+                return _profile()
+            raise KeyError(key)
+
+        db = MagicMock()
+        db.get.side_effect = _get
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=_fire), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert result['searched'] is False, (
+            'the pre-flight approved the DEFAULT profile while single() would '
+            "iterate the movie's own empty one, contacting no provider"
+        )
+        assert single.called is False
+
+
+class TestADatabaseFaultIsNotReportedAsAMissingProfile:
+    """A DB fault used to surface as "No quality profile is configured", which
+    sends the user off to create a profile they already have. Mutation-caught:
+    changing the handler to `except ZeroDivisionError` left the whole suite
+    green, so the branch was shipped untested.
+    """
+
+    def test_it_says_the_profiles_could_not_be_read(self, searcher):
+        movie = _movie(status='done')
+
+        def _fire(name, *a, **k):
+            if name == 'media.get':
+                return movie
+            if name == 'searcher.protocols':
+                return ['nzb']
+            return None
+
+        db = MagicMock()
+        db.get.side_effect = RuntimeError('database is locked')
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=_fire), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert result['searched'] is False
+        assert single.called is False
+        reason = result.get('reason', '').lower()
+        assert 'read' in reason and 'profile' in reason, (
+            'a database fault must not be reported as a configuration problem: %r'
+            % result.get('reason')
+        )

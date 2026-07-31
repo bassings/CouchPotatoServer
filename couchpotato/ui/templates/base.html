@@ -206,11 +206,17 @@ tailwind.config = {
         const id = ++this._toastId;
         this.toasts.push({ id, message, type });
         // Announce through the persistent regions, not the toast node.
-        if (type === 'error') {
-          this.assertiveAnnouncement = message;
-        } else {
-          this.politeAnnouncement = message;
-        }
+        //
+        // Cleared first, then set on the next tick: assigning the SAME string
+        // is a no-op under Alpine's reactivity, so x-text never mutates and a
+        // repeated message is announced zero times. Reachable in two clicks --
+        // press "Search for releases" twice with no downloader enabled and the
+        // identical error toast renders twice. (The previous per-toast-node
+        // shape mutated on every message, so this would have been a regression
+        // on the exact axis the persistent region exists to improve.)
+        const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+        this[region] = '';
+        this.$nextTick(() => { this[region] = message; });
         setTimeout(() => this.dismissToast(id), duration);
       },
 
@@ -421,14 +427,20 @@ tailwind.config = {
   tests/unit/test_releases_partial_route.py pins for the release-count
   announcer, and partials/settings/categories.html already follows it.
 
-  The visual stack is therefore aria-hidden, so a message is announced once.
+  The visual stack below carries no role and no aria-live and has no live
+  ancestor, so nothing announces it -- a message is announced exactly once
+  without needing aria-hidden. It deliberately does NOT have aria-hidden: the
+  toasts contain a real focusable Dismiss button, and aria-hidden does not
+  remove anything from the tab order, so that would leave a keyboard user able
+  to focus a control assistive tech reports as nothing (axe
+  `aria-hidden-focus`, WCAG 4.1.2).
 -->
 <div class="sr-only" aria-live="polite" aria-atomic="true"
      data-testid="toast-announcer-polite" x-text="politeAnnouncement"></div>
 <div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"
      data-testid="toast-announcer-assertive" x-text="assertiveAnnouncement"></div>
 
-<div data-testid="toast-region" aria-hidden="true" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+<div data-testid="toast-region" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
   <template x-for="t in toasts" :key="t.id">
     <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
          :class="{

@@ -227,10 +227,20 @@
                   <option :value="p._id" x-text="p.label"></option>
                 </template>
               </select>
+              <!-- aria-disabled, not `disabled`: the browser BLURS a focused
+                   element when it becomes disabled, so a keyboard user pressing
+                   this lost their place to <body> and the next Tab restarted at
+                   the top of the document. Same fix as the search button; the
+                   handler guards re-entry. `!selectedProfile` still uses the
+                   real attribute -- that state is present before any keypress,
+                   so nothing is focused to lose. -->
               <button @click="confirmRestore()"
                       class="px-3 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50"
                       data-testid="restore-to-wanted-confirm"
-                      :disabled="restoring || !selectedProfile">
+                      :class="restoring ? 'opacity-50 cursor-wait' : ''"
+                      :aria-busy="restoring ? 'true' : 'false'"
+                      :aria-disabled="restoring ? 'true' : 'false'"
+                      :disabled="!selectedProfile">
                 <span x-show="!restoring">Confirm</span>
                 <span x-show="restoring">Moving…</span>
               </button>
@@ -513,7 +523,9 @@ function restoreToWanted() {
     },
 
     async confirmRestore() {
-      if (!this.selectedProfile) return;
+      // Re-entry guard: the button stays focusable (aria-disabled) so focus
+      // survives, which means a second Enter can still reach this.
+      if (this.restoring || !this.selectedProfile) return;
       this.restoring = true;
       try {
         const res = await fetch(CP.apiBase + '/movie.restore_to_wanted/?media_id={{ movie_id }}&profile_id=' + this.selectedProfile);

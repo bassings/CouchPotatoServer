@@ -453,9 +453,69 @@ test.describe('Accessibility', () => {
     await expect(assertive).toHaveText('No enabled downloader');
 
     // The visual stack must not also be announced, or every message is
-    // spoken twice.
-    await expect(page.locator('[data-testid="toast-region"]'))
-      .toHaveAttribute('aria-hidden', 'true');
+    // spoken twice -- but it must NOT be aria-hidden either, because it
+    // contains a focusable Dismiss button and aria-hidden does not remove
+    // anything from the tab order (axe aria-hidden-focus, WCAG 4.1.2).
+    // Silence comes from carrying no role and no live region at all.
+    const region = page.locator('[data-testid="toast-region"]');
+    await expect(region).not.toHaveAttribute('aria-hidden', 'true');
+    const toast = region.locator('[data-testid="toast"]').first();
+    await expect(toast).not.toHaveAttribute('role', /.+/);
+    await expect(toast).not.toHaveAttribute('aria-live', /.+/);
+
+    // And prove it with axe, which is what would catch the aria-hidden-focus
+    // regression: scan with toasts actually on screen.
+    const results = await new AxeBuilder({ page })
+      .include('[data-testid="toast-region"]')
+      .withRules(['aria-hidden-focus'])
+      .analyze();
+    expect(
+      results.violations.map(v => v.nodes.map(n => n.html).join('; ')),
+      'a focusable control is hidden from assistive tech',
+    ).toEqual([]);
+  });
+
+
+  test('a repeated identical toast is announced every time', async ({ page }) => {
+    /*
+     * Assigning the same string to the announcement state is a no-op under
+     * Alpine's reactivity, so x-text never mutates and the live region stays
+     * silent. Measured before the fix: two identical messages produced ONE
+     * live-region mutation.
+     *
+     * Reachable in one click-click: press "Search for releases" twice with no
+     * downloader enabled and the same error toast renders twice. The previous
+     * shape (a new node per toast) mutated on every message including repeats,
+     * so this was a regression on the very axis the persistent region was
+     * meant to improve.
+     */
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+    const polite = page.locator('[data-testid="toast-announcer-polite"]');
+    await expect(polite).toBeAttached();
+
+    await page.evaluate(() => {
+      (window as any).__liveMutations = 0;
+      const el = document.querySelector('[data-testid="toast-announcer-polite"]')!;
+      new MutationObserver(() => { (window as any).__liveMutations++; })
+        .observe(el, { childList: true, characterData: true, subtree: true });
+    });
+
+    const say = () => page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'No new releases', type: 'success' },
+      }));
+    });
+
+    await say();
+    await expect(polite).toHaveText('No new releases');
+    await say();
+    // Two identical announcements must produce more than one mutation, or the
+    // second is never spoken.
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__liveMutations), { timeout: 5000 })
+      .toBeGreaterThan(1);
+    await expect(polite).toHaveText('No new releases');
   });
 
   test('Color contrast should be sufficient', async ({ page }) => {

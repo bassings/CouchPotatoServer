@@ -562,41 +562,44 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                      'reason': 'An unexpected error occurred while searching'}
 
     def _resolvableProfileId(self, profile_id):
-        """The profile this search would actually use, or None.
+        """The id of the profile this search will ACTUALLY use, or None if it
+        cannot produce a search.
 
-        Mirrors the resolution single() performs: the movie's own profile if it
-        still exists, else the default. Used by _searchReleases to pre-flight
-        AC4 -- "could not search" needs to cover a DANGLING profile reference,
-        not just a missing one, because both end with single() returning
-        without contacting a provider.
+        This must mirror single()'s own resolution exactly, or the pre-flight
+        approves one profile while the search uses another. In particular:
+        single() falls back to the default only when the movie's profile_id is
+        missing or does NOT RESOLVE -- never because it resolved to something
+        unusable. Checking "movie's profile, else default" in a different order
+        meant a healthy default masked a movie whose own profile had no
+        qualities, and the view reported a completed search after contacting no
+        provider.
+
+        The qualities check is the second half of AC4: single() iterates
+        profile['qualities'], so an EMPTY list contacts nothing at all.
+        forceDefaults strips ''/'-1' entries (plugins/profile/main.py), so an
+        empty qualities list is reachable, not hypothetical.
         """
         db = get_db()
 
-        def _usable(candidate):
-            """Resolves AND has something to search for.
-
-            The qualities check matters: single() iterates
-            profile['qualities'], so an EMPTY one contacts no provider at all
-            while _searchReleases happily reported 'searched: true, found: 0'.
-            forceDefaults strips '' / '-1' entries (plugins/profile/main.py),
-            so an empty qualities list is reachable, not hypothetical.
-            """
+        def _resolve(candidate):
             if not candidate:
                 return None
             try:
-                doc = db.get('id', candidate)
+                return db.get('id', candidate)
             except (RecordNotFound, KeyError):
                 return None
-            if not (doc or {}).get('qualities'):
-                return None
-            return candidate
 
-        resolved = _usable(profile_id)
-        if resolved:
-            return resolved
+        used_id = profile_id
+        profile = _resolve(profile_id)
 
-        default_profile = fireEvent('profile.default', single = True)
-        return _usable((default_profile or {}).get('_id'))
+        if profile is None:
+            default_profile = fireEvent('profile.default', single = True)
+            used_id = (default_profile or {}).get('_id')
+            profile = _resolve(used_id)
+
+        if not profile or not profile.get('qualities'):
+            return None
+        return used_id
 
     def _searchReleases(self, media_id):
         """FEAT-008 AC3: the response distinguishes three outcomes so the UI

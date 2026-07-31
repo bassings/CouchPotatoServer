@@ -410,16 +410,13 @@ test.describe('Movie Detail', () => {
 
     // A toast reporting the outcome must have appeared (AC5's "reports which
     // of the three outcomes occurred"). Scoped to the toast region's own
-    // own wrapper (base.html), addressed by data-testid -- role="status"
-    // alone would also match the release list's own unrelated status text
-    // (e.g. "No releases match the selected profile qualities"), and the
-    // sr-only release-count announcer in detail.html is live too. Liveness
-    // now sits on each toast rather than the wrapper, so the wrapper is no
-    // longer identifiable by aria-live.
+    // own wrapper (base.html), addressed by data-testid. role="status" alone
+    // would also match the release list's own unrelated status text (e.g.
+    // "No releases match the selected profile qualities"), and the toasts
+    // themselves deliberately carry no role at all -- announcement happens
+    // through the persistent sr-only regions in the shell, not these nodes.
     const toastRegion = page.locator('[data-testid="toast-region"]');
-    // Either role: error toasts are role="alert" (they carry actionable
-    // failure reasons and should interrupt), everything else role="status".
-    // Which one appears depends on the environment, so match both.
+    // The visual toasts have no role -- they are addressed by data-testid.
     const anyToast = toastRegion.locator('[data-testid="toast"]');
     await expect(anyToast.first()).toBeVisible({ timeout: 5000 });
     /*
@@ -654,5 +651,49 @@ test.describe('Movie Detail', () => {
       .toBeEnabled({ timeout: 15000 });
     await expect(page.locator('[data-testid="toast-region"]'))
       .toContainText(/could not refresh|reload/i, { timeout: 5000 });
+  });
+
+  test('confirming a restore keeps keyboard focus (FEAT-008 a11y)', async ({ page }) => {
+    /*
+     * The Confirm button used the `disabled` attribute while restoring, and
+     * the browser BLURS a focused element when it becomes disabled --
+     * measured: focus went to BODY mid-flight and stayed there. This is the
+     * third instance of the same defect on this branch (search button, picker
+     * trigger), and the only one that runs on every SUCCESSFUL restore.
+     *
+     * The response is held open so the busy state is observable at all.
+     */
+    await gotoSeededMovie(page);
+
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDoneBtn = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDoneBtn).toBeVisible({ timeout: 5000 });
+      await markDoneBtn.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+    await trigger.click();
+
+    const keepProfile = await seededMovieProfileId(page);
+    await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
+
+    let held = false;
+    await page.route(/movie\.restore_to_wanted/, async (route) => {
+      held = true;
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      await route.continue();
+    });
+
+    const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
+    await confirmBtn.focus();
+    await page.keyboard.press('Enter');
+
+    const focused = await page.evaluate(
+      () => document.activeElement?.getAttribute('data-testid') ?? document.activeElement?.tagName,
+    );
+    expect(focused, 'focus was destroyed by confirming the restore').toBe('restore-to-wanted-confirm');
+    await expect(confirmBtn).toHaveAttribute('aria-busy', 'true');
+    expect(held, 'the restore response was never held, so this raced').toBe(true);
   });
 });

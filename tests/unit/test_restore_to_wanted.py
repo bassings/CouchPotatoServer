@@ -187,20 +187,30 @@ class TestRestoreToWantedReleasesAndIdempotency:
         assert movie['releases'] == expected, 'releases must be untouched'
 
     def test_is_a_no_op_success_on_an_already_active_movie(self):
-        """AC4: idempotent -- must not error, and must not write anything."""
+        """AC4: idempotent -- must not error, and must not change the movie.
+
+        Idempotence is enforced by the CAS mutator (which returns False, so no
+        write happens), NOT by an early return. An early return also skipped
+        the release marking, which turned this method into a status write
+        instead of a repair -- see
+        TestRestoreIsARepairPathNotJustAStatusWrite.
+        """
         movie = _movie(status='active', profile_id='profile-1')
+        before = deepcopy(movie)
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
 
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.return_value = None
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True
-        assert not db.update_with_retry.called, 'an already-active movie must not be written to'
+        assert movie == before, 'an already-active movie must not be modified'
         assert not any(c.args[0] == 'profile.default' for c in fire.call_args_list), (
-            'no profile resolution should happen for a no-op call'
+            'the movie has a valid profile; the default must not be resolved'
         )
 
     def test_returns_error_when_media_does_not_exist(self):
@@ -291,8 +301,16 @@ class TestIdempotenceStillHonoursTheProfileGuarantee:
         )
 
     def test_an_active_movie_that_already_has_a_profile_is_a_true_no_op(self):
-        """The genuine no-op case must stay one -- no profile lookup, no write."""
+        """The genuine no-op case must stay one -- nothing changes.
+
+        Asserts the INVARIANT (the movie is untouched), not the mechanism.
+        It used to assert `update_with_retry` was never called, which pinned
+        the early-return implementation rather than the behaviour -- and that
+        early return had to go, because it also skipped the release marking
+        and made restore unable to repair a half-restored movie.
+        """
         movie = _movie(status='active', profile_id='existing-profile')
+        before = deepcopy(movie)
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'existing-profile'})
@@ -304,8 +322,11 @@ class TestIdempotenceStillHonoursTheProfileGuarantee:
             result = plugin.restoreToWanted('movie-1')
 
         assert result['success'] is True
-        assert db.update_with_retry.called is False, 'wrote when it should have no-opped'
+        assert movie == before, 'changed a movie that needed nothing done'
         assert movie['profile_id'] == 'existing-profile'
+        assert not any(c.args[0] == 'profile.default' for c in fire.call_args_list), (
+            'resolved the default profile for a movie that already has one'
+        )
 
 
 class TestLosingTheCasRaceReportsTheWinnersState:
@@ -569,3 +590,57 @@ class TestRestoreIsScopedToStatusesItMakesSenseFor:
 
         assert result['success'] is True, 'refused the case the feature is for'
         assert movie['status'] == 'active'
+
+
+class TestRestoreIsARepairPathNotJustAStatusWrite:
+    """The idempotency short-circuit returned success BEFORE the release
+    marking ran, so an already-'active' movie whose held release was still
+    'done' could never be repaired: pressing "Move back to wanted" again
+    reported success and changed nothing, which is user-visibly identical to
+    working.
+
+    That state is reachable -- a library rescan used to resurrect the release
+    (fixed in test_release_add_preserves_ignored.py), and the marking loop can
+    partially fail since release.update_status swallows a persistent
+    ConflictError and returns False.
+    """
+
+    def _restore(self, movie, releases):
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+        updates = []
+
+        def _fire(name, *a, **k):
+            if name == 'release.for_media':
+                return releases
+            if name == 'release.update_status':
+                updates.append((a[0] if a else None, k.get('status')))
+            return None
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
+            result = plugin.restoreToWanted('movie-1')
+        return result, updates
+
+    def test_an_already_active_movie_with_a_held_release_is_repaired(self):
+        movie = _movie(status='active', profile_id='profile-1')
+
+        result, updates = self._restore(movie, [{'_id': 'rel-1', 'status': 'done'}])
+
+        assert result['success'] is True
+        assert ('rel-1', 'ignored') in updates, (
+            'reported success without discounting the held release, so the '
+            'movie is still not really wanted and there is no way to fix it'
+        )
+
+    def test_it_is_still_a_no_op_when_there_is_nothing_to_repair(self):
+        """The other direction: a genuinely-restored movie must not be
+        rewritten on every call."""
+        movie = _movie(status='active', profile_id='profile-1')
+
+        result, updates = self._restore(movie, [{'_id': 'rel-1', 'status': 'ignored'}])
+
+        assert result['success'] is True
+        assert updates == [], 'rewrote a release that was already ignored'
