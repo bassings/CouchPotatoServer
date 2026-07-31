@@ -94,6 +94,12 @@ def _drive(searcher, movie, no_results=False, **kwargs):
             return 'equal'          # "we already have this" -> would break
         if name == 'media.restatus':
             return movie['status']
+        if name == 'profile.default':
+            # A CONCRETE id. Returning None made two assertions blind: assigning
+            # `movie['profile_id'] = <resolved>` was invisible because the
+            # resolved value was also None, and "uses the default profile" could
+            # not check which profile was actually used.
+            return {'_id': 'default-profile-1'}
         return None
 
     db = MagicMock()
@@ -242,6 +248,26 @@ class TestAutomaticPathUnchanged:
         assert 'release.try_download_result' in calls
 
 
+def _view_events(movie, protocols=('nzb',), default_profile=None):
+    """fireEvent stub for the VIEW-level tests (_searchReleases).
+
+    Models an install that can actually search: a movie exists, and at least one
+    protocol is enabled. `searcher.protocols` matters because _searchReleases
+    now pre-flights it — getSearchProtocols returns [] (it does not raise) when
+    no downloader is enabled, and single() would then "search" an empty protocol
+    list, contacting nothing while reporting success.
+    """
+    def _fire(name, *a, **k):
+        if name == 'media.get':
+            return movie
+        if name == 'searcher.protocols':
+            return list(protocols)
+        if name == 'profile.default':
+            return default_profile
+        return None
+    return _fire
+
+
 class TestApiView:
     """AC7 -- exposed so the UI can call it."""
 
@@ -259,7 +285,7 @@ class TestApiView:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             result = searcher.searchReleasesView(media_id='movie-1')
 
         assert result.get('success') is True
@@ -280,7 +306,7 @@ class TestApiView:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             searcher.searchReleasesView(media_id='movie-1')
 
         assert single.call_args.kwargs.get('manual') is True, (
@@ -453,10 +479,11 @@ class TestFoundCount:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', return_value=None, create=True):
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             return searcher.searchReleasesView(media_id='movie-1')
 
-    def test_it_counts_only_available_releases(self, searcher):
+    def test_available_counts_only_available_releases(self, searcher):
+        """`available` is the total the movie now holds."""
         result = self._view(searcher, [
             {'status': 'available', 'quality': '2160p'},
             {'status': 'available', 'quality': '1080p'},
@@ -465,7 +492,26 @@ class TestFoundCount:
             {'status': 'ignored', 'quality': 'brrip'},
         ])
 
-        assert result['found'] == 2
+        assert result['available'] == 2
+
+    def test_found_reports_what_THIS_search_produced_not_the_running_total(self, searcher):
+        """A movie with existing releases whose search finds nothing must not
+        report a win.
+
+        `found` used to be the total count of available releases, so a movie
+        holding 3 of them reported "Found 3 releases" in green after a search
+        that contacted providers and got nothing -- a total provider outage
+        looked like success. It is now the delta this search produced; the
+        running total is `available`.
+        """
+        result = self._view(searcher, [
+            {'status': 'available', 'quality': '2160p'},
+            {'status': 'available', 'quality': '1080p'},
+            {'status': 'available', 'quality': '720p'},
+        ])
+
+        assert result['found'] == 0, 'a search that added nothing must report found=0'
+        assert result['available'] == 3
 
     def test_no_available_releases_reports_zero(self, searcher):
         result = self._view(searcher, [{'status': 'done', 'quality': '720p'}])
@@ -486,7 +532,7 @@ class TestFoundCount:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', side_effect=KeyError('year'), create=True):
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             result = searcher.searchReleasesView(media_id='movie-1')
 
         assert result['success'] is False
@@ -579,8 +625,17 @@ class TestListOnlyOnAMovieWithNoProfile:
 
         A profile-less movie must still be skipped by the automatic searcher --
         widening the gate for everyone would start searching the entire library.
+
+        status='active', NOT 'done', and that is the whole test. With 'done' the
+        STATUS clause of the gate bails first and masks the profile clause
+        entirely: disabling the profile clause outright
+        (`not movie['profile_id'] and False`) left all 35 tests in this file
+        green. Driving the real single() with status='active' shows the
+        difference -- unmutated fires no search, mutated searches the whole
+        library. A risk guard that the risk can walk straight past is worse than
+        no guard, because it reads as covered.
         """
-        movie = _movie(status='done')
+        movie = _movie(status='active')
         movie['profile_id'] = None
 
         calls = _drive(searcher, movie)          # no list_only, no manual
@@ -605,19 +660,31 @@ class TestSearchReleasesThreeWayOutcome:
     """
 
     def test_a_completed_search_reports_searched_true_and_the_found_count(self, searcher):
+        """A search that genuinely turns up new releases reports them.
+
+        `single()` here ADDS releases, rather than being a no-op returning None.
+        That matters: `found` is the delta this search produced, so a no-op mock
+        against a movie that already holds releases would report found=0 and the
+        test would be asserting the wrong thing for the right-looking reason.
+        """
         movie = _movie(status='done', releases=[
-            {'status': 'available', 'quality': '1080p'},
-            {'status': 'available', 'quality': '720p'},
             {'status': 'done', 'quality': '2160p'},
         ])
 
+        def _adds_two(*a, **k):
+            movie['releases'].extend([
+                {'status': 'available', 'quality': '1080p'},
+                {'status': 'available', 'quality': '720p'},
+            ])
+
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
-                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+                patch.object(type(searcher), 'single', side_effect=_adds_two, create=True) as single:
+            fire.side_effect = _view_events(movie)
             result = searcher.searchReleasesView(media_id='movie-1')
 
         assert single.called, 'a movie with a profile must actually be searched'
-        assert result == {'success': True, 'searched': True, 'found': 2}
+        assert result == {'success': True, 'searched': True,
+                          'found': 2, 'available': 2}
 
     def test_a_completed_search_that_finds_nothing_is_still_searched_true(self, searcher):
         """The specific outcome the bug report described: a search that ran
@@ -627,11 +694,12 @@ class TestSearchReleasesThreeWayOutcome:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             result = searcher.searchReleasesView(media_id='movie-1')
 
         assert single.called
-        assert result == {'success': True, 'searched': True, 'found': 0}
+        assert result == {'success': True, 'searched': True,
+                          'found': 0, 'available': 0}
 
     def test_no_profile_anywhere_reports_could_not_search_with_a_reason(self, searcher):
         """AC4: a movie with no profile_id, on an install with no default
@@ -643,7 +711,7 @@ class TestSearchReleasesThreeWayOutcome:
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
-            fire.side_effect = lambda name, *a, **k: movie if name == 'media.get' else None
+            fire.side_effect = _view_events(movie)
             result = searcher.searchReleasesView(media_id='movie-1')
 
         assert not single.called, (
@@ -664,12 +732,7 @@ class TestSearchReleasesThreeWayOutcome:
         movie = _movie(status='done')
         movie['profile_id'] = None
 
-        def fake_fire(name, *a, **k):
-            if name == 'media.get':
-                return movie
-            if name == 'profile.default':
-                return {'_id': 'default-profile'}
-            return None
+        fake_fire = _view_events(movie, default_profile={'_id': 'default-profile'})
 
         with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire), \
                 patch.object(type(searcher), 'single', return_value=None, create=True) as single:
@@ -678,3 +741,64 @@ class TestSearchReleasesThreeWayOutcome:
         assert single.called, 'a default profile is available -- the search must run'
         assert result['searched'] is True
         assert result['success'] is True
+
+
+class TestNeverSearchedIsNeverReportedAsSearched:
+    """FEAT-008's core promise, tightened after review.
+
+    A reviewer wired in the REAL searcher and counted actual provider calls:
+    three further paths reached `searched: True, found: 0` having contacted
+    nobody. The realistic one is "no downloader enabled" -- `getSearchProtocols`
+    returns `[]` rather than raising (it even logs "There aren't any downloaders
+    enabled"), `single()` then iterates an empty protocol list, and the user was
+    told "Searched -- no releases found".
+
+    That is the same lie the feature exists to remove, on a far more common
+    trigger than the profile-less case that prompted it.
+    """
+
+    def test_no_enabled_downloader_refuses_rather_than_claiming_a_search(self, searcher):
+        movie = _movie(status='done')
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = _view_events(movie, protocols=())
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.called is False, 'must not even call single() with no protocols'
+        assert result['searched'] is False
+        assert result['success'] is False
+        assert 'downloader' in result['reason'].lower()
+
+    def test_a_movie_with_no_usable_title_refuses(self, searcher):
+        """single() bails read-only without a title, so no search happens."""
+        movie = _movie(status='done')
+        movie['title'] = ''
+        movie['info'] = {'year': 2020, 'titles': []}
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent') as fire, \
+                patch.object(type(searcher), 'single', return_value=None, create=True) as single:
+            fire.side_effect = _view_events(movie)
+            result = searcher.searchReleasesView(media_id='movie-1')
+
+        assert single.called is False
+        assert result['searched'] is False
+        assert 'title' in result['reason'].lower()
+
+    def test_every_refusal_carries_a_reason_the_ui_can_show(self, searcher):
+        """AC3: a refusal the user cannot act on is barely better than a lie."""
+        movie = _movie(status='done')
+        movie['profile_id'] = None
+
+        cases = {
+            'no protocols': _view_events(movie, protocols=()),
+            'no profile anywhere': _view_events(movie, default_profile=None),
+        }
+        for label, stub in cases.items():
+            with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=stub), \
+                    patch.object(type(searcher), 'single', return_value=None, create=True):
+                result = searcher.searchReleasesView(media_id='movie-1')
+
+            assert result['searched'] is False, label
+            assert result.get('reason'), 'no reason given for: %s' % label
+            assert len(result['reason']) > 15, 'reason too terse to act on: %s' % label

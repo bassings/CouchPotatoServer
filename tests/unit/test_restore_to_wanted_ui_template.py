@@ -62,18 +62,42 @@ class TestRestoreToWantedButtonWiring:
     def _render_done(self):
         return _render(_movie('done'))
 
-    def test_it_calls_the_restore_to_wanted_endpoint(self):
-        html = self._render_done()
+    def _restore_component(self):
+        """The restoreToWanted() component body ONLY.
 
-        assert 'movie.restore_to_wanted' in html
+        Both tests below used to assert against the whole document, which made
+        them vacuous: `movie.restore_to_wanted` also appears in a JS comment, so
+        renaming the real endpoint to /movie.BROKEN_endpoint/ still passed, and
+        `<select` matched profileEditor's own picker, so deleting this feature's
+        entire <select> block still passed. Scope first, then assert -- the same
+        thing the search-button tests in this file already do.
+        """
+        html = self._render_done()
+        assert 'function restoreToWanted(' in html, 'component factory missing'
+        start = html.index('function restoreToWanted(')
+        end = html.index('function ', start + 10) if 'function ' in html[start + 10:] else len(html)
+        return html[start:end]
+
+    def test_it_calls_the_restore_to_wanted_endpoint(self):
+        component = self._restore_component()
+
+        # In the fetch call, not merely somewhere in the document.
+        assert "CP.apiBase + '/movie.restore_to_wanted/" in component, (
+            'the component does not call the restore endpoint'
+        )
 
     def test_it_includes_a_profile_picker(self):
         """AC6: a profile picker, not a one-click action -- the movie may
         need a specific profile, not just whatever the default is."""
         html = self._render_done()
 
-        assert '<select' in html
-        assert 'selectedProfile' in html
+        # This feature's OWN select, identified by its id, not any <select>.
+        assert 'id="restore-profile-' in html, (
+            'no profile picker belonging to the restore control'
+        )
+        assert 'x-model="selectedProfile"' in html, (
+            'the picker is not bound to the component state'
+        )
 
     def test_it_updates_in_place_rather_than_reloading(self):
         """The actual fetch/htmx logic lives in the restoreToWanted() Alpine

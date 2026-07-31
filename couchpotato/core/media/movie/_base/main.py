@@ -194,10 +194,16 @@ class MovieBase(MovieTypeBase):
                 return {'success': False, 'error': 'Media not found'}
 
             # AC4: idempotent -- calling this on an already-active movie is a
-            # no-op success (no profile resolution, no write) rather than an
-            # error, so a UI that doesn't track local state precisely can
-            # call it freely.
-            if media.get('status') == 'active':
+            # no-op success rather than an error, so a UI that doesn't track
+            # local state precisely can call it freely.
+            #
+            # But only when the movie is genuinely in the state this method
+            # promises. An 'active' movie with no resolvable profile is
+            # UNSEARCHABLE -- single()'s gate skips it -- so returning success
+            # there reported a job done that was not: AC1's profile guarantee
+            # is half of what "wanted" means. Fall through and fix the profile
+            # in that case; the status write is then a no-op anyway.
+            if media.get('status') == 'active' and self.existingProfileId(db, media):
                 return {'success': True, 'media': media}
 
             resolved_profile_id = (
@@ -223,7 +229,13 @@ class MovieBase(MovieTypeBase):
             # us to 'active' between our read and our write is a no-op, not a
             # clobber.
             def _restore(m):
-                if m.get('status') == 'active':
+                # Already active AND already searchable -> genuinely nothing to
+                # do. The profile half of the guard matters: an 'active' movie
+                # with no profile is skipped by single()'s gate, so bailing on
+                # status alone left it permanently unsearchable while reporting
+                # success. Repair the profile in that case, then the status
+                # assignment below is simply a no-op.
+                if m.get('status') == 'active' and m.get('profile_id'):
                     return False
                 m['status'] = 'active'
                 m['profile_id'] = resolved_profile_id
@@ -238,8 +250,18 @@ class MovieBase(MovieTypeBase):
 
             # None means the mutator's CAS re-check found the movie already
             # active on a retry (lost the race to another writer) -- still a
-            # success, just nothing further to report beyond the movie as-is.
-            media = updated or media
+            # success. But `media` is the doc we read BEFORE that race, so
+            # returning it (and pushing it to notify.frontend) reported stale
+            # pre-race state for a movie that IS now active. Re-read to report
+            # the winner's version; keep the stale copy only if the re-read
+            # itself fails, which is still better than nothing.
+            if updated:
+                media = updated
+            else:
+                try:
+                    media = db.get('id', media_id)
+                except (RecordNotFound, RecordDeleted, KeyError):
+                    pass
 
             fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
             fireEvent('notify.frontend', type = 'movie.update', data = media)

@@ -158,7 +158,7 @@
              -- that partial's own root element already carries this id, so an
              innerHTML swap would nest a duplicate) instead of a full page
              reload. -->
-        <button @click="searchingReleases = true; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { searchingReleases = false; if(d.searched) { toast(d.found ? ('Found ' + d.found + ' release' + (d.found === 1 ? '' : 's')) : 'Searched — no releases found', d.found ? 'success' : 'info'); } else { toast(d.reason || 'Could not search for releases', 'error'); } htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/releases', { target: '#movie-releases', swap: 'outerHTML' }); }).catch(() => { searchingReleases = false; toast('Search failed', 'error'); })"
+        <button @click="searchingReleases = true; fetch(CP.apiBase + '/movie.searcher.search_releases/?media_id={{ movie_id }}').then(r => r.json()).then(d => { searchingReleases = false; if(d.searched) { var msg = d.found ? ('Found ' + d.found + ' new release' + (d.found === 1 ? '' : 's')) : ('No new releases' + (d.available ? ' — ' + d.available + ' already available' : '')); toast(msg, d.found ? 'success' : 'success'); } else { toast(d.reason || 'Could not search for releases', 'error'); } htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}/releases' + window.location.search, { target: '#movie-releases', swap: 'outerHTML' }); }).catch(() => { searchingReleases = false; toast('Search failed', 'error'); })"
                 class="px-3.5 py-1.5 bg-cp-blue/10 text-cp-blue hover:bg-cp-blue/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 data-testid="search-releases"
                 :disabled="searchingReleases">
@@ -192,7 +192,14 @@
               <label for="restore-profile-{{ movie_id }}" class="sr-only">Quality profile</label>
               <select id="restore-profile-{{ movie_id }}" x-model="selectedProfile"
                       class="bg-cp-bg border border-white/[0.06] rounded-md px-2 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
-                <option value="">Loading…</option>
+                <!-- Placeholder ONLY while there is nothing to pick. Bound to
+                     state, and removed from the DOM by x-if once profiles
+                     arrive -- a static "Loading…" option stayed forever, so a
+                     failed profile fetch looked identical to one still in
+                     flight. -->
+                <template x-if="!profiles.length">
+                  <option value="" x-text="loading ? 'Loading…' : (loadError ? 'Could not load profiles' : 'No profiles available')"></option>
+                </template>
                 <template x-for="p in profiles" :key="p._id">
                   <option :value="p._id" x-text="p.label"></option>
                 </template>
@@ -367,6 +374,8 @@ function restoreToWanted() {
   return {
     showPicker: false,
     restoring: false,
+    loading: false,
+    loadError: false,
     profiles: [],
     selectedProfile: '',
 
@@ -385,6 +394,8 @@ function restoreToWanted() {
     async open() {
       this.showPicker = true;
       if (this.profiles.length === 0) {
+        this.loading = true;
+        this.loadError = false;
         try {
           const res = await fetch(CP.apiBase + '/profile.list/');
           const data = await res.json();
@@ -401,6 +412,12 @@ function restoreToWanted() {
           }
         } catch (e) {
           console.error('Failed to load profiles:', e);
+          this.loadError = true;
+        } finally {
+          this.loading = false;
+        }
+        if (!this.profiles.length) {
+          this.loadError = true;
         }
       }
     },
@@ -416,7 +433,17 @@ function restoreToWanted() {
           // The WHOLE detail body changes (status badge, which action
           // buttons show, the release list) -- swap the same container
           // detail.html's initial hx-get targets, not just #movie-releases.
-          htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}', { target: '#movie-detail-container', swap: 'innerHTML' });
+          // If the swap succeeds this component is replaced and the reset
+          // below never matters. If it FAILS, the move has already happened
+          // server-side, so clear the spinner and tell the user to reload
+          // rather than leaving a permanently disabled "Moving…".
+          try {
+            await htmx.ajax('GET', '{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, { target: '#movie-detail-container', swap: 'innerHTML' });
+          } catch (swapError) {
+            console.error('Failed to refresh after restore:', swapError);
+            this.restoring = false;
+            this.notify('Moved back to wanted, but the page could not refresh — reload to see it', 'error');
+          }
         } else {
           this.restoring = false;
           this.notify(data.error || 'Could not move back to wanted', 'error');

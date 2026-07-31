@@ -11,10 +11,12 @@ that can never be found.
 """
 
 import logging
+from copy import deepcopy
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from CodernityDB.database import RecordNotFound
 from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.media.movie._base.main import MovieBase
 
@@ -168,6 +170,10 @@ class TestRestoreToWantedReleasesAndIdempotency:
         eligible for searching/upgrading again."""
         releases = [{'_id': 'rel-1', 'status': 'done', 'quality': '1080p'}]
         movie = _movie(status='done', profile_id='profile-1', releases=releases)
+        # Snapshot BEFORE the call. Asserting against `releases` itself was
+        # vacuous: it is the same object the movie holds, so an in-place
+        # mutation (the likely bug) changed both sides and still compared equal.
+        expected = deepcopy(releases)
         plugin = MovieBase.__new__(MovieBase)
         db = MagicMock()
         db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
@@ -177,7 +183,7 @@ class TestRestoreToWantedReleasesAndIdempotency:
                 patch('couchpotato.core.media.movie._base.main.fireEvent'):
             plugin.restoreToWanted('movie-1')
 
-        assert movie['releases'] == releases, 'releases must be untouched'
+        assert movie['releases'] == expected, 'releases must be untouched'
 
     def test_is_a_no_op_success_on_an_already_active_movie(self):
         """AC4: idempotent -- must not error, and must not write anything."""
@@ -275,3 +281,98 @@ class TestRestoreToWantedApiView:
 
         assert result == {'success': True}
         core.assert_called_once_with('movie-1', profile_id='profile-9')
+
+
+class TestIdempotenceStillHonoursTheProfileGuarantee:
+    """Review finding: the idempotence short-circuit skipped AC1.
+
+    `if media['status'] == 'active': return success` fired before the profile
+    was resolved, so an already-active movie with `profile_id=None` got a
+    success with nothing written -- and stayed UNSEARCHABLE, because single()'s
+    gate skips profile-less movies. Half of what "wanted" means is having a
+    profile to search against; reporting success without one is the same class
+    of misleading report as FEAT-008's other half.
+    """
+
+    def test_an_active_movie_with_no_profile_is_repaired_not_rubber_stamped(self):
+        movie = _movie(status='active', profile_id=None)
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids=set())
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = lambda name, *a, **k: (
+                {'_id': 'default-profile'} if name == 'profile.default' else None
+            )
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is True
+        assert movie['profile_id'] == 'default-profile', (
+            'an active movie with no profile was left unsearchable'
+        )
+
+    def test_an_active_movie_that_already_has_a_profile_is_a_true_no_op(self):
+        """The genuine no-op case must stay one -- no profile lookup, no write."""
+        movie = _movie(status='active', profile_id='existing-profile')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'existing-profile'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = lambda name, *a, **k: None
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is True
+        assert db.update_with_retry.called is False, 'wrote when it should have no-opped'
+        assert movie['profile_id'] == 'existing-profile'
+
+
+class TestLosingTheCasRaceReportsTheWinnersState:
+    """Backend finding: when update_with_retry's mutator returns False on a
+    retry (another writer got there first), it returns None and the code fell
+    back to `media` -- the doc read BEFORE the race. That pre-race snapshot was
+    then handed to notify.frontend and returned to the caller, so the UI was
+    pushed stale state (status still 'done') for a movie that IS now active.
+    The fallback must re-read, not reuse the stale read."""
+
+    def test_it_re_reads_instead_of_returning_the_pre_race_snapshot(self):
+        stale = _movie(status='done', profile_id=None)
+        winner = _movie(status='active', profile_id='profile-winner')
+
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+
+        reads = {'n': 0}
+
+        def _get(key, value, **kwargs):
+            if key == 'id' and value == 'movie-1':
+                reads['n'] += 1
+                # First read is ours; by the time we re-read, the other
+                # writer's version is what the database holds.
+                return stale if reads['n'] == 1 else winner
+            if key == 'id' and value == 'profile-winner':
+                return {'_id': 'profile-winner'}
+            raise RecordNotFound(value)
+
+        db.get.side_effect = _get
+        # Lost the race: the mutator's own guard returns False -> None.
+        db.update_with_retry.return_value = None
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            result = plugin.restoreToWanted('movie-1', profile_id='profile-winner')
+
+        assert result['success'] is True
+        assert result['media']['status'] == 'active', (
+            'returned the pre-race snapshot instead of re-reading the winner'
+        )
+
+        notified = [c for c in fire.call_args_list if c.args and c.args[0] == 'notify.frontend']
+        assert notified, 'no frontend notification was sent'
+        assert notified[0].kwargs['data']['status'] == 'active', (
+            'pushed stale pre-race state to the UI'
+        )

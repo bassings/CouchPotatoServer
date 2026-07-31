@@ -275,6 +275,26 @@ test.describe('Movie Detail', () => {
     await expect(searchBtn).toBeVisible({ timeout: 5000 });
     const beforeUrl = page.url();
 
+    /*
+     * Hold the search response open so the running state is OBSERVABLE.
+     * Against a local server with no providers configured the search returns
+     * in a few ms -- faster than an assertion can start polling -- so
+     * asserting the transient state directly was a race that failed most
+     * runs. Delaying the response is what makes "disabled while running" a
+     * real assertion rather than a coin flip.
+     */
+    const SEARCH_HOLD_MS = 1500;
+    // Regex, NOT a glob: the request path ends '/movie.searcher.search_releases/
+    // ?media_id=N', and in a Playwright glob a single `*` does not cross `/`,
+    // so '**/movie.searcher.search_releases*' silently matched nothing and the
+    // hold never applied -- leaving in place the exact race it exists to remove.
+    let held = false;
+    await page.route(/movie\.searcher\.search_releases/, async (route) => {
+      held = true;
+      await new Promise((resolve) => setTimeout(resolve, SEARCH_HOLD_MS));
+      await route.continue();
+    });
+
     const response = page.waitForResponse(
       (r) => r.url().includes('movie.searcher.search_releases'),
       { timeout: 15000 },
@@ -283,10 +303,17 @@ test.describe('Movie Detail', () => {
 
     // AC6: disabled and says so WHILE the search runs.
     await expect(searchBtn).toBeDisabled();
-    await expect(searchBtn).toContainText(/Searching/i);
+    // getByText + toBeVisible, NOT toContainText: textContent includes the
+    // x-show-hidden "Searching…" span, so toContainText(/Searching/i) passed
+    // while the button was idle AND enabled — it asserted nothing.
+    await expect(searchBtn.getByText('Searching…')).toBeVisible();
 
     const res = await response;
     expect(res.ok()).toBeTruthy();
+    // Pins that the hold above actually applied. Without this a broken
+    // route pattern makes the running-state assertions a coin flip that
+    // mostly passes -- which is how the bad glob went unnoticed.
+    expect(held, 'the search request was never intercepted, so the running-state assertions were a race').toBe(true);
 
     // AC6: re-enables once finished -- "running" and "finished" must be
     // distinguishable.
@@ -308,7 +335,28 @@ test.describe('Movie Detail', () => {
     // "No releases match the selected profile qualities").
     const toastRegion = page.locator('div.fixed.top-4.right-4[aria-live="polite"]');
     await expect(toastRegion.getByRole('status').first()).toBeVisible({ timeout: 5000 });
-    await expect(toastRegion).toContainText(/Found \d+ release|no releases found|Could not search/i);
+    /*
+     * Assert against the outcome the API ACTUALLY reported, not a fixed
+     * regex. AC3's whole point is that the three outcomes are distinguishable,
+     * so the meaningful check is that the toast matches THIS response --
+     * a hardcoded pattern silently went stale the moment a new `reason`
+     * string was added (it expected /Could not search/ and the server had
+     * begun returning the specific "no enabled downloader" reason).
+     *
+     * Which outcome occurs depends on the environment: with no downloader
+     * configured (the usual E2E case) it is the not-searched branch; with one
+     * configured it is searched/found-nothing. Both are correct, and both are
+     * checked here against what the server said.
+     */
+    const body = await res.json();
+    if (body.searched) {
+      await expect(toastRegion).toContainText(
+        body.found ? new RegExp(`Found ${body.found} new release`) : /No new releases/,
+      );
+    } else {
+      expect(body.reason, 'a not-searched response must carry a reason').toBeTruthy();
+      await expect(toastRegion).toContainText(body.reason);
+    }
   });
 
   /**

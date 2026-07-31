@@ -266,7 +266,7 @@ tailwind.config = {
   }
 </script>
 </head>
-<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="appShell()" x-init="init(); checkForUpdates()" x-cloak>
+<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="appShell()" x-init="checkForUpdates()" x-cloak>
 
 <!-- A11Y: Skip link (A11Y-003) -->
 <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -390,7 +390,7 @@ tailwind.config = {
          :class="{
            'bg-green-600 text-white': t.type === 'success',
            'bg-red-600 text-white': t.type === 'error',
-           'bg-cp-accent text-cp-bg': t.type === 'info'
+           'bg-cp-accent text-black': t.type === 'info'
          }"
          role="status">
       <span x-text="t.message" class="flex-1"></span>

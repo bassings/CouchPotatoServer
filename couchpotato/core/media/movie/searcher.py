@@ -244,7 +244,25 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             default_profile = fireEvent('profile.default', single = True)
             profile_id = (default_profile or {}).get('_id')
 
-        profile = db.get('id', profile_id)
+        try:
+            profile = db.get('id', profile_id)
+        except (RecordNotFound, KeyError):
+            # A truthy but STALE profile_id -- the profile was deleted since the
+            # movie referenced it. Falling back here matters on real libraries:
+            # dangling profile refs are why _base/main.py grew existingProfileId,
+            # and this instance's logs carry "Document not found: <id>" for
+            # exactly this shape. Without it a list-only search reported
+            # "an unexpected error occurred" while a perfectly good default
+            # profile sat unused.
+            if not list_only:
+                raise
+            default_profile = fireEvent('profile.default', single = True)
+            fallback_id = (default_profile or {}).get('_id')
+            if not fallback_id:
+                log.debug('Profile %s is missing and no default exists; nothing to search.', profile_id)
+                return
+            log.debug('Profile %s no longer exists; using the default for this list-only search.', profile_id)
+            profile = db.get('id', fallback_id)
         ret = False
 
         for index, q_identifier in enumerate(profile.get('qualities', [])):
@@ -568,6 +586,49 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
                     'reason': 'No quality profile is configured, so nothing could be searched',
                 }
 
+        # No enabled downloader/protocol means single() will call search() with
+        # an EMPTY protocol list, which iterates nothing and contacts no
+        # provider -- while getSearchProtocols logs "There aren't any
+        # downloaders enabled" and returns [] rather than raising. Without this
+        # pre-flight the user was told "Searched -- no releases found" after a
+        # search that never happened, which is the exact defect FEAT-008 exists
+        # to remove; this is simply its most common trigger.
+        try:
+            protocols = fireEvent('searcher.protocols', single = True)
+        except SearchSetupError:
+            protocols = None
+        if not protocols:
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'No enabled downloader matches your enabled providers, '
+                          'so there was nothing to search',
+            }
+
+        # A title is what every provider searches on. single() bails read-only
+        # without one (the list_only branch of the untitled-movie guard), so
+        # again: no search happened, do not claim one did.
+        if not getTitle(media):
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'This movie has no usable title to search for',
+            }
+
+        # Count what was already there, so `found` can report what THIS search
+        # produced. Counting the total meant a movie with 3 existing available
+        # releases reported "Found 3 releases" in green after a search that
+        # found none -- a total provider outage looked like success.
+        def _available(doc):
+            return len([
+                r for r in (doc.get('releases') or [])
+                if r.get('status') == 'available'
+            ])
+
+        before = _available(media)
+
         # manual=True as well as list_only: single() derives bypass_cache from
         # `manual`, so without it a user pressing "Search for releases" is
         # answered from the 30-minute provider cache -- stale results for an
@@ -578,15 +639,13 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         # Re-read so the count reflects what was just stored.
         media = fireEvent('media.get', media_id, single = True) or media
-        found = len([
-            r for r in (media.get('releases') or [])
-            if r.get('status') == 'available'
-        ])
+        after = _available(media)
 
         return {
             'success': True,
             'searched': True,
-            'found': found,
+            'found': max(after - before, 0),
+            'available': after,
         }
 
     def tryNextReleaseView(self, media_id = None, **kwargs):
