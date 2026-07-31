@@ -349,6 +349,15 @@ class MovieBase(MovieTypeBase):
             # A rescan used to rewrite this back to 'done', which is a
             # PRE-EXISTING bug that already breaks tryNextRelease and
             # markFailedAndResearch, not something this feature introduced.
+            # Known trade-off on 'seeding': checkSnatched watches
+            # release.with_status(['snatched','seeding','missing']), so a
+            # seeding torrent marked 'ignored' drops out of that queue and is
+            # never un-paused or post-processed. It is included anyway because
+            # leaving it would let it satisfy the profile and defeat the whole
+            # action, and because markFailedAndResearch already makes the same
+            # trade with 'failed'. The user has just said they do not want this
+            # copy, so abandoning its seed is the lesser harm -- but it does
+            # mean the torrent stays in the client until removed by hand.
             for rel in fireEvent('release.for_media', media_id, single = True) or []:
                 if rel.get('status') in ('done', 'seeding', 'downloaded'):
                     fireEvent('release.update_status', rel.get('_id'), status = 'ignored', single = True)
