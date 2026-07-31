@@ -130,3 +130,60 @@ test.describe('Filters', () => {
     expect(countText).toContain('movies');
   });
 });
+
+/**
+ * BUG (owner report, 2026-07-31): "I just deleted Tinsel Town to add it back to
+ * search, when I go in to my movies list it's now empty" -- followed by
+ * "actually it was a filter problem. The tinsel town filter was still there,
+ * but I had deleted it."
+ *
+ * The library was intact (1099 movies, verified on the production database).
+ * What the user saw was a filter that matched nothing after the movie was
+ * deleted, and a grid that renders COMPLETELY BLANK in that case: no message,
+ * no indication a filter is even active, and no way to clear it except
+ * noticing the text still sitting in the filter box. An empty grid is
+ * indistinguishable from a lost library, which is exactly the conclusion that
+ * was drawn.
+ *
+ * Measured before the fix: /library?q=<no match> gives 1 card in the DOM, 0
+ * visible, and an empty #movie-grid on screen.
+ */
+test.describe('Filtered-to-empty state', () => {
+  test('explains why the grid is empty and offers a way out', async ({ page }) => {
+    await page.goto('/library');
+    const grid = page.locator('#movie-grid');
+    await expect(grid).toBeVisible({ timeout: 10000 });
+    await expect(page.locator('#movie-grid .poster-card').first())
+      .toBeAttached({ timeout: 10000 });
+    const total = await page.locator('#movie-grid .poster-card').count();
+
+    await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+
+    // The user must be told the library is filtered, not gone.
+    const emptyState = page.locator('[data-testid="filter-empty-state"]');
+    await expect(emptyState).toBeVisible({ timeout: 5000 });
+    await expect(emptyState).toContainText('zzz-no-such-movie-zzz');
+
+    // ...and be able to get out of it in one click, without having to work
+    // out that the filter box is the culprit.
+    await emptyState.locator('[data-testid="clear-filters"]').click();
+
+    await expect(emptyState).toBeHidden({ timeout: 5000 });
+    const visible = await page.locator('#movie-grid .poster-card:not([style*="display: none"])').count();
+    expect(visible, 'clearing from the empty state must restore the full list').toBe(total);
+    await expect(page.locator('#filter-movies')).toHaveValue('');
+  });
+
+  test('a genuinely empty library is not reported as a filter problem', async ({ page }) => {
+    // The Wanted page is empty in the seeded fixture (the seeded movie is
+    // 'done'), so this covers total === 0 with no filter applied: the
+    // filter-specific empty state must NOT claim a filter is hiding things.
+    await page.goto('/');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(1500);
+    const total = await page.locator('#movie-grid .poster-card').count();
+    test.skip(total > 0, 'wanted list is not empty in this run');
+
+    await expect(page.locator('[data-testid="filter-empty-state"]')).toBeHidden();
+  });
+});

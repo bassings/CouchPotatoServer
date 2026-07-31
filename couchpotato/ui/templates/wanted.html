@@ -102,6 +102,45 @@
        role="region"
        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
   </div>
+
+  <!--
+    BUG (owner report, 2026-07-31): a filter that matched nothing rendered a
+    COMPLETELY BLANK grid -- no message, no sign a filter was active, and no
+    way out but noticing the text still in the filter box. After deleting a
+    movie the remaining filter matched nothing, and an empty grid is
+    indistinguishable from a lost library: the report was "my movies list is
+    now empty" for a library that was entirely intact.
+
+    Shown only when a filter is hiding EVERYTHING (totalCount > 0), so a
+    genuinely empty library still gets its own ordinary blank state rather
+    than being blamed on a filter.
+  -->
+  <div x-show="totalCount > 0 && visibleCount === 0"
+       x-cloak
+       data-testid="filter-empty-state"
+       role="status"
+       class="mt-6 rounded-lg border border-white/[0.06] bg-cp-card px-6 py-10 text-center">
+    <svg aria-hidden="true" class="w-8 h-8 mx-auto text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+    </svg>
+    <p class="mt-3 text-sm font-medium">No movies match your filter</p>
+    <p class="mt-1 text-xs text-cp-muted">
+      <span x-show="search">
+        Nothing here is called &ldquo;<span class="text-cp-text" x-text="search"></span>&rdquo;.
+      </span>
+      <span x-show="filterStatus && !search">
+        No movies have the status &ldquo;<span class="text-cp-text" x-text="filterStatus"></span>&rdquo;.
+      </span>
+      <span class="block mt-1">
+        Your library still has <span x-text="totalCount"></span> movies.
+      </span>
+    </p>
+    <button @click="clearFilters()"
+            data-testid="clear-filters"
+            class="mt-4 px-3.5 py-2 rounded-md text-xs font-medium bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors">
+      Clear filters
+    </button>
+  </div>
 </div>
 
 <script>
@@ -109,6 +148,11 @@ function movieList() {
   return {
     search: '',
     filterStatus: '',
+    // Reactive counts. filterMovies() already computed both locally to build
+    // countText; they are kept on the component so the filtered-to-empty
+    // state can key off them.
+    visibleCount: 0,
+    totalCount: 0,
     selectedIds: new Set(),
     bulkProcessing: false,
     countText: '',
@@ -182,6 +226,12 @@ function movieList() {
       this.updateUrl();
     },
 
+    clearFilters() {
+      this.search = '';
+      this.filterStatus = '';
+      this.filterMovies();
+    },
+
     filterMovies() {
       const cards = document.querySelectorAll('#movie-grid .poster-card');
       let visibleCount = 0;
@@ -200,6 +250,9 @@ function movieList() {
         card.style.display = visible ? '' : 'none';
         if (visible) visibleCount++;
       });
+
+      this.visibleCount = visibleCount;
+      this.totalCount = totalCount;
 
       this.countText = CP.ui.formatCount(
         visibleCount, totalCount, !!(this.search || this.filterStatus)
