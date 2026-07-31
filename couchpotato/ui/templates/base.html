@@ -105,6 +105,15 @@ tailwind.config = {
   :root.light .border-white\/\[0\.04\], :root.light .border-white\/\[0\.05\], :root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08); }
   :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
+  /* A11Y (WCAG 2.2 AA, 1.4.3): toast foreground, theme-independent.
+     `text-white` cannot be used here: `:root.light .text-white` above
+     re-points it at var(--cp-text), so the error toast rendered dark text on
+     bg-red-600 in the light theme -- measured 3.60:1, a real failure that
+     shipped because the a11y suite only asserted on axe's `critical` impact
+     and contrast is reported as `serious`. Both rules are needed so this wins
+     against that override in light mode and applies unchanged in dark. */
+  .cp-toast-fg { color: #ffffff; }
+  :root.light .cp-toast-fg { color: #ffffff; }
   /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
   :root.light .text-cp-accent { color: #0e7490; }
   /* A11Y (WCAG 2.2 AA, 1.4.3): the status tokens are chosen for the dark
@@ -388,8 +397,8 @@ tailwind.config = {
   <template x-for="t in toasts" :key="t.id">
     <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
          :class="{
-           'bg-green-600 text-white': t.type === 'success',
-           'bg-red-600 text-white': t.type === 'error',
+           'bg-green-700 cp-toast-fg': t.type === 'success',
+           'bg-red-700 cp-toast-fg': t.type === 'error',
            'bg-cp-accent text-black': t.type === 'info'
          }"
          role="status">

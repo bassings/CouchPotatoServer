@@ -4,7 +4,7 @@ movie back to wanted ('active') without losing its release history.
 Root-cause context (specs/FEAT-008-search-feedback-and-back-to-wanted.md):
 1101 of 1101 sampled production movies have `profile_id = None`. A movie
 moved to `active` with no profile is unsearchable -- it would sit in Wanted
-forever, and single()'s own gate (searcher.py:172) would skip it right back
+forever, and single()'s own first gate would skip it right back
 out again. So this view must always ensure a real, resolvable profile before
 writing `status = 'active'`, and refuse rather than create a Wanted entry
 that can never be found.
@@ -231,37 +231,13 @@ class TestRestoreToWantedReleasesAndIdempotency:
         assert error_records == []
 
 
-class TestRestoreToWantedIsSearchable:
-    """AC5: the movie appears in Wanted afterwards and is picked up by the
-    automatic searcher -- i.e. it must pass single()'s own gate."""
-
-    def test_the_restored_movie_passes_the_searchers_gate(self):
-        """Drive the REAL gate condition from searcher.py rather than
-        re-describing it, so this test breaks if that gate's shape changes
-        out from under this assumption."""
-        movie = _movie(status='done', profile_id=None)
-        plugin = MovieBase.__new__(MovieBase)
-        db = MagicMock()
-        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids=set())
-        db.update_with_retry.side_effect = make_update_with_retry(movie)
-
-        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
-                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
-            fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
-            )
-            plugin.restoreToWanted('movie-1')
-
-        manual = False
-        list_only = False
-        gate_bails = (
-            (not movie['profile_id'] and not list_only)
-            or (movie['status'] in ('done', 'downloaded') and not manual and not list_only)
-        )
-        assert not gate_bails, (
-            'the restored movie must pass single()\'s gate -- it has both a '
-            'profile_id and an "active" status'
-        )
+# AC5 ("picked up by the automatic searcher") is verified in
+# tests/unit/test_search_releases_list_only.py::
+# TestARestoredMovieIsPickedUpByTheAutomaticSearcher, which drives the REAL
+# single() gate. A test that lived here re-typed a copy of the gate expression
+# into its own body and evaluated that instead -- replacing the entire gate
+# with `if True:` left it green, so it was pinning nothing. It is gone rather
+# than fixed: this file has no searcher harness, and the other file does.
 
 
 class TestRestoreToWantedApiView:
@@ -375,4 +351,42 @@ class TestLosingTheCasRaceReportsTheWinnersState:
         assert notified, 'no frontend notification was sent'
         assert notified[0].kwargs['data']['status'] == 'active', (
             'pushed stale pre-race state to the UI'
+        )
+
+
+class TestAnActiveMovieWithADanglingProfileIsRepaired:
+    """Review finding: the idempotence pre-check and the CAS mutator used two
+    DIFFERENT definitions of "has a profile" --
+
+        pre-check: existingProfileId(db, media)   -> resolvable
+        mutator:   m.get('profile_id')            -> merely truthy
+
+    so a movie that is 'active' with a profile_id pointing at a DELETED profile
+    fell through the pre-check (correctly), resolved a good default... and then
+    the mutator bailed on truthiness and wrote nothing. Success was reported
+    for a movie left exactly as unsearchable as before: single()'s own gate
+    passes the truthiness check, then db.get('id', profile_id) raises and
+    searchAll swallows it as 'Search failed'. The two guards must agree.
+    """
+
+    def test_the_dangling_reference_is_replaced_with_a_resolvable_profile(self):
+        movie = _movie(status='active', profile_id='deleted-profile')
+
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        # 'deleted-profile' no longer exists; only the default does.
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'default-profile'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
+            fire.side_effect = lambda name, *a, **k: (
+                {'_id': 'default-profile'} if name == 'profile.default' else None
+            )
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is True
+        assert movie['profile_id'] == 'default-profile', (
+            'the dangling profile reference was left in place, so the movie is '
+            'still unsearchable while the call reported success'
         )

@@ -306,6 +306,108 @@ test.describe('Accessibility', () => {
     }
   });
 
+  /*
+   * The contrast test above loads '/' and never renders a toast, so it could
+   * not have caught the two failing toast types even once the `critical`
+   * filter was fixed. FEAT-008 routes both success and error outcomes through
+   * this component, so every type is rendered here, in BOTH themes, and
+   * checked with axe.
+   *
+   * Measured before the fix: error 3.60:1 in light (the `:root.light
+   * .text-white` override re-pointed `text-white` at the dark body colour on
+   * top of bg-red-600), success 3.30:1 in dark. Both are real 1.4.3 failures.
+   */
+  for (const theme of ['dark', 'light'] as const) {
+    test(`Toasts of every type meet contrast in the ${theme} theme`, async ({ page }) => {
+      /*
+       * Seed localStorage BEFORE navigation. Toggling the `light` class after
+       * load does not work: base.html's own init reads `cp-theme` from
+       * localStorage and re-applies it, silently undoing the toggle -- so the
+       * "dark" case actually ran in the light theme and could not observe the
+       * dark-only success-toast failure at all.
+       */
+      await page.addInitScript((t) => {
+        localStorage.setItem('cp-theme', t);
+      }, theme);
+      await page.goto('/');
+      await page.waitForLoadState('domcontentloaded');
+
+      // Pin that the theme really took effect, so a future regression in the
+      // theme plumbing surfaces here rather than quietly making this vacuous.
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+        .toBe(theme === 'light');
+
+      // All three at once: they stack, so one axe pass covers every variant.
+      await page.evaluate(() => {
+        for (const type of ['success', 'error', 'info']) {
+          window.dispatchEvent(new CustomEvent('cp-toast', {
+            detail: { message: `A ${type} message long enough to read`, type, duration: 60000 },
+          }));
+        }
+      });
+
+      // Scoped to the toast region's own wrapper: the loading skeleton
+      // (#loading) also carries role="status", so a bare [role="status"]
+      // matched 4 elements and the count assertion failed for the wrong reason.
+      const region = 'div.fixed.top-4.right-4[aria-live="polite"]';
+      await expect(page.locator(`${region} [role="status"]`)).toHaveCount(3, { timeout: 5000 });
+
+      /*
+       * Measure the ratio directly rather than relying on axe alone.
+       *
+       * axe's node selection turned out not to be dependable for this
+       * component: with a deliberately-failing success toast (bg-green-600 +
+       * white, 3.30:1) it reported one violation in a standalone probe and
+       * ZERO from inside this test, under conditions verified identical
+       * (theme asserted dark, computed colours asserted white-on-green). A
+       * guard whose detection depends on that is not a guard, so the ratio is
+       * computed here from the two colours actually rendered. axe still runs
+       * below as a second opinion.
+       */
+      const measured = await page.$$eval(`${region} [role="status"]`, (els) => {
+        const rgb = (s: string) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+        const lum = (c: number[]) => {
+          const [r, g, b] = c.map((v) => {
+            const s = v / 255;
+            return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+          });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        return els.map((el) => {
+          const label = el.querySelector('span') as HTMLElement;
+          const bg = lum(rgb(getComputedStyle(el).backgroundColor));
+          const fg = lum(rgb(getComputedStyle(label).color));
+          const ratio = (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05);
+          return {
+            cls: (el.className.match(/bg-\S+/) || ['?'])[0],
+            bg: getComputedStyle(el).backgroundColor,
+            fg: getComputedStyle(label).color,
+            ratio: Math.round(ratio * 100) / 100,
+          };
+        });
+      });
+
+      // The toast label is 14px / weight 500 -- not "large text", so WCAG
+      // 1.4.3 AA requires 4.5:1, not 3:1.
+      const failing = measured.filter((m) => m.ratio < 4.5);
+      expect(
+        failing,
+        `${theme} theme toast contrast below 4.5:1 — ${JSON.stringify(measured)}`,
+      ).toEqual([]);
+
+      const results = await new AxeBuilder({ page })
+        .include(region)
+        .withRules(['color-contrast'])
+        .analyze();
+
+      const detail = results.violations
+        .flatMap(v => v.nodes.map(n => `${n.html} — ${n.failureSummary}`))
+        .join('\n');
+      expect(results.violations.length, `${theme} theme toast contrast:\n${detail}`).toBe(0);
+    });
+  }
+
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -326,9 +428,24 @@ test.describe('Accessibility', () => {
       });
     }
     
-    // Allow minor contrast issues but fail on critical
-    const critical = results.violations.filter(v => v.impact === 'critical');
-    expect(critical.length).toBe(0);
+    /*
+     * Fail on ANY color-contrast violation, not just `critical`.
+     *
+     * This used to be `violations.filter(v => v.impact === 'critical')`, and
+     * axe reports color-contrast with impact `serious` — never `critical`. So
+     * a test whose entire purpose is contrast, and which runs axe with
+     * `.withRules(['color-contrast'])` so it can report nothing else, could
+     * not fail. It was green while the error toast rendered at 3.60:1 in the
+     * light theme and the success toast at 3.30:1 in dark.
+     *
+     * The filter is kept (rather than asserting on violations.length) purely
+     * so the failure message names the rule.
+     */
+    const contrast = results.violations.filter(v => v.id === 'color-contrast');
+    const detail = contrast
+      .flatMap(v => v.nodes.map(n => `${n.html} — ${n.failureSummary}`))
+      .join('\n');
+    expect(contrast.length, `WCAG 1.4.3 contrast failures:\n${detail}`).toBe(0);
   });
 });
 

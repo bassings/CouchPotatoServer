@@ -236,7 +236,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # FEAT-008: movie['profile_id'] can be None here -- only reachable
         # when the gate above was bypassed by list_only. Resolve a profile
         # the same way movie.add already falls back for a new movie
-        # (fireEvent('profile.default'), _base/main.py:200), but PURELY
+        # (fireEvent('profile.default'), in MovieBase.add), but PURELY
         # locally: `profile_id` is a local variable, never written back to
         # `movie` or persisted (AC2 -- a list-only search stays read-only).
         profile_id = movie['profile_id']
@@ -247,13 +247,12 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         try:
             profile = db.get('id', profile_id)
         except (RecordNotFound, KeyError):
-            # A truthy but STALE profile_id -- the profile was deleted since the
-            # movie referenced it. Falling back here matters on real libraries:
-            # dangling profile refs are why _base/main.py grew existingProfileId,
-            # and this instance's logs carry "Document not found: <id>" for
-            # exactly this shape. Without it a list-only search reported
-            # "an unexpected error occurred" while a perfectly good default
-            # profile sat unused.
+            # A truthy but STALE profile_id -- the profile was deleted since
+            # the movie referenced it. Dangling profile refs are real enough on
+            # this codebase that MovieBase.existingProfileId exists specifically
+            # to screen for them. Without this fallback a list-only search
+            # reported "an unexpected error occurred" while a perfectly good
+            # default profile sat unused.
             if not list_only:
                 raise
             default_profile = fireEvent('profile.default', single = True)
@@ -536,9 +535,17 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         """FEAT-005 "Search for releases": populate the movie's release list
         without snatching anything.
 
-        Unlike every other search entry point this never downloads and never
-        changes the movie's status -- it exists so a movie you already have
-        can be re-examined against what providers currently offer.
+        Unlike every other search entry point this never downloads -- it
+        exists so a movie you already have can be re-examined against what
+        providers currently offer.
+
+        It does NOT promise to leave `status` alone, and never did: both this
+        path and the automatic one fire `media.restatus`, which computes and
+        writes a status. What the list-only path guarantees is that it adds no
+        status change of its own, and that it never writes `profile_id` back,
+        deletes the movie, or deletes existing releases. Pinned by
+        tests/unit/test_search_releases_list_only.py::TestListOnlyIsNonDestructive
+        and ...::test_list_only_makes_no_status_change_the_automatic_path_would_not.
         """
         try:
             return self._searchReleases(media_id)
@@ -571,7 +578,7 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         # AC4: pre-flight the SAME profile fallback single() itself will
         # attempt (fireEvent('profile.default'), mirroring movie.add at
-        # _base/main.py:200) so a genuinely profile-less install (fresh
+        # in MovieBase.add) so a genuinely profile-less install (fresh
         # install, or every profile deleted) is reported as "could not
         # search" with a reason -- rather than calling single(), having it
         # silently do nothing, and this method reporting a misleading

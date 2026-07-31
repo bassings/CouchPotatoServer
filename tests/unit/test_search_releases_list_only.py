@@ -62,12 +62,15 @@ class _Calls(list):
     fired = ()
 
 
-def _drive(searcher, movie, no_results=False, **kwargs):
+def _drive(searcher, movie, no_results=False, restatus_to=None, **kwargs):
     """Run single() with the surrounding plumbing mocked, returning the
     fireEvent calls so the assertions can look at what it actually did.
 
     `no_results` models the common provider failure mode: implementations
     swallow connection/HTTP errors and simply return nothing.
+
+    `restatus_to` makes the media.restatus stub WRITE that status to the movie,
+    the way the real event does. Leave it None for tests that don't care.
     """
     calls = _Calls()
     fired = []
@@ -93,6 +96,14 @@ def _drive(searcher, movie, no_results=False, **kwargs):
         if name == 'quality.ishigher':
             return 'equal'          # "we already have this" -> would break
         if name == 'media.restatus':
+            # The real media.restatus (_base/media/main.py) COMPUTES a status
+            # and writes it to the doc. This stub used to just echo
+            # movie['status'] with no side effect, which made
+            # "a list-only search does not change status" unobservable: the
+            # only thing that can change status never changed anything, so the
+            # assertion passed no matter what single() did. Mirror the real
+            # contract -- a movie holding a 'done' release restatuses to 'done'.
+            movie['status'] = restatus_to if restatus_to is not None else movie['status']
             return movie['status']
         if name == 'profile.default':
             # A CONCRETE id. Returning None made two assertions blind: assigning
@@ -611,14 +622,36 @@ class TestListOnlyOnAMovieWithNoProfile:
             'mutate library state'
         )
 
-    def test_a_list_only_search_does_not_change_status(self, searcher):
-        """AC2: and it must not move the movie out of done."""
-        movie = _movie(status='done')
-        movie['profile_id'] = None
+    def test_list_only_makes_no_status_change_the_automatic_path_would_not(self, searcher):
+        """AC2 / spec Risk 1: the list_only bypass must not introduce a status
+        change of its own.
 
-        _drive(searcher, movie, list_only=True)
+        This is deliberately DIFFERENTIAL rather than 'status is still done'.
+        Both paths legitimately fire media.restatus -- the automatic path from
+        inside the first gate, the list-only path from the restatus call that
+        follows the title check
+        -- and that event genuinely writes. So asserting a fixed value would
+        either be wrong about real behaviour or (as the earlier version was)
+        pass only because the restatus stub was inert and nothing in single()
+        assigns to the movie dict directly.
 
-        assert movie['status'] == 'done'
+        What actually matters is that list_only adds nothing: run both paths
+        over identical movies with a restatus stub that really writes, and the
+        resulting status must match. A stray `movie['status'] = ...` on the
+        list-only branch fails this; the shared restatus write does not.
+        """
+        automatic = _movie(status='active')
+        automatic['profile_id'] = 'profile-1'
+        list_only = _movie(status='active')
+        list_only['profile_id'] = 'profile-1'
+
+        _drive(searcher, automatic, restatus_to='done')
+        _drive(searcher, list_only, restatus_to='done', list_only=True)
+
+        assert list_only['status'] == automatic['status'], (
+            'the list-only path changed status in a way the automatic path '
+            'does not: %r vs %r' % (list_only['status'], automatic['status'])
+        )
 
     def test_the_automatic_path_still_returns_early_without_a_profile(self, searcher):
         """Risk guard: the non-list_only behaviour must be unchanged.
@@ -790,11 +823,19 @@ class TestNeverSearchedIsNeverReportedAsSearched:
         movie = _movie(status='done')
         movie['profile_id'] = None
 
+        # The 'no protocols' movie needs a REAL profile. With profile_id=None
+        # the profile check in _searchReleases fires first, so both cases below
+        # exercised the same branch and returned the same reason -- a loop that
+        # read as "every refusal" while covering one of them.
+        with_profile = _movie(status='done')
+        with_profile['profile_id'] = 'profile-1'
+
         cases = {
-            'no protocols': _view_events(movie, protocols=()),
-            'no profile anywhere': _view_events(movie, default_profile=None),
+            'no protocols': (with_profile, _view_events(with_profile, protocols=())),
+            'no profile anywhere': (movie, _view_events(movie, default_profile=None)),
         }
-        for label, stub in cases.items():
+        reasons = {}
+        for label, (_case_movie, stub) in cases.items():
             with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=stub), \
                     patch.object(type(searcher), 'single', return_value=None, create=True):
                 result = searcher.searchReleasesView(media_id='movie-1')
@@ -802,3 +843,146 @@ class TestNeverSearchedIsNeverReportedAsSearched:
             assert result['searched'] is False, label
             assert result.get('reason'), 'no reason given for: %s' % label
             assert len(result['reason']) > 15, 'reason too terse to act on: %s' % label
+            reasons[label] = result['reason']
+
+        # Distinct branches must give distinct guidance -- "no downloader" and
+        # "no profile" need different fixes from the user.
+        assert reasons['no protocols'] != reasons['no profile anywhere'], (
+            'both refusal branches returned the same reason (%r), so one of '
+            'them is not actually being reached' % reasons['no protocols']
+        )
+
+
+class TestStaleProfileFallback:
+    """The stale-profile branch in single() (the `except` around
+    `db.get('id', profile_id)`) had ZERO coverage --
+    _drive()'s db.get always succeeded, so ~20 lines of new code, including the
+    `if not list_only: raise` that is the only thing preserving the automatic
+    path's behaviour, were never executed. Both mutations below used to leave
+    the whole suite green.
+    """
+
+    def _drive_with_stale_profile(self, searcher, movie, default_exists=True, **kwargs):
+        """Like _drive, but db.get raises for the movie's (dangling) profile_id
+        and resolves only the default profile."""
+        calls = _Calls()
+        fired = []
+
+        def fake_fire_event(name, *args, **kw):
+            calls.append(name)
+            fired.append((name, args, kw))
+            if name == 'quality.pre_releases':
+                return []
+            if name == 'movie.update_release_dates':
+                return {'theater': 1, 'dvd': 0}
+            if name == 'quality.single':
+                return {'identifier': kw.get('identifier', '1080p'), 'label': 'q'}
+            if name == 'searcher.search':
+                return []
+            if name == 'release.create_from_search':
+                return []
+            if name == 'quality.ishigher':
+                return 'lower'
+            if name == 'media.get':
+                return movie
+            if name == 'media.restatus':
+                return movie['status']
+            if name == 'profile.default':
+                return {'_id': 'default-profile-1'} if default_exists else None
+            return None
+
+        def _get(index_name, key):
+            if key == 'default-profile-1' and default_exists:
+                return _profile()
+            raise KeyError('Document not found: %s' % key)
+
+        db = MagicMock()
+        db.get.side_effect = _get
+        env = MagicMock()
+        env.prop.return_value = 0
+
+        with patch('couchpotato.core.media.movie.searcher.fireEvent', side_effect=fake_fire_event), \
+                patch('couchpotato.core.media.movie.searcher.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie.searcher.Env', env), \
+                patch.object(type(searcher), 'conf', return_value=False, create=True), \
+                patch.object(type(searcher), 'shuttingDown', return_value=False, create=True):
+            searcher.single(movie, search_protocols=['nzb'], **kwargs)
+
+        calls.fired = fired
+        return calls
+
+    def test_list_only_falls_back_to_the_default_when_the_profile_was_deleted(self, searcher):
+        """Without this the user got "an unexpected error occurred" while a
+        perfectly good default profile sat unused."""
+        movie = _movie(status='done')
+        movie['profile_id'] = 'deleted-profile'
+
+        calls = self._drive_with_stale_profile(searcher, movie, list_only=True)
+
+        assert 'searcher.search' in calls, (
+            'a dangling profile reference aborted the list-only search instead '
+            'of falling back to the default profile'
+        )
+
+    def test_it_gives_up_quietly_when_the_profile_is_stale_and_no_default_exists(self, searcher):
+        movie = _movie(status='done')
+        movie['profile_id'] = 'deleted-profile'
+
+        calls = self._drive_with_stale_profile(
+            searcher, movie, default_exists=False, list_only=True)
+
+        assert 'searcher.search' not in calls
+        assert 'media.delete' not in calls, 'gave up by deleting the movie'
+
+    def test_the_automatic_path_still_raises_on_a_stale_profile(self, searcher):
+        """Spec Risk 3: the non-list_only path must behave EXACTLY as before.
+        The fallback is deliberately list-only; the automatic path must keep
+        propagating the error so searchAll logs it rather than silently
+        searching against a profile the user never chose.
+
+        status='active' with a real-looking profile_id, so the gate lets it
+        through and the stale db.get is actually reached.
+        """
+        movie = _movie(status='active')
+        movie['profile_id'] = 'deleted-profile'
+
+        with pytest.raises(KeyError):
+            self._drive_with_stale_profile(searcher, movie)
+
+
+class TestARestoredMovieIsPickedUpByTheAutomaticSearcher:
+    """FEAT-008 AC5, verified against the REAL gate.
+
+    test_restore_to_wanted.py used to check this by re-typing a copy of the
+    gate expression into the test body and evaluating that. Replacing the whole
+    gate in searcher.py with `if True:` -- i.e. nothing is ever searched --
+    left it green, because it was only ever asserting that its own copied
+    expression agreed with the movie dict.
+
+    This drives single() itself, so it fails if the gate stops letting a
+    restored movie through for any reason.
+    """
+
+    def test_a_movie_in_the_state_restore_to_wanted_leaves_it_gets_searched(self, searcher):
+        # Exactly what restoreToWanted writes: status 'active', a resolvable
+        # profile. Nothing else about the movie changes.
+        restored = _movie(status='active')
+        restored['profile_id'] = 'default-profile-1'
+
+        calls = _drive(searcher, restored)
+
+        assert 'searcher.search' in calls, (
+            'a movie restored to wanted is not picked up by the automatic '
+            "searcher -- it would sit in Wanted forever, which is the exact "
+            'outcome AC5 exists to prevent'
+        )
+
+    def test_the_same_movie_without_a_profile_is_still_skipped(self, searcher):
+        """The other direction: this must pass because the movie is restored
+        properly, not because the gate lets everything through."""
+        not_restored = _movie(status='active')
+        not_restored['profile_id'] = None
+
+        calls = _drive(searcher, not_restored)
+
+        assert 'searcher.search' not in calls

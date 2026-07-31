@@ -170,7 +170,8 @@ class MovieBase(MovieTypeBase):
         and re-adding the movie, which throws that history away.
 
         The same profile_id=None fact that broke "Search for releases"
-        (searcher.py:172, this feature's other half) matters here too: a
+        (MovieSearcher.single's first gate, this feature's other half)
+        matters here too: a
         movie moved to wanted with no profile is unsearchable -- it would sit
         in Wanted forever, and single()'s own gate would skip it right back
         out. So this always ensures a real, resolvable profile before writing
@@ -231,11 +232,20 @@ class MovieBase(MovieTypeBase):
             def _restore(m):
                 # Already active AND already searchable -> genuinely nothing to
                 # do. The profile half of the guard matters: an 'active' movie
-                # with no profile is skipped by single()'s gate, so bailing on
-                # status alone left it permanently unsearchable while reporting
-                # success. Repair the profile in that case, then the status
-                # assignment below is simply a no-op.
-                if m.get('status') == 'active' and m.get('profile_id'):
+                # with no usable profile is skipped by single()'s gate, so
+                # bailing on status alone left it permanently unsearchable
+                # while reporting success. Repair the profile in that case,
+                # then the status assignment below is simply a no-op.
+                #
+                # existingProfileId, NOT a truthiness check on profile_id: this
+                # guard has to use the SAME definition of "has a profile" as
+                # the pre-check above. When it used `m.get('profile_id')`, an
+                # active movie whose profile had since been DELETED passed here
+                # on truthiness and was written back unchanged -- reported as
+                # success while single()'s gate let it through and
+                # db.get('id', profile_id) then raised, so searchAll logged
+                # 'Search failed' for it every cycle and never searched it.
+                if m.get('status') == 'active' and self.existingProfileId(db, m):
                     return False
                 m['status'] = 'active'
                 m['profile_id'] = resolved_profile_id
@@ -263,6 +273,20 @@ class MovieBase(MovieTypeBase):
                 except (RecordNotFound, RecordDeleted, KeyError):
                     pass
 
+            # Deliberately fired on the lost-race path too, where
+            # update_with_retry returned None. sqlite_adapter's own docstring
+            # suggests using that None to SKIP notifying, to avoid a duplicate
+            # notify -- markFailedAndResearch does exactly that. This one
+            # differs on purpose:
+            #   - the re-read above means the payload is the winner's current
+            #     state, so a duplicate notify is redundant, never wrong;
+            #   - the movie genuinely WAS just edited (by the winner), so the
+            #     'recent' tag and last_edit bump are accurate either way;
+            #   - this call is user-initiated from the detail page, and that
+            #     page has to refresh regardless of which concurrent writer
+            #     happened to land the change first. Skipping the notify here
+            #     would leave the user who pressed the button looking at stale
+            #     UI whenever they lost a race they cannot see.
             fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
             fireEvent('notify.frontend', type = 'movie.update', data = media)
 

@@ -21,7 +21,8 @@ releases before: 1      releases after: 1   (delta 0)
 
 It is not slow and it is not a refresh problem. **No search ever runs.**
 
-**Root cause.** `couchpotato/core/media/movie/searcher.py:171`:
+**Root cause.** The first gate in `MovieSearcher.single()`
+(`couchpotato/core/media/movie/searcher.py`), as it stood on master:
 
 ```python
 if not movie['profile_id'] or (movie['status'] in ('done','downloaded')
@@ -48,7 +49,7 @@ started.
 
 1. `movie.searcher.search_releases` on a movie with **no** `profile_id` performs
    a real provider search, using the default profile (`fireEvent('profile.default')`
-   — the same fallback `movie.add` already uses at `_base/main.py:200`).
+   — the same fallback `movie.add` already uses).
 2. It does **not** assign that profile to the movie, or change `status`. A
    list-only search stays read-only with respect to library state.
 3. The response distinguishes the three outcomes, so the UI can too:
