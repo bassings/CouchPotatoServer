@@ -138,7 +138,7 @@ are already promised is unimplemented. That is Part B.
 | `couchpotato/core/plugins/release/main.py` | compute/store `copy_id`; preserve deliberate status on match |
 | `couchpotato/core/plugins/renamer/main.py` | implement replacement; never cleanup after a skipped move |
 | `tests/unit/test_release_copy_identity.py` | new |
-| `tests/unit/test_renamer_replacement.py` | new |
+| `tests/unit/test_renamer_cleanup_safety.py` | new — the safety half only. Replacement tests are deferred with Part B and do not exist. |
 
 ## Out of scope
 
