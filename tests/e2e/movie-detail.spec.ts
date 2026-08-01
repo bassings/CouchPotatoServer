@@ -16,8 +16,29 @@ import { test, expect, type Page } from '@playwright/test';
 // mutations (e.g. "Mark as Done") already cause across this whole suite.
 const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
 
+/*
+ * The movie the DESTRUCTIVE tests use (scripts/seed_e2e_data.py).
+ *
+ * "Move back to wanted" marks the movie's held releases 'ignored', which
+ * permanently destroys what release_controls.spec.ts needs -- measured: all six
+ * of its tests fail against a movie whose releases have all been ignored. That
+ * went unseen because those tests carried skip guards that stood down silently
+ * instead of failing, so the damage read as "no seeded data".
+ *
+ * Identical fixture, separate movie. Isolation, not a different scenario.
+ */
+const DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002';
+
+async function gotoDestructiveMovie(page: Page) {
+  return gotoMovie(page, DESTRUCTIVE_MOVIE_ID);
+}
+
 async function gotoSeededMovie(page: Page) {
-  await page.goto(`/movie/${SEEDED_MOVIE_ID}`);
+  return gotoMovie(page, SEEDED_MOVIE_ID);
+}
+
+async function gotoMovie(page: Page, movieId: string) {
+  await page.goto(`/movie/${movieId}`);
 
   // The detail body arrives via detail.html's hx-trigger="load" swap, so wait
   // for the swapped-in content itself (#movie-releases only exists inside
@@ -44,7 +65,7 @@ async function gotoSeededMovie(page: Page) {
    */
   expect(
     loaded,
-    `No seeded movie at /movie/${SEEDED_MOVIE_ID}. Run ` +
+    `No seeded movie at /movie/${movieId}. Run ` +
     '`.venv/bin/python scripts/seed_e2e_data.py --data_dir=.e2e-data` BEFORE ' +
     'starting the server (playwright.config.ts does this for local runs; CI ' +
     'does it in its own step). If the seed did run, the detail partial took ' +
@@ -67,12 +88,12 @@ async function gotoSeededMovie(page: Page) {
  * That is also the more realistic action: a user moving a movie back to wanted
  * usually keeps its profile.
  */
-async function seededMovieProfileId(page: Page): Promise<string> {
+async function seededMovieProfileId(page: Page, movieId: string = SEEDED_MOVIE_ID): Promise<string> {
   const id = await page.evaluate(async (movieId) => {
     const res = await fetch(`${(window as any).CP.apiBase}/media.get/?id=${movieId}`);
     const data = await res.json();
     return (data?.media ?? data)?.profile_id ?? '';
-  }, SEEDED_MOVIE_ID);
+  }, movieId);
   expect(id, 'seeded movie has no profile to preserve').toBeTruthy();
   return id;
 }
@@ -454,7 +475,7 @@ test.describe('Movie Detail', () => {
    * either way instead of skipping.
    */
   test('"Move back to wanted" restores a done movie to wanted (FEAT-008)', async ({ page }) => {
-    await gotoSeededMovie(page);
+    await gotoDestructiveMovie(page);
 
     const restoreBtn = page.locator('[data-testid="restore-to-wanted"]');
     if (await restoreBtn.count() === 0) {
@@ -472,7 +493,7 @@ test.describe('Movie Detail', () => {
     await expect(restoreBtn).toBeVisible();
     await restoreBtn.click();
 
-    const keepProfile = await seededMovieProfileId(page);
+    const keepProfile = await seededMovieProfileId(page, DESTRUCTIVE_MOVIE_ID);
     await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
 
     const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
@@ -493,7 +514,7 @@ test.describe('Movie Detail', () => {
     // warn about -- this is FEAT-008's "profile picker" AC6 exercised with
     // an explicit choice, not a claim about what the default itself resolves
     // to (that is covered at the unit level).
-    await page.locator(`#restore-profile-${SEEDED_MOVIE_ID}`).selectOption({ label: 'E2E Seed Profile' });
+    await page.locator(`#restore-profile-${DESTRUCTIVE_MOVIE_ID}`).selectOption({ label: 'E2E Seed Profile' });
 
     const response = page.waitForResponse(
       (r) => r.url().includes('movie.restore_to_wanted'),
@@ -562,7 +583,7 @@ test.describe('Movie Detail', () => {
   });
 
   test('the restore picker moves focus in, and Escape returns it (FEAT-008 a11y)', async ({ page }) => {
-    await gotoSeededMovie(page);
+    await gotoDestructiveMovie(page);
 
     /*
      * Drive the movie to 'done' if it is not already, exactly as the sibling
@@ -621,7 +642,7 @@ test.describe('Movie Detail', () => {
   });
 
   test('a failed post-restore refresh does not leave the control stuck (FEAT-008)', async ({ page }) => {
-    await gotoSeededMovie(page);
+    await gotoDestructiveMovie(page);
 
     const trigger = page.locator('[data-testid="restore-to-wanted"]');
     if ((await trigger.count()) === 0) {
@@ -633,7 +654,7 @@ test.describe('Movie Detail', () => {
     }
     await trigger.click();
 
-    const keepProfile = await seededMovieProfileId(page);
+    const keepProfile = await seededMovieProfileId(page, DESTRUCTIVE_MOVIE_ID);
     await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
 
     const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
@@ -663,7 +684,7 @@ test.describe('Movie Detail', () => {
      *
      * The response is held open so the busy state is observable at all.
      */
-    await gotoSeededMovie(page);
+    await gotoDestructiveMovie(page);
 
     const trigger = page.locator('[data-testid="restore-to-wanted"]');
     if ((await trigger.count()) === 0) {
@@ -675,7 +696,7 @@ test.describe('Movie Detail', () => {
     }
     await trigger.click();
 
-    const keepProfile = await seededMovieProfileId(page);
+    const keepProfile = await seededMovieProfileId(page, DESTRUCTIVE_MOVIE_ID);
     await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
 
     let held = false;

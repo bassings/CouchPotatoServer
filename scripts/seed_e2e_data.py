@@ -50,6 +50,21 @@ PROFILE_ID = 'e2e-seed-profile-001'
 MOVIE_ID = 'e2e-seed-movie-001'
 IMDB_ID = 'tt9999901'
 
+#: A SECOND, identical movie for specs that deliberately DAMAGE their fixture.
+#:
+#: FEAT-008's "Move back to wanted" marks a movie's held releases 'ignored'.
+#: Pointed at MOVIE_ID that permanently destroys what
+#: tests/e2e/release_controls.spec.ts needs -- measured: all six of its tests
+#: fail against a movie whose releases have all been ignored. It went unnoticed
+#: for a long time because those tests carried per-test skip guards that quietly
+#: stood down instead of failing, so the damage read as "no seeded data".
+#:
+#: Destructive specs therefore get their own movie and cannot reach the shared
+#: one. Same profile and same release set, so those specs behave identically --
+#: this is isolation, not a different scenario.
+DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002'
+DESTRUCTIVE_IMDB_ID = 'tt9999902'
+
 #: Two distinct qualities, both present in the seeded profile's `qualities`
 #: list -- otherwise the profile-matching filter in
 #: `couchpotato/ui/__init__.py::_releases_ctx` would hide them (`r.get(
@@ -199,18 +214,22 @@ def seed(data_dir):
             'manual_confirmation': False,
         })
 
-        created['movie'] = _upsert(db, MOVIE_ID, {
+        for movie_id, imdb_id, movie_title in (
+            (MOVIE_ID, IMDB_ID, 'E2E Seed Movie'),
+            (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie'),
+        ):
+          created.setdefault('movies', []).append(_upsert(db, movie_id, {
             '_t': 'media',
             'status': 'active',
-            'title': 'E2E Seed Movie',
+            'title': movie_title,
             'type': 'movie',
             'profile_id': PROFILE_ID,
             'category_id': None,
-            'identifiers': {'imdb': IMDB_ID},
+            'identifiers': {'imdb': imdb_id},
             'info': {
-                'imdb': IMDB_ID,
-                'titles': ['E2E Seed Movie'],
-                'original_title': 'E2E Seed Movie',
+                'imdb': imdb_id,
+                'titles': [movie_title],
+                'original_title': movie_title,
                 'year': 2024,
                 'type': 'movie',
                 'genres': ['Action'],
@@ -231,10 +250,10 @@ def seed(data_dir):
             'files': {},
             'tags': [],
             'last_edit': now,
-        })
+          }))
 
-        for r in RELEASES:
-            release_id = 'e2e-seed-release-%s' % r['suffix']
+          for r in RELEASES:
+            release_id = 'e2e-seed-release-%s-%s' % (movie_id[-3:], r['suffix'])
             info = {
                 'name': r['name'],
                 'protocol': r['protocol'],
@@ -249,8 +268,8 @@ def seed(data_dir):
             inserted = _upsert(db, release_id, {
                 '_t': 'release',
                 'status': r['status'],
-                'media_id': MOVIE_ID,
-                'identifier': '%s.%s.%s' % (IMDB_ID, r['suffix'], r['quality']),
+                'media_id': movie_id,
+                'identifier': '%s.%s.%s' % (imdb_id, r['suffix'], r['quality']),
                 'quality': r['quality'],
                 'is_3d': False,
                 'last_edit': now,
@@ -259,6 +278,7 @@ def seed(data_dir):
             })
             created['releases'].append((release_id, inserted))
 
+        created['movie'] = any(created.get('movies') or [])
         return created
     finally:
         db.close()

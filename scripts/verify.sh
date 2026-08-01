@@ -87,6 +87,14 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   step "6/6 E2E tests (Playwright: chromium + a11y + mobile)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
+  # Start from a clean data dir. This is NOT tidiness: specs delete, re-add and
+  # restatus the seeded movie, so a leftover dir makes the gate's result depend
+  # on what the previous run happened to leave behind. Measured: a run that had
+  # deleted the seeded movie left `.e2e-data` with ZERO media docs, and the next
+  # verify failed 5 FEAT-008 tests that had just passed from a clean dir — a
+  # gate whose answer depends on history is not a gate. The mobile and a11y
+  # stages below always did this; chromium did not.
+  rm -rf .e2e-data
   npm run test:e2e -- --project=chromium || fail "E2E tests failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed

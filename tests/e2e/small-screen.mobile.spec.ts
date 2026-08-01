@@ -18,7 +18,10 @@ import AxeBuilder from '@axe-core/playwright';
  * playwright.config.ts and never used.
  */
 
-const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
+// The DESTRUCTIVE fixture: this spec opens the restore picker, and restoring
+// marks the movie's held releases 'ignored', which would destroy what
+// release_controls.spec.ts needs. See scripts/seed_e2e_data.py.
+const SEEDED_MOVIE_ID = 'e2e-seed-movie-002';
 
 /** A profile list with a long label — the case that overflows. */
 async function stubLongProfiles(page: Page) {
