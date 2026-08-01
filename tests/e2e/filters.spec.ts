@@ -277,4 +277,36 @@ test.describe('Filtered-to-empty state', () => {
     // release_controls.spec.ts.
     await expect(page.locator('#filter-movies')).toBeFocused({ timeout: 5000 });
   });
+
+  test('the filtered-to-empty state is announced, not just displayed', async ({ page }) => {
+    /*
+     * PR review: the panel is toggled by x-show, so it is absent from the
+     * accessibility tree while its content is set -- and a screen reader
+     * announces a MUTATION to an element already in the tree, not the arrival
+     * of one. A sighted user saw the explanation; a screen-reader user got
+     * silence and a list that had emptied for no stated reason.
+     *
+     * Announcement therefore goes through a persistent sr-only region. This
+     * asserts the region exists BEFORE the filter is applied -- the property
+     * the previous shape did not have, and which asserting on role/attributes
+     * alone could never catch.
+     */
+    await stubMovieGrid(page, [{ title: 'Tinsel Town', status: 'done', hasReleases: true }]);
+    await page.goto('/');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await waitForGridLoaded(page);
+
+    const announcer = page.locator('[data-testid="filter-empty-announcer"]');
+    await expect(announcer).toBeAttached();
+    await expect(announcer).toHaveAttribute('aria-live', 'polite');
+    await expect(announcer).toBeEmpty();
+
+    await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+    await expect(announcer).toContainText('No movies match your filter');
+    await expect(announcer).toContainText('1 movie');
+
+    // ...and it clears again, so the next match does not re-announce staleness.
+    await page.locator('#filter-movies').fill('');
+    await expect(announcer).toBeEmpty();
+  });
 });

@@ -26,6 +26,20 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Release list controls', () => {
   /*
+   * A LARGER per-test budget than the 30s default, for this file only.
+   *
+   * beforeEach here waits for a server-rendered release table, and it spends
+   * from the same budget the test does. verify.sh now wipes the data dir before
+   * every run (so the gate's answer cannot depend on leftover state), which
+   * means every run pays seeding plus first request. Shaving the wait does not
+   * work: no value is both long enough for a slow cold start and shorter than
+   * the budget it comes out of -- at 30s the hook timed out at exactly 30.0s,
+   * and at 20s a cold run still lost a test at 28.9s. The budget was the wrong
+   * size, so it is the budget that changes.
+   */
+  test.describe.configure({ timeout: 60000 });
+
+  /*
    * NOTE ON SKIP GUARDS. Six per-test `test.skip(await
    * releases.locator('table').count() === 0, ...)` guards used to live in this
    * file. They were removed: beforeEach already waits for that same table and
@@ -82,7 +96,10 @@ test.describe('Release list controls', () => {
     // invisibly and sends the next person to re-run a seed that already worked.
     // Same bug class as the one fixed 80 lines below -- a non-retrying read
     // standing in for a wait.
-    // 30s, not 10s: this must tolerate a COLD START. verify.sh now wipes the
+    // 20s, not 10s: this must tolerate a COLD START -- but it must also stay
+    // UNDER playwright.config.ts's 30s per-test timeout, which beforeEach spends
+    // from. Setting it to 30s made the wait unable to ever complete: the hook
+    // timed out at exactly 30.0s. Measured cold-start need is ~12-16s. verify.sh now wipes the
     // data dir before every run (so the gate's answer cannot depend on what a
     // previous run left behind), which means every run pays seeding plus first
     // request. Measured: the first run after a clean dir skipped one test while
@@ -90,7 +107,7 @@ test.describe('Release list controls', () => {
     // that trips on slowness silently drops coverage and reports green, which
     // is precisely what this file's own comments warn about.
     const hasTable = await page.locator('#movie-releases table')
-      .waitFor({ state: 'attached', timeout: 30000 })
+      .waitFor({ state: 'attached', timeout: 20000 })
       .then(() => true)
       .catch(() => false);
 

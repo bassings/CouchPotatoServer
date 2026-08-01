@@ -717,4 +717,49 @@ test.describe('Movie Detail', () => {
     await expect(confirmBtn).toHaveAttribute('aria-busy', 'true');
     expect(held, 'the restore response was never held, so this raced').toBe(true);
   });
+
+  test('focus survives a SUCCESSFUL restore swap (FEAT-008 a11y)', async ({ page }) => {
+    /*
+     * PR review: the existing focus test holds the request open and checks
+     * focus while the swap is still in flight -- so it never sees the success
+     * path. On success the innerHTML swap removes the Confirm button and its
+     * whole component, focus falls back to <body>, and the next Tab restarts at
+     * the top of the document.
+     *
+     * This is the fourth instance of the same defect class on this branch, and
+     * the first one on a path that runs every single time the feature works.
+     */
+    await gotoDestructiveMovie(page);
+
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDone).toBeVisible({ timeout: 5000 });
+      await markDone.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+    await trigger.click();
+
+    const keepProfile = await seededMovieProfileId(page, DESTRUCTIVE_MOVIE_ID);
+    await page.locator('select[id^="restore-profile-"]').selectOption(keepProfile);
+
+    const confirmBtn = page.locator('[data-testid="restore-to-wanted-confirm"]');
+    await confirmBtn.focus();
+    await confirmBtn.click();
+
+    // Let the swap complete -- the movie becomes active, so Mark as Done returns.
+    await expect(page.getByRole('button', { name: 'Mark as Done', exact: true }))
+      .toBeVisible({ timeout: 15000 });
+
+    const landed = await page.evaluate(() => ({
+      tag: document.activeElement?.tagName ?? 'NONE',
+      testid: document.activeElement?.getAttribute('data-testid') ?? null,
+    }));
+    expect(
+      landed.tag,
+      `focus fell to ${landed.tag} after the restore completed, so the next Tab ` +
+        'restarts at the top of the page',
+    ).not.toBe('BODY');
+  });
 });

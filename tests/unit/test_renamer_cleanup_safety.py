@@ -162,3 +162,23 @@ class TestCleanupStillRunsWhenItShould:
 
         assert Path(scene['dst']).read_text() == 'THE FILE JUST DOWNLOADED'
         assert rec.deleted_folders == [scene['source_folder']]
+
+
+class TestCleanupRespectsItsSetting:
+    """PR review: every test here ran with `cleanup: True`, so a mutation that
+    dropped the `self.conf('cleanup', ...)` half of the guard -- always deleting
+    once anything moved -- would have passed the whole file. The setting is what
+    stands between a user who wants their download folder left alone and an
+    empty one."""
+
+    def test_a_clean_move_does_not_clean_up_when_the_setting_is_off(self, scene, monkeypatch, tmp_path):
+        os.remove(scene['dst'])
+        rec = _Recorder(tmp_path, {'cleanup': False})
+        _run(rec, monkeypatch, scene)
+
+        assert Path(scene['dst']).read_text() == 'THE FILE JUST DOWNLOADED', (
+            'the move itself should still happen'
+        )
+        assert rec.deleted_folders == [], (
+            "deleted the source folder despite 'cleanup' being off"
+        )

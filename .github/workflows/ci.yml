@@ -268,10 +268,27 @@ jobs:
     # configured-but-unrun for a long time -- the first review to exercise it
     # found the restore picker overflowing at 441px on a 393px device. Scoped
     # by testMatch to *.mobile.spec.ts, so this is seconds, not minutes.
-    # Its own data dir: the run above mutates the shared library.
-    - name: Run mobile E2E tests
+    #
+    # The server is restarted against its OWN data dir. CP_E2E_DATA_DIR alone
+    # does nothing here: playwright.config.ts disables its `webServer` block
+    # whenever CI is set, so the config never starts anything -- this job starts
+    # the server by hand. An earlier version passed that variable and claimed
+    # isolation it did not have; the mobile run simply talked to the same
+    # .config instance the desktop suite had already mutated.
+    - name: Restart server on an isolated database for mobile
       env:
-        CP_E2E_DATA_DIR: .config-mobile
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        pkill -f "CouchPotato.py --data_dir=.config" || true
+        sleep 2
+        rm -rf .config-mobile
+        python scripts/seed_e2e_data.py --data_dir=.config-mobile \
+          || echo "::warning::seed failed -- mobile tests will fail loudly"
+        python CouchPotato.py --data_dir=.config-mobile &
+        sleep 10
+        curl -sf http://localhost:5050/ || exit 1
+
+    - name: Run mobile E2E tests
       run: npm run test:e2e -- --project=mobile-chrome
     
     - name: Upload test artifacts

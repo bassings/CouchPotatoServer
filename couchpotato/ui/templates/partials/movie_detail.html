@@ -546,6 +546,18 @@ function restoreToWanted() {
           // rather than leaving a permanently disabled "Moving…".
           try {
             await cpSwap('{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, '#movie-detail-container', 'innerHTML');
+            // The swap removed the button that had focus, along with its whole
+            // component -- so focus falls to <body> and the next Tab restarts
+            // at the top of the document. Send it somewhere stable and
+            // meaningful instead: the movie's heading, which is the first thing
+            // a returning user wants read out anyway.
+            this.$nextTick(() => {
+              const heading = document.querySelector('#movie-detail-container h1');
+              if (heading) {
+                heading.setAttribute('tabindex', '-1');
+                heading.focus();
+              }
+            });
           } catch (swapError) {
             console.error('Failed to refresh after restore:', swapError);
             this.restoring = false;

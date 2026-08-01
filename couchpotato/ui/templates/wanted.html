@@ -122,10 +122,22 @@
     genuinely empty library still gets its own ordinary blank state rather
     than being blamed on a filter.
   -->
+  <!--
+    Announcement goes through a PERSISTENT sr-only region (below), not this
+    panel. The panel is toggled by x-show, so it is absent from the
+    accessibility tree while its content is set -- and a screen reader
+    announces a MUTATION to an element already in the tree, not the arrival of
+    one. Same rule tests/unit/test_releases_partial_route.py pins for the
+    release-count announcer, and the same mistake this project already made
+    once with toasts.
+  -->
+  <div class="sr-only" aria-live="polite" aria-atomic="true"
+       data-testid="filter-empty-announcer" x-text="emptyStateAnnouncement"></div>
+
   <div x-show="totalCount > 0 && visibleCount === 0"
        x-cloak
        data-testid="filter-empty-state"
-       role="status"
+       aria-hidden="true"
        class="mt-6 rounded-lg border border-white/[0.06] bg-cp-card px-6 py-10 text-center">
     <svg aria-hidden="true" class="w-8 h-8 mx-auto text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
@@ -161,6 +173,10 @@ function movieList() {
     // state can key off them.
     visibleCount: 0,
     totalCount: 0,
+    // Text for the persistent live region above. Set when the filter hides
+    // everything, cleared otherwise -- so the region MUTATES rather than
+    // appearing, which is what a screen reader actually announces.
+    emptyStateAnnouncement: '',
     selectedIds: new Set(),
     bulkProcessing: false,
     countText: '',
@@ -266,6 +282,12 @@ function movieList() {
 
       this.visibleCount = visibleCount;
       this.totalCount = totalCount;
+
+      const nowEmpty = totalCount > 0 && visibleCount === 0;
+      this.emptyStateAnnouncement = nowEmpty
+        ? 'No movies match your filter. This list still has ' + totalCount +
+          (totalCount === 1 ? ' movie.' : ' movies.')
+        : '';
 
       this.countText = CP.ui.formatCount(
         visibleCount, totalCount, !!(this.search || this.filterStatus)
