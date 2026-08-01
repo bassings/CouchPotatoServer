@@ -21,6 +21,18 @@ import { defineConfig, devices } from '@playwright/test';
  *      used: it does not exist on a stock macOS + Homebrew setup, which made the
  *      local E2E stage die with "python: command not found" before any test ran.
  */
+/*
+ * Data directory for the throwaway app instance.
+ *
+ * Overridable because the suite shares one server and one database, and specs
+ * mutate it: movie-detail deletes and re-adds, others change the seeded movie's
+ * status. A second Playwright invocation in the same gate run (scripts/verify.sh
+ * runs chromium, then mobile-chrome) would otherwise inherit whatever the first
+ * left behind — which is exactly how the mobile picker test failed after a
+ * green standalone run. Each invocation gets its own dir.
+ */
+const E2E_DATA_DIR = process.env.CP_E2E_DATA_DIR || '.e2e-data';
+
 const VENV_PYTHON = '.venv/bin/python';
 const PYTHON =
   process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
@@ -92,6 +104,14 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
+      /*
+       * Desktop projects must NOT run the small-screen specs. They pass at
+       * 1280px, where their assertions cannot fail -- a green that means
+       * nothing. Worse, the mobile spec's Mark-as-Done fallback mutates the
+       * shared seeded movie, so running it here also pollutes the desktop run.
+       * The a11y specs have their own project for the same reason.
+       */
+      testIgnore: /.*\.(mobile|a11y)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     {
@@ -110,7 +130,18 @@ export default defineConfig({
     },
     /* Mobile viewport testing */
     {
+      /*
+       * Mobile viewport. Scoped with testMatch to `*.mobile.spec.ts` so this
+       * project runs ONLY the specs written for a small screen, which keeps it
+       * cheap enough to include in the gate (scripts/verify.sh).
+       *
+       * It previously matched every spec and was run by nothing — so the
+       * mobile dimension, which AGENTS.md flags high-priority, had never been
+       * exercised. The first review to check it found the restore picker
+       * overflowing at 441px on a 393px device.
+       */
       name: 'mobile-chrome',
+      testMatch: /.*\.mobile\.spec\.ts/,
       use: { ...devices['Pixel 5'] },
     },
   ],
@@ -142,10 +173,28 @@ export default defineConfig({
         // Interpreter resolution is explained at the top of this file (PYTHON).
         // CI is unaffected — it skips webServer entirely and starts its own server.
         command:
-          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=.e2e-data || true) && ` +
-          `${PYTHON} CouchPotato.py --data_dir=.e2e-data`,
+          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=${E2E_DATA_DIR} || true) && ` +
+          `${PYTHON} CouchPotato.py --data_dir=${E2E_DATA_DIR}`,
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
-        reuseExistingServer: true,
+        /*
+         * NOT reuseExistingServer.
+         *
+         * This was `true`, and it produced two false greens on one branch. A
+         * server left running from an earlier session keeps serving its OWN
+         * data dir: template edits reach it (Jinja reloads from disk) but
+         * PYTHON edits do not, and the database is whatever prior specs left
+         * behind. A filters test that depends on the seeded movie's status
+         * passed locally against that stale state and failed on a genuinely
+         * fresh seed -- i.e. the local gate said "safe to open a PR" for a
+         * CI-breaking test.
+         *
+         * With `false`, Playwright starts its own server and fails loudly if
+         * the port is occupied, which is the correct outcome: a leftover
+         * server means the run would not have tested the code on disk.
+         * If you get "port 5050 is used", stop the stray server
+         * (`pkill -f CouchPotato.py`) rather than reinstating this flag.
+         */
+        reuseExistingServer: false,
       },
 });

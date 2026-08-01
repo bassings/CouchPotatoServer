@@ -306,6 +306,255 @@ test.describe('Accessibility', () => {
     }
   });
 
+  /*
+   * The contrast test above loads '/' and never renders a toast, so it could
+   * not have caught the two failing toast types even once the `critical`
+   * filter was fixed. FEAT-008 routes both success and error outcomes through
+   * this component, so every type is rendered here, in BOTH themes, and
+   * checked with axe.
+   *
+   * Measured before the fix: error 3.60:1 in light (the `:root.light
+   * .text-white` override re-pointed `text-white` at the dark body colour on
+   * top of bg-red-600), success 3.30:1 in dark. Both are real 1.4.3 failures.
+   */
+  for (const theme of ['dark', 'light'] as const) {
+    test(`Toasts of every type meet contrast in the ${theme} theme`, async ({ page }) => {
+      /*
+       * Seed localStorage BEFORE navigation. Toggling the `light` class after
+       * load does not work: base.html's own init reads `cp-theme` from
+       * localStorage and re-applies it, silently undoing the toggle -- so the
+       * "dark" case actually ran in the light theme and could not observe the
+       * dark-only success-toast failure at all.
+       */
+      await page.addInitScript((t) => {
+        localStorage.setItem('cp-theme', t);
+      }, theme);
+      await page.goto('/');
+      await page.waitForLoadState('domcontentloaded');
+
+      // Pin that the theme really took effect, so a future regression in the
+      // theme plumbing surfaces here rather than quietly making this vacuous.
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+        .toBe(theme === 'light');
+
+      // All three at once: they stack, so one axe pass covers every variant.
+      await page.evaluate(() => {
+        for (const type of ['success', 'error', 'info']) {
+          window.dispatchEvent(new CustomEvent('cp-toast', {
+            detail: { message: `A ${type} message long enough to read`, type, duration: 60000 },
+          }));
+        }
+      });
+
+      // Scoped to the toast region's own wrapper: the loading skeleton
+      // (#loading) also carries role="status", so a bare [role="status"]
+      // matched 4 elements and the count assertion failed for the wrong reason.
+      const region = '[data-testid="toast-region"]';
+      await expect(
+        page.locator(`${region} [data-testid="toast"]`),
+      ).toHaveCount(3, { timeout: 5000 });
+
+      /*
+       * Measure the ratio directly rather than relying on axe alone.
+       *
+       * axe's node selection turned out not to be dependable for this
+       * component: with a deliberately-failing success toast (bg-green-600 +
+       * white, 3.30:1) it reported one violation in a standalone probe and
+       * ZERO from inside this test, under conditions verified identical
+       * (theme asserted dark, computed colours asserted white-on-green). A
+       * guard whose detection depends on that is not a guard, so the ratio is
+       * computed here from the two colours actually rendered. axe still runs
+       * below as a second opinion.
+       */
+      const measured = await page.$$eval(`${region} [data-testid="toast"]`, (els) => {
+        const rgb = (s: string) => (s.match(/\d+(\.\d+)?/g) || []).slice(0, 3).map(Number);
+        const lum = (c: number[]) => {
+          const [r, g, b] = c.map((v) => {
+            const s = v / 255;
+            return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+          });
+          return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        return els.map((el) => {
+          const label = el.querySelector('span') as HTMLElement;
+          const bg = lum(rgb(getComputedStyle(el).backgroundColor));
+          const fg = lum(rgb(getComputedStyle(label).color));
+          const ratio = (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05);
+          return {
+            cls: (el.className.match(/bg-\S+/) || ['?'])[0],
+            bg: getComputedStyle(el).backgroundColor,
+            fg: getComputedStyle(label).color,
+            ratio: Math.round(ratio * 100) / 100,
+          };
+        });
+      });
+
+      // The toast label is 14px / weight 500 -- not "large text", so WCAG
+      // 1.4.3 AA requires 4.5:1, not 3:1.
+      const failing = measured.filter((m) => m.ratio < 4.5);
+      expect(
+        failing,
+        `${theme} theme toast contrast below 4.5:1 — ${JSON.stringify(measured)}`,
+      ).toEqual([]);
+
+      const results = await new AxeBuilder({ page })
+        .include(region)
+        .withRules(['color-contrast'])
+        .analyze();
+
+      const detail = results.violations
+        .flatMap(v => v.nodes.map(n => `${n.html} — ${n.failureSummary}`))
+        .join('\n');
+      expect(results.violations.length, `${theme} theme toast contrast:\n${detail}`).toBe(0);
+    });
+  }
+
+
+  /*
+   * Toast messages must land in a live region that ALREADY EXISTS.
+   *
+   * Two earlier shapes failed this: aria-live on the toast wrapper (which
+   * nested an error toast's role="alert" inside a polite region), and
+   * aria-live on each toast (which made the live element itself ephemeral --
+   * a screen reader announces a mutation to an element already in the
+   * accessibility tree, not a brand-new node; the same rule
+   * tests/unit/test_releases_partial_route.py pins for the release-count
+   * announcer). Neither could be caught by asserting on roles alone, which is
+   * all the suite did.
+   */
+  test('toast messages are announced through a persistent live region', async ({ page }) => {
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+
+    const polite = page.locator('[data-testid="toast-announcer-polite"]');
+    const assertive = page.locator('[data-testid="toast-announcer-assertive"]');
+
+    // Present BEFORE any toast exists — this is the whole point.
+    await expect(polite).toBeAttached();
+    await expect(assertive).toBeAttached();
+    await expect(polite).toHaveAttribute('aria-live', 'polite');
+    await expect(assertive).toHaveAttribute('aria-live', 'assertive');
+    await expect(polite).toBeEmpty();
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'Found 3 new releases', type: 'success' },
+      }));
+    });
+    await expect(polite).toHaveText('Found 3 new releases');
+
+    // Errors go to the assertive region so an actionable failure interrupts.
+    await page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'No enabled downloader', type: 'error' },
+      }));
+    });
+    await expect(assertive).toHaveText('No enabled downloader');
+
+    // The visual stack must not also be announced, or every message is
+    // spoken twice -- but it must NOT be aria-hidden either, because it
+    // contains a focusable Dismiss button and aria-hidden does not remove
+    // anything from the tab order (axe aria-hidden-focus, WCAG 4.1.2).
+    // Silence comes from carrying no role and no live region at all.
+    const region = page.locator('[data-testid="toast-region"]');
+    await expect(region).not.toHaveAttribute('aria-hidden', 'true');
+    const toast = region.locator('[data-testid="toast"]').first();
+    await expect(toast).not.toHaveAttribute('role', /.+/);
+    await expect(toast).not.toHaveAttribute('aria-live', /.+/);
+
+    // And prove it with axe, which is what would catch the aria-hidden-focus
+    // regression: scan with toasts actually on screen.
+    const results = await new AxeBuilder({ page })
+      .include('[data-testid="toast-region"]')
+      .withRules(['aria-hidden-focus'])
+      .analyze();
+    expect(
+      results.violations.map(v => v.nodes.map(n => n.html).join('; ')),
+      'a focusable control is hidden from assistive tech',
+    ).toEqual([]);
+  });
+
+
+  test('a repeated identical toast is announced every time', async ({ page }) => {
+    /*
+     * Assigning the same string to the announcement state is a no-op under
+     * Alpine's reactivity, so x-text never mutates and the live region stays
+     * silent. Measured before the fix: two identical messages produced ONE
+     * live-region mutation.
+     *
+     * Reachable in one click-click: press "Search for releases" twice with no
+     * downloader enabled and the same error toast renders twice. The previous
+     * shape (a new node per toast) mutated on every message including repeats,
+     * so this was a regression on the very axis the persistent region was
+     * meant to improve.
+     */
+    await page.goto('/');
+    await page.waitForLoadState('domcontentloaded');
+    const polite = page.locator('[data-testid="toast-announcer-polite"]');
+    await expect(polite).toBeAttached();
+
+    await page.evaluate(() => {
+      (window as any).__liveMutations = 0;
+      const el = document.querySelector('[data-testid="toast-announcer-polite"]')!;
+      new MutationObserver(() => { (window as any).__liveMutations++; })
+        .observe(el, { childList: true, characterData: true, subtree: true });
+    });
+
+    const say = () => page.evaluate(() => {
+      window.dispatchEvent(new CustomEvent('cp-toast', {
+        detail: { message: 'No new releases', type: 'success' },
+      }));
+    });
+
+    await say();
+    await expect(polite).toHaveText('No new releases');
+    await say();
+    // Two identical announcements must produce more than one mutation, or the
+    // second is never spoken.
+    await expect
+      .poll(() => page.evaluate(() => (window as any).__liveMutations), { timeout: 5000 })
+      .toBeGreaterThan(1);
+    await expect(polite).toHaveText('No new releases');
+  });
+
+
+  test('the restore-to-wanted control has no accessibility violations', async ({ page }) => {
+    /*
+     * PR review: this CI-gated suite only ever visits `e2e-seed-movie-001`, but
+     * the restore control renders only for a done/downloaded movie -- and the
+     * restore E2E tests deliberately use a SEPARATE fixture
+     * (`e2e-seed-movie-002`) so they do not mutate the movie this suite depends
+     * on. So the picker's markup was structurally never present when axe ran
+     * anywhere in this file. It was reviewed by hand, never scanned in CI.
+     */
+    const DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002';
+    await page.goto(`/movie/${DESTRUCTIVE_MOVIE_ID}`);
+    await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 20000 });
+
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDone).toBeVisible({ timeout: 5000 });
+      await markDone.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+
+    // Open the picker so the select, its label and both buttons are present.
+    await trigger.click();
+    await expect(page.locator('select[id^="restore-profile-"]')).toBeVisible({ timeout: 5000 });
+
+    const results = await new AxeBuilder({ page })
+      .include('#movie-detail-container')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    const detail = results.violations
+      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
+      .join('\n');
+    expect(results.violations.length, `restore control violations:\n${detail}`).toBe(0);
+  });
+
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
@@ -326,9 +575,24 @@ test.describe('Accessibility', () => {
       });
     }
     
-    // Allow minor contrast issues but fail on critical
-    const critical = results.violations.filter(v => v.impact === 'critical');
-    expect(critical.length).toBe(0);
+    /*
+     * Fail on ANY color-contrast violation, not just `critical`.
+     *
+     * This used to be `violations.filter(v => v.impact === 'critical')`, and
+     * axe reports color-contrast with impact `serious` — never `critical`. So
+     * a test whose entire purpose is contrast, and which runs axe with
+     * `.withRules(['color-contrast'])` so it can report nothing else, could
+     * not fail. It was green while the error toast rendered at 3.60:1 in the
+     * light theme and the success toast at 3.30:1 in dark.
+     *
+     * The filter is kept (rather than asserting on violations.length) purely
+     * so the failure message names the rule.
+     */
+    const contrast = results.violations.filter(v => v.id === 'color-contrast');
+    const detail = contrast
+      .flatMap(v => v.nodes.map(n => `${n.html} — ${n.failureSummary}`))
+      .join('\n');
+    expect(contrast.length, `WCAG 1.4.3 contrast failures:\n${detail}`).toBe(0);
   });
 });
 

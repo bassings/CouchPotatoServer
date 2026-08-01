@@ -105,6 +105,18 @@ tailwind.config = {
   :root.light .border-white\/\[0\.04\], :root.light .border-white\/\[0\.05\], :root.light .border-white\/\[0\.06\] { border-color: rgba(0,0,0,0.08); }
   :root.light .bg-white\/\[0\.03\] { background-color: rgba(0,0,0,0.04); }
   :root.light .text-white\/80, :root.light .text-white\/90, :root.light .text-white { color: var(--cp-text); }
+  /* A11Y (WCAG 2.2 AA, 1.4.3): toast foreground, theme-independent.
+     `text-white` cannot be used here: `:root.light .text-white` above
+     re-points it at var(--cp-text), so the error toast rendered dark text on
+     bg-red-600 in the light theme -- measured 3.60:1, a real failure that
+     shipped because the a11y suite only asserted on axe's `critical` impact
+     and contrast is reported as `serious`.
+     A distinct class is all that is needed: the light-theme override matches
+     `.text-white` specifically and never sees this one. (An earlier version
+     carried a `:root.light .cp-toast-fg` companion rule and a comment saying
+     both were required -- it was dead, and removing it left both toast
+     contrast tests green.) */
+  .cp-toast-fg { color: #ffffff; }
   /* A11Y: Use darker accent text in light mode for sufficient contrast on bg-cp-accent/10 */
   :root.light .text-cp-accent { color: #0e7490; }
   /* A11Y (WCAG 2.2 AA, 1.4.3): the status tokens are chosen for the dark
@@ -182,11 +194,29 @@ tailwind.config = {
       version: '',
       darkMode: true,
       toasts: [],
+      // Announcement state for the two PERSISTENT sr-only live regions in the
+      // shell below. Toasts themselves are created by x-for, and a screen
+      // reader announces a MUTATION to an element already in the
+      // accessibility tree -- not the arrival of a brand-new node.
+      politeAnnouncement: '',
+      assertiveAnnouncement: '',
       _toastId: 0,
 
       toast(message, type = 'success', duration = 3000) {
         const id = ++this._toastId;
         this.toasts.push({ id, message, type });
+        // Announce through the persistent regions, not the toast node.
+        //
+        // Cleared first, then set on the next tick: assigning the SAME string
+        // is a no-op under Alpine's reactivity, so x-text never mutates and a
+        // repeated message is announced zero times. Reachable in two clicks --
+        // press "Search for releases" twice with no downloader enabled and the
+        // identical error toast renders twice. (The previous per-toast-node
+        // shape mutated on every message, so this would have been a regression
+        // on the exact axis the persistent region exists to improve.)
+        const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+        this[region] = '';
+        this.$nextTick(() => { this[region] = message; });
         setTimeout(() => this.dismissToast(id), duration);
       },
 
@@ -195,6 +225,25 @@ tailwind.config = {
       },
 
       init() {
+        // FEAT-008: components defined as plain x-data factory functions in
+        // <script> (e.g. movie_detail.html's restoreToWanted()) run their
+        // methods as ordinary JS, not as Alpine-evaluated directive
+        // expressions -- so a bare `toast(...)` call from inside one of
+        // those methods is a ReferenceError (it only resolves via Alpine's
+        // scope-walking when written inline in an @click="..." string).
+        // Other components solve this by defining their OWN component-local
+        // toast() method and calling this.toast(...) -- see
+        // partials/settings/scripts.html and wizard.html -- which is a fine
+        // pattern but duplicates the toast UI per component. A window
+        // CustomEvent lets any such component request a toast without a
+        // direct reference to this component, matching the existing
+        // window.dispatchEvent(new CustomEvent(...)) idiom already used for
+        // cross-component signalling (partials/movie_info_modal.html,
+        // partials/charts.html, partials/suggestions.html,
+        // partials/search_results.html).
+        window.addEventListener('cp-toast', (evt) => {
+          this.toast(evt.detail?.message, evt.detail?.type, evt.detail?.duration);
+        });
         // FEAT-005: Global htmx toast notifications
         document.addEventListener('htmx:afterRequest', (evt) => {
           const url = evt.detail?.requestConfig?.path || '';
@@ -250,7 +299,7 @@ tailwind.config = {
   }
 </script>
 </head>
-<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="appShell()" x-init="init(); checkForUpdates()" x-cloak>
+<body class="bg-cp-bg text-cp-text font-sans min-h-screen antialiased" x-data="appShell()" x-init="checkForUpdates()" x-cloak>
 
 <!-- A11Y: Skip link (A11Y-003) -->
 <a href="#main-content" class="skip-link">Skip to main content</a>
@@ -368,15 +417,38 @@ tailwind.config = {
 {% include "partials/movie_info_modal.html" %}
 
 <!-- FEAT-005: Toast notifications -->
-<div aria-live="polite" aria-atomic="false" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
+<!--
+  Announcement is handled by the two PERSISTENT sr-only regions below, not by
+  the toast nodes. Two earlier shapes were both wrong: aria-live on this
+  wrapper nested an error toast's role="alert" inside an already-live polite
+  region; and moving aria-live onto each toast made the live element itself
+  EPHEMERAL -- a screen reader announces a mutation to an element already in
+  the accessibility tree, not a brand-new node. That is the same rule
+  tests/unit/test_releases_partial_route.py pins for the release-count
+  announcer, and partials/settings/categories.html already follows it.
+
+  The visual stack below carries no role and no aria-live and has no live
+  ancestor, so nothing announces it -- a message is announced exactly once
+  without needing aria-hidden. It deliberately does NOT have aria-hidden: the
+  toasts contain a real focusable Dismiss button, and aria-hidden does not
+  remove anything from the tab order, so that would leave a keyboard user able
+  to focus a control assistive tech reports as nothing (axe
+  `aria-hidden-focus`, WCAG 4.1.2).
+-->
+<div class="sr-only" aria-live="polite" aria-atomic="true"
+     data-testid="toast-announcer-polite" x-text="politeAnnouncement"></div>
+<div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"
+     data-testid="toast-announcer-assertive" x-text="assertiveAnnouncement"></div>
+
+<div data-testid="toast-region" class="fixed top-4 right-4 z-50 flex flex-col gap-2 pointer-events-none">
   <template x-for="t in toasts" :key="t.id">
     <div class="pointer-events-auto flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg text-sm font-medium max-w-xs transition-all"
          :class="{
-           'bg-green-600 text-white': t.type === 'success',
-           'bg-red-600 text-white': t.type === 'error',
-           'bg-cp-accent text-cp-bg': t.type === 'info'
+           'bg-green-700 cp-toast-fg': t.type === 'success',
+           'bg-red-700 cp-toast-fg': t.type === 'error',
+           'bg-cp-accent text-black': t.type === 'info'
          }"
-         role="status">
+         data-testid="toast">
       <span x-text="t.message" class="flex-1"></span>
       <button @click="dismissToast(t.id)" class="opacity-70 hover:opacity-100 ml-1" aria-label="Dismiss">
         <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>

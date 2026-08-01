@@ -84,10 +84,36 @@ npm run test:unit || fail "UI unit tests failed"
 
 # ── 6. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
-  step "6/6 E2E tests (Playwright/chromium)"
+  step "6/6 E2E tests (Playwright: chromium + a11y + mobile)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
+  # Start from a clean data dir. This is NOT tidiness: specs delete, re-add and
+  # restatus the seeded movie, so a leftover dir makes the gate's result depend
+  # on what the previous run happened to leave behind. Measured: a run that had
+  # deleted the seeded movie left `.e2e-data` with ZERO media docs, and the next
+  # verify failed 5 FEAT-008 tests that had just passed from a clean dir — a
+  # gate whose answer depends on history is not a gate. The mobile and a11y
+  # stages below always did this; chromium did not.
+  rm -rf .e2e-data
   npm run test:e2e -- --project=chromium || fail "E2E tests failed"
+  # Small-screen coverage. AGENTS.md treats a mobile layout regression that
+  # blocks a core flow as high-priority, and the mobile-chrome project existed
+  # for a long time without anything running it. Scoped by testMatch to
+  # *.mobile.spec.ts, so this adds seconds, not minutes.
+  # Its OWN data dir: the chromium run above mutates the shared library (specs
+  # delete, re-add and restatus the seeded movie), and inheriting that state
+  # broke this run while it passed standalone.
+  rm -rf .e2e-data-mobile
+  CP_E2E_DATA_DIR=.e2e-data-mobile npm run test:e2e -- --project=mobile-chrome \
+    || fail "Mobile E2E tests failed"
+  # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
+  # the chromium project now testIgnores them -- previously they rode along in
+  # the chromium run, so without this line scoping the projects would have
+  # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
+  # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
+  # gate mirror it, which is the whole contract of this script.
+  rm -rf .e2e-data-a11y
+  CP_E2E_DATA_DIR=.e2e-data-a11y npm run test:a11y || fail "Accessibility tests failed"
 else
   step "6/6 E2E tests — SKIPPED (--no-e2e)"
 fi

@@ -25,6 +25,31 @@ import { test, expect } from '@playwright/test';
  */
 
 test.describe('Release list controls', () => {
+  /*
+   * A LARGER per-test budget than the 30s default, for this file only.
+   *
+   * beforeEach here waits for a server-rendered release table, and it spends
+   * from the same budget the test does. verify.sh now wipes the data dir before
+   * every run (so the gate's answer cannot depend on leftover state), which
+   * means every run pays seeding plus first request. Shaving the wait does not
+   * work: no value is both long enough for a slow cold start and shorter than
+   * the budget it comes out of -- at 30s the hook timed out at exactly 30.0s,
+   * and at 20s a cold run still lost a test at 28.9s. The budget was the wrong
+   * size, so it is the budget that changes.
+   */
+  test.describe.configure({ timeout: 60000 });
+
+  /*
+   * NOTE ON SKIP GUARDS. Six per-test `test.skip(await
+   * releases.locator('table').count() === 0, ...)` guards used to live in this
+   * file. They were removed: beforeEach already waits for that same table and
+   * skips with the same reason, so they were redundant -- and each was a
+   * non-retrying `.count()` standing in for a wait, the exact anti-pattern the
+   * comments below warn about. Measured: they raced the render and silently
+   * dropped a different test between otherwise identical gate runs (139 passed
+   * vs 138 passed + 1 skipped), which is lost coverage reported as green.
+   */
+
   // The movie scripts/seed_e2e_data.py creates. Navigating straight to it,
   // rather than clicking whichever card happens to be first on '/', is what
   // makes these tests order-independent: other specs in this suite mutate
@@ -71,8 +96,18 @@ test.describe('Release list controls', () => {
     // invisibly and sends the next person to re-run a seed that already worked.
     // Same bug class as the one fixed 80 lines below -- a non-retrying read
     // standing in for a wait.
+    // 20s, not 10s: this must tolerate a COLD START -- but it must also stay
+    // UNDER playwright.config.ts's 30s per-test timeout, which beforeEach spends
+    // from. Setting it to 30s made the wait unable to ever complete: the hook
+    // timed out at exactly 30.0s. Measured cold-start need is ~12-16s. verify.sh now wipes the
+    // data dir before every run (so the gate's answer cannot depend on what a
+    // previous run left behind), which means every run pays seeding plus first
+    // request. Measured: the first run after a clean dir skipped one test while
+    // the second and third did not -- 5/6/6 passed across three runs. A guard
+    // that trips on slowness silently drops coverage and reports green, which
+    // is precisely what this file's own comments warn about.
     const hasTable = await page.locator('#movie-releases table')
-      .waitFor({ state: 'attached', timeout: 10000 })
+      .waitFor({ state: 'attached', timeout: 20000 })
       .then(() => true)
       .catch(() => false);
 
@@ -85,12 +120,6 @@ test.describe('Release list controls', () => {
 
   test('the release table exposes sortable headers with aria-sort', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
     const sortable = releases.locator('th[aria-sort]');
     expect(await sortable.count()).toBeGreaterThan(0);
     // Nothing is sorted until the user asks (B1: defaults reproduce the old page).
@@ -101,11 +130,6 @@ test.describe('Release list controls', () => {
 
   test('sorting by size marks that column and reorders the rows', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
     test.skip(
       await releases.locator('tbody tr').count() < 2,
       'need at least two releases to observe a reorder -- scripts/seed_e2e_data.py ' +
@@ -127,12 +151,6 @@ test.describe('Release list controls', () => {
 
   test('filtering by source shows only that source', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
     const select = releases.locator('#rel-source');
     const options = await select.locator('option').allInnerTexts();
     test.skip(
@@ -169,12 +187,6 @@ test.describe('Release list controls', () => {
 
   test('the result count is announced in a live region', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
     // The live region lives OUTSIDE #movie-releases now (a sibling,
     // #release-count-announcer): it must, since hx-swap="outerHTML" destroys
     // and recreates #movie-releases wholesale on every filter/sort change,
@@ -185,12 +197,6 @@ test.describe('Release list controls', () => {
 
   test('Download and Skip still work after a swap (B13)', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
     const actionButton = releases.locator('button', { hasText: /Download|Skip/ }).first();
     test.skip(
       await actionButton.count() === 0,
@@ -223,12 +229,6 @@ test.describe('Release list controls', () => {
 
   test('a bookmarked filtered URL renders filtered on first paint (B8)', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('table').count() === 0,
-      'this movie has no releases -- no seeded movie with releases: run ' +
-      'scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
-
     const url = new URL(page.url());
     url.searchParams.set('sort', 'size');
     url.searchParams.set('dir', 'desc');

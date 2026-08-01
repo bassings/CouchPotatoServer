@@ -169,7 +169,20 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         # 'downloaded' is the manual-review gate (workflow phase 1): treat it like
         # 'done' for gating purposes so a movie awaiting review is never searched
         # or upgraded, unless a manual/forced search explicitly overrides it.
-        if not movie['profile_id'] or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
+        #
+        # FEAT-008: `not movie['profile_id']` used to be an unconditional
+        # clause here -- unlike every OTHER gate in this method it was never
+        # threaded with `list_only`, so a movie imported by the library
+        # scanner (which never gets a profile) made "Search for releases"
+        # silently search nothing, for every done/downloaded movie with no
+        # profile. `and not list_only` makes this gate bypass the same way
+        # the others already do: when list_only is True this whole `if` is
+        # always False (the status clause already ends in `and not list_only`
+        # too), so a list-only search is never blocked by either half of it.
+        # AC2: this is purely a gate change -- nothing here writes a profile
+        # back to the movie; see the profile_id resolution below, which is
+        # entirely local.
+        if (not movie['profile_id'] and not list_only) or (movie['status'] in ('done', 'downloaded') and not manual and not list_only):
             log.debug('Movie doesn\'t have a profile, is already done, or is awaiting review, assuming in manage tab.')
             fireEvent('media.restatus', movie['_id'], single = True)
             return
@@ -190,7 +203,18 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return
 
         # Update media status and check if it is still not done (due to the stop searching after feature
-        restatus_result = fireEvent('media.restatus', movie['_id'], single = True)
+        #
+        # SKIPPED for a list-only search on a movie with no profile. restatus's
+        # own `elif not m['profile_id']: m['status'] = 'done'` would persist
+        # immediately -- this call fires BEFORE the local default-profile
+        # fallback below resolves anything -- so pressing "Search for releases"
+        # on an active profile-less movie silently dropped it out of Wanted,
+        # then searched and stored hits against a movie that had just left the
+        # list. AC2: a list-only search is read-only with respect to library
+        # state. The automatic path is untouched.
+        skip_restatus = list_only and not movie.get('profile_id')
+        restatus_result = None if skip_restatus else fireEvent(
+            'media.restatus', movie['_id'], single = True)
         if restatus_result == 'done':
             log.debug('No better quality found, marking movie %s as done.', default_title)
         elif restatus_result == 'downloaded':
@@ -220,7 +244,35 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         db = get_db()
 
-        profile = db.get('id', movie['profile_id'])
+        # FEAT-008: movie['profile_id'] can be None here -- only reachable
+        # when the gate above was bypassed by list_only. Resolve a profile
+        # the same way movie.add already falls back for a new movie
+        # (fireEvent('profile.default'), in MovieBase.add), but PURELY
+        # locally: `profile_id` is a local variable, never written back to
+        # `movie` or persisted (AC2 -- a list-only search stays read-only).
+        profile_id = movie['profile_id']
+        if not profile_id:
+            default_profile = fireEvent('profile.default', single = True)
+            profile_id = (default_profile or {}).get('_id')
+
+        try:
+            profile = db.get('id', profile_id)
+        except (RecordNotFound, KeyError):
+            # A truthy but STALE profile_id -- the profile was deleted since
+            # the movie referenced it. Dangling profile refs are real enough on
+            # this codebase that MovieBase.existingProfileId exists specifically
+            # to screen for them. Without this fallback a list-only search
+            # reported "an unexpected error occurred" while a perfectly good
+            # default profile sat unused.
+            if not list_only:
+                raise
+            default_profile = fireEvent('profile.default', single = True)
+            fallback_id = (default_profile or {}).get('_id')
+            if not fallback_id:
+                log.debug('Profile %s is missing and no default exists; nothing to search.', profile_id)
+                return
+            log.debug('Profile %s no longer exists; using the default for this list-only search.', profile_id)
+            profile = db.get('id', fallback_id)
         ret = False
 
         for index, q_identifier in enumerate(profile.get('qualities', [])):
@@ -494,9 +546,17 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         """FEAT-005 "Search for releases": populate the movie's release list
         without snatching anything.
 
-        Unlike every other search entry point this never downloads and never
-        changes the movie's status -- it exists so a movie you already have
-        can be re-examined against what providers currently offer.
+        Unlike every other search entry point this never downloads -- it
+        exists so a movie you already have can be re-examined against what
+        providers currently offer.
+
+        It does NOT promise to leave `status` alone, and never did: both this
+        path and the automatic one fire `media.restatus`, which computes and
+        writes a status. What the list-only path guarantees is that it adds no
+        status change of its own, and that it never writes `profile_id` back,
+        deletes the movie, or deletes existing releases. Pinned by
+        tests/unit/test_search_releases_list_only.py::TestListOnlyIsNonDestructive
+        and ...::test_list_only_makes_no_status_change_the_automatic_path_would_not.
         """
         try:
             return self._searchReleases(media_id)
@@ -506,12 +566,140 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             # lack it -- exactly the movies this feature targets. A 500 on the
             # detail page is a worse answer than a handled failure.
             log.error('Failed searching releases for %s: %s', media_id, traceback.format_exc())
-            return {'success': False, 'found': 0}
+            # FEAT-008 AC3: an exception means no search actually completed --
+            # report it the same way as any other could-not-search outcome
+            # (searched=False + reason), not just a bare success=False.
+            return {'success': False, 'searched': False, 'found': 0,
+                     'reason': 'An unexpected error occurred while searching'}
+
+    def _resolvableProfileId(self, profile_id):
+        """The id of the profile this search will ACTUALLY use, or None if it
+        cannot produce a search.
+
+        This must mirror single()'s own resolution exactly, or the pre-flight
+        approves one profile while the search uses another. In particular:
+        single() falls back to the default only when the movie's profile_id is
+        missing or does NOT RESOLVE -- never because it resolved to something
+        unusable. Checking "movie's profile, else default" in a different order
+        meant a healthy default masked a movie whose own profile had no
+        qualities, and the view reported a completed search after contacting no
+        provider.
+
+        The qualities check is the second half of AC4: single() iterates
+        profile['qualities'], so an EMPTY list contacts nothing at all.
+        forceDefaults strips ''/'-1' entries (plugins/profile/main.py), so an
+        empty qualities list is reachable, not hypothetical.
+        """
+        db = get_db()
+
+        def _resolve(candidate):
+            if not candidate:
+                return None
+            try:
+                return db.get('id', candidate)
+            except (RecordNotFound, KeyError):
+                return None
+
+        used_id = profile_id
+        profile = _resolve(profile_id)
+
+        if profile is None:
+            default_profile = fireEvent('profile.default', single = True)
+            used_id = (default_profile or {}).get('_id')
+            profile = _resolve(used_id)
+
+        if not profile or not profile.get('qualities'):
+            return None
+        return used_id
 
     def _searchReleases(self, media_id):
+        """FEAT-008 AC3: the response distinguishes three outcomes so the UI
+        can tell them apart -- they used to collapse into the same
+        {'success': True, 'found': 0} payload, which read as "searched,
+        found nothing" even when nothing was ever searched:
+
+          - searched, found N        -> {'success': True,  'searched': True,  'found': N}
+          - searched, found nothing  -> {'success': True,  'searched': True,  'found': 0}
+          - could not search         -> {'success': False, 'searched': False, 'found': 0, 'reason': <str>}
+        """
         media = fireEvent('media.get', media_id, single = True)
         if not media:
-            return {'success': False, 'found': 0}
+            return {'success': False, 'searched': False, 'found': 0,
+                     'reason': 'This movie no longer exists'}
+
+        # AC4: pre-flight the SAME profile fallback single() itself will
+        # attempt (fireEvent('profile.default'), mirroring movie.add at
+        # in MovieBase.add) so a genuinely profile-less install (fresh
+        # install, or every profile deleted) is reported as "could not
+        # search" with a reason -- rather than calling single(), having it
+        # silently do nothing, and this method reporting a misleading
+        # 'searched: true, found: 0' for a search that never ran.
+        # Note this asks whether the profile RESOLVES, not merely whether the
+        # id is truthy. A movie carrying a profile_id that points at a DELETED
+        # profile used to skip this check entirely, enter single(), fall
+        # through the stale-profile branch, find no default, and return having
+        # contacted zero providers -- while this method went on to report
+        # 'searched: true, found: 0'. That is AC4's own scenario reported as a
+        # completed search, which is the exact lie FEAT-008 exists to remove.
+        try:
+            usable_profile = self._resolvableProfileId(media.get('profile_id'))
+        except Exception:
+            # Don't report a database fault as "no profile configured" -- that
+            # sends the user off to create a profile they already have.
+            log.error('Failed resolving a profile for %s: %s', media_id, traceback.format_exc())
+            return {'success': False, 'searched': False, 'found': 0,
+                     'reason': 'Could not read your quality profiles, so nothing was searched'}
+
+        if not usable_profile:
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'No usable quality profile is configured, so nothing could be searched',
+            }
+
+        # No enabled downloader/protocol means single() will call search() with
+        # an EMPTY protocol list, which iterates nothing and contacts no
+        # provider -- while getSearchProtocols logs "There aren't any
+        # downloaders enabled" and returns [] rather than raising. Without this
+        # pre-flight the user was told "Searched -- no releases found" after a
+        # search that never happened, which is the exact defect FEAT-008 exists
+        # to remove; this is simply its most common trigger.
+        try:
+            protocols = fireEvent('searcher.protocols', single = True)
+        except SearchSetupError:
+            protocols = None
+        if not protocols:
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'No enabled downloader matches your enabled providers, '
+                          'so there was nothing to search',
+            }
+
+        # A title is what every provider searches on. single() bails read-only
+        # without one (the list_only branch of the untitled-movie guard), so
+        # again: no search happened, do not claim one did.
+        if not getTitle(media):
+            return {
+                'success': False,
+                'searched': False,
+                'found': 0,
+                'reason': 'This movie has no usable title to search for',
+            }
+
+        # Count what was already there, so `found` can report what THIS search
+        # produced. Counting the total meant a movie with 3 existing available
+        # releases reported "Found 3 releases" in green after a search that
+        # found none -- a total provider outage looked like success.
+        def _available(doc):
+            return len([
+                r for r in (doc.get('releases') or [])
+                if r.get('status') == 'available'
+            ])
+
+        before = _available(media)
 
         # manual=True as well as list_only: single() derives bypass_cache from
         # `manual`, so without it a user pressing "Search for releases" is
@@ -523,14 +711,13 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
 
         # Re-read so the count reflects what was just stored.
         media = fireEvent('media.get', media_id, single = True) or media
-        found = len([
-            r for r in (media.get('releases') or [])
-            if r.get('status') == 'available'
-        ])
+        after = _available(media)
 
         return {
             'success': True,
-            'found': found,
+            'searched': True,
+            'found': max(after - before, 0),
+            'available': after,
         }
 
     def tryNextReleaseView(self, media_id = None, **kwargs):

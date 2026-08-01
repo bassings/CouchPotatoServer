@@ -186,7 +186,13 @@ test.describe('Available Page', () => {
 
     // /available now redirects to the wanted page with available filter.
     await expect(page).toHaveURL(/\/wanted\/?\?filter=available/);
-    await expect(page.locator('#movie-grid')).toBeVisible();
+    // toBeAttached, not toBeVisible: this asserts the redirect landed on the
+    // grid page, not that any movie matches. With `filter=available` every
+    // card can legitimately be display:none, leaving the grid zero-height —
+    // which Playwright reports as hidden. That made this fail intermittently
+    // depending on what earlier specs left in the shared library (measured:
+    // 1 failure in 4 full runs, passing in isolation every time).
+    await expect(page.locator('#movie-grid')).toBeAttached();
     checkNoErrors(page, errors);
   });
 });

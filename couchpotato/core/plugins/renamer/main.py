@@ -108,6 +108,74 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         finally:
             self.renaming_started = False
 
+
+
+    def _moveRenamedFiles(self, rename_files, group):
+        """Move each renamed file into the library, then clean up -- but only
+        if there is nothing left behind.
+
+        Scope note. This method used to also REPLACE an existing destination,
+        implementing the long-declared-but-never-read
+        `remove_lower_quality_copies` setting. That was removed after two
+        failed attempts, both of which put the user's irreplaceable library at
+        risk:
+
+          - the first had no quality comparison at all, so a 720p download
+            overwrote a 2160p remux (measured);
+          - the second compared with `quality.ishigher`, which is a SEARCH
+            heuristic: it answers 'higher' when the existing quality is not a
+            rung of the profile ("anything beats a rung I do not want"). The
+            default Best profile excludes 2160p, so it still authorised
+            destroying a remux -- while simultaneously being inert, because the
+            scanner-supplied `group['media']` carries no `releases` key
+            (`media.get` attaches that, and the scanner never calls it).
+
+        Replacement needs a total quality ranking that does not exist in this
+        codebase today, on the one code path that deletes files from the user's
+        library. It is therefore its own piece of work, specified in
+        specs/FEAT-009-durable-set-aside-and-upgrade-replacement.md, and not a
+        detail of this method.
+
+        What remains is the half that was always a straight bug fix: an
+        existing destination means the incoming file is SKIPPED (as it always
+        was), and a skip now suppresses `cleanup` -- because deleting the
+        source folder after skipping a file destroyed the download the user had
+        just made.
+        """
+        skipped = False
+        moved_any = False
+
+        for src, dst in rename_files.items():
+            if not os.path.exists(src):
+                log.warning('Source file does not exist: %s', src)
+                skipped = True
+                continue
+
+            if os.path.exists(dst):
+                log.warning('Destination already exists, keeping it: %s', dst)
+                skipped = True
+                continue
+
+            try:
+                self.moveFile(src, dst, use_default = True)
+                log.info('Moved: %s -> %s', os.path.basename(src), dst)
+                moved_any = True
+            except Exception as e:
+                log.error('Failed to move %s: %s', src, e)
+                skipped = True
+
+        # Never delete the source folder when anything was left behind. This is
+        # the data-loss half: previously a skipped move was followed by cleanup,
+        # so the file the user had just downloaded was skipped AND destroyed.
+        if skipped:
+            log.info('Leaving source folder in place: not every file was moved')
+            return
+
+        if moved_any and self.conf('cleanup', default = True):
+            source_folder = group.get('parentdir')
+            if source_folder and os.path.isdir(source_folder):
+                self.deleteFolder(source_folder)
+
     def _processGroup(self, group, media_folder=None, release_download=None):
         """Process a single scanner group (rename/move files)."""
         from couchpotato.core.helpers.variable import getExt, getTitle, getIdentifier
@@ -212,23 +280,4 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         log.error('Failed to create folder %s: %s', dst_dir, e)
                         return
 
-        # Move/copy files
-        for src, dst in rename_files.items():
-            if not os.path.exists(src):
-                log.warning('Source file does not exist: %s', src)
-                continue
-            if os.path.exists(dst):
-                log.warning('Destination already exists: %s', dst)
-                continue
-
-            try:
-                self.moveFile(src, dst, use_default=True)
-                log.info('Moved: %s -> %s', os.path.basename(src), dst)
-            except Exception as e:
-                log.error('Failed to move %s: %s', src, e)
-
-        # Cleanup source folder if configured
-        if self.conf('cleanup', default=True):
-            source_folder = group.get('parentdir')
-            if source_folder and os.path.isdir(source_folder):
-                self.deleteFolder(source_folder)
+        self._moveRenamedFiles(rename_files, group)

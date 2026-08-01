@@ -70,8 +70,15 @@
         <input type="text" id="filter-movies" x-model="search" placeholder="Filter movies..." @input="filterMovies()"
                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 pl-8 text-xs focus:outline-none focus:border-cp-accent/30 placeholder-cp-muted">
         <svg aria-hidden="true" class="absolute left-2.5 top-2 w-3.5 h-3.5 text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"></path></svg>
-        <button x-show="search" @click="search = ''; filterMovies()" class="absolute right-2 top-1.5 text-cp-muted hover:text-cp-text p-0.5">
-          <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
+        <!-- Pre-existing on master, fixed here because the filtered-to-empty
+             panel makes this the control users reach for: it was an icon-only
+             button with NO accessible name (axe `button-name`, critical) at
+             18x18px (WCAG 2.2 AA 2.5.8 wants 24x24). The hit area is now 24x24
+             via padding while the icon stays the same size. -->
+        <button x-show="search" @click="search = ''; filterMovies()"
+                aria-label="Clear the title filter"
+                class="absolute right-1.5 top-0.5 flex items-center justify-center w-6 h-6 text-cp-muted hover:text-cp-text">
+          <svg aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
         </button>
       </div>
     </div>
@@ -102,6 +109,68 @@
        role="region"
        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
   </div>
+
+  <!--
+    BUG (owner report, 2026-07-31): a filter that matched nothing rendered a
+    COMPLETELY BLANK grid -- no message, no sign a filter was active, and no
+    way out but noticing the text still in the filter box. After deleting a
+    movie the remaining filter matched nothing, and an empty grid is
+    indistinguishable from a lost library: the report was "my movies list is
+    now empty" for a library that was entirely intact.
+
+    Shown only when a filter is hiding EVERYTHING (totalCount > 0), so a
+    genuinely empty library still gets its own ordinary blank state rather
+    than being blamed on a filter.
+  -->
+  <!--
+    Announcement goes through a PERSISTENT sr-only region (below), not this
+    panel. The panel is toggled by x-show, so it is absent from the
+    accessibility tree while its content is set -- and a screen reader
+    announces a MUTATION to an element already in the tree, not the arrival of
+    one. Same rule tests/unit/test_releases_partial_route.py pins for the
+    release-count announcer, and the same mistake this project already made
+    once with toasts.
+
+    The panel itself deliberately carries NO aria-hidden. A static
+    `aria-hidden="true"` would apply while the panel is VISIBLE (x-show only
+    toggles display:none, it does not touch the attribute), hiding it and its
+    focusable "Clear filters" button from assistive tech while that button
+    stays in the tab order -- axe `aria-hidden-focus`, WCAG 4.1.2. That is
+    precisely the bug this branch fixed on the toast region, and it was
+    reintroduced here before review caught it. x-show's display:none already
+    removes the panel from the accessibility tree when it is hidden, so no
+    attribute is needed; the panel is simply read twice when open, which is
+    correct -- once as the announcement, once as visible content.
+  -->
+  <div class="sr-only" aria-live="polite" aria-atomic="true"
+       data-testid="filter-empty-announcer" x-text="emptyStateAnnouncement"></div>
+
+  <div x-show="totalCount > 0 && visibleCount === 0"
+       x-cloak
+       data-testid="filter-empty-state"
+       class="mt-6 rounded-lg border border-white/[0.06] bg-cp-card px-6 py-10 text-center">
+    <svg aria-hidden="true" class="w-8 h-8 mx-auto text-cp-muted" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/>
+    </svg>
+    <p class="mt-3 text-sm font-medium">No movies match your filter</p>
+    <p class="mt-1 text-xs text-cp-muted">
+      <span x-show="search">
+        Nothing here is called &ldquo;<span class="text-cp-text" x-text="search"></span>&rdquo;.
+      </span>
+      <span x-show="filterStatus">
+        No movies here have the status &ldquo;<span class="text-cp-text" x-text="filterStatus"></span>&rdquo;.
+      </span>
+      <span class="block mt-1">
+        This list still has <span x-text="totalCount"></span>
+        <span x-text="totalCount === 1 ? 'movie' : 'movies'"></span>.
+      </span>
+    </p>
+    <button @click="clearFilters()"
+            data-testid="clear-filters"
+            class="mt-4 px-3.5 py-2 rounded-md text-xs font-medium bg-cp-accent/10 text-cp-accent hover:bg-cp-accent/20 transition-colors">
+      Clear filters
+    </button>
+  </div>
 </div>
 
 <script>
@@ -109,6 +178,15 @@ function movieList() {
   return {
     search: '',
     filterStatus: '',
+    // Reactive counts. filterMovies() already computed both locally to build
+    // countText; they are kept on the component so the filtered-to-empty
+    // state can key off them.
+    visibleCount: 0,
+    totalCount: 0,
+    // Text for the persistent live region above. Set when the filter hides
+    // everything, cleared otherwise -- so the region MUTATES rather than
+    // appearing, which is what a screen reader actually announces.
+    emptyStateAnnouncement: '',
     selectedIds: new Set(),
     bulkProcessing: false,
     countText: '',
@@ -182,6 +260,17 @@ function movieList() {
       this.updateUrl();
     },
 
+    clearFilters() {
+      this.search = '';
+      this.filterStatus = '';
+      this.filterMovies();
+      // Activating this button hides its own container (x-show), so the
+      // focused element gets display:none and focus falls to <body> -- the
+      // next Tab restarts at the top of the document. Hand focus to the
+      // filter box, which is the control the user needs next anyway.
+      this.$nextTick(() => document.getElementById('filter-movies')?.focus());
+    },
+
     filterMovies() {
       const cards = document.querySelectorAll('#movie-grid .poster-card');
       let visibleCount = 0;
@@ -200,6 +289,15 @@ function movieList() {
         card.style.display = visible ? '' : 'none';
         if (visible) visibleCount++;
       });
+
+      this.visibleCount = visibleCount;
+      this.totalCount = totalCount;
+
+      const nowEmpty = totalCount > 0 && visibleCount === 0;
+      this.emptyStateAnnouncement = nowEmpty
+        ? 'No movies match your filter. This list still has ' + totalCount +
+          (totalCount === 1 ? ' movie.' : ' movies.')
+        : '';
 
       this.countText = CP.ui.formatCount(
         visibleCount, totalCount, !!(this.search || this.filterStatus)

@@ -21,6 +21,41 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
+def copyIdentity(files):
+    """A stable identity for the COPY a scan found, or None if undecidable.
+
+    Derived from the sorted SIZES of the release's movie files. Two properties
+    matter, and each one is why an earlier design failed:
+
+      - SIZE, not path. The default renamer template is
+        `<namethe> (<year>)` / `<thename><cd>.<ext>` -- no quality, group or
+        source token -- so every copy of a movie renames to the SAME path.
+        Comparing paths therefore filed a genuinely new copy as 'ignored', and
+        the movie was re-downloaded on every sweep. Two different encodes
+        essentially never share a byte count.
+      - SORTED, and movie files only. folder_scanner.py builds each bucket with
+        `list(<set>)`, so ordering is hash-randomised between processes -- one
+        unchanged folder produced nine different orderings across fourteen
+        processes. Sorting removes that. Restricting to the 'movie' bucket
+        means a subtitle or poster appearing alongside does not read as a
+        different copy.
+
+    Returns None when it cannot be computed -- no movie file, or a file that
+    cannot be stat'ed. Callers must treat None as "do not know" and fall back
+    to the pre-existing behaviour rather than guessing.
+    """
+    movie_files = (files or {}).get('movie') or []
+    sizes = []
+    for path in movie_files:
+        try:
+            sizes.append(os.path.getsize(path))
+        except OSError:
+            return None
+    if not sizes:
+        return None
+    return ','.join(str(size) for size in sorted(sizes))
+
+
 class Release(Plugin):
 
     _database = {
@@ -162,6 +197,35 @@ class Release(Plugin):
                         'profile_id': None,
                     }, search_after = False, update_after = update_info, notify_after = False, status = 'done', single = True)
 
+                scanned_copy_id = copyIdentity(group.get('files'))
+
+                def _scanned_status(existing_doc):
+                    """'done', unless this is the very copy that was set aside.
+
+                    A rescan must not resurrect a release deliberately marked
+                    'ignored' or 'failed' -- doing so silently undoes 'Try next
+                    release', 'Mark Failed & re-search' and 'Move back to
+                    wanted', all of which mark by status. The resurrected
+                    release then re-finishes the movie via media.restatus and
+                    re-blocks the search in single()'s has_better_quality loop.
+
+                    The comparison is per-COPY (see copyIdentity). Keying on
+                    `release_identifier` instead would mean "never record any
+                    copy at this quality again", because that identifier is
+                    `<imdb>.<audio>.<quality>` -- a quality rung, not a copy.
+
+                    Anything undecidable returns 'done', so a release predating
+                    this field, or one whose files cannot be read, behaves
+                    exactly as it did before.
+                    """
+                    existing_doc = existing_doc or {}
+                    if existing_doc.get('status') not in ('ignored', 'failed'):
+                        return 'done'
+                    stored = existing_doc.get('copy_id')
+                    if not stored or not scanned_copy_id or stored != scanned_copy_id:
+                        return 'done'
+                    return existing_doc['status']
+
                 release = None
                 if update_id:
                     try:
@@ -169,7 +233,7 @@ class Release(Plugin):
                         release.update({
                             'identifier': release_identifier,
                             'last_edit': int(time.time()),
-                            'status': 'done',
+                            'status': _scanned_status(release),
                         })
                     except Exception:
                         log.error('Failed updating existing release: %s', traceback.format_exc())
@@ -190,6 +254,19 @@ class Release(Plugin):
                     try:
                         r = db.get('release_identifier', release_identifier, with_doc = True)['doc']
                         r['media_id'] = media['_id']
+                        # `release` was built fresh above with status 'done';
+                        # carry a deliberate set-aside status across, but only
+                        # when this scan found the same COPY it was set aside
+                        # with.
+                        release['status'] = _scanned_status(r)
+                        # Carry the stored identity too. This branch builds a
+                        # FRESH dict and db.update replaces the whole document,
+                        # so a field that is not copied is dropped -- and this
+                        # is the branch manage.updateLibrary takes. Guarding the
+                        # write below with `if scanned_copy_id:` protects
+                        # nothing here: not writing it means losing it.
+                        if r.get('copy_id'):
+                            release['copy_id'] = r['copy_id']
                     except (RecordNotFound, KeyError):
                         log.debug('Failed updating release by identifier "%s". Inserting new.', release_identifier)
                         r = db.insert(release)
@@ -202,6 +279,18 @@ class Release(Plugin):
 
                 # Empty out empty file groups
                 release['files'] = dict((k, [toUnicode(x) for x in v]) for k, v in group['files'].items() if v)
+                # Stored so the NEXT rescan has something to compare against;
+                # without it the guard above can never engage.
+                #
+                # Only when we actually computed one. copyIdentity returns None
+                # if a file cannot be stat'ed, and writing that None over a
+                # previously-stored id would destroy the set-aside identity
+                # permanently -- no later scan could recover it, even once the
+                # file is readable again. Narrow window (a file that becomes
+                # unreadable between enumeration and here), silent and
+                # irreversible cost.
+                if scanned_copy_id:
+                    release['copy_id'] = scanned_copy_id
                 db.update(release)
 
                 fireEvent('media.restatus', media['_id'], allowed_restatus = ['done'], single = True)
@@ -621,6 +710,23 @@ class Release(Plugin):
             log.debug('Marking release %s as %s', release_name, status)
             rel['status'] = status
             rel['last_edit'] = int(time.time())
+
+            # Backfill the copy identity at the moment a release is
+            # deliberately SET ASIDE, so a later library scan can tell "the
+            # copy that was set aside" from "a new copy at the same quality".
+            #
+            # Without this the feature is inert on every existing install:
+            # copy_id is only ever written by Release.add, there is no
+            # migration, and the set-aside guard needs a STORED id to compare
+            # against. Measured on a pre-FEAT-009 release doc -- restore,
+            # then a full scan, and the release was back to 'done' with the
+            # false "downloaded -- awaiting review" notification.
+            #
+            # Doing it here rather than in each caller covers all three
+            # features that set releases aside: movie.restore_to_wanted,
+            # tryNextRelease and markFailedAndResearch.
+            if status in ('ignored', 'failed') and not rel.get('copy_id'):
+                rel['copy_id'] = copyIdentity(rel.get('files'))
 
         try:
             db = get_db()

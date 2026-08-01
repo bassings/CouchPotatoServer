@@ -3,9 +3,10 @@ import sqlite3
 import traceback
 import time
 
-from CodernityDB.database import RecordNotFound
+from CodernityDB.database import RecordDeleted, RecordNotFound
 from couchpotato import get_db
 from couchpotato.api import addApiView
+from couchpotato.core.db.sqlite_adapter import ConflictError
 from couchpotato.core.event import fireEvent, fireEventAsync, addEvent
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import splitString, getTitle, getImdb, getIdentifier
@@ -121,9 +122,25 @@ class MovieBase(MovieTypeBase):
             }
         })
 
+        addApiView('movie.restore_to_wanted', self.restoreToWantedView, docs = {
+            'desc': "FEAT-008: move a 'done' movie back to 'active' (wanted) "
+                    "without losing its release history -- today the only "
+                    "route back is delete + re-add. Always ensures the movie "
+                    "has a real, resolvable profile (the caller's profile_id, "
+                    "else the movie's existing one, else the default) before "
+                    "writing 'active', and refuses rather than create a "
+                    "Wanted entry the searcher can never pick up.",
+            'params': {
+                'media_id': {'desc': 'The id of the media'},
+                'profile_id': {'desc': 'Optional profile id to assign. Defaults to the '
+                                        "movie's existing profile, then the default profile."},
+            },
+        })
+
         addEvent('movie.add', self.add)
         addEvent('movie.update', self.update)
         addEvent('movie.update_release_dates', self.updateReleaseDate)
+        addEvent('movie.restore_to_wanted', self.restoreToWanted)
 
     def existingProfileId(self, db, m):
         """Return the media doc's current profile_id if it still resolves to a
@@ -143,6 +160,313 @@ class MovieBase(MovieTypeBase):
         except Exception:
             log.error('Failed getting previous profile: %s', traceback.format_exc())
             return None
+
+    def restoreToWantedView(self, media_id = None, **kwargs):
+        return self.restoreToWanted(media_id, profile_id = kwargs.get('profile_id'))
+
+    def restoreToWanted(self, media_id, profile_id = None):
+        """FEAT-008: move a movie back to 'active' (wanted) without losing its
+        release history -- today the only route back from 'done' is deleting
+        and re-adding the movie, which throws that history away.
+
+        The same profile_id=None fact that broke "Search for releases"
+        (MovieSearcher.single's first gate, this feature's other half)
+        matters here too: a
+        movie moved to wanted with no profile is unsearchable -- it would sit
+        in Wanted forever, and single()'s own gate would skip it right back
+        out. So this always ensures a real, resolvable profile before writing
+        'active' -- preferring, in order, the caller's profile_id, the
+        movie's existing one (only if it still resolves to a real profile --
+        a stale/deleted reference is not trusted), then the default profile
+        -- and refuses (AC2) rather than create an unsearchable entry.
+
+        Nothing is deleted, so a 'done' release survives as AC3 requires --
+        but the releases the movie already HOLDS are marked 'ignored', because
+        a held release still counts as satisfying the profile in both
+        media.restatus and single()'s has_better_quality loop. Until both stop
+        counting it the movie is not really wanted: it either bounces straight
+        back out of Wanted (with a false "downloaded -- awaiting review"
+        notification on a manual_confirmation profile) or sits there
+        contacting no providers at all. See the AC3 section of
+        specs/FEAT-008-search-feedback-and-back-to-wanted.md.
+        """
+        if not media_id:
+            return {'success': False, 'error': 'No media_id given'}
+
+        # Hold the per-media lock across BOTH writes.
+        #
+        # This method writes twice: status='active', then the held releases to
+        # 'ignored'. MediaPlugin.restatus takes this same lock for its own
+        # read-modify-write, so without it a concurrent restatus (the periodic
+        # searchAll sweep, a rescan, another search) can land in the window
+        # between them. It reads status='active' with the held release still
+        # 'done', and since every profile this app creates has finish=True,
+        # quality.isfinish is True -- so it finishes the movie straight back to
+        # 'done', or to 'downloaded' plus a false "awaiting review"
+        # notification. The restore is silently undone and this method still
+        # returns success.
+        #
+        # media_lock uses threading.RLock, so nesting inside anything that
+        # already holds it for this key is safe.
+        with media_lock(media_id):
+            return self._restoreToWantedLocked(media_id, profile_id)
+
+    def _restoreToWantedLocked(self, media_id, profile_id = None):
+        try:
+            db = get_db()
+
+            try:
+                media = db.get('id', media_id)
+            except (RecordNotFound, KeyError):
+                return {'success': False, 'error': 'Media not found'}
+
+            # The statuses this action is written for. Applied twice, on
+            # purpose: once here against the doc we read, and again inside the
+            # CAS mutator against the doc actually written -- update_with_retry
+            # re-get()s independently, so those are different reads.
+            RESTORABLE = ('done', 'downloaded', 'active')
+
+            # AC4 (idempotence) is enforced by the CAS mutator below, which
+            # returns False -- no write -- when the movie is already active
+            # with a profile. There is deliberately NO early return here.
+            #
+            # There used to be, and it made this method a status write rather
+            # than a REPAIR. "Already active" does not mean "already wanted":
+            # the movie can be active while still holding a 'done' release
+            # that re-finishes it through media.restatus and blocks the search
+            # through single()'s has_better_quality loop. Returning early
+            # skipped the release-marking below, so pressing "Move back to
+            # wanted" on such a movie reported success and changed nothing --
+            # indistinguishable from working, with no way to fix it.
+            #
+            # That state is reachable: release.add used to resurrect an
+            # ignored release on any library rescan, and release.update_status
+            # swallows a persistent ConflictError, so the marking can also
+            # partially fail. Making every call converge on the intended state
+            # is what makes this safe to press twice.
+
+            # Scope guard, mirroring markFailedAndResearch's discipline: only
+            # the statuses this feature is written for. Without it ANY status
+            # was flipped to 'active' -- in practice the reachable case is a
+            # 'chart' or 'suggested' entry (movie/charts/main.py), which would
+            # be promoted into the wanted list by an API call that was only
+            # ever meant to act on a movie you already have.
+            #
+            # It is NOT about 'snatched': nothing in this codebase assigns
+            # media status 'snatched' -- that is a RELEASE status. An earlier
+            # version of this comment (and its test) claimed the guard stopped
+            # the searcher grabbing a second copy mid-download, which was
+            # fiction; a movie with a snatched release has media status
+            # 'active' and is short-circuited by the idempotency check above.
+            #
+            # 'downloaded' is included deliberately: that is the manual-review
+            # gate, and sending a movie awaiting review back to wanted is a
+            # reasonable thing to want.
+            # 'active' is in the list because reaching here means the movie is
+            # active with NO resolvable profile -- i.e. unsearchable. That is
+            # the repair path the pre-check above deliberately falls through
+            # to, and refusing it would reinstate the very bug this method
+            # grew a profile guarantee to fix.
+            if media.get('status') not in RESTORABLE:
+                return {
+                    'success': False,
+                    'error': "Only a movie you already have can be moved back to wanted "
+                              "(done, downloaded, or already wanted); this one is '%s'"
+                              % media.get('status'),
+                }
+
+            # An explicit choice from the caller always wins; only the
+            # fallback is re-derived per-attempt below.
+            caller_profile_id = self.existingProfileId(db, {'profile_id': profile_id})
+            resolved_profile_id = caller_profile_id or self.existingProfileId(db, media)
+            resolved_profile = None
+
+            if not resolved_profile_id:
+                # profile.default returns the DOC, so keep it -- re-fetching by
+                # id would be a second read of the same thing.
+                resolved_profile = fireEvent('profile.default', single = True)
+                resolved_profile_id = resolved_profile.get('_id') if resolved_profile else None
+
+            if not resolved_profile_id:
+                # AC2: refuse rather than create an unsearchable Wanted entry.
+                return {
+                    'success': False,
+                    'error': 'No quality profile is available -- create one before '
+                              'restoring this movie to wanted',
+                }
+
+            # A profile with NO qualities is unsearchable for the same reason a
+            # missing one is: single() iterates profile['qualities'], so an
+            # empty list contacts no provider at all. profile.save can persist
+            # types=[], so this is reachable. The searcher's own pre-flight
+            # (_resolvableProfileId) already refuses it; without the same check
+            # here, restore reports success and leaves the movie permanently
+            # active having never searched.
+            if resolved_profile is None:
+                try:
+                    resolved_profile = db.get('id', resolved_profile_id)
+                except (RecordNotFound, KeyError):
+                    resolved_profile = None
+            if not (resolved_profile or {}).get('qualities'):
+                return {
+                    'success': False,
+                    'error': 'That quality profile has no qualities, so nothing could ever '
+                              'be searched for -- add at least one quality to it first',
+                }
+
+            # CAS mutator, mirroring markDone/markFailedAndResearch: re-checks
+            # the status-guard against the freshly re-read doc on every retry
+            # (not just the pre-check above), so a concurrent write that beat
+            # us to 'active' between our read and our write is a no-op, not a
+            # clobber.
+            def _restore(m):
+                # Re-derive the scope guard HERE, on the doc actually being
+                # written. update_with_retry re-get()s the current document on
+                # every attempt including the first, so the pre-check above ran
+                # against a DIFFERENT read. A concurrent writer that moved the
+                # movie out of scope in that window (say a chart entry) would
+                # otherwise be promoted to Wanted regardless -- the exact thing
+                # the guard exists to prevent, reachable through the race.
+                # markFailedAndResearch's mutator re-checks unconditionally for
+                # the same reason.
+                if m.get('status') not in RESTORABLE:
+                    return False
+
+                # Already active AND already searchable -> genuinely nothing to
+                # do. The profile half of the guard matters: an 'active' movie
+                # with no usable profile is skipped by single()'s gate, so
+                # bailing on status alone left it permanently unsearchable
+                # while reporting success. Repair the profile in that case,
+                # then the status assignment below is simply a no-op.
+                #
+                # existingProfileId, NOT a truthiness check on profile_id: this
+                # guard has to use the SAME definition of "has a profile" as
+                # the pre-check above. When it used `m.get('profile_id')`, an
+                # active movie whose profile had since been DELETED passed here
+                # on truthiness and was written back unchanged -- reported as
+                # success while single()'s gate let it through and
+                # db.get('id', profile_id) then raised, so searchAll logged
+                # 'Search failed' for it every cycle and never searched it.
+                if m.get('status') == 'active' and self.existingProfileId(db, m):
+                    return False
+                m['status'] = 'active'
+                # The caller's explicit pick always wins. Otherwise re-derive
+                # against the doc being WRITTEN, for the same reason the status
+                # guard above does: this mutator can run against a doc re-read
+                # after a CAS retry, and blindly writing a profile_id resolved
+                # from the pre-fetch doc would clobber a legitimate profile
+                # change that raced this restore.
+                m['profile_id'] = (caller_profile_id
+                                    or self.existingProfileId(db, m)
+                                    or resolved_profile_id)
+
+            try:
+                updated = db.update_with_retry(_restore, media_id)
+            except (RecordNotFound, RecordDeleted, KeyError):
+                return {'success': False, 'error': 'Media not found'}
+            except ConflictError:
+                log.warning('Gave up restoring media %s to wanted after retries due to persistent contention', media_id)
+                return {'success': False, 'error': 'Database busy, please retry'}
+
+            # None means the mutator's CAS re-check found the movie already
+            # active on a retry (lost the race to another writer) -- still a
+            # success. But `media` is the doc we read BEFORE that race, so
+            # returning it (and pushing it to notify.frontend) reported stale
+            # pre-race state for a movie that IS now active. Re-read to report
+            # the winner's version; keep the stale copy only if the re-read
+            # itself fails, which is still better than nothing.
+            if updated:
+                media = updated
+            else:
+                # The mutator declined to write. That is a no-op SUCCESS when
+                # the movie was already active-and-searchable, but a FAILURE
+                # when a concurrent writer moved it out of scope between our
+                # pre-check and update_with_retry's own read -- we must not
+                # report a restore we deliberately refused to make.
+                try:
+                    media = db.get('id', media_id)
+                except (RecordNotFound, RecordDeleted, KeyError):
+                    pass
+                if media.get('status') not in RESTORABLE:
+                    log.info('Not restoring %s: its status changed to %r before the write',
+                             media_id, media.get('status'))
+                    return {
+                        'success': False,
+                        'error': "This movie changed to '%s' while the restore was in "
+                                  'flight, so it was not moved back to wanted'
+                                  % media.get('status'),
+                    }
+
+            # Deliberately fired on the lost-race path too, where
+            # update_with_retry returned None. sqlite_adapter's own docstring
+            # suggests using that None to SKIP notifying, to avoid a duplicate
+            # notify -- markFailedAndResearch does exactly that. This one
+            # differs on purpose:
+            #   - the re-read above means the payload is the winner's current
+            #     state, so a duplicate notify is redundant, never wrong;
+            #   - the movie genuinely WAS just edited (by the winner), so the
+            #     'recent' tag and last_edit bump are accurate either way;
+            #   - this call is user-initiated from the detail page, and that
+            #     page has to refresh regardless of which concurrent writer
+            #     happened to land the change first. Skipping the notify here
+            #     would leave the user who pressed the button looking at stale
+            #     UI whenever they lost a race they cannot see.
+            # Discount the copy the movie already holds.
+            #
+            # Setting status='active' is not enough on a real install: every
+            # profile this app creates uses finish=True on every rung ("take
+            # the best thing available now, then stop"), so quality.isfinish is
+            # True for ANY held release. media.restatus would finish the movie
+            # again on the next sweep, and single()'s has_better_quality loop
+            # would break before contacting a provider. Marking the held
+            # releases 'ignored' addresses both -- restatus counts only 'done',
+            # and has_better_quality skips ('available', 'ignored', 'failed').
+            #
+            # 'ignored' rather than 'failed': nothing failed, the user just
+            # wants something better. Mirrors tryNextRelease, which marks the
+            # snatched/done release 'ignored' for exactly this reason.
+            #
+            # Durability is release.add's job -- see the per-copy rule there.
+            # A rescan used to rewrite this back to 'done', which is a
+            # PRE-EXISTING bug that already breaks tryNextRelease and
+            # markFailedAndResearch, not something this feature introduced.
+            # Known trade-off on 'seeding': checkSnatched watches
+            # release.with_status(['snatched','seeding','missing']), so a
+            # seeding torrent marked 'ignored' drops out of that queue and is
+            # never un-paused or post-processed. It is included anyway because
+            # leaving it would let it satisfy the profile and defeat the whole
+            # action, and because markFailedAndResearch already makes the same
+            # trade with 'failed'. The user has just said they do not want this
+            # copy, so abandoning its seed is the lesser harm -- but it does
+            # mean the torrent stays in the client until removed by hand.
+            # release.update_status returns False when it gives up (persistent
+            # CAS contention). Ignoring that reported success while leaving a
+            # 'done' release still satisfying the profile -- so the next
+            # restatus moves the movie straight back out of Wanted, after the
+            # UI has told the user it worked. Surface it instead.
+            unset_aside = []
+            for rel in fireEvent('release.for_media', media_id, single = True) or []:
+                if rel.get('status') in ('done', 'seeding', 'downloaded'):
+                    ok = fireEvent('release.update_status', rel.get('_id'),
+                                    status = 'ignored', single = True)
+                    if ok is False:
+                        unset_aside.append(rel.get('_id'))
+
+            if unset_aside:
+                log.error('Restored %s but could not set aside releases %s', media_id, unset_aside)
+                return {
+                    'success': False,
+                    'error': 'The movie was moved back to wanted, but a release could not '
+                              'be set aside — it may complete again. Please retry.',
+                }
+
+            fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
+            fireEvent('notify.frontend', type = 'movie.update', data = media)
+
+            return {'success': True, 'media': media}
+        except Exception:
+            log.error('Failed restoring media %s to wanted: %s', media_id, traceback.format_exc())
+            return {'success': False, 'error': 'Unexpected error'}
 
     def add(self, params = None, force_readd = True, search_after = True, update_after = True, notify_after = True, status = None):
         if not params: params = {}
