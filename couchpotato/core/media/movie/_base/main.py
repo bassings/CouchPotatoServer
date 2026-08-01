@@ -275,10 +275,10 @@ class MovieBase(MovieTypeBase):
                               % media.get('status'),
                 }
 
-            resolved_profile_id = (
-                self.existingProfileId(db, {'profile_id': profile_id})
-                or self.existingProfileId(db, media)
-            )
+            # An explicit choice from the caller always wins; only the
+            # fallback is re-derived per-attempt below.
+            caller_profile_id = self.existingProfileId(db, {'profile_id': profile_id})
+            resolved_profile_id = caller_profile_id or self.existingProfileId(db, media)
             resolved_profile = None
 
             if not resolved_profile_id:
@@ -350,7 +350,15 @@ class MovieBase(MovieTypeBase):
                 if m.get('status') == 'active' and self.existingProfileId(db, m):
                     return False
                 m['status'] = 'active'
-                m['profile_id'] = resolved_profile_id
+                # The caller's explicit pick always wins. Otherwise re-derive
+                # against the doc being WRITTEN, for the same reason the status
+                # guard above does: this mutator can run against a doc re-read
+                # after a CAS retry, and blindly writing a profile_id resolved
+                # from the pre-fetch doc would clobber a legitimate profile
+                # change that raced this restore.
+                m['profile_id'] = (caller_profile_id
+                                    or self.existingProfileId(db, m)
+                                    or resolved_profile_id)
 
             try:
                 updated = db.update_with_retry(_restore, media_id)

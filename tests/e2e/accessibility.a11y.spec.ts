@@ -518,6 +518,43 @@ test.describe('Accessibility', () => {
     await expect(polite).toHaveText('No new releases');
   });
 
+
+  test('the restore-to-wanted control has no accessibility violations', async ({ page }) => {
+    /*
+     * PR review: this CI-gated suite only ever visits `e2e-seed-movie-001`, but
+     * the restore control renders only for a done/downloaded movie -- and the
+     * restore E2E tests deliberately use a SEPARATE fixture
+     * (`e2e-seed-movie-002`) so they do not mutate the movie this suite depends
+     * on. So the picker's markup was structurally never present when axe ran
+     * anywhere in this file. It was reviewed by hand, never scanned in CI.
+     */
+    const DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002';
+    await page.goto(`/movie/${DESTRUCTIVE_MOVIE_ID}`);
+    await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 20000 });
+
+    const trigger = page.locator('[data-testid="restore-to-wanted"]');
+    if ((await trigger.count()) === 0) {
+      const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
+      await expect(markDone).toBeVisible({ timeout: 5000 });
+      await markDone.click();
+      await page.waitForLoadState('networkidle');
+      await expect(trigger).toBeVisible({ timeout: 10000 });
+    }
+
+    // Open the picker so the select, its label and both buttons are present.
+    await trigger.click();
+    await expect(page.locator('select[id^="restore-profile-"]')).toBeVisible({ timeout: 5000 });
+
+    const results = await new AxeBuilder({ page })
+      .include('#movie-detail-container')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    const detail = results.violations
+      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
+      .join('\n');
+    expect(results.violations.length, `restore control violations:\n${detail}`).toBe(0);
+  });
+
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');

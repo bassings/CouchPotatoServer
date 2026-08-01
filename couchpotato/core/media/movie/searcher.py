@@ -203,7 +203,18 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return
 
         # Update media status and check if it is still not done (due to the stop searching after feature
-        restatus_result = fireEvent('media.restatus', movie['_id'], single = True)
+        #
+        # SKIPPED for a list-only search on a movie with no profile. restatus's
+        # own `elif not m['profile_id']: m['status'] = 'done'` would persist
+        # immediately -- this call fires BEFORE the local default-profile
+        # fallback below resolves anything -- so pressing "Search for releases"
+        # on an active profile-less movie silently dropped it out of Wanted,
+        # then searched and stored hits against a movie that had just left the
+        # list. AC2: a list-only search is read-only with respect to library
+        # state. The automatic path is untouched.
+        skip_restatus = list_only and not movie.get('profile_id')
+        restatus_result = None if skip_restatus else fireEvent(
+            'media.restatus', movie['_id'], single = True)
         if restatus_result == 'done':
             log.debug('No better quality found, marking movie %s as done.', default_title)
         elif restatus_result == 'downloaded':

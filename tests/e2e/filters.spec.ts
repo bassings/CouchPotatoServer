@@ -1,4 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 
 /**
  * Filter functionality tests for CouchPotato new UI.
@@ -308,5 +309,43 @@ test.describe('Filtered-to-empty state', () => {
     // ...and it clears again, so the next match does not re-announce staleness.
     await page.locator('#filter-movies').fill('');
     await expect(announcer).toBeEmpty();
+  });
+
+  test('the empty-state panel is not hidden from assistive tech while visible', async ({ page }) => {
+    /*
+     * PR review: a static `aria-hidden="true"` was added to this panel. x-show
+     * only toggles display:none -- it does not touch the attribute -- so the
+     * panel and its focusable "Clear filters" button were hidden from
+     * assistive tech while VISIBLE and still in the tab order. axe
+     * `aria-hidden-focus`, WCAG 4.1.2.
+     *
+     * That is the identical bug this branch diagnosed and fixed on the toast
+     * region, reintroduced on the panel whose entire purpose is to reassure a
+     * user whose library looks empty. Nothing caught it: the existing coverage
+     * asserts toBeVisible/toContainText, and the a11y suite never scanned this
+     * panel while it was open.
+     */
+    await stubMovieGrid(page, [{ title: 'Tinsel Town', status: 'done', hasReleases: true }]);
+    await page.goto('/');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await waitForGridLoaded(page);
+
+    await page.locator('#filter-movies').fill('zzz-no-such-movie-zzz');
+    const panel = page.locator('[data-testid="filter-empty-state"]');
+    await expect(panel).toBeVisible();
+
+    // The Clear filters button is focusable, so the panel must not be hidden.
+    await expect(panel).not.toHaveAttribute('aria-hidden', 'true');
+    await page.locator('[data-testid="clear-filters"]').focus();
+    await expect(page.locator('[data-testid="clear-filters"]')).toBeFocused();
+
+    const results = await new AxeBuilder({ page })
+      .include('[data-testid="filter-empty-state"]')
+      .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
+      .analyze();
+    const detail = results.violations
+      .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
+      .join('\n');
+    expect(results.violations.length, `empty-state panel violations:\n${detail}`).toBe(0);
   });
 });

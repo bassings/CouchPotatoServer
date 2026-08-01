@@ -1229,43 +1229,47 @@ class TestADatabaseFaultIsNotReportedAsAMissingProfile:
         )
 
 
-class TestARestoredMovieSearchesOnADefaultProfile:
-    """The configuration every real install actually has.
+# TestARestoredMovieSearchesOnADefaultProfile stood here. It was a mechanical
+# duplicate of TestARestoredMovieIsPickedUpByTheAutomaticSearcher below: same
+# status, same single 'ignored' 2160p release, same _drive helper, same
+# assertion. The only textual difference was profile_id, which _drive ignores
+# because its db.get returns the same _profile() whatever it is asked for --
+# so the two tests could not diverge. Removed rather than left as coverage
+# theatre.
 
-    _profile() here uses finish=[True, True, True], matching what
-    plugins/profile/main.py creates for every seeded profile ("take the best
-    thing available now, then stop"). On that profile a held release satisfies
-    quality.isfinish at ANY rung, and single()'s has_better_quality loop counts
-    any release whose status is not in ('available', 'ignored', 'failed') --
-    so a restored movie holding a 'done' release contacts zero providers.
 
-    restoreToWanted marks the held releases 'ignored' precisely so this works.
-    The earlier AC5 test used releases=[] -- a state restoreToWanted never
-    produces -- and so certified this against a movie that could not exhibit
-    the problem.
+class TestAListOnlySearchDoesNotDropAProfilelessMovieOutOfWanted:
+    """PR review: for an ACTIVE movie with no profile, list_only bypasses the
+    gate -- but the `media.restatus` immediately after fires before the local
+    default-profile fallback resolves. restatus's own
+    `elif not m['profile_id']: m['status'] = 'done'` then persists, because
+    previous_status ('active') != 'done'.
+
+    So pressing "Search for releases" on an active profile-less movie silently
+    drops it from Wanted, then searches and stores hits against a movie that
+    just left the list. That is problem #2 of this branch ("where did my movie
+    go") reproduced through problem #1's own new code path -- and AC2 says a
+    list-only search is read-only with respect to library state.
     """
 
-    def test_the_held_release_no_longer_blocks_the_search(self, searcher):
-        restored = _movie(status='active', releases=[
-            {'_id': 'held-1', 'status': 'ignored', 'quality': '2160p', 'is_3d': False},
-        ])
-        restored['profile_id'] = 'profile-1'
+    def test_an_active_profileless_movie_stays_active(self, searcher):
+        movie = _movie(status='active')
+        movie['profile_id'] = None
 
-        calls = _drive(searcher, restored)
+        # restatus_to models the real event: with no profile it computes 'done'.
+        _drive(searcher, movie, list_only=True, restatus_to='done')
 
-        assert 'searcher.search' in calls, (
-            'a restored movie contacts no providers on a default profile -- it '
-            'would sit in Wanted forever'
+        assert movie['status'] == 'active', (
+            'a read-only "show me what is available" action dropped the movie '
+            'out of Wanted'
         )
 
-    def test_the_same_movie_still_blocked_if_the_release_were_left_done(self, searcher):
-        """The other direction, so the test above cannot pass for the wrong
-        reason: leave the held release 'done' and the search must NOT run."""
-        not_restored = _movie(status='active', releases=[
-            {'_id': 'held-1', 'status': 'done', 'quality': '2160p', 'is_3d': False},
-        ])
-        not_restored['profile_id'] = 'profile-1'
+    def test_the_automatic_path_is_unchanged(self, searcher):
+        """The other direction: restatus must still run normally when this is
+        not a list-only search, or the searcher stops maintaining status."""
+        movie = _movie(status='active')
+        movie['profile_id'] = 'profile-1'
 
-        calls = _drive(searcher, not_restored)
+        calls = _drive(searcher, movie, restatus_to='done')
 
-        assert 'searcher.search' not in calls
+        assert 'media.restatus' in calls

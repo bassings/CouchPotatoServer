@@ -215,70 +215,73 @@ def seed(data_dir):
         })
 
         for movie_id, imdb_id, movie_title in (
-            (MOVIE_ID, IMDB_ID, 'E2E Seed Movie'),
-            (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie'),
+              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie'),
+              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie'),
         ):
-          created.setdefault('movies', []).append(_upsert(db, movie_id, {
-            '_t': 'media',
-            'status': 'active',
-            'title': movie_title,
-            'type': 'movie',
-            'profile_id': PROFILE_ID,
-            'category_id': None,
-            'identifiers': {'imdb': imdb_id},
-            'info': {
-                'imdb': imdb_id,
-                'titles': [movie_title],
-                'original_title': movie_title,
-                'year': 2024,
-                'type': 'movie',
-                'genres': ['Action'],
-                'plot': 'A deterministic fixture movie seeded for E2E tests '
-                        '(scripts/seed_e2e_data.py) -- not a real release.',
-                'runtime': 100,
-                'mpaa': None,
-                'images': {
-                    'poster': [], 'backdrop': [], 'poster_original': [],
-                    'backdrop_original': [], 'disc_art': [], 'extra_thumbs': [],
-                    'actors': {}, 'clear_art': [], 'logo': [], 'banner': [],
-                    'landscape': [], 'extra_fanart': [],
-                },
-                'actors': [],
-                'actor_roles': {},
-                'via_tmdb': False,
-            },
-            'files': {},
-            'tags': [],
-            'last_edit': now,
-          }))
+            created.setdefault('movies', []).append(_upsert(db, movie_id, {
+              '_t': 'media',
+              'status': 'active',
+              'title': movie_title,
+              'type': 'movie',
+              'profile_id': PROFILE_ID,
+              'category_id': None,
+              'identifiers': {'imdb': imdb_id},
+              'info': {
+                  'imdb': imdb_id,
+                  'titles': [movie_title],
+                  'original_title': movie_title,
+                  'year': 2024,
+                  'type': 'movie',
+                  'genres': ['Action'],
+                  'plot': 'A deterministic fixture movie seeded for E2E tests '
+                          '(scripts/seed_e2e_data.py) -- not a real release.',
+                  'runtime': 100,
+                  'mpaa': None,
+                  'images': {
+                      'poster': [], 'backdrop': [], 'poster_original': [],
+                      'backdrop_original': [], 'disc_art': [], 'extra_thumbs': [],
+                      'actors': {}, 'clear_art': [], 'logo': [], 'banner': [],
+                      'landscape': [], 'extra_fanart': [],
+                  },
+                  'actors': [],
+                  'actor_roles': {},
+                  'via_tmdb': False,
+              },
+              'files': {},
+              'tags': [],
+              'last_edit': now,
+            }))
 
-          for r in RELEASES:
-            release_id = 'e2e-seed-release-%s-%s' % (movie_id[-3:], r['suffix'])
-            info = {
-                'name': r['name'],
-                'protocol': r['protocol'],
-                'provider': 'E2ESeedProvider',
-                'size': r['size'],
-                'score': r['score'],
-                'age': r['age'],
-            }
-            if r['seeders'] is not None:
-                info['seeders'] = r['seeders']
+            for r in RELEASES:
+              release_id = 'e2e-seed-release-%s-%s' % (movie_id[-3:], r['suffix'])
+              info = {
+                  'name': r['name'],
+                  'protocol': r['protocol'],
+                  'provider': 'E2ESeedProvider',
+                  'size': r['size'],
+                  'score': r['score'],
+                  'age': r['age'],
+              }
+              if r['seeders'] is not None:
+                  info['seeders'] = r['seeders']
 
-            inserted = _upsert(db, release_id, {
-                '_t': 'release',
-                'status': r['status'],
-                'media_id': movie_id,
-                'identifier': '%s.%s.%s' % (imdb_id, r['suffix'], r['quality']),
-                'quality': r['quality'],
-                'is_3d': False,
-                'last_edit': now,
-                'files': {},
-                'info': info,
-            })
-            created['releases'].append((release_id, inserted))
+              inserted = _upsert(db, release_id, {
+                  '_t': 'release',
+                  'status': r['status'],
+                  'media_id': movie_id,
+                  'identifier': '%s.%s.%s' % (imdb_id, r['suffix'], r['quality']),
+                  'quality': r['quality'],
+                  'is_3d': False,
+                  'last_edit': now,
+                  'files': {},
+                  'info': info,
+              })
+              created['releases'].append((release_id, inserted))
 
-        created['movie'] = any(created.get('movies') or [])
+        # The summary line reports the SHARED movie specifically. `movies`
+        # holds one flag per seeded movie in creation order; collapsing them
+        # with any() made the console say "created" when only the other one was.
+        created['movie'] = (created.get('movies') or [False])[0]
         return created
     finally:
         db.close()
