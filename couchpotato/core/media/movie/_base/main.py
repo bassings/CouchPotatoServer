@@ -201,6 +201,12 @@ class MovieBase(MovieTypeBase):
             except (RecordNotFound, KeyError):
                 return {'success': False, 'error': 'Media not found'}
 
+            # The statuses this action is written for. Applied twice, on
+            # purpose: once here against the doc we read, and again inside the
+            # CAS mutator against the doc actually written -- update_with_retry
+            # re-get()s independently, so those are different reads.
+            RESTORABLE = ('done', 'downloaded', 'active')
+
             # AC4 (idempotence) is enforced by the CAS mutator below, which
             # returns False -- no write -- when the movie is already active
             # with a profile. There is deliberately NO early return here.
@@ -242,7 +248,7 @@ class MovieBase(MovieTypeBase):
             # the repair path the pre-check above deliberately falls through
             # to, and refusing it would reinstate the very bug this method
             # grew a profile guarantee to fix.
-            if media.get('status') not in ('done', 'downloaded', 'active'):
+            if media.get('status') not in RESTORABLE:
                 return {
                     'success': False,
                     'error': "Only a movie you already have can be moved back to wanted "
@@ -254,10 +260,13 @@ class MovieBase(MovieTypeBase):
                 self.existingProfileId(db, {'profile_id': profile_id})
                 or self.existingProfileId(db, media)
             )
+            resolved_profile = None
 
             if not resolved_profile_id:
-                default_profile = fireEvent('profile.default', single = True)
-                resolved_profile_id = default_profile.get('_id') if default_profile else None
+                # profile.default returns the DOC, so keep it -- re-fetching by
+                # id would be a second read of the same thing.
+                resolved_profile = fireEvent('profile.default', single = True)
+                resolved_profile_id = resolved_profile.get('_id') if resolved_profile else None
 
             if not resolved_profile_id:
                 # AC2: refuse rather than create an unsearchable Wanted entry.
@@ -267,12 +276,43 @@ class MovieBase(MovieTypeBase):
                               'restoring this movie to wanted',
                 }
 
+            # A profile with NO qualities is unsearchable for the same reason a
+            # missing one is: single() iterates profile['qualities'], so an
+            # empty list contacts no provider at all. profile.save can persist
+            # types=[], so this is reachable. The searcher's own pre-flight
+            # (_resolvableProfileId) already refuses it; without the same check
+            # here, restore reports success and leaves the movie permanently
+            # active having never searched.
+            if resolved_profile is None:
+                try:
+                    resolved_profile = db.get('id', resolved_profile_id)
+                except (RecordNotFound, KeyError):
+                    resolved_profile = None
+            if not (resolved_profile or {}).get('qualities'):
+                return {
+                    'success': False,
+                    'error': 'That quality profile has no qualities, so nothing could ever '
+                              'be searched for -- add at least one quality to it first',
+                }
+
             # CAS mutator, mirroring markDone/markFailedAndResearch: re-checks
             # the status-guard against the freshly re-read doc on every retry
             # (not just the pre-check above), so a concurrent write that beat
             # us to 'active' between our read and our write is a no-op, not a
             # clobber.
             def _restore(m):
+                # Re-derive the scope guard HERE, on the doc actually being
+                # written. update_with_retry re-get()s the current document on
+                # every attempt including the first, so the pre-check above ran
+                # against a DIFFERENT read. A concurrent writer that moved the
+                # movie out of scope in that window (say a chart entry) would
+                # otherwise be promoted to Wanted regardless -- the exact thing
+                # the guard exists to prevent, reachable through the race.
+                # markFailedAndResearch's mutator re-checks unconditionally for
+                # the same reason.
+                if m.get('status') not in RESTORABLE:
+                    return False
+
                 # Already active AND already searchable -> genuinely nothing to
                 # do. The profile half of the guard matters: an 'active' movie
                 # with no usable profile is skipped by single()'s gate, so
@@ -311,10 +351,24 @@ class MovieBase(MovieTypeBase):
             if updated:
                 media = updated
             else:
+                # The mutator declined to write. That is a no-op SUCCESS when
+                # the movie was already active-and-searchable, but a FAILURE
+                # when a concurrent writer moved it out of scope between our
+                # pre-check and update_with_retry's own read -- we must not
+                # report a restore we deliberately refused to make.
                 try:
                     media = db.get('id', media_id)
                 except (RecordNotFound, RecordDeleted, KeyError):
                     pass
+                if media.get('status') not in RESTORABLE:
+                    log.info('Not restoring %s: its status changed to %r before the write',
+                             media_id, media.get('status'))
+                    return {
+                        'success': False,
+                        'error': "This movie changed to '%s' while the restore was in "
+                                  'flight, so it was not moved back to wanted'
+                                  % media.get('status'),
+                    }
 
             # Deliberately fired on the lost-race path too, where
             # update_with_retry returned None. sqlite_adapter's own docstring
@@ -358,9 +412,26 @@ class MovieBase(MovieTypeBase):
             # trade with 'failed'. The user has just said they do not want this
             # copy, so abandoning its seed is the lesser harm -- but it does
             # mean the torrent stays in the client until removed by hand.
+            # release.update_status returns False when it gives up (persistent
+            # CAS contention). Ignoring that reported success while leaving a
+            # 'done' release still satisfying the profile -- so the next
+            # restatus moves the movie straight back out of Wanted, after the
+            # UI has told the user it worked. Surface it instead.
+            unset_aside = []
             for rel in fireEvent('release.for_media', media_id, single = True) or []:
                 if rel.get('status') in ('done', 'seeding', 'downloaded'):
-                    fireEvent('release.update_status', rel.get('_id'), status = 'ignored', single = True)
+                    ok = fireEvent('release.update_status', rel.get('_id'),
+                                    status = 'ignored', single = True)
+                    if ok is False:
+                        unset_aside.append(rel.get('_id'))
+
+            if unset_aside:
+                log.error('Restored %s but could not set aside releases %s', media_id, unset_aside)
+                return {
+                    'success': False,
+                    'error': 'The movie was moved back to wanted, but a release could not '
+                              'be set aside — it may complete again. Please retry.',
+                }
 
             fireEvent('media.tag', media_id, 'recent', update_edited = True, single = True)
             fireEvent('notify.frontend', type = 'movie.update', data = media)

@@ -49,6 +49,16 @@ def _make_update_with_retry(doc, writes=None):
     return _fake
 
 
+def _default_profile():
+    """What profile.default actually returns: a full profile doc.
+
+    `qualities` is load-bearing -- restoreToWanted refuses a profile with none,
+    because single() iterates that list and an empty one contacts no provider.
+    A bare {'_id': ...} stub is gentler than production and hid that check.
+    """
+    return {'_id': 'default-profile', '_t': 'profile', 'qualities': ['1080p']}
+
+
 def _fire_stub(isfinish=False, releases=None):
     """fireEvent stand-in for tests that do not care about release marking.
 
@@ -88,7 +98,11 @@ def _db_get_side_effect(movie, known_profile_ids):
         if key == movie['_id']:
             return movie
         if key in known_profile_ids:
-            return {'_id': key, '_t': 'profile'}
+            # `qualities` matters: a profile with none is unsearchable (single()
+            # iterates it), and restoreToWanted now refuses one. A fixture
+            # profile without qualities is gentler than any real profile and
+            # would let that check pass untested.
+            return {'_id': key, '_t': 'profile', 'qualities': ['1080p']}
         raise KeyError('Document not found: %s' % key)
     return _get
 
@@ -107,7 +121,7 @@ class TestRestoreToWantedProfileResolution:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
             fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
+                _default_profile() if name == 'profile.default' else None
             )
             result = plugin.restoreToWanted('movie-1')
 
@@ -164,7 +178,7 @@ class TestRestoreToWantedProfileResolution:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
             fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
+                _default_profile() if name == 'profile.default' else None
             )
             result = plugin.restoreToWanted('movie-1')
 
@@ -323,7 +337,7 @@ class TestIdempotenceStillHonoursTheProfileGuarantee:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
             fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
+                _default_profile() if name == 'profile.default' else None
             )
             result = plugin.restoreToWanted('movie-1')
 
@@ -387,7 +401,7 @@ class TestLosingTheCasRaceReportsTheWinnersState:
                 # writer's version is what the database holds.
                 return stale if reads['n'] == 1 else winner
             if key == 'id' and value == 'profile-winner':
-                return {'_id': 'profile-winner'}
+                return {'_id': 'profile-winner', '_t': 'profile', 'qualities': ['1080p']}
             raise RecordNotFound(value)
 
         db.get.side_effect = _get
@@ -440,7 +454,7 @@ class TestAnActiveMovieWithADanglingProfileIsRepaired:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
             fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
+                _default_profile() if name == 'profile.default' else None
             )
             result = plugin.restoreToWanted('movie-1')
 
@@ -471,7 +485,7 @@ class TestACallerSuppliedProfileIdIsNotTrusted:
         with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
                 patch('couchpotato.core.media.movie._base.main.fireEvent') as fire:
             fire.side_effect = lambda name, *a, **k: (
-                {'_id': 'default-profile'} if name == 'profile.default' else None
+                _default_profile() if name == 'profile.default' else None
             )
             result = plugin.restoreToWanted('movie-1', profile_id='profile-deleted-in-another-tab')
 
@@ -620,3 +634,159 @@ class TestTheHeldReleasesAreDiscounted:
         assert movie['status'] == 'chart'
 
 
+
+
+class TestTheScopeGuardIsReAppliedInsideTheCasMutator:
+    """PR review: the scope guard was checked ONCE, against the pre-fetch doc.
+
+    `update_with_retry` re-`get()`s the current document on every attempt,
+    including the first -- so the doc the mutator receives is a different read
+    from the one the guard validated. A concurrent writer that moves the movie
+    to a status outside ('done','downloaded','active') in that window gets it
+    silently promoted to Wanted anyway, which is exactly what the guard exists
+    to prevent.
+
+    The existing harness could not express this: `_db_get_side_effect` and
+    `make_update_with_retry` both operate on the SAME mutable dict, so the
+    pre-check read and the mutator read can never differ. The gap was not just
+    unfixed, it was structurally unreachable -- so this harness deliberately
+    returns a different doc to the mutator.
+    """
+
+    def _restore_with_racing_writer(self, pre_check_status, racer_status):
+        pre_check_doc = _movie(status=pre_check_status, profile_id='profile-1')
+        raced_doc = _movie(status=racer_status, profile_id='profile-1')
+
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+
+        reads = {'n': 0}
+
+        def _get(index, key):
+            if key == 'movie-1':
+                # First read is the pre-check. By the time anything re-reads,
+                # the concurrent writer has landed -- which is the whole point.
+                reads['n'] += 1
+                return pre_check_doc if reads['n'] == 1 else raced_doc
+            if key == 'profile-1':
+                return {'_id': 'profile-1', '_t': 'profile', 'qualities': ['1080p']}
+            raise KeyError(key)
+
+        db.get.side_effect = _get
+
+        def _retry(mutator, doc_id, retries=3):
+            # The concurrent writer landed between the pre-check and here, so
+            # update_with_retry's own get() returns the RACED doc.
+            return None if mutator(raced_doc) is False else raced_doc
+
+        db.update_with_retry.side_effect = _retry
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire_stub()):
+            result = plugin.restoreToWanted('movie-1')
+        return result, raced_doc
+
+    def test_a_movie_raced_out_of_scope_is_not_promoted(self):
+        result, raced = self._restore_with_racing_writer('done', 'suggested')
+
+        assert raced['status'] == 'suggested', (
+            'a chart/suggested entry was silently promoted to Wanted because '
+            'the scope guard was never re-applied to the doc actually written'
+        )
+        assert result['success'] is False, 'reported success for a write it did not make'
+
+    def test_a_movie_still_in_scope_is_restored_normally(self):
+        """The other direction: re-applying the guard must not break the
+        ordinary case, where the raced doc is still restorable."""
+        result, raced = self._restore_with_racing_writer('done', 'downloaded')
+
+        assert result['success'] is True
+        assert raced['status'] == 'active'
+
+
+class TestARestoreThatCouldNotFinishReportsFailure:
+    """PR review: `release.update_status` returns False when it gives up after
+    exhausting its CAS retries. Ignoring that reported success while leaving a
+    'done' release still satisfying the profile -- so the next restatus moves
+    the movie straight back out of Wanted, after the UI has said it worked.
+
+    Mutation-caught: the fix shipped with no test, and reverting it left all
+    1930 green.
+    """
+
+    def _restore(self, update_status_result):
+        movie = _movie(status='done', profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        def _fire(name, *a, **k):
+            if name == 'release.for_media':
+                return [{'_id': 'rel-1', 'status': 'done'}]
+            if name == 'release.update_status':
+                return update_status_result
+            return None
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
+            return plugin.restoreToWanted('movie-1')
+
+    def test_a_release_that_could_not_be_set_aside_is_reported(self):
+        result = self._restore(False)
+
+        assert result['success'] is False, (
+            'told the user the restore worked while a held release still '
+            'satisfies the profile -- the movie will leave Wanted again'
+        )
+        assert 'retry' in result.get('error', '').lower()
+
+    def test_a_successful_set_aside_still_reports_success(self):
+        """The other direction: this must not turn every restore into an error."""
+        assert self._restore(True)['success'] is True
+
+
+class TestAProfileWithNoQualitiesIsRefused:
+    """PR review: `profile.save` can persist `types=[]`, and single() iterates
+    profile['qualities'] -- so an empty profile contacts no provider and the
+    movie sits permanently active having never searched. The searcher's own
+    pre-flight already refuses this; restore has to agree.
+
+    Mutation-caught: shipped with no test.
+    """
+
+    def _restore_with_profile(self, profile_doc):
+        movie = _movie(status='done', profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+
+        def _get(index, key):
+            if key == 'movie-1':
+                return movie
+            if key == 'profile-1':
+                return profile_doc
+            raise KeyError(key)
+
+        db.get.side_effect = _get
+        db.update_with_retry.side_effect = make_update_with_retry(movie)
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire_stub()):
+            return plugin.restoreToWanted('movie-1'), movie
+
+    def test_an_empty_profile_is_refused(self):
+        result, movie = self._restore_with_profile(
+            {'_id': 'profile-1', '_t': 'profile', 'qualities': []})
+
+        assert result['success'] is False, (
+            'restored a movie to a profile that can never search for anything'
+        )
+        assert 'quality' in result.get('error', '').lower()
+        assert movie['status'] == 'done', 'a refused restore must not write'
+
+    def test_a_profile_with_qualities_is_accepted(self):
+        result, movie = self._restore_with_profile(
+            {'_id': 'profile-1', '_t': 'profile', 'qualities': ['1080p']})
+
+        assert result['success'] is True
+        assert movie['status'] == 'active'
