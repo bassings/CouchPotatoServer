@@ -193,6 +193,25 @@ class MovieBase(MovieTypeBase):
         if not media_id:
             return {'success': False, 'error': 'No media_id given'}
 
+        # Hold the per-media lock across BOTH writes.
+        #
+        # This method writes twice: status='active', then the held releases to
+        # 'ignored'. MediaPlugin.restatus takes this same lock for its own
+        # read-modify-write, so without it a concurrent restatus (the periodic
+        # searchAll sweep, a rescan, another search) can land in the window
+        # between them. It reads status='active' with the held release still
+        # 'done', and since every profile this app creates has finish=True,
+        # quality.isfinish is True -- so it finishes the movie straight back to
+        # 'done', or to 'downloaded' plus a false "awaiting review"
+        # notification. The restore is silently undone and this method still
+        # returns success.
+        #
+        # media_lock uses threading.RLock, so nesting inside anything that
+        # already holds it for this key is safe.
+        with media_lock(media_id):
+            return self._restoreToWantedLocked(media_id, profile_id)
+
+    def _restoreToWantedLocked(self, media_id, profile_id = None):
         try:
             db = get_db()
 

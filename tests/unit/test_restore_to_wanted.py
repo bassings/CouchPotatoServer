@@ -790,3 +790,68 @@ class TestAProfileWithNoQualitiesIsRefused:
 
         assert result['success'] is True
         assert movie['status'] == 'active'
+
+
+class TestRestoreHoldsTheMediaLockAcrossBothWrites:
+    """PR review: restore makes TWO writes -- status='active', then marking the
+    held releases 'ignored' -- with nothing holding a lock across them.
+
+    `MediaPlugin.restatus` DOES take `media_lock(media_id)`. A concurrent
+    restatus landing in that window reads status='active' with the held release
+    still 'done'; every profile this app creates has finish=True, so
+    quality.isfinish is True and it finishes the movie straight back to 'done'
+    (or 'downloaded' plus a false "awaiting review" notification when
+    manual_confirmation is on). restoreToWanted then marks a now-irrelevant
+    release and returns success for a restore that was already undone.
+
+    media_lock uses threading.RLock, so nesting inside callers that take it
+    themselves is safe.
+    """
+
+    def test_both_writes_happen_inside_one_media_lock(self):
+        movie = _movie(status='done', profile_id='profile-1')
+        plugin = MovieBase.__new__(MovieBase)
+        db = MagicMock()
+        db.get.side_effect = _db_get_side_effect(movie, known_profile_ids={'profile-1'})
+
+        held = {'depth': 0}
+        events = []
+
+        def _retry(mutator, doc_id, retries=3):
+            events.append(('status_write', held['depth']))
+            mutator(movie)
+            return movie
+
+        db.update_with_retry.side_effect = _retry
+
+        def _fire(name, *a, **k):
+            if name == 'release.for_media':
+                return [{'_id': 'rel-1', 'status': 'done'}]
+            if name == 'release.update_status':
+                events.append(('release_write', held['depth']))
+            return None
+
+        from contextlib import contextmanager
+
+        @contextmanager
+        def _tracking_lock(key):
+            assert key == 'movie-1', 'locked the wrong key: %r' % key
+            held['depth'] += 1
+            try:
+                yield
+            finally:
+                held['depth'] -= 1
+
+        with patch('couchpotato.core.media.movie._base.main.get_db', return_value=db), \
+                patch('couchpotato.core.media.movie._base.main.media_lock', _tracking_lock), \
+                patch('couchpotato.core.media.movie._base.main.fireEvent', side_effect=_fire):
+            result = plugin.restoreToWanted('movie-1')
+
+        assert result['success'] is True
+        assert events, 'neither write happened'
+        for what, depth in events:
+            assert depth > 0, (
+                '%s happened OUTSIDE the media lock, so a concurrent restatus '
+                'can land between the two writes and silently undo the restore'
+                % what
+            )
