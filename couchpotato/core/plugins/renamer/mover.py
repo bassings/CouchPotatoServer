@@ -16,8 +16,8 @@ class MoverMixin:
     def moveFile(self, old, dest, use_default=False):
         dest = sp(dest)
         try:
-            if os.path.exists(dest) and os.path.isfile(dest):
-                raise Exception('Destination "%s" already exists' % dest)
+            if os.path.lexists(dest):
+                raise FileExistsError('Destination "%s" already exists' % dest)
 
             move_type = self.conf('file_action')
             if use_default:
@@ -41,10 +41,11 @@ class MoverMixin:
                 shutil.copy(old, dest)
             elif move_type == 'symlink_reversed':
                 log.info('Reverse symlink "%s" to "%s"', old, dest)
-                try:
-                    shutil.move(old, dest)
-                except Exception:
-                    log.error('Moving "%s" to "%s" went wrong: %s', old, dest, traceback.format_exc())
+                # A failed move must not be swallowed here: if nothing reached
+                # `dest`, the caller (_moveRenamedFiles) must see this as a
+                # failure, not a success -- otherwise cleanup deletes the only
+                # copy of the file. Only the symlink-back is best-effort.
+                shutil.move(old, dest)
                 try:
                     symlink(dest, old)
                 except Exception:
@@ -57,13 +58,22 @@ class MoverMixin:
                 except Exception:
                     log.debug('Couldn\'t hardlink file "%s" to "%s". Symlinking instead. Error: %s.', old, dest, traceback.format_exc())
                     shutil.copy(old, dest)
+                    old_link = '%s.link' % sp(old)
                     try:
-                        old_link = '%s.link' % sp(old)
                         symlink(dest, old_link)
-                        os.unlink(old)
-                        os.rename(old_link, old)
+                        # os.replace is atomic and never unlinks `old` first:
+                        # either it lands as the symlink, or `old` is left
+                        # exactly as it was. The previous unlink-then-rename
+                        # could leave `old` gone entirely if the rename failed
+                        # in between.
+                        os.replace(old_link, old)
                     except Exception:
                         log.error('Couldn\'t symlink file "%s" to "%s". Copied instead. Error: %s. ', old, dest, traceback.format_exc())
+                        if os.path.lexists(old_link):
+                            try:
+                                os.unlink(old_link)
+                            except Exception:
+                                log.debug('Failed removing stray link file "%s": %s', old_link, traceback.format_exc())
 
             try:
                 os.chmod(dest, Env.getPermission('file'))

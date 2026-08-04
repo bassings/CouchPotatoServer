@@ -465,62 +465,49 @@ class TestPermissions:
 
 
 # ---------------------------------------------------------------------------
-# Live defects (T1.8 fixes these; these tests pin TODAY's behaviour so T1.8
-# can invert them).
+# T1.8 data-loss fixes (formerly TestLiveDefects, which pinned these as bugs
+# -- the tests are inverted in place: same scenarios, fixed-behaviour
+# assertions).
 # ---------------------------------------------------------------------------
 
-class TestLiveDefects:
+class TestT18DataLossFixes:
 
-    def test_pins_current_bug_a_move_into_an_empty_directory_at_the_destination_silently_succeeds(self, tmp_path, monkeypatch):
-        """PINS A LIVE DEFECT (T1.8 fix (a), mover.py:19). The top-of-function
-        guard only refuses an existing destination when os.path.isfile(dest)
-        is true, so an existing DIRECTORY at `dest` sails straight through.
-        shutil.move then genuinely succeeds by placing the file INSIDE that
-        directory, unrenamed, as dest/<old's basename>. moveFile returns True,
-        so `_moveRenamedFiles` treats this as a completed move -- and cleanup
-        goes on to delete the source folder, having moved nothing to the name
-        the caller actually asked for. The trailing os.chmod(dest, ...) then
-        strips the directory's own execute bit (PERM_MODE here has no `x`),
-        making it non-traversable -- measured directly below. T1.8 fixes the
-        guard to os.path.exists(dest) alone, which will make this test's own
-        assertions false -- that is the point: T1.8 inverts it.
+    def test_fix_a_a_directory_at_the_destination_is_refused_and_both_sides_are_untouched(self, tmp_path, monkeypatch):
+        """T1.8 fix (a), mover.py:19. FIXED: the top-of-function guard now
+        tests os.path.lexists(dest) alone, so an existing DIRECTORY at `dest`
+        is refused exactly like an existing file always was -- it no longer
+        falls through to shutil.move, which used to place the file INSIDE the
+        directory, unrenamed, as dest/<old's basename>, and then strip the
+        directory's own execute bit via the trailing os.chmod (previously
+        measured and pinned here as a live defect: see git history of this
+        test). AC-DATA-8 / AC-QA-11: raises, and neither side is touched.
+        Break: revert to `os.path.exists(dest) and os.path.isfile(dest)` --
+        this test must fail (result is True instead of raising).
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest_dir = tmp_path / 'library' / 'movie.mkv'
         dest_dir.mkdir(parents=True)  # empty: no basename collision inside
         plugin = _mover(monkeypatch, file_action='move')
 
-        result = _move(plugin, tmp_path, str(old), str(dest_dir))
+        with pytest.raises(Exception, match='already exists'):
+            _move(plugin, tmp_path, str(old), str(dest_dir))
 
-        assert result is True, 'today: a directory at dest is treated as a successful move'
-        assert not os.path.exists(old), 'the file was "moved" -- into the directory'
-        assert not os.access(dest_dir, os.X_OK), (
-            'the trailing os.chmod(dest, PERM_MODE) strips the directory\'s own '
-            'execute bit -- it is no longer traversable, which is itself part '
-            'of the defect'
+        assert Path(old).read_bytes() == DOWNLOAD, 'the source must be untouched'
+        assert os.access(dest_dir, os.X_OK), (
+            'the directory must not be touched at all -- not even its permissions'
         )
-        # Restore traversal ourselves purely so this test (and pytest's own
-        # tmp_path teardown) can look inside -- the loss of +x above IS the
-        # defect being pinned, not something that needs to stay broken for the
-        # rest of this test or for cleanup afterwards.
-        os.chmod(dest_dir, 0o755)
-        landed = dest_dir / 'movie.mkv'
-        assert landed.exists() and landed.read_bytes() == DOWNLOAD, (
-            'the file lands inside the directory, unrenamed, instead of the '
-            'caller ever getting a file at the `dest` path it actually asked for'
-        )
+        assert list(dest_dir.iterdir()) == [], 'nothing must land inside the directory'
 
-    def test_pins_current_bug_b_a_failed_rename_after_hardlink_fallback_leaves_old_absent_and_a_stray_link_file(self, tmp_path, monkeypatch):
-        """PINS A LIVE DEFECT (T1.8 fix (b), mover.py:60-64). On the hardlink
-        fallback path, `old` is unlinked (:63) BEFORE the rename that restores
-        it as a symlink (:64). If that rename then fails -- a real, reachable
-        failure mode (another process holding `old_link` open, a dropped
-        mount between the two calls) -- `old` is simply gone: no real file, no
-        symlink, nothing at that name at all, while a stray `<old>.link`
-        survives instead. The whole thing is swallowed by the branch's own
-        try/except, so moveFile still reports True. T1.8 replaces the
-        unlink+rename pair with one atomic os.replace, which cannot produce
-        this state -- that is what this test's assertions will invert.
+    def test_fix_b_a_failed_replace_after_hardlink_fallback_leaves_old_intact_with_no_stray_link(self, tmp_path, monkeypatch):
+        """T1.8 fix (b), mover.py:60-69. FIXED: `old` is never unlinked ahead
+        of time -- `os.replace(old_link, old)` is atomic, so it either lands
+        as the symlink or leaves `old` exactly as it was. When it fails (a
+        real, reachable failure mode: another process holding `old_link`
+        open, a dropped mount between the two calls -- simulated here by
+        monkeypatching os.replace itself), the branch also removes the now-
+        orphaned `old_link` (AC-QA-15: no stray `<old>.link` survives any
+        failure ordering). Break: restore the old unlink-then-rename pair --
+        this test must fail (old gone, a stray `.link` left behind).
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -530,38 +517,47 @@ class TestLiveDefects:
             mover_module, 'link',
             lambda src, dst: (_ for _ in ()).throw(OSError('simulated: cannot hardlink')),
         )
-        real_rename = os.rename
+        # Fail whichever call the code under test happens to make for
+        # old_link -> old: os.replace (fixed code) or os.rename (the
+        # unlink-then-rename pair this test's Break note reverts to). Patching
+        # only one would make this test blind to a revert of the OTHER call,
+        # since the unpatched syscall would then simply succeed.
+        real_replace, real_rename = os.replace, os.rename
+
+        def _raising_replace(src, dst):
+            if str(src) == old_link_path:
+                raise OSError('simulated: replace of the fallback link failed')
+            return real_replace(src, dst)
 
         def _raising_rename(src, dst):
             if str(src) == old_link_path:
                 raise OSError('simulated: rename of the fallback link failed')
             return real_rename(src, dst)
 
+        monkeypatch.setattr(os, 'replace', _raising_replace)
         monkeypatch.setattr(os, 'rename', _raising_rename)
         plugin = _mover(monkeypatch, file_action='link')
 
         result = _move(plugin, tmp_path, str(old), str(dest))
 
-        assert result is True, 'the branch swallows this failure and still reports success'
-        assert not os.path.exists(old), 'today: old is gone -- unlinked before the failed rename'
-        assert os.path.exists(old_link_path), 'today: a stray <old>.link survives'
+        assert result is True, 'this branch still degrades to a plain copy and reports success'
+        assert os.path.exists(old) and not os.path.islink(old), (
+            'old must remain the real file -- never unlinked ahead of the replace'
+        )
+        assert Path(old).read_bytes() == DOWNLOAD
+        assert not os.path.lexists(old_link_path), 'no stray <old>.link may survive any failure ordering'
         assert dest.read_bytes() == DOWNLOAD
 
-    def test_pins_current_bug_c_symlink_reversed_swallows_a_failed_move_and_reports_success(self, tmp_path, monkeypatch):
-        """PINS A LIVE DEFECT (T1.8 fix (c), mover.py:42-51). Both the initial
-        move and the symlink-back attempt in the symlink_reversed branch are
-        wrapped in their own try/except that only logs and continues. When the
-        move fails, `old` is never moved -- so the follow-up
-        `symlink(dest, old)` ALSO fails, because `old` still exists as a real
-        file at that exact path (you cannot create a symlink where a regular
-        file already sits) -- and that failure is swallowed too. moveFile
-        still returns True, with nothing at `dest` and `old` sitting exactly
-        where it started. `_moveRenamedFiles` takes that True to mean the file
-        reached the library and, with cleanup on, deletes the source folder:
-        on a full disk or a dropped NAS mount, this is how a completed
-        download disappears with nothing to show for it. T1.8 fixes this by
-        re-raising (or returning falsy) when the move itself fails, which will
-        make this test's own assertions false -- that is the point.
+    def test_fix_c_symlink_reversed_raises_when_the_move_fails_instead_of_reporting_success(self, tmp_path, monkeypatch):
+        """T1.8 fix (c), mover.py:42-52. FIXED: the initial shutil.move in the
+        symlink_reversed branch is no longer wrapped in a swallowing
+        try/except -- a failed move now propagates out of moveFile entirely
+        (only the best-effort symlink-back stays swallowed). `_moveRenamedFiles`
+        therefore sees a real exception instead of a false True, sets
+        `skipped`, and cleanup is suppressed -- this is the guard against
+        deleting a completed download on a full disk or a dropped NAS mount.
+        Break: re-wrap the shutil.move call in try/except -- this test must
+        fail (result is True instead of raising).
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -573,10 +569,136 @@ class TestLiveDefects:
         monkeypatch.setattr(shutil, 'move', _failing_move)
         plugin = _mover(monkeypatch, file_action='symlink_reversed')
 
-        result = _move(plugin, tmp_path, str(old), str(dest))
+        with pytest.raises(OSError):
+            _move(plugin, tmp_path, str(old), str(dest))
 
-        assert result is True, 'today: a failed move in this branch is swallowed and reported as success'
         assert Path(old).read_bytes() == DOWNLOAD, 'old is untouched -- the move never happened'
+        assert not os.path.exists(dest), 'nothing reached the destination either'
+
+
+# ---------------------------------------------------------------------------
+# T1.8 caller-level proof (AC-DATA-12 / AC-QA-17). The assertions above are a
+# curiosity on their own -- moveFile is not the code that deletes anything.
+# These drive the real Renamer._moveRenamedFiles (renamer/main.py), with a
+# REAL moveFile underneath (only `conf`, `Env.getPermission` and
+# `deleteFolder` are stubbed -- deleteFolder purely to record whether cleanup
+# ran, following test_renamer_cleanup_safety.py's _Recorder pattern, without
+# actually touching the tmp_path fixture we still want to assert against
+# afterwards), against a real filesystem, and assert whether the source
+# folder gets cleaned up.
+# ---------------------------------------------------------------------------
+
+class TestCallerLevelDataLossGuards:
+
+    def _run(self, monkeypatch, conf, rename_files, source_folder):
+        plugin = _mover(monkeypatch, **conf)
+        deleted = []
+        monkeypatch.setattr(
+            type(plugin), 'deleteFolder',
+            lambda _self, folder, **kw: deleted.append(folder),
+            raising=False,
+        )
+        plugin._moveRenamedFiles(rename_files, {'parentdir': source_folder})
+        return deleted
+
+    def test_fix_a_a_pre_existing_directory_at_the_destination_is_not_cleaned_up(self, tmp_path, monkeypatch):
+        """AC-DATA-8 / AC-DATA-12 / AC-QA-11 / AC-QA-17 at the caller level.
+        Renamer._moveRenamedFiles already refuses ANY pre-existing `dst` (file
+        or directory) before ever calling moveFile (renamer/main.py:154-157),
+        so this specific scenario is caught one layer up regardless of the
+        mover.py fix -- worth recording honestly rather than implying the
+        caller-level test alone proves fix (a) load-bearing (it does not:
+        reverting fix (a) in isolation leaves this test green, because the
+        caller's own guard fires first). The unit-level test above
+        (test_fix_a_...) is what proves fix (a) is load-bearing; this one
+        proves the two guards agree, and that a pre-existing directory can
+        never reach cleanup via the real caller.
+        """
+        old = _write(tmp_path / 'downloads/Movie-GRP/movie.mkv', DOWNLOAD)
+        dest_dir = tmp_path / 'library' / 'movie.mkv'
+        dest_dir.mkdir(parents=True)
+        source_folder = str(old.parent)
+
+        deleted = self._run(
+            monkeypatch, {'default_file_action': 'move', 'cleanup': True},
+            {str(old): str(dest_dir)}, source_folder,
+        )
+
+        assert deleted == [], 'source folder must not be cleaned up when nothing moved'
+        assert old.exists() and old.read_bytes() == DOWNLOAD, 'the download must survive'
+
+    def test_fix_b_a_failed_hardlink_fallback_replace_leaves_no_stray_link_via_the_real_caller(self, tmp_path, monkeypatch):
+        """AC-DATA-12 / AC-QA-15 / AC-QA-17 at the caller level. Unlike (a) and
+        (c), a failed replace in this branch does not put the library copy at
+        risk -- shutil.copy(old, dest) already completed before the replace is
+        even attempted, so `dest` is correct either way and cleanup running is
+        safe. What T1.8 fix (b) guarantees at this boundary is the one thing
+        that was NOT safe before: `old` is never left absent, and no stray
+        `<old>.link` survives, even driven through the real caller rather than
+        moveFile directly.
+        """
+        old = _write(tmp_path / 'downloads/Movie-GRP/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/Movie (2020)/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source_folder = str(old.parent)
+        old_link_path = '%s.link' % old
+
+        monkeypatch.setattr(
+            mover_module, 'link',
+            lambda src, dst: (_ for _ in ()).throw(OSError('simulated: cannot hardlink')),
+        )
+        # See the unit-level test_fix_b for why both are patched.
+        real_replace, real_rename = os.replace, os.rename
+
+        def _raising_replace(src, dst):
+            if str(src) == old_link_path:
+                raise OSError('simulated: replace of the fallback link failed')
+            return real_replace(src, dst)
+
+        def _raising_rename(src, dst):
+            if str(src) == old_link_path:
+                raise OSError('simulated: rename of the fallback link failed')
+            return real_rename(src, dst)
+
+        monkeypatch.setattr(os, 'replace', _raising_replace)
+        monkeypatch.setattr(os, 'rename', _raising_rename)
+
+        deleted = self._run(
+            monkeypatch, {'default_file_action': 'link', 'cleanup': True},
+            {str(old): str(dest)}, source_folder,
+        )
+
+        assert deleted == [source_folder], 'cleanup should still run -- dest already holds the full content'
+        assert dest.read_bytes() == DOWNLOAD
+        assert not os.path.lexists(old_link_path), 'no stray <old>.link must survive, even via the real caller'
+
+    def test_fix_c_a_failed_symlink_reversed_move_is_not_cleaned_up(self, tmp_path, monkeypatch):
+        """AC-DATA-12 / AC-QA-17 -- the actual data-loss guard this task
+        exists for. Before T1.8, a failed shutil.move inside the
+        symlink_reversed branch was swallowed and moveFile still returned
+        True; `_moveRenamedFiles` took that as a completed move and, with
+        cleanup on, deleted the source folder -- destroying the only copy of
+        a completed download on a full disk or a dropped NAS mount. After the
+        fix, the failure propagates out of moveFile, `_moveRenamedFiles`
+        catches it and sets `skipped`, and cleanup is suppressed.
+        """
+        old = _write(tmp_path / 'downloads/Movie-GRP/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/Movie (2020)/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        source_folder = str(old.parent)
+
+        def _failing_move(src, dst):
+            raise OSError('simulated: disk full / dropped mount, nothing written')
+
+        monkeypatch.setattr(shutil, 'move', _failing_move)
+
+        deleted = self._run(
+            monkeypatch, {'default_file_action': 'symlink_reversed', 'cleanup': True},
+            {str(old): str(dest)}, source_folder,
+        )
+
+        assert deleted == [], 'the source folder must not be cleaned up when the move never happened'
+        assert old.exists() and old.read_bytes() == DOWNLOAD, 'the download must survive'
         assert not os.path.exists(dest), 'nothing reached the destination either'
 
 
