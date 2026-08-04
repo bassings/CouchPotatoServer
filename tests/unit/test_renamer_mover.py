@@ -601,18 +601,23 @@ class TestCallerLevelDataLossGuards:
         plugin._moveRenamedFiles(rename_files, {'parentdir': source_folder})
         return deleted
 
-    def test_fix_a_a_pre_existing_directory_at_the_destination_is_not_cleaned_up(self, tmp_path, monkeypatch):
-        """AC-DATA-8 / AC-DATA-12 / AC-QA-11 / AC-QA-17 at the caller level.
-        Renamer._moveRenamedFiles already refuses ANY pre-existing `dst` (file
-        or directory) before ever calling moveFile (renamer/main.py:154-157),
-        so this specific scenario is caught one layer up regardless of the
-        mover.py fix -- worth recording honestly rather than implying the
-        caller-level test alone proves fix (a) load-bearing (it does not:
-        reverting fix (a) in isolation leaves this test green, because the
-        caller's own guard fires first). The unit-level test above
-        (test_fix_a_...) is what proves fix (a) is load-bearing; this one
-        proves the two guards agree, and that a pre-existing directory can
-        never reach cleanup via the real caller.
+    def test_caller_refuses_any_pre_existing_destination_before_calling_movefile(self, tmp_path, monkeypatch):
+        """Pins `Renamer._moveRenamedFiles`'s OWN guard, not mover.py's.
+
+        Renamed from `test_fix_a_...` during T1.8 review. Under that name the
+        test claimed to prove fix (a) load-bearing at the caller level, and it
+        cannot: `renamer/main.py:154-157` refuses ANY pre-existing `dst` (file
+        or directory) before `moveFile` is ever reached, so reverting fix (a)
+        leaves this green. That is the "incidentally passing" shape in
+        CLAUDE.md section 11: it passed for a reason unrelated to what its name
+        claimed. The unit-level `test_fix_a_...` is what proves fix (a).
+
+        Kept, because what it actually guards is worth guarding: the caller's
+        skip-and-warn on a pre-existing destination, which sets `skipped = True`
+        and so keeps `cleanup` away from the source folder. PR 4 (FEAT-009
+        Part B, T4.3) rewrites exactly that line to replace the destination
+        instead of skipping, and this test is the regression pin for the
+        behaviour it is replacing.
         """
         old = _write(tmp_path / 'downloads/Movie-GRP/movie.mkv', DOWNLOAD)
         dest_dir = tmp_path / 'library' / 'movie.mkv'
