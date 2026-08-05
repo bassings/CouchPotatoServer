@@ -20,7 +20,8 @@
  * second copy in JS that could quietly drift from the Python one.
  */
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { test as base, expect } from '@playwright/test';
@@ -36,8 +37,12 @@ const PYTHON = process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'p
 const BASE_PORT = 5150;
 const READY_TIMEOUT_MS = 60_000;
 const POLL_INTERVAL_MS = 250;
+// Playwright's own output directory: already gitignored, already cleaned per
+// run, already where traces and failure screenshots go.
+const LOG_DIR = 'test-results';
 
 type WorkerServer = { baseURL: string };
+type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
 function decode(chunk: unknown): string {
   return chunk instanceof Buffer ? chunk.toString('utf-8') : String(chunk);
@@ -51,16 +56,13 @@ function decode(chunk: unknown): string {
  * downstream spec reporting a bare ERR_CONNECTION_REFUSED against a URL
  * that never had anything listening on it.
  */
-async function waitForServer(proc: ChildProcess, url: string, getOutput: () => string): Promise<void> {
+async function waitForServer(getExit: () => Exit | null, url: string, getOutput: () => string): Promise<void> {
   const deadline = Date.now() + READY_TIMEOUT_MS;
-  let exited: { code: number | null; signal: NodeJS.Signals | null } | null = null;
-  proc.once('exit', (code, signal) => {
-    exited = { code, signal };
-  });
 
   while (Date.now() < deadline) {
+    const exited = getExit();
     if (exited) {
-      const { code, signal } = exited as { code: number | null; signal: NodeJS.Signals | null };
+      const { code, signal } = exited;
       throw new Error(
         `the application under test exited before it became ready ` +
         `(exit code ${code}, signal ${signal}). Last output:\n${getOutput().slice(-4000)}`,
@@ -133,6 +135,8 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
     }
 
     let proc: ChildProcess | undefined;
+    let output = '';
+    let exited: Exit | null = null;
     try {
       // Seed BEFORE the server starts -- a failed/half-complete seed must
       // fail the worker, never start a server against an empty database
@@ -140,14 +144,18 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       // scripts/seed_e2e_data.py's own docstring establishes).
       execFileSync(PYTHON, ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`], { stdio: 'pipe' });
 
-      let output = '';
       proc = spawn(PYTHON, ['CouchPotato.py', `--data_dir=${dataDir}`, `--port=${port}`], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       proc.stdout?.on('data', (d) => { output += decode(d); });
       proc.stderr?.on('data', (d) => { output += decode(d); });
+      // Persistent, not once-during-startup: a server that dies mid-run is
+      // the case with no diagnosis at all today. Every subsequent spec on
+      // this worker just reports ECONNREFUSED against a URL that used to
+      // work, and the traceback explaining why went to a pipe nobody read.
+      proc.on('exit', (code, signal) => { exited = { code, signal }; });
 
-      await waitForServer(proc, `${baseURL}/`, () => output);
+      await waitForServer(() => exited, `${baseURL}/`, () => output);
     } catch (err) {
       if (proc) await stopServer(proc);
       // Best-effort: a worker that failed to start still frees its data
@@ -165,8 +173,39 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
 
     await use({ baseURL });
 
+    // Read BEFORE stopServer, which kills the process and would otherwise
+    // set this itself -- an orderly shutdown must not be reported as a crash.
+    const crashed = exited;
+
+    // Always persist the app log. Until now it lived only in a closure and
+    // was dropped on the floor at teardown, so the one artefact that could
+    // explain a mid-run failure was the one thing the run never kept.
+    // test-results/ is Playwright's own output dir, already gitignored and
+    // already where traces and screenshots land.
+    let logPath = '';
+    try {
+      mkdirSync(LOG_DIR, { recursive: true });
+      logPath = path.join(LOG_DIR, `server-w${idx}.log`);
+      writeFileSync(logPath, output, 'utf-8');
+    } catch {
+      // Never fail teardown over a log file.
+    }
+
     await stopServer(proc);
     execFileSync(PYTHON, ['scripts/e2e_worker_data.py', 'cleanup', String(idx)], { stdio: 'pipe' });
+
+    // Raised last, so the data dir is released either way -- but raised, not
+    // logged: a suite that goes green while the application under test died
+    // half way through is reporting on tests that never ran against it.
+    if (crashed) {
+      throw new Error(
+        `worker ${idx}: the application under test exited mid-run ` +
+        `(exit code ${crashed.code}, signal ${crashed.signal}). ` +
+        `Any spec that ran after that point failed against a dead server. ` +
+        `Full application log: ${logPath || '(could not be written)'}\n` +
+        `Last output:\n${output.slice(-4000)}`,
+      );
+    }
   }, { scope: 'worker', auto: true }],
 
   baseURL: async ({ workerServer }, use) => {
