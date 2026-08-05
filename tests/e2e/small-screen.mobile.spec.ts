@@ -154,14 +154,16 @@ test.describe('Small-screen layout', () => {
       .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
       .analyze();
 
-    // button-name is critical; target-size is WCAG 2.2 AA (2.5.8) and is the
-    // difference between a control a thumb can hit and one it cannot.
-    const blocking = results.violations.filter(
-      (v) => v.id === 'button-name' || v.id === 'target-size',
-    );
-    const detail = blocking
+    // T1.4b/AC-A11Y-11: this used to filter to button-name + target-size
+    // before asserting, so any OTHER WCAG violation on this page (in this
+    // filtered state, at this viewport) could never fail the test. Assert on
+    // the full violation list -- .withTags already includes wcag22aa above,
+    // so target-size (2.5.8) is still evaluated; button-name is a `critical`
+    // rule that was already covered either way.
+    const violations = results.violations;
+    const detail = violations
       .flatMap((v) => v.nodes.map((n) => `${v.id}: ${n.html}`))
       .join('\n');
-    expect(blocking.length, `reach-blocking violations:\n${detail}`).toBe(0);
+    expect(violations.length, `a11y violations:\n${detail}`).toBe(0);
   });
 });
