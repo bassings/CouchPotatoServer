@@ -621,6 +621,13 @@ already `rm -rf` sibling paths in the repo root.
   entry and a CI topology change: a red run would have seven candidate causes
   and the evidence the AC buys becomes uninterpretable. This does not split the
   PR and does not let PR 2 start sooner, so it is consistent with decision 4.
+- **T1.7a (seed fixture) lands first** (decided 2026-08-05). The flake below
+  blocks T1.7's acceptance bar, so the seeded movies are separated first: the
+  already-`done` release moves onto its own movie, so the Wanted-page specs keep
+  an active one. Test-fixture change only, no production code, which keeps PR 1
+  in character. The restatus timing in `searcher.py` is the root cause but was
+  rejected as the fix here: it is production code on the download path PR 3 also
+  edits, and it does not belong in a test-focused PR.
 - **A second flake source exists, independent of spec coupling** (found during
   T1.4, 2026-08-05). The app's own `app.load` to `searchAll` restatus pass can
   promote a seeded movie straight to `done` mid-run, which drops it out of the
