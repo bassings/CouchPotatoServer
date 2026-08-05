@@ -670,12 +670,17 @@ the diff, not by an agent.
   (T1.7, added 2026-08-05 -- concurrent per-worker CouchPotato.py processes
   race on cleaning the shared `__pycache__` tree; reproduced directly with
   `--workers=3`, one worker crashed before binding a port),
+  (h) `ui/templates/wanted.html`: the redundant `x-init="init()"` removal
+  only (T1.7, added 2026-08-05 -- a double `init()` call double-registered
+  the arrow-key handler, which T1.7's acceptance runs made deterministic
+  once the seed grew from 1-2 to 3 Wanted movies; blocks the local gate
+  hard rule 2 requires, so this could not be left red and deferred),
   (g) whole-file deletions of `simple_healthcheck.py`, `integration_test.py`,
   `environment_test.py`. **Any other modified file under `couchpotato/` fails.**
   *(Amended 2026-08-03: the original allowed only `searcher.py:419`. The
   precedence order puts irrecoverable data loss above the no-runtime-change
   constraint: see T1.8, and `--port` was added to scope as a T1.7
-  prerequisite. Amended again 2026-08-05 for (e) and (f).)*
+  prerequisite. Amended again 2026-08-05 for (e), (f) and (h).)*
 - **AC-SIMP-2** `requirements.txt` unchanged; `package.json` dependencies and
   devDependencies unchanged. No new runtime or npm dependency.
 - **AC-SIMP-3** No new configuration setting: zero additions to the settings

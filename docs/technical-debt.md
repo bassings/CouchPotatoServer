@@ -36,21 +36,29 @@
   notifications/metadata don't auto-fire); being addressed by the
   Downloaded/review workflow — see `specs/DOWNLOADED-REVIEW-WORKFLOW.md` +
   `specs/RENAMER-EVENT-CHAIN.md`.
-- **Wanted-page arrow-key navigation double-fires (found during T1.7, not
-  fixed there — out of scope for an E2E-isolation PR).** `wanted.html`'s
-  keydown handler (`document.getElementById('movie-grid').addEventListener
-  ('keydown', ...)` inside `init()`) moves focus by TWO cards per
-  arrow-key press, not one: pressing ArrowRight from card 0 lands on card 2,
-  skipping card 1. Reproduced deterministically (not a flake — 3/3 runs,
-  isolated single-worker) by instrumenting `focusin`: two focus changes land
-  within 0.1ms of each other for one keypress, so the handler is firing
-  twice per event, most likely a duplicate `addEventListener` registration.
-  Invisible before T1.7a/T1.9: the Wanted grid used to seed 1-2 movies, where
-  a double-step and a single-step clamp to the same result. It seeds 3 now,
-  which exposes it. `tests/e2e/interactions.e2e.spec.ts`'s "arrow keys
-  navigate movie cards" test is excluded from T1.7's acceptance runs with
-  `--grep-invert` for this reason, documented rather than weakened to match
-  the bug.
+- **RESOLVED (T1.7).** `wanted.html`'s arrow-key handler used to move focus
+  by TWO cards per keypress, not one: `x-data="movieList()"
+  x-init="init()"` called `init()` twice (once via Alpine's own
+  auto-invoke-a-data-object's-`init()` convention, once via the explicit
+  `x-init`), double-registering the keydown listener. Invisible before
+  T1.7a/T1.9, when the Wanted grid seeded 1-2 movies (a double-step and a
+  single-step clamp to the same result there); seeding 3 exposed it. Same
+  bug class already fixed once in `base.html`'s `<body>` and in
+  `partials/movie_detail.html`'s `restoreToWanted()` component (see that
+  file's comment at `:199`) -- this makes `wanted.html` the third fix, not
+  a new pattern. Confirmed the fix is load-bearing: reverted, watched
+  `tests/e2e/interactions.e2e.spec.ts`'s "arrow keys navigate movie cards"
+  fail 3/3, restored, hash-verified.
+
+  **`x-init="init()"` is still redundant (same live bug, not yet visibly
+  broken) in `wizard.html`, `logs.html`, `settings.html`,
+  `partials/movie_detail.html`'s `profileEditor()`, and
+  `partials/movie_releases.html`.** Each double-runs its own `init()`
+  exactly like `wanted.html` did. Not fixed here -- out of scope for an
+  E2E-isolation PR to sweep every template -- but worth a dedicated pass;
+  whatever each `init()` does twice (fetches, listener registrations) is
+  waste at minimum and a latent bug at worst, the same shape three
+  independent fixes have now found in three different components.
 - **Events fired with no handler.** `fireEvent()` returns `[]` for an
   unhandled name, indistinguishable from "handled, found nothing", so a
   mis-wired event never fails — the feature behind it silently does nothing.
