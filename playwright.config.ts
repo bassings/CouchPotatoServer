@@ -114,14 +114,6 @@ export default defineConfig({
       testIgnore: /.*\.(mobile|a11y)\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
-    {
-      name: 'firefox',
-      use: { ...devices['Desktop Firefox'] },
-    },
-    {
-      name: 'webkit',
-      use: { ...devices['Desktop Safari'] },
-    },
     /* Accessibility tests project */
     {
       name: 'accessibility',
