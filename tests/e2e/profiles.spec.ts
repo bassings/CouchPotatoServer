@@ -34,18 +34,34 @@ async function openProfilesTab(page: Page) {
 }
 
 /**
- * Create a fresh, NON-core test profile and return the panel. Needed because
- * every built-in profile is `core` and its Delete button is disabled, so any
- * test exercising the delete flow must operate on a user-created profile.
+ * Create a fresh, NON-core test profile with `qualityCount` qualities and
+ * return the panel. Needed because every built-in profile is `core` and its
+ * Delete button is disabled, so any test exercising the delete flow must
+ * operate on a user-created profile.
+ *
+ * `qualityCount` exists so a test that needs a specific shape (two qualities,
+ * to reorder) can establish it rather than inspecting whatever profile
+ * happened to be first and skipping when it does not fit. The dropdown drops
+ * each quality once added (`availableQualities` filters out used ones), so
+ * selecting index 1 repeatedly picks a different quality each time.
  */
-async function createTestProfile(page: Page) {
+async function createTestProfile(page: Page, qualityCount = 1) {
   const panel = await openProfilesTab(page);
   await panel.getByRole('button', { name: /new profile/i }).click();
   const modal = page.getByTestId('edit-modal');
   await expect(modal).toBeVisible();
   await modal.locator('input[type="text"]').first().fill(TEST_PROFILE_NAME);
-  await modal.locator('select').first().selectOption({ index: 1 });
-  await modal.getByRole('button', { name: /^add$/i }).click();
+
+  const qualityList = modal.locator('[role="list"][aria-label="Qualities in this profile"]');
+  for (let i = 0; i < qualityCount; i++) {
+    await modal.locator('select').first().selectOption({ index: 1 });
+    await modal.getByRole('button', { name: /^add$/i }).click();
+    // Wait for the row to land before selecting the next one: the select's
+    // options are derived from the rows, so racing it would re-add the same
+    // quality and silently produce a profile one quality short.
+    await expect(qualityList.locator('[role="listitem"]')).toHaveCount(i + 1);
+  }
+
   await modal.getByRole('button', { name: /create profile/i }).click();
   await expect(modal).not.toBeVisible();
   await expect(panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') })).toBeVisible();
@@ -77,11 +93,12 @@ test.describe('Quality Profiles', () => {
   test('profiles tab loads and shows profile list', async ({ page }) => {
     const panel = await openProfilesTab(page);
 
-    // Should not be in an error state
-    const errEl = panel.locator('[role="alert"]');
-    if (await errEl.isVisible()) {
-      throw new Error('Profiles panel showed error: ' + (await errEl.textContent()));
-    }
+    // Should not be in an error state. A plain assertion, not
+    // `if (visible) throw`: the alert and the New Profile button are
+    // mutually exclusive (x-show="!loading && !loadError"), so the
+    // conditional could never be entered once openProfilesTab had waited
+    // for that button -- dead code dressed as a check.
+    await expect(panel.locator('[role="alert"]')).toBeHidden();
 
     await expect(panel.getByRole('button', { name: /new profile/i })).toBeVisible();
 
@@ -156,28 +173,30 @@ test.describe('Quality Profiles', () => {
   });
 
   test('reorder qualities within a profile', async ({ page }) => {
-    const panel = await openProfilesTab(page);
+    // Build the precondition instead of hoping for it. This test used to
+    // edit whichever profile happened to be listed first and then wrap the
+    // reorder in `if (count >= 2)` / `if (moveDownBtns > 0)` -- so on any
+    // seed where the first profile had a single quality it asserted
+    // nothing at all, and reported green. Two qualities, created here, are
+    // what the reorder needs.
+    const panel = await createTestProfile(page, 2);
 
-    const editBtns = panel.getByRole('button', { name: /edit profile/i });
-    if (await editBtns.count() === 0) { test.skip(); return; }
-
-    await editBtns.first().click();
+    await panel.getByRole('button', { name: new RegExp('Edit profile: ' + TEST_PROFILE_NAME, 'i') }).click();
 
     const modal = page.getByTestId('edit-modal');
     await expect(modal).toBeVisible();
 
-    const qualityItems = modal.locator('[role="listitem"]');
-    await expect(qualityItems.first()).toBeVisible();
+    const qualityItems = modal.locator('[role="list"][aria-label="Qualities in this profile"] [role="listitem"]');
+    await expect(qualityItems).toHaveCount(2);
 
-    if (await qualityItems.count() >= 2) { // vacuous-guard-ok: reordering needs at least 2 qualities in the profile being edited, which this test does not control.
-      const firstLabel = await qualityItems.first().locator('span.flex-1').textContent();
-      const moveDownBtns = modal.getByRole('button', { name: /quality down/i });
-      if (await moveDownBtns.count() > 0) { // vacuous-guard-ok: nested under the >= 2 qualities guard above for the same reason.
-        await moveDownBtns.first().click();
-        // The previously-first quality should no longer be first.
-        await expect(qualityItems.first().locator('span.flex-1')).not.toHaveText(firstLabel || '');
-      }
-    }
+    const labels = await qualityItems.locator('span.flex-1').allTextContents();
+    expect(labels[0]).not.toBe(labels[1]);
+
+    await qualityItems.first().getByRole('button', { name: /quality down/i }).click();
+
+    // Not just "the first one changed": assert the exact swap, so a reorder
+    // that dropped, duplicated or reversed the whole list cannot pass.
+    await expect(qualityItems.locator('span.flex-1')).toHaveText([labels[1], labels[0]]);
 
     await page.keyboard.press('Escape');
     await expect(modal).not.toBeVisible();
