@@ -330,7 +330,18 @@ def seed(data_dir):
               # T1.9: zero releases, so this is the fixture's only movie the
               # fixed has_releases=False filter actually puts on the Wanted
               # page -- see WANTED_MOVIE_ID's comment above.
-              (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E Wanted Only Movie', 'active', []),
+              #
+              # Title deliberately avoids the substrings "wanted"/"available"/
+              # "all": filters.spec.ts locates the Wanted/Available/All filter
+              # buttons by accessible-name regex (/wanted/i etc.), and this
+              # movie's own per-card "Refresh metadata for <title>" button is
+              # in the same accessibility tree -- a title containing "Wanted"
+              # made that locator resolve to two elements (the filter button
+              # AND this card's refresh button) and fail Playwright's strict
+              # mode. Measured: e2e-seed-movie-004 titled "E2E Wanted Only
+              # Movie" broke filters.spec.ts's "should have filter buttons",
+              # "clicking Wanted filter", and "clicking All" tests this way.
+              (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E No-Release Movie', 'active', []),
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',

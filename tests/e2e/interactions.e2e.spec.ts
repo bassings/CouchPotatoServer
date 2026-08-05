@@ -139,17 +139,17 @@ test.describe('Wanted Page', () => {
     const filterInput = page.locator('input[placeholder*="Filter"]');
     await expect(filterInput).toBeVisible();
 
-    // Baseline, not a hardcoded "2": scripts/seed_e2e_data.py seeds two
-    // Wanted-page movies (e2e-seed-movie-001/-002). Neither carries an
-    // already-'done' release any more (T1.7a moved that onto its own,
-    // unreferenced third movie), so the app's app.load -> searchAll restatus
-    // pass can no longer promote either of them to 'done' by itself -- but
-    // e2e-seed-movie-002 IS still explicitly driven to 'done' by other specs'
-    // "Mark as Done" action (movie-detail.spec.ts, small-screen.mobile.spec.ts),
-    // and can be mid-transition in a parallel run, so "exactly 2 cards" is
-    // still not reliable here even though "at least 1" is. A real filter
-    // effect (not just "the input accepted text") is the actual behaviour
-    // this test's name promises.
+    // Baseline, not a hardcoded count: scripts/seed_e2e_data.py's Wanted-page
+    // movie is e2e-seed-movie-004 (WANTED_MOVIE_ID, T1.9) -- the only seeded
+    // movie with genuinely zero releases, so it is the only one
+    // has_releases=False actually matches. e2e-seed-movie-001/-002 both carry
+    // releases and now correctly live on Available instead (T1.9 fixed
+    // Release.withStatus dropping with_doc, which had made has_releases
+    // inert and let those two show up here too). The "Add Movie" spec can add
+    // a second wanted-eligible movie mid-run, so "exactly 1 card" is still
+    // not reliable here even though "at least 1" is. A real filter effect
+    // (not just "the input accepted text") is the actual behaviour this
+    // test's name promises.
     //
     // waitForPageReady only proves the page SHELL rendered, not that
     // #movie-grid's own async `hx-trigger="load"` fetch has landed --
