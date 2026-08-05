@@ -41,7 +41,7 @@ srt==3.5.3
 tomlkit==0.15.1
 click-option-group==0.5.9
 defusedxml==0.7.1
-trakit==0.2.5
+trakit==0.3.0
 decorator==5.3.1
 rarfile==4.4
 
