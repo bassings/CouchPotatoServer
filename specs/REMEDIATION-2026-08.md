@@ -606,11 +606,18 @@ already `rm -rf` sibling paths in the repo root.
 - **AC-OPS-17** After a completed **and** an interrupted `make verify`,
   `pgrep -f CouchPotato.py` is empty. A port already in use fails naming the
   port and the spec, not a 120 s `webServer` timeout.
-- **AC-SIMP-11** Confined to `playwright.config.ts`, at most one new fixture
-  file, `ci.yml`, and `scripts/seed_e2e_data.py`. No new npm dependency, no new
-  config file. Both `test.describe.configure({ mode: 'serial' })` lines and the
-  ~40-line `workers: 1` rationale block (`playwright.config.ts:47-86`) are
-  **deleted**, not amended: it argues for a decision this task reverses.
+- **AC-SIMP-11 (amended 2026-08-05)** Confined to `playwright.config.ts`, at
+  most one new fixture file, `ci.yml`, `scripts/seed_e2e_data.py`, plus the
+  AC-DATA-24/25 safety helper and its tests (`scripts/e2e_worker_data.py` +
+  `tests/unit/test_e2e_worker_data.py` -- new files, since no existing file
+  owns rm-rf safety), and `tests/e2e/isolation-a-mutate.spec.ts` +
+  `isolation-b-assert.spec.ts` (AC-QA-50's direct proof; see AC-SIMP-6). No
+  new npm dependency, no new config file. Both `test.describe.configure({
+  mode: 'serial' })` lines and the ~40-line `workers: 1` rationale block
+  (`playwright.config.ts:47-86`) are **deleted**, not amended: it argues for
+  a decision this task reverses. `verify.sh` and `couchpotato/core/helpers/
+  variable.py` (`removePyc`, see AC-SIMP-1) also touched -- not in the
+  original file list, both load-bearing for T1.7 to work at all.
 - **AC-SIMP (new)** Delete the `firefox` and `webkit` project entries
   (`playwright.config.ts:105-115`) as the **first** commit of T1.7. Verified
   dead: only `chromium`, `mobile-chrome` and `accessibility` are ever invoked,
@@ -656,12 +663,19 @@ the diff, not by an agent.
   (c) `runner.py`: the `--port` argument only,
   (d) `core/media/_base/media/main.py` and/or `core/plugins/release/main.py`:
   the `has_releases` row-shape fix only (T1.9, added 2026-08-05),
-  (e) whole-file deletions of `simple_healthcheck.py`, `integration_test.py`,
+  (e) `ui/__init__.py`: `partial_movies`'s `with_releases` default fix only
+  (T1.9 follow-up, added 2026-08-05 -- was missing from this list, corrected
+  here rather than left silently uncovered),
+  (f) `core/helpers/variable.py`: `removePyc`'s `os.listdir` guard only
+  (T1.7, added 2026-08-05 -- concurrent per-worker CouchPotato.py processes
+  race on cleaning the shared `__pycache__` tree; reproduced directly with
+  `--workers=3`, one worker crashed before binding a port),
+  (g) whole-file deletions of `simple_healthcheck.py`, `integration_test.py`,
   `environment_test.py`. **Any other modified file under `couchpotato/` fails.**
   *(Amended 2026-08-03: the original allowed only `searcher.py:419`. The
   precedence order puts irrecoverable data loss above the no-runtime-change
   constraint: see T1.8, and `--port` was added to scope as a T1.7
-  prerequisite.)*
+  prerequisite. Amended again 2026-08-05 for (e) and (f).)*
 - **AC-SIMP-2** `requirements.txt` unchanged; `package.json` dependencies and
   devDependencies unchanged. No new runtime or npm dependency.
 - **AC-SIMP-3** No new configuration setting: zero additions to the settings
@@ -672,9 +686,16 @@ the diff, not by an agent.
   existing `scripts/check_test_traps.py`.
 - **AC-SIMP-5** Net-negative in tracked files: ≥10 deletions, and
   `git ls-files | wc -l` lower after than before.
-- **AC-SIMP-6** New files under `tests/` limited to
+- **AC-SIMP-6 (amended 2026-08-05)** New files under `tests/` limited to
   `tests/unit/test_renamer_mover.py`, `tests/unit/test_searcher_correct_release.py`,
-  and at most **one** Playwright fixture file. No new `conftest.py`, no new
+  at most **one** Playwright fixture file, `tests/unit/test_e2e_worker_data.py`
+  (the AC-DATA-25 safety helper's own tests -- "the safety helper and its
+  tests" was explicit scope for T1.7), and **two** Playwright spec files,
+  `tests/e2e/isolation-a-mutate.spec.ts` + `isolation-b-assert.spec.ts`
+  (AC-QA-50's direct isolation proof -- "Spec A" and "Spec B" cannot be
+  expressed as `describe` blocks in one file and still prove separate-worker
+  scheduling; splitting them is what makes the file-naming/sort-order
+  mechanism in their own header work at all). No new `conftest.py`, no new
   shared helper module for the mover tests: they instantiate the mixin
   directly, as `test_renamer_cleanup_safety.py` already does.
 - **AC-SIMP-7** In every touched `tests/e2e/*.spec.ts`, zero test bodies remain
