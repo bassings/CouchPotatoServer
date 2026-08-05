@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { Page } from '@playwright/test';
 
 /**
  * Comprehensive interaction tests for CouchPotato.

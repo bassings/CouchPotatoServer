@@ -1,41 +1,19 @@
-import { existsSync } from 'node:fs';
-
 import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Playwright configuration for CouchPotato E2E tests.
  * See https://playwright.dev/docs/test-configuration
- */
-
-/*
- * Interpreter used to start the app for local runs (see `webServer` below).
  *
- * Resolution order, most specific first:
- *   1. $PYTHON — what scripts/verify.sh exports, so the gate starts the app with
- *      the same interpreter it ran the unit tests with.
- *   2. ./.venv/bin/python — so a bare `npm run test:e2e` works without the caller
- *      having to know about the venv. The app needs bcrypt/httpx, which a system
- *      python3 typically lacks, and the failure mode is an opaque
- *      "ModuleNotFoundError: No module named 'bcrypt'" from a background process.
- *   3. python3 — PEP 394's guaranteed name. A bare `python` is deliberately NOT
- *      used: it does not exist on a stock macOS + Homebrew setup, which made the
- *      local E2E stage die with "python: command not found" before any test ran.
+ * T1.7: there is no shared `webServer` any more. Every worker starts its
+ * OWN CouchPotato server, on its own port, against its own data dir --
+ * see tests/e2e/fixtures.ts, which every spec now imports `test`/`expect`
+ * from instead of '@playwright/test' directly. That removes the need for
+ * `workers: 1` (kept a long history here explaining why parallel used to
+ * be unsafe; the reason -- one shared server -- no longer applies, so the
+ * explanation went with it rather than being amended in place) and for
+ * `test.describe.configure({ mode: 'serial' })` on categories/profiles,
+ * which existed to protect that same shared server.
  */
-/*
- * Data directory for the throwaway app instance.
- *
- * Overridable because the suite shares one server and one database, and specs
- * mutate it: movie-detail deletes and re-adds, others change the seeded movie's
- * status. A second Playwright invocation in the same gate run (scripts/verify.sh
- * runs chromium, then mobile-chrome) would otherwise inherit whatever the first
- * left behind — which is exactly how the mobile picker test failed after a
- * green standalone run. Each invocation gets its own dir.
- */
-const E2E_DATA_DIR = process.env.CP_E2E_DATA_DIR || '.e2e-data';
-
-const VENV_PYTHON = '.venv/bin/python';
-const PYTHON =
-  process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'python3');
 export default defineConfig({
   testDir: './tests/e2e',
   /* Run tests in files in parallel */
@@ -44,58 +22,18 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
   retries: process.env.CI ? 2 : 0,
-  /*
-   * ONE worker — and the SAME setting locally and on CI.
-   *
-   * History worth keeping, because the shape of the bug recurs: this was
-   * `process.env.CI ? 1 : undefined`, which serialised CI while a local run used
-   * one worker per core. CI was green and local failed ~20 of 142 — so the local
-   * gate could never pass, which defeats CLAUDE.md hard rule 2 ("`make verify`
-   * must pass locally before every push"). A gate that cannot pass gets bypassed.
-   *
-   * Two genuine improvements were made toward parallelism, and they stand:
-   *   - categories/profiles declare `test.describe.configure({ mode: 'serial' })`,
-   *     because they mutate GLOBAL singleton config (the category/profile list)
-   *     under fixed fixture names and assert on list order.
-   *   - the suggestions and search specs stub their third-party lookups
-   *     (`/partial/charts`, `/partial/search`) instead of waiting on Blu-ray.com
-   *     and TMDB, which also makes the suite hermetic.
-   *
-   * They were not sufficient: parallel is NOT yet reliable, so this stays at one
-   * worker.
-   *
-   * Measured after the serial-mode change, n=5 at that commit: 4 green, 1 red
-   * (`release_controls` "sorting by size"). Earlier runs of n=3 and n=4 came back
-   * all-green, which is why an earlier version of this comment claimed parallel
-   * was verified — that was under-powered evidence, not a verification. At one
-   * worker the suite has been green on every run.
-   *
-   * The residual failures are CROSS-FILE: `mode: 'serial'` fixed races within
-   * categories/profiles, but those files still run concurrently with each other
-   * and with release_controls, and all three mutate global singleton state on one
-   * shared server. Playwright has no "these files must not run concurrently"
-   * primitive, so the real fixes are (a) merge the state-mutating specs into one
-   * serial file, or (b) a server per worker. Both are real work; see
-   * docs/technical-debt.md.
-   *
-   * Cost of this decision: ~4.1 min instead of ~1.0 min. Worth it. A gate that
-   * spuriously reds one run in five teaches everyone to re-run and ignore it,
-   * which is how a gate stops being a gate.
-   */
-  workers: 1,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['html', { open: 'never' }],
     ['list']
   ],
-  /* Shared settings for all the projects below. */
+  /* Shared settings for all the projects below. `baseURL` is overridden
+   * per worker by tests/e2e/fixtures.ts; this default is only ever seen
+   * before that fixture initialises. */
   use: {
-    /* Base URL for tests */
-    baseURL: process.env.CP_TEST_URL || 'http://localhost:5050',
-    
     /* Collect trace when retrying the failed test. */
     trace: 'on-first-retry',
-    
+
     /* Screenshot on failure */
     screenshot: 'only-on-failure',
   },
@@ -144,52 +82,8 @@ export default defineConfig({
     timeout: 5000,
   },
 
-  /*
-   * Local runs auto-start the app so `npm run test:e2e` works with no manual
-   * server step. CI starts the server itself (see .github/workflows/ci.yml),
-   * so we skip webServer there to avoid a port clash.
-   * Uses a throwaway .e2e-data dir — never the real ./.config the dev/docker uses.
-   *
-   * Seeds a deterministic movie + releases (scripts/seed_e2e_data.py, FEAT-007
-   * Part B) before the server starts, so tests/e2e/release_controls.spec.ts and
-   * the movie-detail case in accessibility.a11y.spec.ts run instead of
-   * test.skip()-ing on an empty library -- same before-server-start ordering
-   * as the CI job. The seed step is deliberately tolerant (`|| true`): if it
-   * fails, the server still starts and the rest of the suite still runs --
-   * those two specs just fall back to skipping, matching the pre-seed
-   * behaviour, rather than a seed bug taking down the entire local E2E run.
-   */
-  webServer: process.env.CI
-    ? undefined
-    : {
-        // Interpreter resolution is explained at the top of this file (PYTHON).
-        // CI is unaffected — it skips webServer entirely and starts its own server.
-        command:
-          // T1.7a: no `|| true`. A failed or half-complete seed must fail the run,
-          // not start a server against an empty database and leave every spec
-          // reporting "no movie card in the Wanted grid".
-          `${PYTHON} scripts/seed_e2e_data.py --data_dir=${E2E_DATA_DIR} && ` +
-          `${PYTHON} CouchPotato.py --data_dir=${E2E_DATA_DIR}`,
-        url: process.env.CP_TEST_URL || 'http://localhost:5050',
-        timeout: 120_000,
-        /*
-         * NOT reuseExistingServer.
-         *
-         * This was `true`, and it produced two false greens on one branch. A
-         * server left running from an earlier session keeps serving its OWN
-         * data dir: template edits reach it (Jinja reloads from disk) but
-         * PYTHON edits do not, and the database is whatever prior specs left
-         * behind. A filters test that depends on the seeded movie's status
-         * passed locally against that stale state and failed on a genuinely
-         * fresh seed -- i.e. the local gate said "safe to open a PR" for a
-         * CI-breaking test.
-         *
-         * With `false`, Playwright starts its own server and fails loudly if
-         * the port is occupied, which is the correct outcome: a leftover
-         * server means the run would not have tested the code on disk.
-         * If you get "port 5050 is used", stop the stray server
-         * (`pkill -f CouchPotato.py`) rather than reinstating this flag.
-         */
-        reuseExistingServer: false,
-      },
+  // No webServer block: tests/e2e/fixtures.ts starts one server per worker,
+  // identically in CI and locally (playwright.config.ts used to special-case
+  // `process.env.CI` here to avoid a port clash with CI's own hand-started
+  // server -- see .github/workflows/ci.yml, which no longer hand-starts one).
 });

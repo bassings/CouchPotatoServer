@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
@@ -195,10 +195,21 @@ test.describe('Accessibility', () => {
       .then(() => true)
       .catch(() => false);
 
-    test.skip(!releasesLoaded,
+    /*
+     * FAIL, don't skip (AC-A11Y-1, same pattern as movie-detail.spec.ts:55).
+     *
+     * This used to be test.skip(!releasesLoaded, ...). A skip here reads as
+     * "the a11y suite is clean" while the one case in this file that
+     * actually scans a filtered, data-bearing release table never ran at
+     * all -- a broken seed silently deleted coverage rather than failing
+     * the run that lost it.
+     */
+    expect(
+      releasesLoaded,
       'no seeded movie with releases at /movie/e2e-seed-movie-001 -- either ' +
       'the seed did not run (scripts/seed_e2e_data.py --data_dir=<dir> before ' +
-      'starting the server), or the detail partial took over 15s to load');
+      'starting the server), or the detail partial took over 15s to load',
+    ).toBe(true);
 
     const releases = page.locator('#movie-releases');
 

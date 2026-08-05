@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { Page } from '@playwright/test';
 
 /**
  * E2E coverage for the "Add from a movie site" (add-by-URL / bookmarklet)
