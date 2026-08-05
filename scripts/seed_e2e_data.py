@@ -65,17 +65,51 @@ IMDB_ID = 'tt9999901'
 DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002'
 DESTRUCTIVE_IMDB_ID = 'tt9999902'
 
+#: A THIRD movie, carrying only the already-'done' release below.
+#:
+#: T1.7a (2026-08-05). MOVIE_ID and DESTRUCTIVE_MOVIE_ID used to both carry
+#: an identical already-'done' release (it lived in RELEASES, as release #4,
+#: see DONE_RELEASE's own comment for why 'done' rather than some other
+#: status). That backfired: the app's own `app.load` -> `searchAll` restatus
+#: pass (`couchpotato/core/media/_base/media/main.py::restatus`) promotes
+#: any 'active' movie holding a finished 'done' release straight to media
+#: status 'done' the moment it notices it -- which drops that movie out of
+#: the Wanted page's server-side `status=active` query. With both movies
+#: carrying the release, a single run could promote both at once: measured
+#: during T1.4 at roughly 1 run in 2, which is exactly what made
+#: `tests/e2e/interactions.e2e.spec.ts`'s Wanted-grid tests fail with "no
+#: movie card in the Wanted grid".
+#:
+#: Moving the release onto a dedicated movie that nothing else refers to by
+#: id removes the promotion mechanism from MOVIE_ID and DESTRUCTIVE_MOVIE_ID
+#: entirely -- neither can self-promote via restatus any more, so at least
+#: one of them is always 'active'.
+#:
+#: This movie itself is seeded ALREADY 'done' (see seed() below), not
+#: 'active' and left for restatus to promote later. Measured: seeding it
+#: 'active' leaves it 'active' -- and therefore a THIRD card in the Wanted
+#: grid -- for as long as it takes the restatus pass to notice and promote
+#: it, which is not deterministic within one test run. That broke two
+#: unrelated assertions in interactions.e2e.spec.ts that assume exactly two
+#: Wanted-page cards.
+DONE_RELEASE_MOVIE_ID = 'e2e-seed-movie-003'
+DONE_RELEASE_IMDB_ID = 'tt9999903'
+
 #: Two distinct qualities, both present in the seeded profile's `qualities`
 #: list -- otherwise the profile-matching filter in
 #: `couchpotato/ui/__init__.py::_releases_ctx` would hide them (`r.get(
 #: 'quality') in profile_qualities`).
 PROFILE_QUALITIES = ['2160p', '1080p', '720p']
 
-#: Six releases spanning: protocol (nzb / torrent / torrent_magnet), quality
-#: (1080p / 720p), and status (available / ignored / downloaded / snatched).
-#: `size`, `score`, `age`, `info.name` are unique across every release (so
-#: sort-order assertions are unambiguous); `seeders` is present only on the
-#: non-nzb releases and is also unique among those.
+#: Five releases, seeded onto MOVIE_ID and DESTRUCTIVE_MOVIE_ID, spanning:
+#: protocol (nzb / torrent / torrent_magnet), quality (1080p / 720p), and
+#: status (available / ignored / snatched). `size`, `score`, `age`,
+#: `info.name` are unique across every release (so sort-order assertions are
+#: unambiguous); `seeders` is present only on the non-nzb releases and is
+#: also unique among those.
+#:
+#: Deliberately excludes an already-'done' release: see DONE_RELEASE_MOVIE_ID
+#: above for why that lives elsewhere now (T1.7a).
 RELEASES = [
     {
         'suffix': '1',
@@ -110,23 +144,6 @@ RELEASES = [
         'age': 1,
         'name': 'E2E.Seed.Movie.2024.1080p.BluRay-GRP3',
     },
-    # Deliberately NOT 'downloaded': that status puts the movie in the
-    # manual-review gate, which renders a per-release "Mark failed" button and
-    # breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
-    # for a non-downloaded movie" -- the seeded movie must stay a plain
-    # non-downloaded movie. 'done' gives the status filter the same variety
-    # without changing what the movie IS.
-    {
-        'suffix': '4',
-        'protocol': 'torrent',
-        'quality': '720p',
-        'status': 'done',
-        'size': 6400,
-        'seeders': 3,
-        'score': 40.0,
-        'age': 45,
-        'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
-    },
     {
         'suffix': '5',
         'protocol': 'nzb',
@@ -150,6 +167,29 @@ RELEASES = [
         'name': 'E2E.Seed.Movie.2024.720p.DVDRip-GRP6',
     },
 ]
+
+#: The already-'done' release, seeded only onto DONE_RELEASE_MOVIE_ID (T1.7a
+#: -- see that constant's comment for why it no longer lives in RELEASES
+#: above). Suffix kept as '4' rather than renumbered, so this release's id
+#: and name are unchanged from before the split.
+#:
+#: Deliberately NOT 'downloaded': that status puts the movie in the
+#: manual-review gate, which renders a per-release "Mark failed" button and
+#: breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
+#: for a non-downloaded movie" -- a movie carrying this release must stay a
+#: plain non-downloaded movie. 'done' gives the status filter variety without
+#: changing what the movie IS.
+DONE_RELEASE = {
+    'suffix': '4',
+    'protocol': 'torrent',
+    'quality': '720p',
+    'status': 'done',
+    'size': 6400,
+    'seeders': 3,
+    'score': 40.0,
+    'age': 45,
+    'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
+}
 
 
 def _sqlite_db_dir(data_dir):
@@ -214,13 +254,18 @@ def seed(data_dir):
             'manual_confirmation': False,
         })
 
-        for movie_id, imdb_id, movie_title in (
-              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie'),
-              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie'),
+        for movie_id, imdb_id, movie_title, movie_status, releases in (
+              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie', 'active', RELEASES),
+              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie', 'active', RELEASES),
+              # T1.7a: isolated on its own movie, deliberately unreferenced by
+              # any spec -- see DONE_RELEASE_MOVIE_ID's comment above. Seeded
+              # already 'done' (not 'active') so it never depends on the
+              # restatus pass and never appears in the Wanted grid at all.
+              (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', [DONE_RELEASE]),
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',
-              'status': 'active',
+              'status': movie_status,
               'title': movie_title,
               'type': 'movie',
               'profile_id': PROFILE_ID,
@@ -252,7 +297,7 @@ def seed(data_dir):
               'last_edit': now,
             }))
 
-            for r in RELEASES:
+            for r in releases:
               release_id = 'e2e-seed-release-%s-%s' % (movie_id[-3:], r['suffix'])
               info = {
                   'name': r['name'],

@@ -140,12 +140,16 @@ test.describe('Wanted Page', () => {
     await expect(filterInput).toBeVisible();
 
     // Baseline, not a hardcoded "2": scripts/seed_e2e_data.py seeds two
-    // movies, but the app's own app.load -> searchAll restatus pass
-    // (searcher.py) can promote either one to 'done' mid-run, which drops it
-    // out of the Wanted page's server-side `status=active` query entirely --
-    // so "exactly 2 cards" is not reliable here even though "at least 1" is.
-    // A real filter effect (not just "the input accepted text") is the
-    // actual behaviour this test's name promises.
+    // Wanted-page movies (e2e-seed-movie-001/-002). Neither carries an
+    // already-'done' release any more (T1.7a moved that onto its own,
+    // unreferenced third movie), so the app's app.load -> searchAll restatus
+    // pass can no longer promote either of them to 'done' by itself -- but
+    // e2e-seed-movie-002 IS still explicitly driven to 'done' by other specs'
+    // "Mark as Done" action (movie-detail.spec.ts, small-screen.mobile.spec.ts),
+    // and can be mid-transition in a parallel run, so "exactly 2 cards" is
+    // still not reliable here even though "at least 1" is. A real filter
+    // effect (not just "the input accepted text") is the actual behaviour
+    // this test's name promises.
     //
     // waitForPageReady only proves the page SHELL rendered, not that
     // #movie-grid's own async `hx-trigger="load"` fetch has landed --
@@ -750,14 +754,15 @@ test.describe('Keyboard Navigation', () => {
     // either way.
     const cardLinks = page.locator('#movie-grid .poster-card a[href*="/movie/"]');
 
-    // At least one card is guaranteed: the seed script's two movies both
-    // start 'active', and the app's own `app.load` -> searchAll restatus
-    // pass (searcher.py) can promote a movie straight to 'done' the moment
-    // it notices a matching already-'done' release -- both seeded movies
-    // carry one, deliberately, for release_controls.spec.ts's status
-    // filter coverage. So a SECOND card is common but not guaranteed within
-    // a run; fail loudly rather than silently skip if even the first is
-    // ever missing (matches movie-detail.spec.ts's "FAIL, don't skip").
+    // At least one card is guaranteed: the seed script's two Wanted-page
+    // movies both start 'active', and (T1.7a) neither carries an
+    // already-'done' release any more, so the app's own `app.load` ->
+    // searchAll restatus pass (searcher.py) can no longer self-promote
+    // either of them to 'done'. e2e-seed-movie-002 can still be driven to
+    // 'done' explicitly by another spec's "Mark as Done" action, so a SECOND
+    // card is common but not guaranteed within a run; fail loudly rather
+    // than silently skip if even the first is ever missing (matches
+    // movie-detail.spec.ts's "FAIL, don't skip").
     await expect(
       cardLinks.first(),
       'no movie card in the Wanted grid -- did scripts/seed_e2e_data.py run?',

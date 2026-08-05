@@ -92,3 +92,103 @@ class TestIsSafeSeedTarget:
         (outside / "marker").write_text("x")
 
         assert seed_e2e_data._is_safe_seed_target(str(outside)) is False
+
+
+class TestDoneReleaseIsolation:
+    """T1.7a (2026-08-05).
+
+    `MOVIE_ID` and `DESTRUCTIVE_MOVIE_ID` used to carry an identical
+    already-'done' release. The app's own `app.load` -> `searchAll` restatus
+    pass (`couchpotato/core/media/_base/media/main.py::restatus`) promotes
+    any 'active' movie holding a finished 'done' release straight to media
+    status 'done' -- which drops it out of the Wanted page's server-side
+    `status=active` query. With both movies carrying the release, a single
+    run could promote both at once: measured during T1.4 at roughly 1 run in
+    2, and it is exactly what made `tests/e2e/interactions.e2e.spec.ts`'s
+    Wanted-grid tests fail with "no movie card in the Wanted grid".
+
+    Fix: the already-'done' release moves onto its own dedicated movie
+    (`DONE_RELEASE_MOVIE_ID`), which nothing else refers to by id, so
+    `MOVIE_ID` and `DESTRUCTIVE_MOVIE_ID` can no longer self-promote via
+    restatus. This pins the fixture shape directly, at the level `restatus`
+    actually reads it -- not just "the E2E suite happened to pass", which a
+    lucky run could satisfy either way.
+    """
+
+    def _seed_and_open(self, tmp_path):
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+        return seed_e2e_data._open_adapter(data_dir)
+
+    def _releases_for(self, db, media_id):
+        return [
+            row['doc'] for row in db.all('id', with_doc=True)
+            if row['doc'].get('_t') == 'release' and row['doc'].get('media_id') == media_id
+        ]
+
+    def test_the_wanted_page_movies_carry_no_done_release(self, tmp_path):
+        db = self._seed_and_open(tmp_path)
+        try:
+            for movie_id in (seed_e2e_data.MOVIE_ID, seed_e2e_data.DESTRUCTIVE_MOVIE_ID):
+                releases = self._releases_for(db, movie_id)
+                assert releases, 'expected releases seeded for %s' % movie_id
+
+                statuses = {r['status'] for r in releases}
+                assert 'done' not in statuses, (
+                    "%s carries a 'done' release -- this is exactly what let the "
+                    "app's restatus pass promote it out of the Wanted page's "
+                    "active query (T1.7a)" % movie_id
+                )
+        finally:
+            db.close()
+
+    def test_the_done_release_lives_on_its_own_dedicated_movie(self, tmp_path):
+        db = self._seed_and_open(tmp_path)
+        try:
+            done_movie_id = seed_e2e_data.DONE_RELEASE_MOVIE_ID
+            movie = db.get('id', done_movie_id)
+            assert movie is not None
+
+            releases = self._releases_for(db, done_movie_id)
+            statuses = {r['status'] for r in releases}
+            assert 'done' in statuses, (
+                'the dedicated movie must actually carry the done release, '
+                'not just exist'
+            )
+        finally:
+            db.close()
+
+    def test_the_done_release_movie_starts_already_done(self, tmp_path):
+        """It must not rely on the app's restatus pass to get there.
+
+        Measured (2026-08-05): seeding this movie 'active', with only its
+        release carrying status 'done', leaves it 'active' -- and therefore a
+        THIRD card in the Wanted grid -- for as long as it takes the app's own
+        app.load -> searchAll restatus pass to notice and promote it, which is
+        not deterministic within a single test run. That broke two unrelated
+        assertions in interactions.e2e.spec.ts that assume exactly two
+        Wanted-page cards (arrow-key card-to-card focus, and a plain
+        visibility check that happened to race the promotion). Seeding the
+        media doc's own status as 'done' directly removes the timing
+        dependency instead of relocating it.
+        """
+        db = self._seed_and_open(tmp_path)
+        try:
+            movie = db.get('id', seed_e2e_data.DONE_RELEASE_MOVIE_ID)
+            assert movie['status'] == 'done', (
+                "DONE_RELEASE_MOVIE_ID must be seeded already 'done', not left "
+                "'active' for the restatus pass to promote later"
+            )
+        finally:
+            db.close()
+
+    def test_the_done_release_movie_is_not_referenced_by_any_other_seeded_id(self, tmp_path):
+        """It must be genuinely unreferenced -- if a spec ever starts
+        navigating to it directly, the isolation this fixture buys stops
+        meaning anything."""
+        assert seed_e2e_data.DONE_RELEASE_MOVIE_ID not in (
+            seed_e2e_data.MOVIE_ID, seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
+        )
+        assert seed_e2e_data.DONE_RELEASE_IMDB_ID not in (
+            seed_e2e_data.IMDB_ID, seed_e2e_data.DESTRUCTIVE_IMDB_ID,
+        )
