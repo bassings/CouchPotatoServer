@@ -3,10 +3,11 @@
 Uses a temporary CodernityDB database populated from sample_data.json,
 then migrates to SQLite and verifies.
 """
+import hashlib
 import json
 import os
+import sqlite3
 import sys
-import tempfile
 
 import pytest
 
@@ -22,6 +23,23 @@ from couchpotato.core.db.migrate import read_codernity_docs, clean_doc_for_sqlit
 
 
 FIXTURES_PATH = os.path.join(os.path.dirname(__file__), '..', 'fixtures', 'sample_data.json')
+
+
+def digest_tree(root: str) -> dict:
+    """Map every file under `root` to the SHA-256 of its contents.
+
+    Used to assert a directory is byte-identical before and after an
+    operation. Compares contents rather than mtimes: a rewrite that happens
+    to reproduce the same bytes is not damage, and a filesystem's mtime
+    granularity is too coarse to trust for a fast test.
+    """
+    digests = {}
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            full = os.path.join(dirpath, name)
+            with open(full, 'rb') as handle:
+                digests[os.path.relpath(full, root)] = hashlib.sha256(handle.read()).hexdigest()
+    return digests
 
 
 @pytest.fixture
@@ -175,3 +193,91 @@ class TestMigrationDataIntegrity:
             assert len(docs) == expected, f"Type {doc_type}: expected {expected}, got {len(docs)}"
 
         adapter.close()
+
+
+class TestMigrationIsRepeatable:
+    """AC-DATA-23: the migration survives being run a second time.
+
+    An operator whose first run was interrupted -- a full disk, a Ctrl-C, a
+    container restart part-way through 849 documents -- will simply run it
+    again. Two things must hold for that to be safe, and neither is obvious
+    from reading migrate():
+
+    1. The second run must not double the library. That rests entirely on
+       insert_bulk using INSERT OR REPLACE; a future change to plain INSERT,
+       or a denormalised side table that appends rather than replaces, breaks
+       it silently and the operator finds out by scrolling a library with
+       every film in it twice.
+    2. The CodernityDB source must come back untouched. Until the operator
+       trusts the SQLite copy, that directory is their only rollback, and
+       migrate() opens it with a library written for Python 2. A read path
+       that quietly rewrites index or storage files would be destroying the
+       escape hatch at the exact moment it is most likely to be needed.
+    """
+
+    def test_running_the_migration_twice_does_not_duplicate_documents(self, codernity_db, tmp_path):
+        source_path, expected_count = codernity_db
+        dest_path = str(tmp_path / "dest_db")
+
+        first_count, first_types = migrate(source_path, dest_path, verbose=False)
+        second_count, second_types = migrate(source_path, dest_path, verbose=False)
+
+        assert first_count == expected_count
+        assert second_count == expected_count
+        assert second_types == first_types
+
+        adapter = SQLiteAdapter()
+        adapter.open(dest_path)
+        try:
+            ids = [doc['_id'] for doc in adapter.all('id')]
+        finally:
+            adapter.close()
+
+        assert len(ids) == expected_count, (
+            'the second migration run changed the document count from '
+            f'{expected_count} to {len(ids)}'
+        )
+        assert len(set(ids)) == len(ids), 'the second migration run duplicated document ids'
+        assert verify(source_path, dest_path, verbose=False)
+
+        # verify() only compares the `documents` table. media_identifiers is
+        # the denormalised side table, and duplicated rows there are exactly
+        # what produced this project's live "same film added twice" defects --
+        # so check it directly rather than inferring it from a passing verify.
+        conn = sqlite3.connect(os.path.join(dest_path, 'couchpotato.db'))
+        try:
+            rows = conn.execute(
+                "SELECT media_id, provider, identifier FROM media_identifiers"
+            ).fetchall()
+        finally:
+            conn.close()
+
+        assert rows, 'no identifier rows were written, so this assertion proves nothing'
+        assert len(set(rows)) == len(rows), 'the second migration run duplicated media_identifiers rows'
+
+    def test_the_codernitydb_source_is_byte_identical_after_migrating_and_verifying(
+            self, codernity_db, tmp_path):
+        source_path, _ = codernity_db
+        dest_path = str(tmp_path / "dest_db")
+
+        before = digest_tree(source_path)
+        # Guards the guard: an empty mapping would make the comparison below
+        # hold no matter what migrate() did to the source.
+        assert before, 'the fixture produced no source files to hash'
+
+        # The whole documented operator flow, not just one call: `migrate
+        # --verify` reads the source twice, and the second read is the one a
+        # naive "just reopen it" implementation is most likely to dirty.
+        migrate(source_path, dest_path, verbose=False)
+        migrate(source_path, dest_path, verbose=False)
+        verify(source_path, dest_path, verbose=False)
+
+        after = digest_tree(source_path)
+        changed = sorted(
+            name for name in set(before) | set(after)
+            if before.get(name) != after.get(name)
+        )
+        assert not changed, (
+            'migrating mutated the CodernityDB source, which is the operator\'s '
+            f'only rollback until they trust the SQLite copy: {changed}'
+        )
