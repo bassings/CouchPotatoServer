@@ -95,6 +95,30 @@ DESTRUCTIVE_IMDB_ID = 'tt9999902'
 DONE_RELEASE_MOVIE_ID = 'e2e-seed-movie-003'
 DONE_RELEASE_IMDB_ID = 'tt9999903'
 
+#: A FOURTH movie, carrying no releases at all.
+#:
+#: T1.9 (2026-08-05). `Release.withStatus(status, with_doc=False)` used to
+#: drop the `with_doc` flag when calling `db.get_many('release_status',
+#: s)`, so `SQLiteAdapter.get_many`'s own default (with_doc=True) always
+#: won regardless of what the caller asked for -- every row came back
+#: wrapped as `{'doc': {...}, '_id': ...}`. media/main.py's `has_releases`
+#: filter reads `r.get('media_id')` straight off those rows, which was
+#: always None, so the filter never filtered: has_releases=False (the
+#: Wanted page) matched every active movie, and has_releases=True (the
+#: Available page) matched none.
+#:
+#: MOVIE_ID and DESTRUCTIVE_MOVIE_ID both carry releases (RELEASES,
+#: below), so with the filter genuinely working neither belongs on the
+#: Wanted page any more -- they belong on Available instead. Every E2E
+#: spec that navigated to '/' or '/wanted/' and grabbed "the first movie
+#: card", assuming it would land on one of those two, was unknowingly
+#: depending on the has_releases bug to get there.
+#:
+#: This movie is the fixture's only genuine Wanted-page candidate: 'active'
+#: status, zero releases, nothing else referring to it by id.
+WANTED_MOVIE_ID = 'e2e-seed-movie-004'
+WANTED_MOVIE_IMDB_ID = 'tt9999904'
+
 #: Two distinct qualities, both present in the seeded profile's `qualities`
 #: list -- otherwise the profile-matching filter in
 #: `couchpotato/ui/__init__.py::_releases_ctx` would hide them (`r.get(
@@ -249,7 +273,8 @@ def verify(data_dir):
 
     Checks the invariant T1.7a established: both Wanted-page movies are
     'active' (so restatus cannot have promoted them out) and the dedicated
-    done-release movie is 'done'.
+    done-release movie is 'done'. T1.9 adds WANTED_MOVIE_ID: 'active', the
+    fixture's only genuine has_releases=False candidate.
     """
     db = _open_adapter(data_dir)
     try:
@@ -258,6 +283,7 @@ def verify(data_dir):
             (MOVIE_ID, 'active'),
             (DESTRUCTIVE_MOVIE_ID, 'active'),
             (DONE_RELEASE_MOVIE_ID, 'done'),
+            (WANTED_MOVIE_ID, 'active'),
         ):
             try:
                 doc = db.get('id', movie_id)
@@ -301,6 +327,10 @@ def seed(data_dir):
               # already 'done' (not 'active') so it never depends on the
               # restatus pass and never appears in the Wanted grid at all.
               (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', [DONE_RELEASE]),
+              # T1.9: zero releases, so this is the fixture's only movie the
+              # fixed has_releases=False filter actually puts on the Wanted
+              # page -- see WANTED_MOVIE_ID's comment above.
+              (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E Wanted Only Movie', 'active', []),
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',

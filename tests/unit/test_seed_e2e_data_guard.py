@@ -192,3 +192,93 @@ class TestDoneReleaseIsolation:
         assert seed_e2e_data.DONE_RELEASE_IMDB_ID not in (
             seed_e2e_data.IMDB_ID, seed_e2e_data.DESTRUCTIVE_IMDB_ID,
         )
+
+
+class TestWantedOnlyMovieHasNoReleases:
+    """T1.9 (2026-08-05).
+
+    couchpotato/core/plugins/release/main.py's `Release.withStatus(status,
+    with_doc=False)` used to drop the `with_doc` argument when calling
+    `db.get_many('release_status', s)`, so `SQLiteAdapter.get_many`'s own
+    default (`with_doc=True`) always won regardless of what the caller
+    asked for -- every row came back wrapped as `{'doc': {...}, '_id':
+    ...}`. media/main.py's `has_releases` filter builds its set from
+    `r.get('media_id')` on exactly those rows, which was always None, so
+    the filter never filtered: `has_releases=False` (the Wanted page)
+    matched every active movie and `has_releases=True` (the Available
+    page) matched none.
+
+    MOVIE_ID and DESTRUCTIVE_MOVIE_ID both carry releases (RELEASES,
+    above), so with the filter actually working neither belongs on the
+    Wanted page any more -- they belong on Available. Every E2E spec that
+    navigated to '/' or '/wanted/' and grabbed "the first movie card" was
+    unknowingly depending on the has_releases bug to find one of those two
+    movies there.
+
+    WANTED_MOVIE_ID is a fourth, dedicated movie seeded 'active' with NO
+    releases at all, so it genuinely satisfies has_releases=False and is
+    the only movie the fixed filter puts on the Wanted page. This test
+    pins that invariant directly against the seeded database rather than
+    trusting that the E2E suite happens to find a card.
+    """
+
+    def _seed_and_open(self, tmp_path):
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+        return seed_e2e_data._open_adapter(data_dir)
+
+    def _releases_for(self, db, media_id):
+        return [
+            row['doc'] for row in db.all('id', with_doc=True)
+            if row['doc'].get('_t') == 'release' and row['doc'].get('media_id') == media_id
+        ]
+
+    def test_wanted_movie_is_active_with_zero_releases(self, tmp_path):
+        db = self._seed_and_open(tmp_path)
+        try:
+            movie = db.get('id', seed_e2e_data.WANTED_MOVIE_ID)
+            assert movie is not None
+            assert movie['status'] == 'active'
+
+            releases = self._releases_for(db, seed_e2e_data.WANTED_MOVIE_ID)
+            assert releases == [], (
+                'WANTED_MOVIE_ID must carry no releases at all -- a single '
+                'release of any status would make has_releases=False '
+                'legitimately exclude it, which is exactly the failure mode '
+                'this fixture exists to avoid'
+            )
+        finally:
+            db.close()
+
+    def test_wanted_movie_is_not_referenced_by_any_other_seeded_id(self, tmp_path):
+        """Genuinely a fourth, distinct movie -- not an alias for one of the
+        existing three."""
+        assert seed_e2e_data.WANTED_MOVIE_ID not in (
+            seed_e2e_data.MOVIE_ID,
+            seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
+            seed_e2e_data.DONE_RELEASE_MOVIE_ID,
+        )
+        assert seed_e2e_data.WANTED_MOVIE_IMDB_ID not in (
+            seed_e2e_data.IMDB_ID,
+            seed_e2e_data.DESTRUCTIVE_IMDB_ID,
+            seed_e2e_data.DONE_RELEASE_IMDB_ID,
+        )
+
+    def test_verify_checks_the_wanted_movie_is_active(self, tmp_path):
+        """verify() (called by main() after every seed) must catch a future
+        regression that leaves WANTED_MOVIE_ID in the wrong status, the same
+        way it already does for the other three seeded movies."""
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+
+        db = seed_e2e_data._open_adapter(data_dir)
+        try:
+            db.update({**db.get('id', seed_e2e_data.WANTED_MOVIE_ID), 'status': 'done'})
+        finally:
+            db.close()
+
+        problems = seed_e2e_data.verify(data_dir)
+        assert any(seed_e2e_data.WANTED_MOVIE_ID in p for p in problems), (
+            'verify() did not notice WANTED_MOVIE_ID was left in the wrong '
+            'status: %r' % (problems,)
+        )
