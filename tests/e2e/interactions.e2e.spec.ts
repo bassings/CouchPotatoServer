@@ -139,16 +139,37 @@ test.describe('Wanted Page', () => {
     const filterInput = page.locator('input[placeholder*="Filter"]');
     await expect(filterInput).toBeVisible();
 
-    // scripts/seed_e2e_data.py seeds two movies; only one title contains
-    // "Destructive". A real filter effect (not just "the input accepted
-    // text") is the actual behaviour this test's name promises.
-    await filterInput.fill('Destructive');
+    // Baseline, not a hardcoded "2": scripts/seed_e2e_data.py seeds two
+    // movies, but the app's own app.load -> searchAll restatus pass
+    // (searcher.py) can promote either one to 'done' mid-run, which drops it
+    // out of the Wanted page's server-side `status=active` query entirely --
+    // so "exactly 2 cards" is not reliable here even though "at least 1" is.
+    // A real filter effect (not just "the input accepted text") is the
+    // actual behaviour this test's name promises.
+    //
+    // waitForPageReady only proves the page SHELL rendered, not that
+    // #movie-grid's own async `hx-trigger="load"` fetch has landed --
+    // `.count()` does not auto-retry the way `toBeVisible()` does, so reading
+    // it immediately raced the swap and measured 0 once (verified: the DB
+    // still had an 'active' movie at that instant). Wait for a real card
+    // first, generously: this is the same htmx-load race
+    // interactions.e2e.spec.ts's "Available Page" test documents elsewhere
+    // in this file (measured ~1 failure in 4 full runs before that fix).
+    const visibleCards = page.locator('#movie-grid .poster-card:visible');
+    await expect(
+      visibleCards.first(),
+      'no movie card in the Wanted grid -- did scripts/seed_e2e_data.py run?',
+    ).toBeVisible({ timeout: 10000 });
+    const baseline = await visibleCards.count();
+
+    // No seeded title contains this, so this must hide every card.
+    await filterInput.fill('zzz-does-not-match-any-seeded-title');
     await page.waitForTimeout(500);
-    await expect(page.locator('#movie-grid .poster-card:visible')).toHaveCount(1);
+    await expect(visibleCards).toHaveCount(0);
 
     await filterInput.fill('');
     await page.waitForTimeout(500);
-    await expect(page.locator('#movie-grid .poster-card:visible')).toHaveCount(2);
+    await expect(visibleCards).toHaveCount(baseline);
   });
 
   test('select all button works', async ({ page }) => {
@@ -269,15 +290,20 @@ test.describe('Add Movie Page', () => {
 
 test.describe('Movie Detail Page', () => {
   test.beforeEach(async ({ page }) => {
-    // Navigate to first movie detail if available
+    // The seeded library always has a movie in the Wanted grid (see the
+    // Wanted Page tests above), so this navigation is guaranteed rather than
+    // best-effort -- fail loudly if it is not, instead of leaving every test
+    // below to silently no-op against '/wanted/'.
     await page.goto('/wanted/');
     await waitForPageReady(page);
-    
+
     const movieLink = page.locator('a[href*="/movie/"]').first();
-    if (await movieLink.isVisible({ timeout: 3000 })) {
-      await movieLink.click();
-      await waitForPageReady(page);
-    }
+    await expect(
+      movieLink,
+      'no movie card in the Wanted grid -- did scripts/seed_e2e_data.py run?',
+    ).toBeVisible({ timeout: 10000 });
+    await movieLink.click();
+    await waitForPageReady(page);
   });
 
   test('refresh button works', async ({ page }) => {
@@ -318,16 +344,29 @@ test.describe('Movie Detail Page', () => {
   });
 
   test('delete button shows confirmation', async ({ page }) => {
-    if (page.url().includes('/movie/')) {
-      // Set up dialog handler
-      page.on('dialog', dialog => dialog.dismiss());
-      
-      const deleteBtn = page.locator('button:has-text("Delete")');
-      if (await deleteBtn.isVisible({ timeout: 3000 })) {
-        await deleteBtn.click();
-        // Dialog should have appeared (and been dismissed)
-      }
-    }
+    // beforeEach guarantees a movie detail page, and Delete is unconditional
+    // on it (movie-detail.spec.ts's "should show Delete button on detail
+    // page" pins that) -- so both the URL and the isVisible() guards this
+    // used to have could never be false, and NOTHING was ever asserted even
+    // when they passed: a dialog could be replaced with a silent no-op and
+    // this test would still pass.
+    let dialogMessage: string | null = null;
+    let dialogType: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      dialogType = dialog.type();
+      await dialog.dismiss();
+    });
+
+    const deleteBtn = page.getByRole('button', { name: /delete/i });
+    await expect(deleteBtn).toBeVisible({ timeout: 3000 });
+    await deleteBtn.click();
+
+    await expect.poll(() => dialogType).not.toBeNull();
+    expect(dialogType, 'Delete must ask for confirmation, not act immediately').toBe('confirm');
+    expect(dialogMessage, 'the confirm dialog carried no message').toBeTruthy();
+    // Dismissed, not accepted: the movie must still be here afterwards.
+    await expect(page).toHaveURL(/.*movie\/.+/);
   });
 });
 
@@ -446,12 +485,21 @@ test.describe('Settings Page', () => {
     await page.goto('/settings/');
     await waitForPageReady(page);
 
-    const advancedToggle = page.locator('button:has-text("Advanced"), [role="switch"]:near(:text("Advanced"))');
-    if (await advancedToggle.isVisible()) {
-      await advancedToggle.click();
-      await page.waitForTimeout(500);
-      await advancedToggle.click();
-    }
+    // header.html renders this unconditionally for any tab outside
+    // customPanelTabs, and General (the default active tab) is not one of
+    // them -- settings.spec.ts's own "should show Advanced toggle" test
+    // already pins that it is always there. The old
+    // `if (await advancedToggle.isVisible())` guard could never be false,
+    // and nothing was asserted even when it passed.
+    const advancedToggle = page.getByRole('switch', { name: /show advanced settings/i });
+    await expect(advancedToggle).toBeVisible();
+    await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
+
+    await advancedToggle.click();
+    await expect(advancedToggle).toHaveAttribute('aria-checked', 'true');
+
+    await advancedToggle.click();
+    await expect(advancedToggle).toHaveAttribute('aria-checked', 'false');
   });
 
   test('Jackett sync button works', async ({ page }) => {
@@ -535,17 +583,24 @@ test.describe('Logs Page', () => {
     await page.goto('/settings/');
     await waitForPageReady(page);
 
+    // The Logs tab is static chrome (settings.spec.ts's "should show Logs
+    // tab" pins it), and its level filter (logs_tab.html) always ships the
+    // same 5 static <option>s -- neither guard here could ever be false, and
+    // nothing was asserted even when both passed.
     const logsTab = page.locator('[role="tab"]:has-text("Logs")');
-    if (await logsTab.isVisible()) {
-      await logsTab.click();
-      await page.waitForTimeout(500);
+    await expect(logsTab).toBeVisible();
+    await logsTab.click();
+    await page.waitForTimeout(500);
 
-      const logFilter = page.locator('select').first();
-      if (await logFilter.isVisible()) {
-        await logFilter.selectOption({ index: 1 });
-        await page.waitForTimeout(500);
-      }
-    }
+    // #settings-log-level, not `select` .first(): Alpine's x-show hides
+    // inactive tabs without removing them from the DOM, so "the first
+    // <select> in document order" is not reliably "the one on this tab".
+    const logFilter = page.locator('#settings-log-level');
+    await expect(logFilter).toBeVisible();
+    await expect(logFilter).toHaveValue('all');
+
+    await logFilter.selectOption({ index: 1 });
+    await expect(logFilter).toHaveValue('error');
   });
 
   test('clear logs button works', async ({ page }) => {
@@ -602,41 +657,87 @@ test.describe('Keyboard Navigation', () => {
   });
 
   test('escape closes modals', async ({ page }) => {
+    // The trailer lookup (themoviedb.py's `movie.trailer`) hits a real
+    // provider; without a video_id the modal never opens (movie_detail.html:
+    // `if(videoId) { showTrailer = true; }`) and the old version of this test
+    // would then "pass" on Escape doing nothing to a modal that was never
+    // there. Stub it so the modal is guaranteed to open.
+    await page.route(/movie\.trailer/, (route) => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, video_id: 'dQw4w9WgXcQ' }),
+    }));
+
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
+    // The seeded library always has a card here (see the Wanted Page tests).
     const movieLink = page.locator('a[href*="/movie/"]').first();
-    if (await movieLink.isVisible({ timeout: 3000 })) {
-      await movieLink.click();
-      await waitForPageReady(page);
+    await expect(movieLink).toBeVisible({ timeout: 3000 });
+    await movieLink.click();
+    await waitForPageReady(page);
 
-      // Use specific selector for the movie detail page trailer button (has x-ref="trailerBtn")
-      const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
-      if (await trailerBtn.isVisible({ timeout: 3000 })) {
-        await trailerBtn.click();
-        await page.waitForTimeout(1000);
-        
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(300);
-        
-        // Modal should be closed
-        const modal = page.locator('[role="dialog"]');
-        const isVisible = await modal.isVisible().catch(() => false);
-        expect(isVisible).toBe(false);
-      }
-    }
+    // Trailer is unconditional on the detail page (movie_detail.html has no
+    // `{% if %}` around it) -- confirmed by movie-detail.spec.ts's own tests.
+    const trailerBtn = page.locator('button[x-ref="trailerBtn"]:has-text("Trailer")');
+    await expect(trailerBtn).toBeVisible({ timeout: 3000 });
+    await trailerBtn.click();
+
+    // Scoped by accessible name, not a bare `[role="dialog"]`: the movie-info
+    // modal (movie_info_modal.html) is ALSO always in the DOM as global
+    // chrome (x-show hidden, not absent), so an unscoped locator resolves to
+    // two dialogs and Playwright's strict mode rejects it.
+    const modal = page.getByRole('dialog', { name: 'Movie trailer' });
+    await expect(modal).toBeVisible({ timeout: 5000 });
+
+    await page.keyboard.press('Escape');
+
+    await expect(modal).toBeHidden();
   });
 
   test('arrow keys navigate movie cards', async ({ page }) => {
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
-    const movieCard = page.locator('.poster-card, [data-movie-id]').first();
-    if (await movieCard.isVisible({ timeout: 3000 })) {
-      await movieCard.focus();
+    // wanted.html's roving-focus handler moves focus among the <a> links
+    // inside .poster-card (`#movie-grid .poster-card ... a`), not the card
+    // wrapper -- the old test called `.focus()` on the wrapper div, which
+    // has no tabindex, so the browser never actually moved focus there, the
+    // keydown handler's `cards.indexOf(document.activeElement)` was always
+    // -1, and it returned before doing anything. Nothing was asserted
+    // either way.
+    const cardLinks = page.locator('#movie-grid .poster-card a[href*="/movie/"]');
+
+    // At least one card is guaranteed: the seed script's two movies both
+    // start 'active', and the app's own `app.load` -> searchAll restatus
+    // pass (searcher.py) can promote a movie straight to 'done' the moment
+    // it notices a matching already-'done' release -- both seeded movies
+    // carry one, deliberately, for release_controls.spec.ts's status
+    // filter coverage. So a SECOND card is common but not guaranteed within
+    // a run; fail loudly rather than silently skip if even the first is
+    // ever missing (matches movie-detail.spec.ts's "FAIL, don't skip").
+    await expect(
+      cardLinks.first(),
+      'no movie card in the Wanted grid -- did scripts/seed_e2e_data.py run?',
+    ).toBeVisible({ timeout: 10000 });
+    const count = await cardLinks.count();
+
+    const first = cardLinks.nth(0);
+    await first.focus();
+    await expect(first).toBeFocused();
+
+    if (count > 1) {
+      const second = cardLinks.nth(1);
       await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(200);
+      await expect(second).toBeFocused();
       await page.keyboard.press('ArrowLeft');
+      await expect(first).toBeFocused();
+    } else {
+      // Only one card in the grid this run: there is nowhere to move focus
+      // TO, so the real assertion is that the handler does not throw or
+      // drop focus off the only card that exists.
+      await page.keyboard.press('ArrowRight');
+      await expect(first).toBeFocused();
     }
   });
 });
