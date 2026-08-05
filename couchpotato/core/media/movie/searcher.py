@@ -416,7 +416,18 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
         if not fireEvent('searcher.correct_words', nzb['name'], media, single = True):
             return False
 
-        preferred_quality = quality if quality else fireEvent('quality.single', identifier = quality['identifier'], single = True)
+        # A falsy quality (None, {} or False) must never be resolved from the
+        # database here: SQLiteAdapter._query_index treats key=None as "no
+        # filter", so db.get('quality', None) silently returns the FIRST
+        # quality row instead of raising -- resolving a release against a
+        # quality nobody chose, in the function that decides what gets
+        # downloaded. There is no valid identifier to resolve to anyway, so
+        # this is a straight reject rather than a fallback.
+        if not quality:
+            log.info2('Wrong: %s, no quality to check against', nzb['name'])
+            return False
+
+        preferred_quality = quality
 
         # Contains lower quality string
         contains_other = fireEvent('searcher.contains_other_quality', nzb, movie_year = media['info']['year'], preferred_quality = preferred_quality, single = True)
@@ -425,18 +436,26 @@ class MovieSearcher(SearcherBase, MovieTypeBase):
             return False
 
         # Contains lower quality string
+        # .get('custom', {}): 'custom' is grafted onto the quality dict by
+        # the caller (searcher.py:326), never part of what
+        # QualityPlugin.single() itself returns, so a quality dict reaching
+        # here straight from single() legitimately has no 'custom' key.
         if not fireEvent('searcher.correct_3d', nzb, preferred_quality = preferred_quality, single = True):
-            log.info2('Wrong: %s, %slooking for %s in 3D', nzb['name'], ('' if preferred_quality['custom'].get('3d') else 'NOT '), quality['label'])
+            log.info2('Wrong: %s, %slooking for %s in 3D', nzb['name'], ('' if preferred_quality.get('custom', {}).get('3d') else 'NOT '), quality['label'])
             return False
 
         # File to small
-        if nzb['size'] and tryInt(preferred_quality['size_min']) > tryInt(nzb['size']):
-            log.info2('Wrong: "%s" is too small to be %s. %sMB instead of the minimal of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_min'])
+        # .get(...): defensive only. Every quality doc QualityPlugin.fill()
+        # writes carries size_min/size_max; this guards a corrupted/partial
+        # doc from raising instead of being rejected. No behaviour change
+        # for a normal (complete) doc.
+        if nzb['size'] and tryInt(preferred_quality.get('size_min')) > tryInt(nzb['size']):
+            log.info2('Wrong: "%s" is too small to be %s. %sMB instead of the minimal of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality.get('size_min'))
             return False
 
         # File to large
-        if nzb['size'] and tryInt(preferred_quality['size_max']) < tryInt(nzb['size']):
-            log.info2('Wrong: "%s" is too large to be %s. %sMB instead of the maximum of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality['size_max'])
+        if nzb['size'] and tryInt(preferred_quality.get('size_max')) < tryInt(nzb['size']):
+            log.info2('Wrong: "%s" is too large to be %s. %sMB instead of the maximum of %sMB.', nzb['name'], preferred_quality['label'], nzb['size'], preferred_quality.get('size_max'))
             return False
 
         # Provider specific functions
