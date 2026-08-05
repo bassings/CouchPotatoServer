@@ -124,6 +124,47 @@ test.describe('Accessibility', () => {
     await checkA11y(page, 'Settings');
   });
 
+  /*
+   * T1.4b/AC-A11Y-10: every page-level checkA11y sweep above runs in the
+   * LIGHT theme. With no localStorage seeded, base.html's own init leaves
+   * `document.documentElement` without the `light` class removed --
+   * measured: `classList.contains('light')` is true by default -- so dark
+   * mode has never been scanned page-wide. The toast contrast test below is
+   * the only place dark theme gets exercised at all, and that is exactly the
+   * blind spot that let the dark success toast ship at 3.30:1 (see the
+   * comment above that test). Cover one plain content page (Wanted) and one
+   * form-bearing page (Settings) in dark, following the same
+   * addInitScript-before-goto pattern the toast test uses.
+   */
+  test('Wanted and Settings pages should be accessible in the dark theme', async ({ page }) => {
+    await page.addInitScript((t) => {
+      localStorage.setItem('cp-theme', t);
+    }, 'dark');
+
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1000); // Wait for htmx to load content
+
+    // Pin that dark theme really took effect -- load-bearing, not decorative:
+    // a broken theme pipeline must red this test loudly rather than silently
+    // scanning the light theme under a "dark theme" test name.
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+      .toBe(false);
+
+    await checkA11y(page, 'Wanted (dark theme)');
+
+    await page.goto('/settings/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000); // Settings takes longer to load
+
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+      .toBe(false);
+
+    await checkA11y(page, 'Settings (dark theme)');
+  });
+
   // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows
   // movie-detail.spec.ts's own pattern for reaching the detail page.
   // scripts/seed_e2e_data.py seeds a movie with releases (wired into
