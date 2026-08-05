@@ -716,12 +716,21 @@ PYTEST_INVOCATION_RE = re.compile(r"\bpytest\b(.*)$", re.MULTILINE)
 
 
 def _tracked_test_files(repo_root: Path) -> list[str]:
-    """Tracked ``test_*.py`` files, via ``git ls-files``: NOT a filesystem walk.
+    """Tracked test-shaped ``.py`` files, via ``git ls-files``: NOT a filesystem walk.
 
     A filesystem walk would let an untracked local scratch file trip this
-    guard, or be silently swept into scope by a later "fix the finding" , 
+    guard, or be silently swept into scope by a later "fix the finding" pass.
     exactly the thing AC-DATA-21 rules out. ``git ls-files`` structurally
     cannot see a file nobody has ``git add``-ed.
+
+    Both of pytest's default naming conventions count, ``test_*.py`` AND
+    ``*_test.py``, even though this repo's ``pytest.ini`` narrows
+    ``python_files`` to the first. Narrowing it is precisely what made the
+    suffix form dangerous: three ``*_test.py`` files sat tracked under
+    ``couchpotato/`` reading like a live suite while no runner and no
+    collector would ever touch them, and one of them was sitting on a
+    Python 3 port defect that 500'd the settings file browser. A rule that
+    only knows the prefix declares that tree clean.
     """
     result = subprocess.run(
         ["git", "ls-files"],
@@ -732,7 +741,10 @@ def _tracked_test_files(repo_root: Path) -> list[str]:
         path = line.strip()
         if not path or path.startswith("libs/"):
             continue  # vendored, not ours to flag
-        if path.endswith(".py") and Path(path).name.startswith("test_"):
+        name = Path(path).name
+        if name.startswith("test_") and name.endswith(".py"):
+            files.append(path)
+        elif name.endswith("_test.py"):
             files.append(path)
     return sorted(files)
 
@@ -818,8 +830,8 @@ def check_orphaned_test_files(
         yield (
             path,
             1,
-            f"`{path}` matches pytest.ini's `test_*.py` convention and is "
-            "tracked, but no pytest invocation in scripts/verify.sh or "
+            f"`{path}` is named like a test (`test_*.py` or `*_test.py`) and "
+            "is tracked, but no pytest invocation in scripts/verify.sh or "
             ".github/workflows/ci.yml executes it: it can rot indefinitely "
             "with nothing ever noticing (tests/integration/ did exactly "
             "this: 'covered' by pytest.ini's testpaths, run by no runner, "

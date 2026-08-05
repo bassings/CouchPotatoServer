@@ -704,6 +704,33 @@ def test_flags_a_tracked_test_file_no_runner_executes():
     assert "not executed" in message.lower() or "orphan" in message.lower()
 
 
+def test_tracked_test_files_sees_both_pytest_naming_conventions(tmp_path):
+    """`*_test.py` counts as a test file, not just `test_*.py`.
+
+    Every other test in this section injects `tracked_files`, so none of
+    them exercises the naming predicate that decides what lands in that
+    list. The predicate is where this rule actually missed: three
+    `*_test.py` files sat tracked under `couchpotato/`, outside `testpaths`
+    and outside `pytest.ini`'s narrowed `python_files = test_*.py`, so
+    nothing collected them and nothing flagged them. One had been failing
+    since the Python 3 port and was hiding a live defect in the settings
+    file browser. A rule that only knows the prefix calls that tree clean.
+
+    Asserting the exact list, not membership, so it also pins what must NOT
+    be swept in: a helper module and a conftest are not tests.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "pkg").mkdir()
+    for name in ("test_prefix.py", "suffix_test.py", "helpers.py", "conftest.py"):
+        (tmp_path / "pkg" / name).write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert check_test_traps._tracked_test_files(tmp_path) == [
+        "pkg/suffix_test.py",
+        "pkg/test_prefix.py",
+    ]
+
+
 def test_does_not_flag_a_file_under_an_executed_root():
     verify_sh_like = "pytest tests/unit/ -q\npytest tests/integration/ -v\n"
     ci_yml_like = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
@@ -749,7 +776,7 @@ def test_allowlist_exempts_only_the_named_file_not_its_whole_directory():
     """The exemption must be exact, not a directory shadow.
 
     A sibling file in the same directory as an allowlisted entry, but not
-    itself allowlisted, must still be flagged if it is genuinely orphaned , 
+    itself allowlisted, must still be flagged if it is genuinely orphaned:
     otherwise the allowlist silently exempts a whole directory instead of the
     one file it names.
     """
@@ -780,15 +807,36 @@ def test_orphan_allowlist_entries_are_commented(tmp_path):
     match = re.search(r"ORPHAN_ALLOWLIST\s*=\s*\{(.*?)\n\}", source, re.DOTALL)
     assert match, "ORPHAN_ALLOWLIST set literal not found"
     body = match.group(1)
-    # Every non-blank line inside the literal must be a comment or sit
-    # directly under one (the comment lines outnumber or match the entries).
-    entry_lines = [
-        ln for ln in body.split("\n")
-        if ln.strip() and not ln.strip().startswith("#")
-    ]
-    comment_lines = [ln for ln in body.split("\n") if ln.strip().startswith("#")]
-    assert len(comment_lines) >= len(entry_lines), (
-        "every ORPHAN_ALLOWLIST entry needs an inline comment justifying it"
+    # Walk the literal IN ORDER and require each entry to be immediately
+    # preceded by a comment line.
+    #
+    # This compared totals (`len(comment_lines) >= len(entry_lines)`), which
+    # cannot fail while any existing entry carries a multi-line justification:
+    # the single current entry has a six-line block, so five more entries could
+    # be added with no reason at all before the counts crossed. Measured: adding
+    # an uncommented entry left the suite at 80 passed, exit 0.
+    #
+    # That matters because this allowlist is Rule 5's only escape hatch. An
+    # agent told "the orphan check is failing" could silence it with no
+    # justification, which is exactly the .gitleaksignore failure this test was
+    # modelled on preventing.
+    previous_was_comment = False
+    unjustified = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            previous_was_comment = True
+            continue
+        if not previous_was_comment:
+            unjustified.append(stripped)
+        previous_was_comment = False
+
+    assert not unjustified, (
+        "every ORPHAN_ALLOWLIST entry must be immediately preceded by a comment "
+        "justifying why that file is exempt from Rule 5. Unjustified: %s"
+        % unjustified
     )
 
 

@@ -106,7 +106,12 @@ class FileBrowser(Plugin):
             dirs = []
 
         if soft_chroot.enabled:
-            dirs = map(soft_chroot.abs2chroot, dirs)
+            # A list, not `map()`. Under Python 2 `map` returned a list; under
+            # Python 3 it is a lazy iterator, so `len(dirs)` below raised
+            # TypeError and the whole endpoint 500'd for anyone who had
+            # configured a chroot -- and even without the len(), a map object
+            # cannot be serialised into the response.
+            dirs = [soft_chroot.abs2chroot(d) for d in dirs]
 
         parent = os.path.dirname(path.rstrip(os.path.sep))
         if parent == path.rstrip(os.path.sep):
