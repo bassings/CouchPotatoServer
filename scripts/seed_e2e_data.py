@@ -235,6 +235,45 @@ def _upsert(db, doc_id, doc):
     return True
 
 
+
+def verify(data_dir):
+    """Read back what seed() wrote and fail loudly if it is not there.
+
+    T1.7a follow-up (2026-08-05). playwright.config.ts used to chain the seed
+    with `|| true`, so a seed that failed or half-completed still started the
+    server, against an empty database. Every downstream spec then failed with
+    "no movie card in the Wanted grid", which names the symptom and hides the
+    cause. The `|| true` is gone; this function makes the exit code mean
+    something by checking the end state rather than trusting that no exception
+    was raised.
+
+    Checks the invariant T1.7a established: both Wanted-page movies are
+    'active' (so restatus cannot have promoted them out) and the dedicated
+    done-release movie is 'done'.
+    """
+    db = _open_adapter(data_dir)
+    try:
+        problems = []
+        for movie_id, expected in (
+            (MOVIE_ID, 'active'),
+            (DESTRUCTIVE_MOVIE_ID, 'active'),
+            (DONE_RELEASE_MOVIE_ID, 'done'),
+        ):
+            try:
+                doc = db.get('id', movie_id)
+            except Exception:
+                problems.append('%s is missing from the seeded database' % movie_id)
+                continue
+            status = doc.get('status')
+            if status != expected:
+                problems.append(
+                    '%s has status %r, expected %r' % (movie_id, status, expected)
+                )
+        return problems
+    finally:
+        db.close()
+
+
 def seed(data_dir):
     """Seed the profile, movie, and releases. Returns a summary dict."""
     db = _open_adapter(data_dir)
@@ -401,6 +440,13 @@ def main(argv=None):
         result = seed(args.data_dir)
     except Exception as exc:  # noqa: BLE001 -- report and exit non-zero, don't traceback-spam CI
         print('ERROR: failed to seed E2E data: %s' % exc, file=sys.stderr)
+        return 1
+
+    problems = verify(args.data_dir)
+    if problems:
+        print('ERROR: the seed did not produce the expected state:', file=sys.stderr)
+        for problem in problems:
+            print('  - %s' % problem, file=sys.stderr)
         return 1
 
     print('Seeded E2E data at %s:' % args.data_dir)

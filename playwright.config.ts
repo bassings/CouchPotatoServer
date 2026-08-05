@@ -173,7 +173,10 @@ export default defineConfig({
         // Interpreter resolution is explained at the top of this file (PYTHON).
         // CI is unaffected — it skips webServer entirely and starts its own server.
         command:
-          `(${PYTHON} scripts/seed_e2e_data.py --data_dir=${E2E_DATA_DIR} || true) && ` +
+          // T1.7a: no `|| true`. A failed or half-complete seed must fail the run,
+          // not start a server against an empty database and leave every spec
+          // reporting "no movie card in the Wanted grid".
+          `${PYTHON} scripts/seed_e2e_data.py --data_dir=${E2E_DATA_DIR} && ` +
           `${PYTHON} CouchPotato.py --data_dir=${E2E_DATA_DIR}`,
         url: process.env.CP_TEST_URL || 'http://localhost:5050',
         timeout: 120_000,
