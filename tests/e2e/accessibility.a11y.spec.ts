@@ -10,7 +10,10 @@ import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 // Helper to check a11y violations
 async function checkA11y(page: any, pageName: string) {
   const accessibilityScanResults = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    // wcag22aa added (T1.4b/AC-A11Y-9): the project standard is WCAG 2.2 AA,
+    // and without this tag 2.5.8 (target-size) and 2.4.11
+    // (focus-not-obscured) were never evaluated at all.
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     // Exclude known exceptions documented below
     .exclude('#loading') // Loading indicators are transient
     .analyze();
@@ -33,15 +36,22 @@ async function checkA11y(page: any, pageName: string) {
     });
   }
 
-  // Fail on critical or serious violations
-  const criticalViolations = accessibilityScanResults.violations.filter(
-    v => v.impact === 'critical' || v.impact === 'serious'
-  );
+  // Fail on ANY WCAG-tagged violation, not just critical/serious.
+  //
+  // T1.4b/AC-A11Y-8: this used to filter to `impact === 'critical' ||
+  // 'serious'` before asserting, which meant a `moderate`-impact violation
+  // (e.g. many WCAG 2.2 `target-size` findings, or `color-contrast` at
+  // certain ratios) could never fail this function -- and it backs 5 of the
+  // 18 tests in this file (Wanted, Available, Add Movie, Movie Detail, Setup
+  // Wizard directly, plus Suggestions and Settings). The identical bug, one
+  // notch tighter (`impact === 'critical'` alone), lived in the standalone
+  // "Color contrast should be sufficient" test further down -- already fixed.
+  const violations = accessibilityScanResults.violations;
 
   expect(
-    criticalViolations.length,
-    `Found ${criticalViolations.length} critical/serious a11y violations on ${pageName}: ${
-      criticalViolations.map(v => v.id).join(', ')
+    violations.length,
+    `Found ${violations.length} a11y violations on ${pageName}: ${
+      violations.map(v => v.id).join(', ')
     }`
   ).toBe(0);
 
