@@ -30,9 +30,11 @@ check runs, so a symlink whose own name looks safe but points somewhere
 else is refused by the SAME two checks rather than a special case bolted on
 for symlinks specifically.
 """
+import argparse
 import os
 import re
 import shutil
+import sys
 
 #: AC-SEC-9: the basename must start with ".e2e" and end with "data" --
 #: `.gitignore` (`.e2e-*data/`) and `.gitleaks.toml`
@@ -141,3 +143,77 @@ def safe_rmtree(path, scratch_root=None):
         )
 
     shutil.rmtree(resolved)
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────
+#
+# The Playwright worker fixture (tests/e2e/fixtures.ts) is TypeScript and
+# shells out to this as a subprocess, the same way playwright.config.ts has
+# always shelled out to scripts/seed_e2e_data.py -- one implementation of
+# the safety rules, called from both languages, rather than a second copy
+# of validate_worker_data_dir/safe_rmtree re-implemented in JS.
+
+
+def _cli_resolve_or_die(worker_index):
+    try:
+        return resolve_worker_data_dir(worker_index)
+    except UnsafeDataDirError as exc:
+        print('ERROR: %s' % exc, file=sys.stderr)
+        return None
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description='Validate, reserve, and delete a per-Playwright-worker '
+                     'E2E data dir (T1.7).',
+    )
+    subparsers = parser.add_subparsers(dest='command', required=True)
+
+    prepare = subparsers.add_parser(
+        'prepare',
+        help="Validate worker <index>'s data dir and print its path. Fails "
+             '(AC-DATA-26) if the directory already exists -- a leftover '
+             'from a crashed prior run must be surfaced, not silently '
+             'reused or wiped.',
+    )
+    prepare.add_argument('worker_index')
+
+    cleanup = subparsers.add_parser(
+        'cleanup',
+        help="Delete worker <index>'s data dir through the guarded helper "
+             '(AC-DATA-25). A missing directory is not an error.',
+    )
+    cleanup.add_argument('worker_index')
+
+    args = parser.parse_args(argv)
+
+    path = _cli_resolve_or_die(args.worker_index)
+    if path is None:
+        return 1
+
+    if args.command == 'prepare':
+        if os.path.exists(path):
+            print(
+                'ERROR: %s already exists. A previous run may have crashed '
+                'without cleaning up. Remove it with '
+                '`python scripts/e2e_worker_data.py cleanup %s` (never a '
+                'bare rm -rf) and retry.' % (path, args.worker_index),
+                file=sys.stderr,
+            )
+            return 1
+        print(path)
+        return 0
+
+    if args.command == 'cleanup':
+        try:
+            safe_rmtree(path)
+        except UnsafeDataDirError as exc:
+            print('ERROR: %s' % exc, file=sys.stderr)
+            return 1
+        return 0
+
+    return 1  # pragma: no cover -- argparse's `required=True` makes this unreachable
+
+
+if __name__ == '__main__':
+    sys.exit(main())

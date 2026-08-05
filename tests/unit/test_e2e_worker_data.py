@@ -28,8 +28,10 @@ _SCRIPT_DIR = os.path.join(_REPO_ROOT, 'scripts')
 if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
+import e2e_worker_data  # noqa: E402
 from e2e_worker_data import (  # noqa: E402
     UnsafeDataDirError,
+    main,
     resolve_worker_data_dir,
     safe_rmtree,
     validate_worker_data_dir,
@@ -189,3 +191,57 @@ class TestSafeRmtree:
             safe_rmtree(str(target), scratch_root=str(tmp_path))
 
         assert target.is_file()
+
+
+class TestCli:
+    """The `prepare` / `cleanup` subcommands the Playwright worker fixture
+    (TypeScript) shells out to, rather than re-implementing
+    validate_worker_data_dir/safe_rmtree a second time in JS.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _scratch_root(self, tmp_path, monkeypatch):
+        # Every CLI test runs against tmp_path as the scratch root, never
+        # this checkout's real REPO_ROOT.
+        monkeypatch.setattr(e2e_worker_data, 'REPO_ROOT', str(tmp_path))
+        self.root = tmp_path
+
+    def test_prepare_prints_the_path_when_absent(self, capsys):
+        exit_code = main(['prepare', '2'])
+        assert exit_code == 0
+        out = capsys.readouterr().out.strip()
+        assert out == str((self.root / '.e2e-w2-data').resolve())
+
+    def test_prepare_fails_loudly_when_the_dir_already_exists(self, capsys):
+        (self.root / '.e2e-w2-data').mkdir()
+
+        exit_code = main(['prepare', '2'])
+
+        assert exit_code != 0
+        err = capsys.readouterr().err
+        assert '.e2e-w2-data' in err
+
+    def test_cleanup_deletes_an_existing_dir(self, capsys):
+        target = self.root / '.e2e-w4-data'
+        target.mkdir()
+        (target / 'marker').write_text('x')
+
+        exit_code = main(['cleanup', '4'])
+
+        assert exit_code == 0
+        assert not target.exists()
+
+    def test_cleanup_is_a_noop_when_absent(self, capsys):
+        exit_code = main(['cleanup', '9'])
+        assert exit_code == 0
+
+    def test_prepare_then_cleanup_then_prepare_again_succeeds(self, capsys):
+        # The realistic worker lifecycle: reserve, use, tear down, and the
+        # NEXT invocation (e.g. a later `make verify` run) must not still
+        # see AC-DATA-26's "already exists" failure.
+        assert main(['prepare', '1']) == 0
+        target = self.root / '.e2e-w1-data'
+        target.mkdir()
+        assert main(['cleanup', '1']) == 0
+        assert not target.exists()
+        assert main(['prepare', '1']) == 0
