@@ -654,7 +654,9 @@ the diff, not by an agent.
   (a) `core/media/movie/searcher.py`: the `:419`/`:429`/`:433` fallback,
   (b) `core/plugins/renamer/mover.py`: the three T1.8 fixes,
   (c) `runner.py`: the `--port` argument only,
-  (d) whole-file deletions of `simple_healthcheck.py`, `integration_test.py`,
+  (d) `core/media/_base/media/main.py` and/or `core/plugins/release/main.py`:
+  the `has_releases` row-shape fix only (T1.9, added 2026-08-05),
+  (e) whole-file deletions of `simple_healthcheck.py`, `integration_test.py`,
   `environment_test.py`. **Any other modified file under `couchpotato/` fails.**
   *(Amended 2026-08-03: the original allowed only `searcher.py:419`. The
   precedence order puts irrecoverable data loss above the no-runtime-change
