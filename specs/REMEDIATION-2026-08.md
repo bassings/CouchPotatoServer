@@ -621,6 +621,17 @@ already `rm -rf` sibling paths in the repo root.
   entry and a CI topology change: a red run would have seven candidate causes
   and the evidence the AC buys becomes uninterpretable. This does not split the
   PR and does not let PR 2 start sooner, so it is consistent with decision 4.
+- **A second flake source exists, independent of spec coupling** (found during
+  T1.4, 2026-08-05). The app's own `app.load` to `searchAll` restatus pass can
+  promote a seeded movie straight to `done` mid-run, which drops it out of the
+  Wanted page's server-side `status=active` query. Both seeded movies carry an
+  already-`done` release deliberately, for `release_controls.spec.ts`. Measured
+  at roughly 1 run in 2 during T1.4. The old vacuous conditionals absorbed this
+  silently forever; repairing them turned it into a loud, rare failure, which is
+  the correct outcome but means **T1.7's ten green runs cannot be reached by
+  isolation alone**. Fix the seed fixture or the restatus timing first, or the
+  ten-run bar will be chasing a defect that per-spec data dirs cannot remove.
+  This is pre-existing app behaviour, not a regression from this PR.
 - **Note on implementation:** Playwright has **no per-spec primitive**. The
   natural implementation is per-**worker**, which is what
   `docs/technical-debt.md:184-186` and `playwright.config.ts:79-81` both
