@@ -11,7 +11,7 @@ import re
 import tarfile
 import shutil
 
-from argparse import ArgumentParser
+from argparse import ArgumentParser, ArgumentTypeError
 from couchpotato.core.cache import SQLiteCache
 from couchpotato.core.event import fireEventAsync, fireEvent
 from couchpotato.core.helpers.encoding import sp
@@ -19,6 +19,33 @@ from couchpotato.core.helpers.variable import getDataDir, tryInt, getFreeSpace
 import requests
 from urllib3 import disable_warnings
 from couchpotato.core.softchroot import SoftChrootInitError
+
+
+def _port_argument(value):
+    """argparse `type=` for `--port`: an int in the valid TCP port range.
+
+    Raising `ArgumentTypeError` makes argparse print a message naming the
+    offending value and exit(2) -- AC-OPS-21 requires an invalid port to
+    fail loudly at startup, naming the port, not be silently accepted and
+    fall through to some default later.
+    """
+    try:
+        port = int(value)
+    except ValueError:
+        raise ArgumentTypeError('%r is not a valid port (must be an integer)' % value)
+    if not (1 <= port <= 65535):
+        raise ArgumentTypeError('%r is not a valid port (must be 1-65535)' % value)
+    return port
+
+
+def _resolve_port(cli_port, configured_port):
+    """The `--port` precedence rule (AC-OPS-21): `cli_port` (options.port)
+    overrides `configured_port` (config.ini's value) when given. `cli_port`
+    being `None` means `--port` was never passed, so `configured_port`
+    passes through unchanged -- this is what keeps omitting `--port`
+    byte-identical to today's behaviour (AC-OPS-20).
+    """
+    return cli_port if cli_port is not None else configured_port
 
 
 def getOptions(args):
@@ -39,6 +66,12 @@ def getOptions(args):
                         dest='daemon', help='Daemonize the app')
     parser.add_argument('--pid_file',
                         dest='pid_file', help='Path to pidfile needed for daemon')
+    parser.add_argument('--port', type=_port_argument, default=None,
+                        dest='port', help='Port to bind. Overrides config.ini\'s '
+                        '"port" setting; omit to keep today\'s behaviour '
+                        'unchanged (config.ini wins, nothing is written back '
+                        'to it). Selects a port only -- the bind address '
+                        'still comes entirely from config.ini\'s "host".')
 
     options = parser.parse_args(args)
 
@@ -254,7 +287,12 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
 
     config = {
         'use_reloader': reloader,
-        'port': tryInt(Env.setting('port', default=5050)),
+        # --port overrides config.ini when given; omitted (None) means
+        # config.ini's value passes through unchanged (AC-OPS-20/21). Only
+        # the port is affected -- `host` above is untouched, so --port
+        # cannot become a way to expose an instance more widely than
+        # config.ini already does (AC-SEC-16).
+        'port': _resolve_port(getattr(options, 'port', None), tryInt(Env.setting('port', default=5050))),
         'host': host if host and len(host) > 0 else '0.0.0.0',
         'ssl_cert': Env.setting('ssl_cert', default=None),
         'ssl_key': Env.setting('ssl_key', default=None),
@@ -314,12 +352,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     fireEventAsync('app.load')
 
     # Run with uvicorn
-    try:
-        _run_uvicorn(application, config, debug)
-    except Exception as e:
-        log.error('Failed starting: %s', traceback.format_exc())
-        if hasattr(e, 'errno') and e.errno == 48:
-            log.info('Port (%s) is already in use', config.get('port'))
+    _start_uvicorn_or_exit(application, config, debug, log)
 
 
 def _run_uvicorn(application, config, debug):
@@ -348,3 +381,25 @@ def _run_uvicorn(application, config, debug):
         access_log=False,
         **ssl_kwargs
     )
+
+
+def _start_uvicorn_or_exit(application, config, debug, log):
+    """Start uvicorn; on failure, log an error NAMING the port and exit
+    non-zero.
+
+    AC-OPS-21: an invalid or already-bound port must fail loudly at
+    startup, not be logged and swallowed while the process exits 0 as if it
+    had started -- that silent shape is exactly what would reintroduce the
+    shared-server coupling `--port` exists to remove: a harness spawning
+    one server per worker would see every worker report success and only
+    discover a missing server once specs start timing out, naming a URL
+    instead of the real cause.
+    """
+    try:
+        _run_uvicorn(application, config, debug)
+    except Exception as e:
+        if hasattr(e, 'errno') and e.errno == 48:
+            log.error('Port %s is already in use -- refusing to start.', config.get('port'))
+        else:
+            log.error('Failed starting on port %s: %s', config.get('port'), traceback.format_exc())
+        sys.exit(1)
