@@ -47,6 +47,15 @@ export async function waitForPageReady(page: Page): Promise<void> {
  * classes — i.e. axe was asserting a visible focus indicator that the stub did
  * not have. `tests/unit/test_charts_template.py` pins these against the real
  * template.
+ *
+ * It ALSO previously dropped the `onclick="openMovieModal(...)"` attribute and
+ * the `openMovieModal` definition itself (charts.html ships both: the card's
+ * `onclick` and its own `<script>` block, since htmx can swap this partial in
+ * alone). Without them the card was inert — clicking it opened nothing, so no
+ * E2E test could ever reach the movie-info modal's Add/Skip controls from a
+ * charts card (T1.4 / AC-QA-40: `interactions.e2e.spec.ts`'s "add/skip
+ * buttons on suggestions work" burned 5s waiting for a Skip button that could
+ * not exist and asserted only `checkNoErrors`).
  */
 export async function mockSuggestionsCharts(page: Page): Promise<void> {
   await page.route('**/partial/charts', route => route.fulfill({
@@ -56,6 +65,7 @@ export async function mockSuggestionsCharts(page: Page): Promise<void> {
       <div class="mb-8">
         <h2 class="text-sm font-medium mb-3">Featured</h2>
         <button type="button"
+                onclick="openMovieModal('tt0137523', this, 'chart')"
                 class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group text-left w-full cursor-pointer hover:border-white/[0.12] transition-colors focus:outline-none focus:ring-2 focus:ring-cp-accent/50 focus:ring-offset-2 focus:ring-offset-cp-bg"
                 data-imdb="tt0137523"
                 aria-label="View details for Example Movie (2026)">
@@ -70,6 +80,20 @@ export async function mockSuggestionsCharts(page: Page): Promise<void> {
           </div>
         </button>
       </div>
+      <script>
+      function openMovieModal(imdb, triggerEl, skipType) {
+        window.dispatchEvent(new CustomEvent('open-movie-modal', {
+          detail: { imdb, triggerEl, skipType }
+        }));
+      }
+      if (!window.__cpMovieSkippedBound) {
+        window.__cpMovieSkippedBound = true;
+        window.addEventListener('movie-skipped', (e) => {
+          const card = document.querySelector(\`.poster-card[data-imdb="\${e.detail.imdb}"]\`);
+          if (card) card.remove();
+        });
+      }
+      </script>
     `,
   }));
 }

@@ -197,7 +197,7 @@ test.describe('Wanted Page', () => {
     // guaranteed here -- the old `if (await movieCard.isVisible())` guard
     // could never be false, and even inside it nothing was ever asserted.
     const movieCard = page.locator('.poster-card, [data-movie-id]').first();
-    await expect(movieCard).toBeVisible();
+    await expect(movieCard).toBeVisible({ timeout: 10000 });
 
     // The refresh button (movie_cards.html) is `opacity-0 group-hover:opacity-100`
     // -- present but transparent until hover, so `toBeVisible()` alone cannot
@@ -214,7 +214,7 @@ test.describe('Wanted Page', () => {
 
     // Same guarantee as above: the seeded library always has a card here.
     const movieLink = page.locator('a[href*="/movie/"]').first();
-    await expect(movieLink).toBeVisible();
+    await expect(movieLink).toBeVisible({ timeout: 10000 });
 
     await movieLink.click();
     await waitForPageReady(page);
@@ -394,15 +394,57 @@ test.describe('Suggestions Page', () => {
     const errors: string[] = [];
     page.on('console', msg => { if (msg.type() === 'error') errors.push(msg.text()); });
 
+    // Root cause (AC-QA-40): the Skip button lives inside the movie-info
+    // modal (movie_info_modal.html), not on the page -- it only opens on
+    // click, and the OLD mockSuggestionsCharts stub card had no click
+    // handler at all, so `button:has-text("Skip")` could never exist and
+    // this test asserted only `checkNoErrors` after burning 5s waiting for
+    // it. helpers.ts's stub now carries the same `onclick` charts.html
+    // itself ships, so the card is real enough to open the modal.
+    //
+    // The modal's own open() does a real `fetch(.../search?q=...)`, and
+    // Skip does a real `fetch(.../charts.ignore/...)` -- both stubbed here
+    // so this stays hermetic rather than depending on TMDB.
+    await page.route('**/search?q=tt0137523', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        movie: [{ imdb: 'tt0137523', titles: ['Example Movie'], year: 2026 }],
+      }),
+    }));
+    let skipRequested = false;
+    await page.route('**/charts.ignore/**', route => {
+      skipRequested = true;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success": true}' });
+    });
+
     await mockSuggestionsCharts(page);
     await page.goto('/suggestions/');
     await waitForPageReady(page);
 
-    const skipBtn = page.locator('button:has-text("Skip")').first();
-    if (await skipBtn.isVisible({ timeout: 5000 })) {
-      await skipBtn.click();
-      await page.waitForTimeout(1000);
-    }
+    const card = page.locator('.poster-card[data-imdb="tt0137523"]');
+    await expect(card).toBeVisible();
+    await card.click();
+
+    // Scoped by #movie-modal-close (movie_info_modal.html), not by accessible
+    // name: the modal's aria-label is `movie?.title || 'Movie details'`, so
+    // it flips from "Movie details" to the loaded title -- a race against a
+    // name-based locator. It also is NOT the trailer modal, which is always
+    // in the DOM too as global chrome.
+    const modal = page.locator('[role="dialog"]:has(#movie-modal-close)');
+    await expect(modal).toBeVisible();
+
+    const skipBtn = modal.getByRole('button', { name: 'Skip' });
+    await expect(skipBtn).toBeVisible({ timeout: 5000 });
+    await skipBtn.click();
+
+    await expect.poll(() => skipRequested, 'Skip never called charts.ignore').toBe(true);
+    // skipMovie() (movie_info_modal.html) closes the modal and removes the
+    // card from the grid on success -- both are the real, observable effect
+    // of a working Skip, not just "the button existed".
+    await expect(modal).toBeHidden();
+    await expect(card).toHaveCount(0);
 
     checkNoErrors(page, errors);
   });
@@ -673,7 +715,7 @@ test.describe('Keyboard Navigation', () => {
 
     // The seeded library always has a card here (see the Wanted Page tests).
     const movieLink = page.locator('a[href*="/movie/"]').first();
-    await expect(movieLink).toBeVisible({ timeout: 3000 });
+    await expect(movieLink).toBeVisible({ timeout: 10000 });
     await movieLink.click();
     await waitForPageReady(page);
 
