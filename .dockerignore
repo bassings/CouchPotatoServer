@@ -10,6 +10,11 @@ docker-compose.yml
 .env
 .env.*
 .config/
+# T1.7/AC-SEC-10: per-worker E2E data dirs (.e2e-w<N>-data/) hold a live
+# config.ini with a real api_key, same as .config/ above. Without this,
+# `docker build` (the normal docker-compose.dev.yml path) bakes it into a
+# layer -- Dockerfile:72 (COPY . ${APP_DIR}) copies the whole context.
+.e2e-*
 .openclaw/
 .design-sync/
 ds-bundle/
