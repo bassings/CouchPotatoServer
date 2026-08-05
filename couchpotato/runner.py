@@ -397,9 +397,20 @@ def _start_uvicorn_or_exit(application, config, debug, log):
     """
     try:
         _run_uvicorn(application, config, debug)
-    except Exception as e:
-        if hasattr(e, 'errno') and e.errno == 48:
-            log.error('Port %s is already in use -- refusing to start.', config.get('port'))
-        else:
-            log.error('Failed starting on port %s: %s', config.get('port'), traceback.format_exc())
+    except SystemExit:
+        # uvicorn handles a bind conflict itself: it logs
+        # "[Errno 48] error while attempting to bind on address ..." and raises
+        # SystemExit(3). That is a BaseException, so `except Exception` below
+        # never sees it. Re-raise rather than converting it: the exit code and
+        # uvicorn's own message are already correct and already name the port,
+        # and swallowing them here would replace a good diagnostic with a
+        # worse one.
+        #
+        # The previous shape special-cased `e.errno == 48`, which was
+        # unreachable twice over: SystemExit is not an Exception, and errno 48
+        # is macOS. Linux, including the python:3.14-alpine production base,
+        # uses 98.
+        raise
+    except Exception:
+        log.error('Failed starting on port %s: %s', config.get('port'), traceback.format_exc())
         sys.exit(1)

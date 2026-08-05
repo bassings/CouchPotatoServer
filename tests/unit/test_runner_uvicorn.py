@@ -138,25 +138,60 @@ class TestStartUvicornOrExit:
             'ssl_key': None,
         }
 
-    def test_exits_nonzero_and_names_the_port_on_bind_conflict(self, monkeypatch):
-        def fake_run(application, config, debug):
-            err = OSError('Address already in use')
-            err.errno = 48
-            raise err
+    def test_a_bind_conflict_propagates_uvicorns_own_nonzero_exit(self, monkeypatch):
+        """uvicorn owns the bind-conflict diagnostic; we must not swallow it.
 
-        monkeypatch.setattr(
-            'couchpotato.runner._run_uvicorn', fake_run
-        )
+        Rewritten after review. The previous version fabricated an
+        `OSError` with `errno = 48` and asserted our own log line named the
+        port. It passed for a reason unrelated to what it claimed to guard:
+        driven against a genuinely bound port, `uvicorn.run()` raises
+        `SystemExit(3)`, which is a BaseException that `except Exception`
+        never sees, so the errno branch was unreachable. `errno 48` is also
+        macOS only; Linux, including the production python:3.14-alpine base,
+        uses 98.
+
+        What actually happens, and what this now pins: uvicorn logs
+        "[Errno ...] error while attempting to bind on address ..." itself and
+        exits non-zero, and we let that through unchanged rather than
+        replacing a correct diagnostic with a worse one.
+        """
+        import socket
+
+        # A REAL bound port, not a fabricated exception. Which exception
+        # uvicorn raises here is environment-dependent (measured: SystemExit(3)
+        # on one host, an OSError reaching our generic branch on another), and
+        # that variability is precisely why fabricating one produced a test
+        # that could not fail. What must hold on every platform is the
+        # observable contract: refuse to start, exit non-zero, and do not
+        # return as though the server came up.
+        # Bind the SAME address the config will hand uvicorn. Binding
+        # 127.0.0.1 while the config says 0.0.0.0 is not a conflict: uvicorn
+        # starts happily on the wildcard address and serves until the test
+        # times out, which is exactly what the first version of this test did
+        # (60s, then a failure that looked like the production code was wrong).
+        holder = socket.socket()
+        holder.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
+        holder.bind(('0.0.0.0', 0))
+        holder.listen(1)
+        taken = holder.getsockname()[1]
+
+        async def app(scope, receive, send):  # pragma: no cover - never served
+            pass
+
         log = MagicMock()
+        try:
+            with pytest.raises(SystemExit) as exc_info:
+                _start_uvicorn_or_exit(
+                    app, self._config(port=taken), False, log,
+                )
+        finally:
+            holder.close()
 
-        with pytest.raises(SystemExit) as exc_info:
-            _start_uvicorn_or_exit(object(), self._config(port=5099), False, log)
-
-        assert exc_info.value.code != 0
-        logged = ' '.join(
-            '%s' % (call.args,) for call in log.error.call_args_list
+        assert exc_info.value.code not in (0, None), (
+            'a bind conflict must not exit 0: a harness starting one server '
+            'per worker would see every worker report success and only find '
+            'out when specs time out naming a URL instead of the cause'
         )
-        assert '5099' in logged
 
     def test_exits_nonzero_rather_than_silently_returning_on_any_start_failure(self, monkeypatch):
         # Not just the errno-48 case: ANY failure to start must not look

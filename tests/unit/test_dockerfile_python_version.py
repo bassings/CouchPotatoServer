@@ -124,3 +124,41 @@ def test_local_docker_runner_defaults_to_the_dockerfile_version():
         f"`PYTHON_VERSION=\"${{1:-{dockerfile_version}}}\"` so the local Alpine "
         f"test runner matches production by default."
     )
+
+
+def test_the_ruff_pin_agrees_across_requirements_dev_and_both_ci_jobs():
+    """The ruff pin is duplicated three ways; nothing compared them.
+
+    AC-SIMP-9 deliberately chose duplication over a mechanism that removes it
+    (sourcing the lint job from requirements-dev.txt would install pytest,
+    mutmut and coverage into a lint job for no benefit). That choice is fine.
+    What was missing is a check that the three copies agree.
+
+    Without it: bump requirements-dev.txt to 0.17.0 and forget ci.yml, and
+    `verify.sh` goes green locally on 0.17.0 while both CI jobs lint on 0.16.0.
+    That is the same silent-drift class T1.5 exists to close, reopened one file
+    over, with no signal in either direction.
+
+    This is the same shape as the Dockerfile/CI/test-local.sh agreement above,
+    and adds no workflow, no job and no script.
+    """
+    req = (REPO_ROOT / 'requirements-dev.txt').read_text(encoding='utf-8')
+    pinned = re.findall(r'^ruff==(\S+)\s*$', req, re.MULTILINE)
+    assert len(pinned) == 1, (
+        'requirements-dev.txt must carry exactly one exact ruff pin '
+        '(ruff==X.Y.Z), found: %s' % pinned
+    )
+
+    ci = (REPO_ROOT / '.github' / 'workflows' / 'ci.yml').read_text(encoding='utf-8')
+    installed = re.findall(r"pip install\s+['\"]ruff==(\S+?)['\"]", ci)
+    assert len(installed) == 2, (
+        'expected both the lint and security-lint jobs to install a quoted, '
+        'exactly-pinned ruff; found %s' % installed
+    )
+
+    assert set(installed) == set(pinned), (
+        'ruff pin drift: requirements-dev.txt has %s, ci.yml installs %s. '
+        'verify.sh checks the installed version against requirements-dev.txt '
+        'only, so this divergence is invisible locally and lints CI on a '
+        'different version than the gate you ran.' % (pinned, sorted(set(installed)))
+    )

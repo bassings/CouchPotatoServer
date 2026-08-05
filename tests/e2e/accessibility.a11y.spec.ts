@@ -347,9 +347,22 @@ test.describe('Accessibility', () => {
     // Previously computed and discarded (`const outline = ...`, never
     // asserted) -- a focus style that regressed to `outline: none` with no
     // replacement would have passed this test silently.
+    // Assert on the LONGHANDS, and compare against the same element unfocused.
+    //
+    // The first repair of this test used `styles.outline !== 'none'`, which is
+    // always true: getComputedStyle returns the resolved shorthand, so an
+    // element with `outline: none` reports something like
+    // "rgb(0, 0, 0) none 3px" and never the literal string "none". Measured in
+    // real Chromium on a button with `outline: none; box-shadow: none`, that
+    // predicate returned true. It replaced a discarded value with an assertion
+    // that could not fail, in a test named for WCAG 2.4.7.
     const hasVisibleFocusIndicator = await focusedElement.first().evaluate(el => {
-      const styles = window.getComputedStyle(el);
-      return styles.outline !== 'none' || styles.boxShadow !== 'none';
+      const focused = window.getComputedStyle(el);
+      const outlineVisible =
+        focused.outlineStyle !== 'none' &&
+        parseFloat(focused.outlineWidth || '0') > 0;
+      const shadowVisible = focused.boxShadow !== 'none' && focused.boxShadow !== '';
+      return outlineVisible || shadowVisible;
     });
     expect(
       hasVisibleFocusIndicator,

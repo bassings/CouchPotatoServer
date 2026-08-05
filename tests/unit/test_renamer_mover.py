@@ -677,6 +677,17 @@ class TestCallerLevelDataLossGuards:
         assert dest.read_bytes() == DOWNLOAD
         assert not os.path.lexists(old_link_path), 'no stray <old>.link must survive, even via the real caller'
 
+        # Reverting fix (b) to the old unlink-then-rename pair leaves the
+        # stray-link assertion above GREEN, because the except branch removes
+        # the orphan under both versions. The half that actually pins fix (b)
+        # is that `old` is never left absent: assert it survives, as a real
+        # file, byte-intact.
+        assert os.path.exists(old), (
+            'os.replace must never leave `old` absent: the unlink-then-rename '
+            'pair it replaced could, if the rename failed in between'
+        )
+        assert not os.path.islink(old), '`old` must still be the real file'
+
     def test_fix_c_a_failed_symlink_reversed_move_is_not_cleaned_up(self, tmp_path, monkeypatch):
         """AC-DATA-12 / AC-QA-17 -- the actual data-loss guard this task
         exists for. Before T1.8, a failed shutil.move inside the
