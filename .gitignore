@@ -4,6 +4,11 @@ __pycache__/
 .venv/
 /data/
 /_env/
+# Local dev compose-file selector (COMPOSE_FILE=docker-compose.local.yml).
+# Untracked deliberately (T1.6): a `git pull` must never silently overwrite a
+# developer's local override. Restore with:
+#   echo COMPOSE_FILE=docker-compose.local.yml > .env
+.env
 /_source/
 .project
 .pydevproject

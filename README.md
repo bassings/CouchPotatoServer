@@ -12,7 +12,7 @@ This is a **Python 3 fork** of the [archived original](https://github.com/CouchP
 
 ## What's New in v3.0.0
 
-- **Python 3.10+** (tested on 3.10 through 3.13)
+- **Python 3.10+** (tested on 3.10 through 3.14)
 - **Complete Python 2 to 3 migration** — every module updated, all legacy `unicode`/`bytes` issues resolved
 - **457 tests** covering database operations, web framework, settings, events, concurrency, security, and performance
 - **Security hardened** — rate limiting (300 req/min), API key validation, input sanitisation, directory traversal protection

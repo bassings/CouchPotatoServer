@@ -57,7 +57,7 @@ fail() { printf '\n\033[1;31m✖ %s\033[0m\n' "$1" >&2; exit 1; }
 if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
   fail "Python deps missing (bcrypt/httpx/ruff). Run 'make setup' (or:
        $PYTHON -m pip install -r requirements.txt -r requirements-dev.txt)
-       — ideally inside a venv on Python 3.10–3.13."
+       — ideally inside a venv on Python 3.10–3.14."
 fi
 
 # requirements-dev.txt pins ruff exactly (`ruff==X.Y.Z`), and ci.yml installs

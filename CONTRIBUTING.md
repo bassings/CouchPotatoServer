@@ -17,6 +17,15 @@ pip install -r requirements.txt
 docker compose up
 ```
 
+`docker compose up` picks its compose file from `.env` (`COMPOSE_FILE=...`),
+which is a local dev toggle, not a secret — it is gitignored and not tracked,
+so a fresh clone starts without it and falls back to the default compose file
+(the published image, not a local build). Restore it with:
+
+```bash
+echo COMPOSE_FILE=docker-compose.local.yml > .env
+```
+
 ## Running Tests
 
 ```bash

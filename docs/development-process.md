@@ -503,7 +503,7 @@ exist to prevent, so they do not get to be the untested part of the suite.
   `adapter.create(str(tmp_path / 'name'))`.
 - `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
   `httpx` is installed in `.venv`, so run them via `.venv/bin/python -m pytest`.
-- CI matrix: Python 3.10, 3.11, 3.12, 3.13.
+- CI matrix: Python 3.10, 3.11, 3.12, 3.13, 3.14.
 - Note: a bare `pytest tests/unit/ -q` may hit import errors for tests touching
   vendored `libs/` — `make test-py` sets `PYTHONPATH=libs`. Prefer `make verify`
   / `make test-py`, or add the prefix if invoking pytest directly.
