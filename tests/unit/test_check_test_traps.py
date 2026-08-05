@@ -568,15 +568,15 @@ def test_the_repos_own_hooks_are_executable():
 # runner invocation in scripts/verify.sh or .github/workflows/ci.yml ever
 # passed it to pytest, so 31 tests never ran anywhere. A rule anchored on
 # `testpaths` would have passed against that orphaned suite and is therefore
-# vacuous — the tests below key on the runner invocations instead.
+# vacuous: the tests below key on the runner invocations instead.
 
 
 def test_flags_a_tracked_test_file_no_runner_executes():
     """A file under `tests/` (so testpaths 'covers' it) but under no runner
-    root must still be flagged — this is the exact orphaning bug, reproduced.
+    root must still be flagged: this is the exact orphaning bug, reproduced.
 
     `runner_texts` mirrors the real shape: one entry PER RUNNER FILE
-    (verify.sh, ci.yml), each of which invokes both roots — see
+    (verify.sh, ci.yml), each of which invokes both roots: see
     `test_does_not_flag_a_file_under_an_executed_root` and the module
     docstring on `check_orphaned_test_files` for why this is per-file
     intersection, not a flat union of every invocation seen anywhere.
@@ -610,7 +610,7 @@ def test_does_not_flag_a_file_under_an_executed_root():
 
 def test_flags_a_file_dropped_from_one_runner_file_but_not_the_other():
     """Per-file intersection, not union: a suite still invoked by ci.yml but
-    dropped from verify.sh (or vice versa) is still a real gap — the local
+    dropped from verify.sh (or vice versa) is still a real gap: the local
     gate would no longer mirror CI. This is exactly the mutation the guard
     must catch: deleting the tests/integration/ invocation from verify.sh
     alone, while ci.yml keeps it, must still be flagged.
@@ -641,7 +641,7 @@ def test_allowlist_exempts_only_the_named_file_not_its_whole_directory():
     """The exemption must be exact, not a directory shadow.
 
     A sibling file in the same directory as an allowlisted entry, but not
-    itself allowlisted, must still be flagged if it is genuinely orphaned —
+    itself allowlisted, must still be flagged if it is genuinely orphaned , 
     otherwise the allowlist silently exempts a whole directory instead of the
     one file it names.
     """
@@ -658,7 +658,7 @@ def test_allowlist_exempts_only_the_named_file_not_its_whole_directory():
     flagged = {f[0] for f in findings}
     assert allowlisted_path not in flagged, "the allowlisted file itself must never be flagged"
     assert sibling in flagged, (
-        "a non-allowlisted sibling in the same directory must still be flagged — "
+        "a non-allowlisted sibling in the same directory must still be flagged: "
         "the allowlist must not accidentally exempt the whole directory"
     )
 
@@ -748,7 +748,7 @@ def test_extract_pytest_path_args_ignores_flags_and_trailing_message_text():
 
 def test_real_verify_and_ci_invoke_both_unit_and_integration_roots():
     """Anchors the extracted values, not just 'zero findings' on the real
-    tree — a regex that silently stopped matching would make the whole-tree
+    tree: a regex that silently stopped matching would make the whole-tree
     check pass for the wrong reason (nothing to compare against) rather than
     fail loudly.
     """
@@ -767,7 +767,7 @@ def test_real_verify_and_ci_invoke_both_unit_and_integration_roots():
 
 def test_checker_is_clean_on_the_real_tree_under_rule_5():
     """The real tree, with the real verify.sh/ci.yml/tracked files, must have
-    zero orphaned test_*.py files — meaning Part 2's wiring genuinely closed
+    zero orphaned test_*.py files: meaning Part 2's wiring genuinely closed
     the gap rule 5 exists to catch.
     """
     findings = list(check_test_traps.check_orphaned_test_files())

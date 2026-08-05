@@ -11,10 +11,10 @@
 #      gate used to omit, so "green locally" did not imply "green in CI")
 #   4. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
 #   5. Python integration tests (tests/integration, host interpreter,
-#      PYTHONPATH=libs — the direct regression net for the SQLiteAdapter
+#      PYTHONPATH=libs: the direct regression net for the SQLiteAdapter
 #      _query_index defects; previously orphaned, never invoked by any runner)
 #   6. UI unit tests (vitest)
-#   7. E2E tests (Playwright/chromium — server auto-starts via playwright.config.ts)
+#   7. E2E tests (Playwright/chromium: server auto-starts via playwright.config.ts)
 #
 # Usage:
 #   ./scripts/verify.sh            # full gate
@@ -123,7 +123,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   rm -rf .e2e-data-a11y
   CP_E2E_DATA_DIR=.e2e-data-a11y npm run test:a11y || fail "Accessibility tests failed"
 else
-  step "7/7 E2E tests — SKIPPED (--no-e2e)"
+  step "7/7 E2E tests: SKIPPED (--no-e2e)"
 fi
 
 # ── Informational: static security lint (bandit S rules) ────────────────────

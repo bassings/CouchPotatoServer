@@ -77,7 +77,7 @@ class TestRealDatabaseLoading:
             assert expected in names, f'Missing index: {expected}'
 
     def test_read_all_documents(self, real_db):
-        """Read every document via the id index — no errors."""
+        """Read every document via the id index: no errors."""
         count = 0
         for doc in real_db.all('id'):
             assert '_id' in doc

@@ -56,9 +56,9 @@ Checks performed:
   5. **Orphaned test files.** A tracked file named ``test_*.py`` (pytest.ini's
      own ``python_files`` convention) that no pytest invocation in
      ``scripts/verify.sh`` or ``.github/workflows/ci.yml`` actually executes.
-     Not hypothetical either: ``tests/integration/`` sat exactly like this —
+     Not hypothetical either: ``tests/integration/`` sat exactly like this , 
      "covered" by ``pytest.ini``'s ``testpaths = tests`` on paper, invoked by
-     no runner in practice — until the PR that added this rule also wired it
+     no runner in practice: until the PR that added this rule also wired it
      in. Deliberately keyed on the **runner invocations themselves**, not on
      ``testpaths``: a rule anchored on ``testpaths`` would have passed against
      that orphaned suite the whole time, which makes it vacuous. Enumerates
@@ -622,7 +622,7 @@ ORPHAN_ALLOWLIST = {
     # Gated on /var/media/config_backup.zip, a ~39 MB machine-local backup
     # that will never exist on a CI runner (pytest.ini's addopts also carries
     # --ignore=tests/local for the same reason). See the file's own
-    # docstring for the full rationale — it must not be wired into CI, by a
+    # docstring for the full rationale: it must not be wired into CI, by a
     # secret or otherwise: the real backup carries live credentials.
     "tests/local/test_real_database.py",
 }
@@ -633,10 +633,10 @@ PYTEST_INVOCATION_RE = re.compile(r"\bpytest\b(.*)$", re.MULTILINE)
 
 
 def _tracked_test_files(repo_root: Path) -> list[str]:
-    """Tracked ``test_*.py`` files, via ``git ls-files`` — NOT a filesystem walk.
+    """Tracked ``test_*.py`` files, via ``git ls-files``: NOT a filesystem walk.
 
     A filesystem walk would let an untracked local scratch file trip this
-    guard, or be silently swept into scope by a later "fix the finding" —
+    guard, or be silently swept into scope by a later "fix the finding" , 
     exactly the thing AC-DATA-21 rules out. ``git ls-files`` structurally
     cannot see a file nobody has ``git add``-ed.
     """
@@ -700,18 +700,18 @@ def check_orphaned_test_files(
     real git repo or without depending on the state of this tree; production
     use (``main()``) calls it with no arguments and it reads the real repo.
 
-    Yields ``(path, line_no, message)`` — REPORTS ONLY. It never deletes,
+    Yields ``(path, line_no, message)``: REPORTS ONLY. It never deletes,
     moves or modifies the orphaned file (AC-DATA-21); ``line_no`` is always 1
     since there is no meaningful line within the orphaned file itself to
     point at, consistent with how ``check_git_hook`` reports a whole-file
     property at line 1.
 
     ``runner_texts`` holds ONE entry per configured runner FILE (verify.sh,
-    ci.yml — each of which may itself contain several pytest invocations). A
+    ci.yml: each of which may itself contain several pytest invocations). A
     path must be executed according to EVERY entry, not merely at least one:
     the local gate (verify.sh) and CI (ci.yml) are two independent gates, and
     a suite present in one but silently dropped from the other is still a
-    real gap — the local gate no longer mirrors CI (hard rule 4), or CI is
+    real gap: the local gate no longer mirrors CI (hard rule 4), or CI is
     carrying dead weight nobody runs locally. Union semantics here would have
     let this exact mutation through: deleting the tests/integration/
     invocation from verify.sh alone, while it stayed in ci.yml, must still be
@@ -737,7 +737,7 @@ def check_orphaned_test_files(
             1,
             f"`{path}` matches pytest.ini's `test_*.py` convention and is "
             "tracked, but no pytest invocation in scripts/verify.sh or "
-            ".github/workflows/ci.yml executes it — it can rot indefinitely "
+            ".github/workflows/ci.yml executes it: it can rot indefinitely "
             "with nothing ever noticing (tests/integration/ did exactly "
             "this: 'covered' by pytest.ini's testpaths, run by no runner, "
             "until this rule and its fix). If it is deliberately local-only, "
