@@ -173,6 +173,12 @@ jobs:
       run: |
         python -m pytest tests/unit/ -v --tb=short -W ignore::SyntaxWarning
 
+    - name: Run integration tests
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        python -m pytest tests/integration/ -v --tb=short -W ignore::SyntaxWarning
+
     - name: Check core modules import
       env:
         PYTHONPATH: ${{ github.workspace }}/libs

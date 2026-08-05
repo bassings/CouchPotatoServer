@@ -10,8 +10,11 @@
 #   3. UI conformance check (design-system drift — a REQUIRED CI check that this
 #      gate used to omit, so "green locally" did not imply "green in CI")
 #   4. Python unit tests (tests/unit, host interpreter, PYTHONPATH=libs)
-#   5. UI unit tests (vitest)
-#   6. E2E tests (Playwright/chromium — server auto-starts via playwright.config.ts)
+#   5. Python integration tests (tests/integration, host interpreter,
+#      PYTHONPATH=libs — the direct regression net for the SQLiteAdapter
+#      _query_index defects; previously orphaned, never invoked by any runner)
+#   6. UI unit tests (vitest)
+#   7. E2E tests (Playwright/chromium — server auto-starts via playwright.config.ts)
 #
 # Usage:
 #   ./scripts/verify.sh            # full gate
@@ -58,33 +61,38 @@ if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
 fi
 
 # ── 1. Lint ─────────────────────────────────────────────────────────────────
-step "1/6 ruff lint"
+step "1/7 ruff lint"
 "$PYTHON" -m ruff check . || fail "ruff found issues"
 
 # ── 2. False-green guard ────────────────────────────────────────────────────
-step "2/6 test-trap check"
+step "2/7 test-trap check"
 "$PYTHON" scripts/check_test_traps.py || fail "test-trap check found issues"
 
 # ── 3. UI conformance ───────────────────────────────────────────────────────
-step "3/6 UI conformance check"
+step "3/7 UI conformance check"
 "$PYTHON" scripts/check_conformance.py || fail "conformance check found issues"
 
 # ── 4. Python unit tests ────────────────────────────────────────────────────
-step "4/6 Python unit tests"
+step "4/7 Python unit tests"
 "$PYTHON" -m pytest tests/unit/ -q --tb=short -W ignore::SyntaxWarning \
   || fail "Python unit tests failed"
 
-# ── 5. UI unit tests ────────────────────────────────────────────────────────
-step "5/6 UI unit tests (vitest)"
+# ── 5. Python integration tests ─────────────────────────────────────────────
+step "5/7 Python integration tests"
+"$PYTHON" -m pytest tests/integration/ -q --tb=short -W ignore::SyntaxWarning \
+  || fail "Python integration tests failed"
+
+# ── 6. UI unit tests ────────────────────────────────────────────────────────
+step "6/7 UI unit tests (vitest)"
 if [[ ! -d node_modules ]]; then
   echo "node_modules missing — running npm ci..."
   npm ci
 fi
 npm run test:unit || fail "UI unit tests failed"
 
-# ── 6. E2E tests ────────────────────────────────────────────────────────────
+# ── 7. E2E tests ────────────────────────────────────────────────────────────
 if [[ "$RUN_E2E" -eq 1 ]]; then
-  step "6/6 E2E tests (Playwright: chromium + a11y + mobile)"
+  step "7/7 E2E tests (Playwright: chromium + a11y + mobile)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
   # Start from a clean data dir. This is NOT tidiness: specs delete, re-add and
@@ -115,7 +123,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   rm -rf .e2e-data-a11y
   CP_E2E_DATA_DIR=.e2e-data-a11y npm run test:a11y || fail "Accessibility tests failed"
 else
-  step "6/6 E2E tests — SKIPPED (--no-e2e)"
+  step "7/7 E2E tests — SKIPPED (--no-e2e)"
 fi
 
 # ── Informational: static security lint (bandit S rules) ────────────────────

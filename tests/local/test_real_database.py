@@ -1,4 +1,21 @@
-"""Integration tests: load and query a real CouchPotato database from backup."""
+"""Local-only tool: load and query a real CouchPotato database from backup.
+
+This is NOT a CI test. It requires `/var/media/config_backup.zip`, a ~39 MB
+machine-local file that will never exist on a CI runner, and every test here
+skips via `pytestmark` when that file is absent. Wiring it into a runner
+therefore buys silent skips, not signal: it was "covered" by pytest.ini's
+`testpaths = tests` for a long time without ever actually running in CI, which
+is exactly the failure mode this relocation and `scripts/check_test_traps.py`
+Rule 5 exist to catch.
+
+Living outside `pytest.ini`'s effective test path is deliberate, not an
+oversight: `pytest.ini` carries an explicit `--ignore=tests/local` for this
+reason. Do not "fix" that by removing the ignore or by supplying the backup
+zip through a CI secret or artifact. The real backup carries live credentials,
+real library paths and roughly 849 media documents; it must never be
+committed to the repository or uploaded anywhere CI can reach it. Run this
+file by hand, locally, against your own copy of the backup, when you need it.
+"""
 import os
 import sys
 import tempfile
