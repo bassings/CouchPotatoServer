@@ -85,6 +85,24 @@ Checks performed:
      flagged too, so ``// vacuous-guard-ok:`` cannot become a silent universal
      bypass.
 
+  7. **Unquoted `>`/`>=` on a `pip install` line.** ``pip install ruff>=0.9.0``
+     in a GitHub workflow ``run:`` block is not a version constraint: an
+     unquoted ``>`` is shell stdout redirection, so the shell actually runs
+     ``pip install ruff`` (floating latest) and writes stdout to a file
+     literally named ``=0.9.0``. Not hypothetical: this is exactly how
+     ``.github/workflows/ci.yml`` floated ruff in two jobs while looking
+     pinned (T1.5). Flagged when a line contains ``pip install``/``pip3
+     install`` AND an unquoted ``>`` (tracked with a small quote-aware scan,
+     so ``pip install 'pyyaml>=6.0'`` is correctly left alone — the ``>``
+     there is literal text inside the quotes). Scope is deliberately narrow:
+     only lines that already match ``pip install``/``pip3 install`` are
+     considered, so an unrelated ``echo x > file`` is never touched. That
+     narrowness has one accepted false positive: a deliberate
+     ``pip install -r requirements.txt > some.log`` redirect would also be
+     flagged. No such pattern exists in this codebase today, and quoting the
+     redirect target is not meaningfully worse than the status quo, so this is
+     a documented trade-off, not a bug to route around.
+
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
 
@@ -564,6 +582,44 @@ def _iter_run_steps(node, inherited_shell=None):
             yield from _iter_run_steps(item, inherited_shell)
 
 
+# ── Rule 7: unquoted `>`/`>=` on a `pip install` line ───────────────────────
+
+PIP_INSTALL_RE = re.compile(r"\bpip3?\s+install\b")
+
+PIP_INSTALL_REDIRECT_MESSAGE = (
+    "unquoted `>`/`>=` on a `pip install` line — the shell parses a bare `>` as "
+    "stdout redirection, not part of the argument, so e.g. "
+    "`pip install ruff>=0.9.0` actually runs `pip install ruff` (floating "
+    "latest) and writes stdout to a file literally named `=0.9.0`. Quote the "
+    "requirement so `>`/`>=` is passed to pip as literal text: "
+    "`pip install 'pkg==X.Y.Z'`."
+)
+
+
+def _has_unquoted_redirect(line: str) -> bool:
+    """True if `line` contains a `>` that sits outside single/double quotes.
+
+    A small quote-tracking scan, same shape as `strip_shell_comments`'s quote
+    handling: walk the line, flip in/out of a quoted region on `'`/`"`, and
+    only count a `>` seen while not inside one. `pip install 'pyyaml>=6.0'`
+    must NOT trip this — the `>` there is literal text the shell hands to pip
+    unchanged — while `pip install ruff>=0.9.0` must, because that `>` is
+    live shell syntax.
+    """
+    quote = None
+    for ch in line:
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            continue
+        if ch == ">":
+            return True
+    return False
+
+
 def check_workflow(path: Path, text: str):
     """GitHub's DEFAULT shell is `bash -e` — pipefail is not set unless asked for."""
     if yaml is None:
@@ -590,8 +646,6 @@ def check_workflow(path: Path, text: str):
         if pipefail is None:
             continue  # not a shell whose pipeline status we police
         body = run_node.value
-        if pipefail or _has_pipefail(body):
-            continue
 
         # For a block scalar (`|`/`>`) the value starts on the line AFTER the
         # indicator; for an inline value it starts on the mark's own line.
@@ -599,6 +653,18 @@ def check_workflow(path: Path, text: str):
         first_content_line = run_node.start_mark.line + (1 if block else 0)
 
         lines = body.split("\n")
+
+        # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
+        # on a `pip install` line has nothing to do with pipefail, so it must
+        # not be hidden behind the pipefail early-exit below.
+        for local_no, logical in join_continuations(lines):
+            cleaned = strip_shell_comments(logical)
+            if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
+                yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
+
+        if pipefail or _has_pipefail(body):
+            continue
+
         for local_no, logical in join_continuations(lines):
             cleaned = strip_shell_comments(logical)
             if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):

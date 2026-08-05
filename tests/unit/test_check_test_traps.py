@@ -294,6 +294,114 @@ def test_accepts_set_euo_pipefail_in_any_order(tmp_path):
         assert findings_for(script) == [], body
 
 
+# ── Rule 7: unquoted `>`/`>=` on a `pip install` line ───────────────────────
+#
+# T1.5's actual bug: `.github/workflows/ci.yml` had `run: pip install
+# ruff>=0.9.0` — an unquoted `>` is shell stdout redirection, not a version
+# constraint, so the shell parses it as `pip install ruff` (floating latest)
+# with stdout written to a file literally named `=0.9.0`. This rule is what
+# would have caught that automatically instead of three lenses finding it by
+# hand during planning.
+
+
+def test_flags_unquoted_pip_install_version_redirect(tmp_path):
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.9.0\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 1, findings
+    line_no, message = findings[0]
+    assert line_no == 5
+    assert "redirect" in message.lower() or ">=" in message
+
+
+def test_does_not_flag_a_correctly_quoted_pip_install_requirement(tmp_path):
+    """`'pyyaml>=6.0'` is quoted, so the `>` is literal text passed to pip."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install pyyaml\n"
+        "      run: pip install 'pyyaml>=6.0'\n"
+    )
+
+    assert findings_for(workflow) == []
+
+
+def test_does_not_flag_a_legitimate_redirect_that_is_not_a_pip_install(tmp_path):
+    """A real `>` redirect on a non-pip-install line is not this rule's business."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  build:\n"
+        "    steps:\n"
+        "    - name: Log output\n"
+        "      run: echo x > file\n"
+    )
+
+    assert findings_for(workflow) == []
+
+
+def test_flags_both_real_broken_lines_from_ci_yml(tmp_path):
+    """Regression pin for the actual T1.5 bug: both floating installs, in one
+    synthetic workflow shaped like the real ci.yml, are caught — two findings,
+    not one, and not silently deduped or short-circuited after the first.
+    """
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.9.0\n"
+        "  security-lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.15.16\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 2, findings
+    line_nos = {line_no for line_no, _msg in findings}
+    assert line_nos == {5, 9}, findings
+
+
+def test_pip3_install_is_also_covered(tmp_path):
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - run: pip3 install ruff>=0.9.0\n"
+    )
+
+    assert len(findings_for(workflow)) == 1
+
+
+def test_unquoted_pip_install_redirect_is_flagged_even_when_pipefail_is_set(tmp_path):
+    """Rule 7 has nothing to do with pipefail — it must not be hidden behind
+    rule 2/3's `if pipefail: continue` early exit."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - run: |\n"
+        "        set -o pipefail\n"
+        "        pip install ruff>=0.9.0\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 1, findings
+
+
 # ── Regressions: bugs found in review of this very guard ────────────────────
 
 

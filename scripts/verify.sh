@@ -60,6 +60,24 @@ if ! "$PYTHON" -c "import bcrypt, httpx, ruff" >/dev/null 2>&1; then
        — ideally inside a venv on Python 3.10–3.13."
 fi
 
+# requirements-dev.txt pins ruff exactly (`ruff==X.Y.Z`), and ci.yml installs
+# that same pin twice (lint + security-lint jobs) — see T1.5. The import check
+# above only proves ruff is importable, not that it's the pinned version, so a
+# developer running a stale/different local ruff got a false green here and a
+# red CI once the two disagreed. The version is read out of
+# requirements-dev.txt rather than hardcoded a second time in this script:
+# duplicating the pin across requirements-dev.txt and ci.yml was the accepted
+# trade-off; a third copy here was not.
+PINNED_RUFF="$(grep -E '^ruff==' requirements-dev.txt | head -1 | sed -E 's/^ruff==//')"
+if [[ -z "$PINNED_RUFF" ]]; then
+  fail "requirements-dev.txt has no 'ruff==X.Y.Z' pin to check the installed ruff against."
+fi
+INSTALLED_RUFF="$("$PYTHON" -m ruff --version | awk '{print $2}')"
+if [[ "$INSTALLED_RUFF" != "$PINNED_RUFF" ]]; then
+  fail "installed ruff ($INSTALLED_RUFF) does not match the pin in requirements-dev.txt ($PINNED_RUFF).
+       Fix: $PYTHON -m pip install 'ruff==$PINNED_RUFF'"
+fi
+
 # ── 1. Lint ─────────────────────────────────────────────────────────────────
 step "1/7 ruff lint"
 "$PYTHON" -m ruff check . || fail "ruff found issues"
