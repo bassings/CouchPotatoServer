@@ -68,7 +68,20 @@ async function waitForServer(proc: ChildProcess, url: string, getOutput: () => s
     }
     try {
       const res = await fetch(url);
-      if (res.ok) return;
+      // `res.ok` on the root only proves the port is bound. Measured
+      // 2026-08-05: for roughly four seconds after that, the app answers
+      // /partial/movies with 200 and an EMPTY grid while the seeded database
+      // already holds active movies. Tests that start inside that window get
+      // a fast, well-formed, wrong answer, and no client-side timeout can
+      // help because the server has already replied.
+      //
+      // That window is what produced "no movie card in the Wanted grid",
+      // intermittently, on whichever grid-dependent spec happened to run
+      // first. So readiness means "serving library data", not "listening".
+      if (res.ok) {
+        const grid = await fetch(new URL('/partial/movies?status=active', url).href);
+        if (grid.ok && (await grid.text()).includes('poster-card')) return;
+      }
     } catch {
       // Not listening yet -- keep polling.
     }

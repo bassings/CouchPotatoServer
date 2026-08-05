@@ -775,7 +775,114 @@ it should not.
 deploying it. Recovery path (edit `config.ini`, restart) must be in the release
 notes. Settings live in `config.ini`, not `settings.conf`.
 
+### PR 2 planning cycle, 2026-08-06: what changed
+
+Four lenses ran (security, QA, operability, simplicity). Every task below moved.
+Three findings are **Critical** and two of them would have shipped a fix that
+fixes nothing, which is the T1.5 failure repeating.
+
+**Verified by the orchestrator, not taken from the reports:**
+
+1. **The `auth_required` tri-state does not work.** All three lenses found it
+   independently. `registerDefaults` materialises the literal `auth_required =
+   None` into `config.ini`, and `Env.setting`'s own default is `''`, so the
+   natural call returns falsy and auth stays off on every install, silently.
+   The tri-state only round-trips via a `ValidationError` swallowed per auth
+   check. **Use a plain `{'default': 0}` plus a one-shot startup migration.**
+2. **A `sessions` table would brick login on every existing install.**
+   `SQLiteAdapter.open()` runs no DDL, so a table in `schema.sql` reaches fresh
+   installs only and the first login raises `no such table`. Store sessions as
+   `documents` rows with `_t = 'session'`: zero DDL.
+3. **A session lookup reaching `_query_index`'s generic branch authenticates any
+   cookie.** Executed: with two session documents present,
+   `db.get('session', 'TOKEN_B')` returned a **media** document, because the
+   `else` branch discards the key. `release_download` is a live example of
+   exactly that shape. This repo has shipped this defect twice.
+4. **Passwords set through the UI or wizard are stored as unsalted MD5.**
+   `_core.py:57` wires `setting.save.core.password` to `md5Password`. The
+   comment at `variable.py:143` claiming "New passwords are always bcrypt" is
+   false; bcrypt is reached only by the login-time upgrade, and this cohort has
+   never logged in. `scripts/backup.sh` copies `config.ini`. **New task.**
+5. **`auth_required` on with a blank password accepts any password** (executed:
+   `POST /login/` issues a cookie for arbitrary credentials). T2.1 would create
+   a state that looks protected and admits everyone.
+6. **T2.6's Synology fix closes nothing.** `synology.py:110-111` strips the
+   scheme and hardcodes `http://`, so `verify=False` at `:140` is unreachable
+   on an http URL and removing it changes no observable behaviour.
+
+**Vetoes accepted from `lens-simplicity`** (planning-only, so these stand unless
+an owning lens supplies a criterion): the sessions table becomes an HMAC-signed
+cookie with a rotating secret in the existing property store (L to S, no schema);
+the SSRF private-address guard is **deleted**, not deferred, because every
+default downloader points at `localhost` and Jackett is a LAN host, so the guard
+would break downloads, and `belongsTo` requires a host that is a substring of a
+hardcoded film-site pattern; CSP defers until PR 5 removes the Tailwind CDN;
+`/getkey/` is **deleted rather than gated**.
+
+**Scope mechanism (AC-SIMP-31).** PR 1's allowlist was the right shape and
+failed because amending it was free. PR 2's may be amended **once**; a second
+file leaves for a follow-up PR unless it is precedence tier 1-3 **and** already
+on an allowlisted path. Countable at review.
+
+**Highest-value single criterion**, from both security and QA: a **route
+inventory test** asserting every route either carries the auth dependency or is
+in an explicit public allowlist. T2.2 fixes one endpoint; this fixes the class,
+and the class is how `/getkey/` came to exist.
+
+**Before PR 2 is written**, read production's actual `username`/`password` state
+into this spec. The cohort this PR protects is also the cohort that has never
+typed its password, because the server never asked.
+
+### T2.0: Make `Settings.save()` atomic · S · risk: **Critical** — NEW
+
+Found by `lens-operability` during PR 2 planning (2026-08-06), verified by
+reading the code. `core/settings.py:236-238` is:
+
+```python
+def save(self):
+    with open(self.file, 'w', encoding='utf-8') as configfile:
+        self.p.write(configfile)
+```
+
+Truncate-then-write, no temp file, no rename. `Env.setting(attr, value=...)`
+calls it unconditionally (`environment.py:71`), and **PR 2 is what makes this
+fire**: forcing a first-ever login on installs that never logged in triggers
+the legacy-md5-to-bcrypt rehash at `__init__.py:277-278` and `:306-307`, each
+of which rewrites the whole file.
+
+If the process dies or the volume fills mid-write, `config.ini` is truncated:
+the password, the `api_key` and every downloader and notifier credential go in
+one step, and the instance restarts as a fresh public install with a new key.
+`config.ini` is also the documented lock-out recovery file, so the failure
+destroys the remedy along with the configuration.
+
+Precedence tier 1 (irrecoverable loss) outranks everything else in this PR, and
+the fix is roughly eight lines.
+
+- **AC-OPS-40** Write to a temp file in the same directory, then `os.replace()`
+  onto the target, so the previous file stays intact until the rename succeeds.
+  A failed save logs at ERROR naming the file.
+- Prove it load-bearing: interrupt the write and assert the original file is
+  still complete and readable.
+
 ### T2.1: Fail-closed auth via explicit setting · M · risk: medium
+
+> **The tri-state default sketched below does not work. Verified by execution
+> 2026-08-06** (`lens-simplicity`, reproduced by the orchestrator):
+> `registerDefaults` materialises the literal line `auth_required = None` into
+> `config.ini` on first boot, so "unset" survives exactly one start. Reading it
+> back, `get(default=None)` returns `None` but `get(default='')` returns `''`,
+> and `Env.setting`'s own default **is** `''`. So the natural
+> `Env.setting('auth_required', type='bool')` yields a falsy value and auth stays
+> off, silently, on every install, with no failing test and no log line. The
+> tri-state also only round-trips via a `ValidationError` raised and swallowed
+> per auth check (`settings.py:154-155`), so adding `'none'` to the falsy list
+> as a tidy-up would turn every protected install public.
+>
+> **Use instead**: a plain `{'default': 0, 'type': 'bool'}` plus a one-shot
+> startup migration that writes `auth_required = 1` when the key is absent and a
+> password is set. After the first boot the value is an explicit `0` or `1` that
+> the operator can read with `grep`, which is also the documented recovery path.
 
 `couchpotato/__init__.py:57-71` currently gates on `if username and password:`,
 so a password with a blank username leaves the server fully public: verified by
