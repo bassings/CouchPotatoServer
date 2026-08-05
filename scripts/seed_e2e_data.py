@@ -298,16 +298,27 @@ def verify(data_dir):
     db = _open_adapter(data_dir)
     try:
         problems = []
+        # Every no-release movie is checked, not just the first. They exist so
+        # the Wanted grid does not depend on one document surviving all 135
+        # specs, and a verify() that only covered WANTED_MOVIE_ID would let two
+        # thirds of that redundancy go missing without saying so.
         for movie_id, expected in (
-            (MOVIE_ID, 'active'),
-            (DESTRUCTIVE_MOVIE_ID, 'active'),
-            (DONE_RELEASE_MOVIE_ID, 'done'),
-            (WANTED_MOVIE_ID, 'active'),
+            [
+                (MOVIE_ID, 'active'),
+                (DESTRUCTIVE_MOVIE_ID, 'active'),
+                (DONE_RELEASE_MOVIE_ID, 'done'),
+            ]
+            + [(mid, 'active') for mid, _imdb, _title in WANTED_MOVIE_IDS]
         ):
             try:
                 doc = db.get('id', movie_id)
-            except Exception:
-                problems.append('%s is missing from the seeded database' % movie_id)
+            except Exception as exc:
+                # Keep the exception: a corrupt database and a genuinely absent
+                # document are different problems, and this runs immediately
+                # before every E2E worker's server starts, so it is the first
+                # diagnostic anyone sees when seeding goes wrong.
+                problems.append('%s could not be read: %s: %s' % (
+                    movie_id, type(exc).__name__, exc))
                 continue
             status = doc.get('status')
             if status != expected:
@@ -319,8 +330,47 @@ def verify(data_dir):
         db.close()
 
 
+
+def _bind_to_loopback(data_dir):
+    """Pin this data dir's server to 127.0.0.1 before it ever starts.
+
+    `runner.py:286` reads `Env.setting('host', default='0.0.0.0')` and there is
+    no `host` entry in the settings list and no CLI flag for it, so a freshly
+    seeded data dir always resolves to 0.0.0.0. Under T1.7 that is no longer
+    one listener: a `--workers=4` run opens four unauthenticated CouchPotato
+    instances on 5150-5153, each with its own generated api_key and no password
+    (`get_current_user` returns True when neither is set), all reachable from
+    the LAN.
+
+    Writing the setting here keeps the fix test-only. Adding a `--host` CLI
+    argument would be new production surface, and AC-SEC-16 exists to stop
+    `--port` widening exposure: solving this by widening the CLI would defeat
+    the criterion it is meant to satisfy.
+
+    Idempotent, and never clobbers an existing value.
+    """
+    import configparser
+
+    config_file = os.path.join(data_dir, 'config.ini')
+    parser = configparser.RawConfigParser()
+    if os.path.exists(config_file):
+        parser.read(config_file, encoding='utf-8')
+    if not parser.has_section('core'):
+        parser.add_section('core')
+    if parser.has_option('core', 'host'):
+        return False
+    parser.set('core', 'host', '127.0.0.1')
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = config_file + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+    os.replace(tmp, config_file)
+    return True
+
+
 def seed(data_dir):
     """Seed the profile, movie, and releases. Returns a summary dict."""
+    _bind_to_loopback(data_dir)
     db = _open_adapter(data_dir)
     try:
         now = time.time()
@@ -458,7 +508,11 @@ def _is_safe_seed_target(data_dir):
     mistake; it cannot detect "this populated, correctly-named directory
     happens to hold real data" without asking the user.
     """
-    path = os.path.abspath(data_dir)
+    # realpath, not abspath: e2e_worker_data.validate_worker_data_dir
+    # resolves symlinks, and a symlinked .e2e-* name pointing at a real
+    # library directory passed this weaker guard while the delete guard
+    # refused it. Both sit either side of the same computed path.
+    path = os.path.realpath(os.path.abspath(data_dir))
 
     if not os.path.exists(path):
         return True

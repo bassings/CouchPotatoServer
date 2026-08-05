@@ -111,6 +111,16 @@ def resolve_worker_data_dir(worker_index, scratch_root=None):
     it before returning -- never hands back a path validate_worker_data_dir
     would refuse (AC-DATA-24: validated before a server is ever started).
     """
+    # Reject before building the path. `resolve_worker_data_dir('')`
+    # previously returned `.e2e-w-data`, a plausible-looking shared
+    # directory: two workers handed an empty index would silently use one
+    # data dir and the isolation this module exists to provide would be
+    # gone with every spec still green. Same shape as CouchPotato.py:53's
+    # empty --data_dir falling through to the real library.
+    if not re.fullmatch(r'[0-9]+', str(worker_index)):
+        raise UnsafeDataDirError(
+            'worker index must be a non-negative integer, got %r' % (worker_index,)
+        )
     root = scratch_root or REPO_ROOT
     path = os.path.join(root, '.e2e-w%s-data' % worker_index)
     return validate_worker_data_dir(path, scratch_root=root)

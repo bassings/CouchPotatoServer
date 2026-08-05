@@ -93,6 +93,95 @@ class TestIsSafeSeedTarget:
 
         assert seed_e2e_data._is_safe_seed_target(str(outside)) is False
 
+    def test_a_symlinked_e2e_name_pointing_at_a_real_library_is_refused(self, tmp_path, monkeypatch):
+        """The name/location check resolves symlinks.
+
+        A `.e2e-*` entry inside the repo that is a SYMLINK to a populated
+        directory elsewhere passed this guard while it used `abspath`, which
+        does not follow links: basename said `.e2e-...`, and the unresolved
+        path did start with the repo root. `e2e_worker_data.py`'s delete-side
+        guard already resolved symlinks and refused the same path, so the two
+        checks either side of one computed path disagreed -- and the one that
+        disagreed in the permissive direction is the one that writes.
+
+        The stand-in here is deliberately populated with a settings file: the
+        realistic shape is a link left pointing at a real data dir, not an
+        empty directory (an empty one is safe by the earlier branch anyway,
+        which is why the fixture must not be empty for this to mean anything).
+        """
+        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", str(REPO_ROOT))
+
+        real_library = tmp_path / "real-library"
+        real_library.mkdir()
+        (real_library / "config.ini").write_text("[core]\napi_key = live\n")
+
+        link = REPO_ROOT / ".e2e-symlink-guard-test"
+        link.symlink_to(real_library, target_is_directory=True)
+        try:
+            assert seed_e2e_data._is_safe_seed_target(str(link)) is False
+        finally:
+            link.unlink()
+
+
+class TestBindToLoopback:
+    """The seeded server must not be reachable from the LAN.
+
+    `runner.py` reads `Env.setting('host', default='0.0.0.0')`, there is no
+    `host` in the settings list and no CLI flag for it, so a freshly seeded
+    data dir always resolves to the wildcard address. Under per-worker
+    isolation that is not one listener: a `--workers=4` run opens four
+    unauthenticated CouchPotato instances on 5150-5153, each with its own
+    generated api_key and no password (`get_current_user` returns True when
+    neither is set), all reachable from the network.
+
+    Fixed in the seed script rather than by adding a `--host` argument,
+    because AC-SEC-16 exists to stop `--port` widening exposure and solving
+    this by widening the CLI would defeat the criterion it satisfies.
+    """
+
+    def _host(self, data_dir):
+        import configparser
+
+        parser = configparser.RawConfigParser()
+        parser.read(str(data_dir / "config.ini"), encoding="utf-8")
+        return parser.get("core", "host", fallback=None)
+
+    def test_a_fresh_data_dir_is_pinned_to_loopback(self, tmp_path):
+        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is True
+        assert self._host(tmp_path) == "127.0.0.1"
+
+    def test_it_never_clobbers_a_host_the_operator_already_set(self, tmp_path):
+        """Idempotent and non-destructive.
+
+        The seed script runs before every worker starts, so it must be safe to
+        re-run. It also must not overwrite a deliberate choice: someone driving
+        the suite against a data dir they configured themselves owns that
+        value, and silently rewriting settings is the behaviour this repo
+        treats as data loss, not as a fix.
+        """
+        (tmp_path / "config.ini").write_text(
+            "[core]\nhost = 192.168.1.50\n", encoding="utf-8",
+        )
+
+        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is False
+        assert self._host(tmp_path) == "192.168.1.50"
+
+    def test_it_leaves_other_settings_alone(self, tmp_path):
+        """The rewrite goes through configparser, so unrelated keys survive."""
+        (tmp_path / "config.ini").write_text(
+            "[core]\nport = 5150\napi_key = seeded-key\n", encoding="utf-8",
+        )
+
+        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is True
+
+        import configparser
+
+        parser = configparser.RawConfigParser()
+        parser.read(str(tmp_path / "config.ini"), encoding="utf-8")
+        assert parser.get("core", "host") == "127.0.0.1"
+        assert parser.get("core", "port") == "5150"
+        assert parser.get("core", "api_key") == "seeded-key"
+
 
 class TestDoneReleaseIsolation:
     """T1.7a (2026-08-05).

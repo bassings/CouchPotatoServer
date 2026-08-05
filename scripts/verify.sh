@@ -68,7 +68,11 @@ fi
 # requirements-dev.txt rather than hardcoded a second time in this script:
 # duplicating the pin across requirements-dev.txt and ci.yml was the accepted
 # trade-off; a third copy here was not.
-PINNED_RUFF="$(grep -E '^ruff==' requirements-dev.txt | head -1 | sed -E 's/^ruff==//')"
+# `|| true`: under `set -euo pipefail` a pipeline whose grep matches nothing
+# returns 1, which aborts the script AT THIS ASSIGNMENT, so the guard below
+# never runs and the gate exits 1 having printed nothing at all. Verified in
+# bash (this script's shell); zsh does not reproduce it.
+PINNED_RUFF="$(grep -E '^ruff==' requirements-dev.txt | head -1 | sed -E 's/^ruff==//' || true)"
 if [[ -z "$PINNED_RUFF" ]]; then
   fail "requirements-dev.txt has no 'ruff==X.Y.Z' pin to check the installed ruff against."
 fi
