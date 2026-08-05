@@ -273,36 +273,50 @@ test.describe('Accessibility', () => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
-    
+
     // Tab through the page
     await page.keyboard.press('Tab');
-    
+
     // Something should be focused
     const focusedElement = page.locator(':focus');
     await expect(focusedElement.first()).toBeVisible();
-    
-    // Focused element should have visible focus indicator (not disabled in CSS)
-    const outline = await focusedElement.first().evaluate(el => {
+
+    // Focused element should have a visible focus indicator (WCAG 2.4.7).
+    // Previously computed and discarded (`const outline = ...`, never
+    // asserted) -- a focus style that regressed to `outline: none` with no
+    // replacement would have passed this test silently.
+    const hasVisibleFocusIndicator = await focusedElement.first().evaluate(el => {
       const styles = window.getComputedStyle(el);
       return styles.outline !== 'none' || styles.boxShadow !== 'none';
     });
-    // Note: This might need adjustment based on the focus styling approach used
+    expect(
+      hasVisibleFocusIndicator,
+      'the first Tab-focused element has neither an outline nor a box-shadow -- no visible focus indicator (WCAG 2.4.7)',
+    ).toBe(true);
   });
 
   test('Images should have alt text', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
-    
+
     // Get all images
     const images = page.locator('img');
     const count = await images.count();
-    
+    // Verified: `expect(null).toBeDefined()` PASSES, and `getAttribute`
+    // returns `null` for a missing attribute -- so the old
+    // `expect(await img.getAttribute('alt')).toBeDefined()` could not fail
+    // even for an <img> with no `alt` at all. It also silently asserted
+    // nothing whenever `count` was 0. Both fixed: a real image count first,
+    // then a real type check on the attribute (a string, including '' for
+    // decorative images, not null).
+    expect(count, 'expected at least one <img> on the page to check alt text on').toBeGreaterThan(0);
+
     for (let i = 0; i < Math.min(count, 10); i++) {
       const img = images.nth(i);
       const alt = await img.getAttribute('alt');
-      // All images should have alt attribute (even if empty for decorative)
-      expect(await img.getAttribute('alt')).toBeDefined();
+      // All images should have an alt attribute (even if empty for decorative)
+      expect(typeof alt, `image ${i} (src="${await img.getAttribute('src')}") has no alt attribute`).toBe('string');
     }
   });
 
