@@ -113,24 +113,32 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   step "7/7 E2E tests (Playwright: chromium + a11y + mobile)"
   # Ensure the chromium browser is present (no-op if already installed).
   npx playwright install chromium >/dev/null 2>&1 || true
-  # Start from a clean data dir. This is NOT tidiness: specs delete, re-add and
-  # restatus the seeded movie, so a leftover dir makes the gate's result depend
-  # on what the previous run happened to leave behind. Measured: a run that had
-  # deleted the seeded movie left `.e2e-data` with ZERO media docs, and the next
-  # verify failed 5 FEAT-008 tests that had just passed from a clean dir — a
-  # gate whose answer depends on history is not a gate. The mobile and a11y
-  # stages below always did this; chromium did not.
-  rm -rf .e2e-data
-  npm run test:e2e -- --project=chromium || fail "E2E tests failed"
+  # T1.7: no `rm -rf .e2e-data*` here any more. tests/e2e/fixtures.ts gives
+  # every Playwright WORKER its own server, port and data dir
+  # (.e2e-w<N>-data/), seeded fresh at worker startup and deleted at worker
+  # teardown through scripts/e2e_worker_data.py's guarded helper -- there is
+  # no fixed-name dir left over between runs to clean up, and the fixture
+  # deliberately FAILS (AC-DATA-26) rather than silently reusing or wiping
+  # one if it ever finds a directory already there. A directory surviving
+  # to the start of the NEXT run means a previous run crashed before its own
+  # teardown ran; that is a real problem to go look at, not something this
+  # script should paper over by deleting it for you.
+  #
+  # --fail-on-flaky-tests (AC-A11Y-4/QA-56): a no-op HERE, since
+  # playwright.config.ts sets `retries: 0` locally and nothing can be
+  # classified flaky (failed once, passed on retry) without a retry ever
+  # happening -- passed for parity with the CI invocations of this exact
+  # command, where retries: 2 makes it load-bearing: a test that fails then
+  # passes on retry must still fail CI rather than quietly going green,
+  # which is what let a 1-in-5 shared-state race pass as "the suite is
+  # green" for a long time.
+  npm run test:e2e -- --project=chromium --fail-on-flaky-tests \
+    || fail "E2E tests failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed
   # for a long time without anything running it. Scoped by testMatch to
   # *.mobile.spec.ts, so this adds seconds, not minutes.
-  # Its OWN data dir: the chromium run above mutates the shared library (specs
-  # delete, re-add and restatus the seeded movie), and inheriting that state
-  # broke this run while it passed standalone.
-  rm -rf .e2e-data-mobile
-  CP_E2E_DATA_DIR=.e2e-data-mobile npm run test:e2e -- --project=mobile-chrome \
+  npm run test:e2e -- --project=mobile-chrome --fail-on-flaky-tests \
     || fail "Mobile E2E tests failed"
   # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
   # the chromium project now testIgnores them -- previously they rode along in
@@ -138,8 +146,7 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
   # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
   # gate mirror it, which is the whole contract of this script.
-  rm -rf .e2e-data-a11y
-  CP_E2E_DATA_DIR=.e2e-data-a11y npm run test:a11y || fail "Accessibility tests failed"
+  npm run test:a11y -- --fail-on-flaky-tests || fail "Accessibility tests failed"
 else
   step "7/7 E2E tests: SKIPPED (--no-e2e)"
 fi
