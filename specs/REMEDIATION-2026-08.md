@@ -307,9 +307,15 @@ Delete: `couchpotato/simple_healthcheck.py`, `couchpotato/integration_test.py`,
   carries live credentials, real library paths and ~849 media documents. State
   that in the docstring so the next person does not "fix" the relocation by
   supplying the fixture via a CI secret.
-- **AC-DATA-23** If the round-trip migration test is kept: running the migration
-  **twice** yields the same document count, and the source CodernityDB directory
-  is **byte-identical afterwards**.
+- **AC-DATA-23** ~~If the round-trip migration test is kept:~~ **Unconditional,
+  amended at review 2026-08-06.** The conditional form had no owner and was
+  still unwritten when the PR was otherwise complete: the test was kept, and
+  nobody was accountable for the criterion. Running the migration **twice**
+  yields the same document count, with no duplicated `_id` and no duplicated
+  `media_identifiers` row (`verify()` compares only the `documents` table), and
+  the source CodernityDB directory is **byte-identical afterwards**, hashed per
+  file. *Break:* a plain `INSERT` in `insert_bulk`, and a stray write into the
+  source from `read_codernity_docs`; each must red.
 - **AC-QA-38** The new `check_test_traps.py` rule keys on the **runner
   invocations** in `verify.sh` + `ci.yml`, not on `pytest.ini`'s `testpaths`.
   `testpaths = tests` already "covers" `tests/integration` while no runner
@@ -319,6 +325,16 @@ Delete: `couchpotato/simple_healthcheck.py`, `couchpotato/integration_test.py`,
 - **AC-DATA-21** The guard **reports and never removes**, and enumerates from
   `git ls-files` rather than a filesystem walk, so an untracked local scratch
   file can neither fail the gate nor be swept up by a later "fix the finding".
+- **AC-QA-38b** *(added at review 2026-08-06, see spec gap 9)* The guard's
+  **predicate** counts **both** pytest naming conventions, `test_*.py` and
+  `*_test.py`. `pytest.ini` narrows `python_files` to the first, which is
+  exactly what made the suffix form dangerous: `couchpotato/settings_test.py`,
+  `couchpotato/softchroot_test.py` and `couchpotato/plugins/browser_test.py`
+  were tracked, read like a live suite, and were collected by nothing. They are
+  **relocated into `tests/unit/`, not deleted** — 24 of their 26 tests passed
+  immediately and the other two were failing on a live defect. *Break:* remove
+  the suffix branch; the predicate's own unit test must red. (Every other test
+  of this rule injects `tracked_files`, so none of them exercises the predicate.)
 - **AC-SEC-3** After the deletions, `docker build` produces an image where
   `ls /app/couchpotato/simple_healthcheck.py` and `ls /app/test_*.py` return "no
   such file". Verified against the built image: these five files ship in
@@ -510,6 +526,15 @@ anyone running two servers by hand.
   whatever it binds today (`runner.py:253,258`); this argument selects a port,
   not an interface, and must not become a way to expose an instance more widely
   than `config.ini` would.
+- **AC-SEC-16b** *(added at review 2026-08-06, see spec gap 10)* AC-SEC-16 was
+  satisfied and the exposure happened anyway: `host` defaults to `0.0.0.0`, is
+  absent from the settings list, and has no CLI surface, so a `--workers=N` run
+  opens **N unauthenticated instances on the LAN**, each with a generated
+  `api_key` and no password (`get_current_user` returns `True` when neither is
+  set). Every per-worker server binds **loopback only**, fixed in the **seed
+  script** rather than by adding `--host` — widening the CLI to fix this would
+  defeat AC-SEC-16 itself. The write is idempotent and must **not** overwrite a
+  `host` the operator already set.
 - This is the second production change in PR 1 (with T1.8) and is reflected in
   `AC-SIMP-1`.
 
@@ -550,6 +575,16 @@ already `rm -rf` sibling paths in the repo root.
   seeded movie done); spec B asserts the pristine state. Both orders, in
   parallel, pass. This fails today and is the only thing that proves isolation
   rather than luck.
+- **AC-QA-50b** *(added at review 2026-08-06, see spec gap 11)* Spec B has a
+  **happens-after edge on spec A**. As originally specified this was a race:
+  Playwright gives each spec file to a different worker and runs them
+  concurrently, so B reached its assertion before A had created anything and
+  passed against an empty world — a green that would survive isolation being
+  removed entirely. B must also distinguish "A ran on a different server"
+  (the property under test) from "A ran on *this* server" (both halves on one
+  worker, which proves nothing) and fail differently for each. *Break:* run B
+  alone; it must red naming the missing partner, where it previously passed.
+  Run the pair at `--workers=1`; it must red naming the misconfiguration.
 - **AC-QA-52 / AC-A11Y-2** Acceptance bar: **≥10 consecutive full parallel runs
   green**, each with a freshly created data dir, driven by a script that stops
   on first red and prints the failing spec and worker assignment. Hand-counted
@@ -593,6 +628,15 @@ already `rm -rf` sibling paths in the repo root.
   than 30 tests reporting `ERR_CONNECTION_REFUSED`. Measured during planning:
   the server was SIGKILLed at test 112 of 142 and every downstream failure named
   a URL rather than the cause.
+- **AC-QA-58b** *(added at review 2026-08-06, see spec gap 12)* The same holds
+  **after** readiness, which is when the planning measurement above actually
+  happened. The worker watches its server for the whole run, fails the run if it
+  exits, and **retains the application log** at a named path — it previously
+  lived only in a closure and was discarded at teardown, so the one artefact
+  that could explain a mid-run failure was the one thing never kept. *Break:*
+  kill the listening server mid-test; teardown must error naming the signal, the
+  log file must exist, and the **process exit code** must be non-zero (checked
+  explicitly: Playwright's summary line still reads "1 passed").
 - **AC-A11Y-5** Isolation applies to the CI `accessibility` job too, which today
   starts its own server by hand (`ci.yml:345-350`, `--data_dir=.config`) and
   never reads `CP_E2E_DATA_DIR`. **`playwright.config.ts` disables `webServer`
@@ -754,6 +798,44 @@ to produce:
 7. **Concurrent `moveFile` calls to one destination** destroy a file and both
    report success (forced interleave; real-world reachability inferred from the
    unlocked check-then-set at `renamer/main.py:72-79`).
+
+### Spec gaps found at review (PR 1)
+
+Findings the review cycle raised that no `AC-` covers. Recorded because that
+list is how the harness improves rather than merely runs:
+
+8. **A repaired `has_releases` filter widens what a destructive path deletes.**
+   `AC-DATA-*` covered the filter's correctness and `manage.py`'s cleanup was
+   not in scope at all, so nothing asked the obvious follow-up: which *other*
+   callers change behaviour when a filter that never filtered starts
+   filtering. The answer was `media.delete(delete_from='all')` admitting
+   `active` (upgrading) movies, in an unattended scan. **A criterion of the
+   form "enumerate every caller of a predicate whose behaviour this change
+   alters" belongs in the template**, not just in this spec.
+9. **The orphaned-test rule was written against one of pytest's two naming
+   conventions.** `AC-QA-38` specified what the rule keys *on* (runner
+   invocations, not `testpaths`) and was right about it, but said nothing
+   about what counts as a test file. Three `*_test.py` files under
+   `couchpotato/` were invisible to it, and one was sitting on a live Python 3
+   port defect (`FileBrowser.view()` calling `len()` on a `map`). A guard's
+   *predicate* needs a criterion as much as its *anchor* does.
+10. **Per-worker servers bind `0.0.0.0`.** `AC-SEC-16` correctly stopped
+    `--port` from widening exposure, and was satisfied — while the harness it
+    enabled opened N unauthenticated instances on the LAN, because the host
+    comes from a setting with no CLI surface at all. The criterion guarded the
+    argument that was added instead of the exposure that resulted.
+11. **The isolation proof had no happens-before edge.** `AC-QA-50` asked for a
+    direct proof of isolation and got two specs that Playwright runs
+    concurrently, so the asserting half regularly ran first and passed against
+    an empty world. A criterion asking for a proof between *parallel* actors
+    has to say how they synchronise, or it specifies a race.
+12. **Nothing watched the application under test after startup.** `AC-QA-58`
+    covered the server exiting *before* readiness. A server dying mid-run —
+    the same failure, ten seconds later — had no criterion, no diagnosis and
+    no retained log.
+13. **`AC-DATA-23` was written as a conditional** ("if the round-trip
+    migration test is kept"). It was kept, and the criterion was still
+    unwritten at review. Conditional acceptance criteria have no owner.
 
 **PR 1 acceptance:** `make verify` green **and `make check-secrets` green**;
 every new test proven load-bearing (break, watch fail, `git diff`-confirm,
