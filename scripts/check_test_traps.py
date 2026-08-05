@@ -53,6 +53,22 @@ Checks performed:
      hypothetical: ``.githooks/pre-push`` was mode 0644 in this tree, i.e. the
      pre-push gate had been inert.
 
+  5. **Orphaned test files.** A tracked file named ``test_*.py`` (pytest.ini's
+     own ``python_files`` convention) that no pytest invocation in
+     ``scripts/verify.sh`` or ``.github/workflows/ci.yml`` actually executes.
+     Not hypothetical either: ``tests/integration/`` sat exactly like this —
+     "covered" by ``pytest.ini``'s ``testpaths = tests`` on paper, invoked by
+     no runner in practice — until the PR that added this rule also wired it
+     in. Deliberately keyed on the **runner invocations themselves**, not on
+     ``testpaths``: a rule anchored on ``testpaths`` would have passed against
+     that orphaned suite the whole time, which makes it vacuous. Enumerates
+     candidates via ``git ls-files`` (never a filesystem walk, so an untracked
+     local scratch file cannot trip it or be swept into scope), reports only
+     (never deletes, moves or modifies anything), and honours a small,
+     comment-required ``ORPHAN_ALLOWLIST`` for files that are deliberately
+     local-only by design (``tests/local/test_real_database.py``, gated on a
+     39 MB machine-local backup that will never exist in CI).
+
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
 
@@ -83,6 +99,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -590,6 +607,145 @@ def check_git_hook(path: Path):
         )
 
 
+# ── Rule 5: orphaned test files ─────────────────────────────────────────────
+
+VERIFY_SH = REPO_ROOT / "scripts" / "verify.sh"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+# Files this rule must never flag, each with the reason it is deliberately
+# outside every runner invocation. Mirrors the .gitleaksignore-requires-a-
+# comment convention (tests/unit/test_gitleaks_config.py enforces the same
+# idea for secrets): an exemption without a reason on the line is not
+# acceptable, because a bare filename in a set gives the next reader nothing
+# to check it against.
+ORPHAN_ALLOWLIST = {
+    # Gated on /var/media/config_backup.zip, a ~39 MB machine-local backup
+    # that will never exist on a CI runner (pytest.ini's addopts also carries
+    # --ignore=tests/local for the same reason). See the file's own
+    # docstring for the full rationale — it must not be wired into CI, by a
+    # secret or otherwise: the real backup carries live credentials.
+    "tests/local/test_real_database.py",
+}
+
+# Matches the word `pytest` and captures the rest of its logical line, so the
+# path arguments that follow can be pulled out below.
+PYTEST_INVOCATION_RE = re.compile(r"\bpytest\b(.*)$", re.MULTILINE)
+
+
+def _tracked_test_files(repo_root: Path) -> list[str]:
+    """Tracked ``test_*.py`` files, via ``git ls-files`` — NOT a filesystem walk.
+
+    A filesystem walk would let an untracked local scratch file trip this
+    guard, or be silently swept into scope by a later "fix the finding" —
+    exactly the thing AC-DATA-21 rules out. ``git ls-files`` structurally
+    cannot see a file nobody has ``git add``-ed.
+    """
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=repo_root, capture_output=True, text=True, check=True,
+    )
+    files = []
+    for line in result.stdout.splitlines():
+        path = line.strip()
+        if not path or path.startswith("libs/"):
+            continue  # vendored, not ours to flag
+        if path.endswith(".py") and Path(path).name.startswith("test_"):
+            files.append(path)
+    return sorted(files)
+
+
+def _extract_pytest_path_args(text: str) -> tuple[set[str], set[str]]:
+    """Directory roots and exact file paths passed to ``pytest`` invocations.
+
+    Returns ``(dir_roots, file_args)``. A token is a directory root if it
+    ends in ``/`` (``tests/unit/``), an exact file argument if it ends in
+    ``.py``; anything else (flags, warning filters, shell control-flow words,
+    message text) is ignored. Backslash-continued invocations are joined
+    first, so a path on one physical line and its trailing ``|| fail ...`` on
+    the next are read as one logical command.
+    """
+    dir_roots: set[str] = set()
+    file_args: set[str] = set()
+    for _start, logical in join_continuations(text.split("\n")):
+        cleaned = strip_shell_comments(logical)
+        for match in PYTEST_INVOCATION_RE.finditer(cleaned):
+            for token in match.group(1).split():
+                if token.startswith("-"):
+                    continue
+                if token.endswith("/"):
+                    dir_roots.add(token)
+                elif token.endswith(".py"):
+                    file_args.add(token)
+    return dir_roots, file_args
+
+
+def _is_executed(path: str, dir_roots: set[str], file_args: set[str]) -> bool:
+    if path in file_args:
+        return True
+    return any(path.startswith(root) for root in dir_roots)
+
+
+def check_orphaned_test_files(
+    repo_root: Path = REPO_ROOT,
+    *,
+    tracked_files: list[str] | None = None,
+    runner_texts: list[str] | None = None,
+):
+    """Rule 5: a tracked ``test_*.py`` file no runner invocation executes.
+
+    Whole-repo by nature (needs the full ``git ls-files`` picture plus both
+    runner files), so unlike rules 1-4 it is not dispatched per path from
+    ``check_file``. ``tracked_files``/``runner_texts`` are injectable so
+    tests can pin the rule's behaviour against synthetic fixtures without a
+    real git repo or without depending on the state of this tree; production
+    use (``main()``) calls it with no arguments and it reads the real repo.
+
+    Yields ``(path, line_no, message)`` — REPORTS ONLY. It never deletes,
+    moves or modifies the orphaned file (AC-DATA-21); ``line_no`` is always 1
+    since there is no meaningful line within the orphaned file itself to
+    point at, consistent with how ``check_git_hook`` reports a whole-file
+    property at line 1.
+
+    ``runner_texts`` holds ONE entry per configured runner FILE (verify.sh,
+    ci.yml — each of which may itself contain several pytest invocations). A
+    path must be executed according to EVERY entry, not merely at least one:
+    the local gate (verify.sh) and CI (ci.yml) are two independent gates, and
+    a suite present in one but silently dropped from the other is still a
+    real gap — the local gate no longer mirrors CI (hard rule 4), or CI is
+    carrying dead weight nobody runs locally. Union semantics here would have
+    let this exact mutation through: deleting the tests/integration/
+    invocation from verify.sh alone, while it stayed in ci.yml, must still be
+    caught.
+    """
+    if tracked_files is None:
+        tracked_files = _tracked_test_files(repo_root)
+    if runner_texts is None:
+        runner_texts = [
+            VERIFY_SH.read_text(encoding="utf-8"),
+            CI_WORKFLOW.read_text(encoding="utf-8"),
+        ]
+
+    per_runner = [_extract_pytest_path_args(text) for text in runner_texts]
+
+    for path in tracked_files:
+        if path in ORPHAN_ALLOWLIST:
+            continue
+        if all(_is_executed(path, d, f) for d, f in per_runner):
+            continue
+        yield (
+            path,
+            1,
+            f"`{path}` matches pytest.ini's `test_*.py` convention and is "
+            "tracked, but no pytest invocation in scripts/verify.sh or "
+            ".github/workflows/ci.yml executes it — it can rot indefinitely "
+            "with nothing ever noticing (tests/integration/ did exactly "
+            "this: 'covered' by pytest.ini's testpaths, run by no runner, "
+            "until this rule and its fix). If it is deliberately local-only, "
+            "add it to ORPHAN_ALLOWLIST in scripts/check_test_traps.py with "
+            "a comment explaining why; otherwise wire it into a runner.",
+        )
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -635,6 +791,13 @@ def main(argv: list[str]) -> int:
         for line_no, message in check_file(path):
             print(f"{path}:{line_no}: {message}")
             total += 1
+
+    # Rule 5 is whole-repo by nature (git ls-files + both runner files), not
+    # scoped by `roots`/argv the way rules 1-4 are, so it runs unconditionally
+    # rather than being folded into the per-path loop above.
+    for path, line_no, message in check_orphaned_test_files():
+        print(f"{path}:{line_no}: {message}")
+        total += 1
 
     if total:
         print(

@@ -561,6 +561,219 @@ def test_the_repos_own_hooks_are_executable():
         )
 
 
+# ── Rule 5: orphaned test files ─────────────────────────────────────────────
+#
+# This rule exists because tests/integration/ sat orphaned in exactly this
+# tree: pytest.ini's `testpaths = tests` technically "covered" it, but no
+# runner invocation in scripts/verify.sh or .github/workflows/ci.yml ever
+# passed it to pytest, so 31 tests never ran anywhere. A rule anchored on
+# `testpaths` would have passed against that orphaned suite and is therefore
+# vacuous — the tests below key on the runner invocations instead.
+
+
+def test_flags_a_tracked_test_file_no_runner_executes():
+    """A file under `tests/` (so testpaths 'covers' it) but under no runner
+    root must still be flagged — this is the exact orphaning bug, reproduced.
+
+    `runner_texts` mirrors the real shape: one entry PER RUNNER FILE
+    (verify.sh, ci.yml), each of which invokes both roots — see
+    `test_does_not_flag_a_file_under_an_executed_root` and the module
+    docstring on `check_orphaned_test_files` for why this is per-file
+    intersection, not a flat union of every invocation seen anywhere.
+    """
+    verify_sh_like = "pytest tests/unit/ -q\npytest tests/integration/ -v\n"
+    ci_yml_like = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/orphaned_suite/test_thing.py"],
+            runner_texts=[verify_sh_like, ci_yml_like],
+        )
+    )
+    assert len(findings) == 1, findings
+    path, line_no, message = findings[0]
+    assert path == "tests/orphaned_suite/test_thing.py"
+    assert line_no == 1
+    assert "not executed" in message.lower() or "orphan" in message.lower()
+
+
+def test_does_not_flag_a_file_under_an_executed_root():
+    verify_sh_like = "pytest tests/unit/ -q\npytest tests/integration/ -v\n"
+    ci_yml_like = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/integration/test_duplicate_detection.py"],
+            runner_texts=[verify_sh_like, ci_yml_like],
+        )
+    )
+    assert findings == []
+
+
+def test_flags_a_file_dropped_from_one_runner_file_but_not_the_other():
+    """Per-file intersection, not union: a suite still invoked by ci.yml but
+    dropped from verify.sh (or vice versa) is still a real gap — the local
+    gate would no longer mirror CI. This is exactly the mutation the guard
+    must catch: deleting the tests/integration/ invocation from verify.sh
+    alone, while ci.yml keeps it, must still be flagged.
+    """
+    verify_sh_like_after_mutation = "pytest tests/unit/ -q\n"  # integration line deleted
+    ci_yml_like_unchanged = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/integration/test_duplicate_detection.py"],
+            runner_texts=[verify_sh_like_after_mutation, ci_yml_like_unchanged],
+        )
+    )
+    assert len(findings) == 1, findings
+    assert findings[0][0] == "tests/integration/test_duplicate_detection.py"
+
+
+def test_does_not_flag_an_exact_file_argument_match():
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/local/test_one_off.py"],
+            runner_texts=["pytest tests/local/test_one_off.py -q"],
+        )
+    )
+    assert findings == []
+
+
+def test_allowlist_exempts_only_the_named_file_not_its_whole_directory():
+    """The exemption must be exact, not a directory shadow.
+
+    A sibling file in the same directory as an allowlisted entry, but not
+    itself allowlisted, must still be flagged if it is genuinely orphaned —
+    otherwise the allowlist silently exempts a whole directory instead of the
+    one file it names.
+    """
+    assert check_test_traps.ORPHAN_ALLOWLIST, "allowlist must not be empty for this test"
+    allowlisted_path = sorted(check_test_traps.ORPHAN_ALLOWLIST)[0]
+    sibling = str(Path(allowlisted_path).parent / "test_definitely_not_allowlisted.py")
+
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=[allowlisted_path, sibling],
+            runner_texts=["pytest tests/unit/ -q"],
+        )
+    )
+    flagged = {f[0] for f in findings}
+    assert allowlisted_path not in flagged, "the allowlisted file itself must never be flagged"
+    assert sibling in flagged, (
+        "a non-allowlisted sibling in the same directory must still be flagged — "
+        "the allowlist must not accidentally exempt the whole directory"
+    )
+
+
+def test_orphan_allowlist_entries_are_commented(tmp_path):
+    """Mirrors the .gitleaksignore-requires-a-comment convention
+    (tests/unit/test_gitleaks_config.py): every exemption in the source file
+    must carry its justification on the line, not just live in a set literal.
+    """
+    source = (REPO_ROOT / "scripts" / "check_test_traps.py").read_text(encoding="utf-8")
+    match = re.search(r"ORPHAN_ALLOWLIST\s*=\s*\{(.*?)\n\}", source, re.DOTALL)
+    assert match, "ORPHAN_ALLOWLIST set literal not found"
+    body = match.group(1)
+    # Every non-blank line inside the literal must be a comment or sit
+    # directly under one (the comment lines outnumber or match the entries).
+    entry_lines = [
+        ln for ln in body.split("\n")
+        if ln.strip() and not ln.strip().startswith("#")
+    ]
+    comment_lines = [ln for ln in body.split("\n") if ln.strip().startswith("#")]
+    assert len(comment_lines) >= len(entry_lines), (
+        "every ORPHAN_ALLOWLIST entry needs an inline comment justifying it"
+    )
+
+
+def test_tracked_test_files_uses_git_ls_files_not_a_filesystem_walk(tmp_path):
+    """AC-DATA-21: an untracked local scratch file must be structurally
+    invisible to this rule, not merely filtered out by convention.
+    """
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+
+    tracked = repo / "test_tracked.py"
+    tracked.write_text("def test_x():\n    pass\n")
+    subprocess.run(["git", "add", "test_tracked.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    # Untracked scratch file, same test_*.py naming pattern, sitting right
+    # next to the tracked one on disk.
+    (repo / "test_scratch.py").write_text("def test_y():\n    pass\n")
+
+    files = check_test_traps._tracked_test_files(repo)
+    assert files == ["test_tracked.py"], (
+        f"an untracked scratch file leaked into scope: {files}"
+    )
+
+
+def test_tracked_test_files_excludes_libs(tmp_path):
+    """Vendored code under libs/ is not ours to flag."""
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+
+    (repo / "libs").mkdir()
+    (repo / "libs" / "test_vendored.py").write_text("def test_x():\n    pass\n")
+    (repo / "test_ours.py").write_text("def test_y():\n    pass\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    files = check_test_traps._tracked_test_files(repo)
+    assert files == ["test_ours.py"], files
+
+
+def test_extract_pytest_path_args_finds_directory_and_file_targets():
+    dir_roots, file_args = check_test_traps._extract_pytest_path_args(
+        "python -m pytest tests/unit/ -v --tb=short -W ignore::SyntaxWarning\n"
+        "pytest tests/local/test_real_database.py -q\n"
+    )
+    assert dir_roots == {"tests/unit/"}
+    assert file_args == {"tests/local/test_real_database.py"}
+
+
+def test_extract_pytest_path_args_ignores_flags_and_trailing_message_text():
+    """A pytest invocation followed by shell control flow and a message
+    string must not leak spurious path-shaped tokens.
+    """
+    dir_roots, file_args = check_test_traps._extract_pytest_path_args(
+        '"$PYTHON" -m pytest tests/integration/ -q --tb=short \\\n'
+        '  || fail "Python integration tests failed"\n'
+    )
+    assert dir_roots == {"tests/integration/"}
+    assert file_args == set()
+
+
+def test_real_verify_and_ci_invoke_both_unit_and_integration_roots():
+    """Anchors the extracted values, not just 'zero findings' on the real
+    tree — a regex that silently stopped matching would make the whole-tree
+    check pass for the wrong reason (nothing to compare against) rather than
+    fail loudly.
+    """
+    dir_roots: set[str] = set()
+    file_args: set[str] = set()
+    for text in (
+        (REPO_ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8"),
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
+    ):
+        d, f = check_test_traps._extract_pytest_path_args(text)
+        dir_roots |= d
+        file_args |= f
+    assert "tests/unit/" in dir_roots, dir_roots
+    assert "tests/integration/" in dir_roots, dir_roots
+
+
+def test_checker_is_clean_on_the_real_tree_under_rule_5():
+    """The real tree, with the real verify.sh/ci.yml/tracked files, must have
+    zero orphaned test_*.py files — meaning Part 2's wiring genuinely closed
+    the gap rule 5 exists to catch.
+    """
+    findings = list(check_test_traps.check_orphaned_test_files())
+    assert findings == [], findings
+
+
 def test_strip_shell_comments_respects_quotes():
     """Quote-awareness is claimed in the docstring but was never asserted."""
     strip = check_test_traps.strip_shell_comments
