@@ -62,34 +62,31 @@ test.describe('Navigation', () => {
     checkNoErrors(page, errors);
   });
 
-  test('sidebar collapse button works', async ({ page }) => {
-    await page.goto('/');
-    await waitForPageReady(page);
-
-    const collapseBtn = page.locator('button[aria-label*="Collapse"], button[aria-label*="Expand"]');
-    if (await collapseBtn.isVisible()) {
-      await collapseBtn.click();
-      await page.waitForTimeout(300);
-      // Sidebar should be collapsed (nav text hidden)
-      await collapseBtn.click();
-      await page.waitForTimeout(300);
-    }
-  });
+  // 'sidebar collapse button works' used to live here, asserting nothing
+  // (`if (await collapseBtn.isVisible()) { click; click; }`, no expect at
+  // all). navigation.spec.ts:75 ("sidebar should collapse and expand")
+  // covers the identical behaviour AND is the suite's only assertion of the
+  // control's accessible name, so it is the one kept (T1.4, decided
+  // 2026-08-03) rather than repairing a second copy of the same coverage.
 
   test('theme toggle switches modes', async ({ page }) => {
     await page.goto('/');
     await waitForPageReady(page);
 
+    // The `chromium` project runs Desktop Chrome and never the mobile
+    // viewport the sidebar (and this button, inside it) is hidden on, so the
+    // old `if (await themeBtn.isVisible())` guard could never be false here
+    // -- it just hid a possible zero-assertion run.
     const themeBtn = page.locator('button:has-text("Light mode"), button:has-text("Dark mode")');
-    if (await themeBtn.isVisible()) {
-      const initialText = await themeBtn.textContent();
-      await themeBtn.click();
-      await page.waitForTimeout(300);
-      const newText = await themeBtn.textContent();
-      expect(newText).not.toBe(initialText);
-      // Toggle back
-      await themeBtn.click();
-    }
+    await expect(themeBtn).toBeVisible();
+
+    const initialText = await themeBtn.textContent();
+    await themeBtn.click();
+    await page.waitForTimeout(300);
+    const newText = await themeBtn.textContent();
+    expect(newText).not.toBe(initialText);
+    // Toggle back
+    await themeBtn.click();
   });
 
   test('mobile menu works on small viewport', async ({ page }) => {
@@ -97,14 +94,17 @@ test.describe('Navigation', () => {
     await page.goto('/');
     await waitForPageReady(page);
 
+    // The mobile top bar (base.html) is `lg:hidden`, so it is CSS-guaranteed
+    // visible at this test's own 375px viewport -- the old
+    // `if (await menuBtn.isVisible())` guard could never be false here.
     const menuBtn = page.locator('button[aria-label*="menu"], button[aria-label*="navigation"]');
-    if (await menuBtn.isVisible()) {
-      await menuBtn.click();
-      await page.waitForTimeout(300);
-      // Mobile menu should be visible
-      const mobileNav = page.locator('[role="menu"], #mobile-menu');
-      await expect(mobileNav).toBeVisible();
-    }
+    await expect(menuBtn).toBeVisible();
+
+    await menuBtn.click();
+    await page.waitForTimeout(300);
+    // Mobile menu should be visible
+    const mobileNav = page.locator('[role="menu"], #mobile-menu');
+    await expect(mobileNav).toBeVisible();
   });
 });
 
@@ -132,47 +132,72 @@ test.describe('Wanted Page', () => {
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
+    // The filter input is static chrome in wanted.html, rendered
+    // unconditionally regardless of what is in the library -- the old
+    // `if (await filterInput.isVisible())` guard could never be false, and
+    // the test asserted nothing at all either way.
     const filterInput = page.locator('input[placeholder*="Filter"]');
-    if (await filterInput.isVisible()) {
-      await filterInput.fill('test');
-      await page.waitForTimeout(500);
-      await filterInput.fill('');
-    }
+    await expect(filterInput).toBeVisible();
+
+    // scripts/seed_e2e_data.py seeds two movies; only one title contains
+    // "Destructive". A real filter effect (not just "the input accepted
+    // text") is the actual behaviour this test's name promises.
+    await filterInput.fill('Destructive');
+    await page.waitForTimeout(500);
+    await expect(page.locator('#movie-grid .poster-card:visible')).toHaveCount(1);
+
+    await filterInput.fill('');
+    await page.waitForTimeout(500);
+    await expect(page.locator('#movie-grid .poster-card:visible')).toHaveCount(2);
   });
 
   test('select all button works', async ({ page }) => {
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
+    // Static chrome, always rendered on the Wanted page -- the old
+    // `if (await selectAllBtn.isVisible())` guard could never be false, and
+    // the test asserted nothing at all either way.
     const selectAllBtn = page.locator('button:has-text("Select All")');
-    if (await selectAllBtn.isVisible()) {
-      await selectAllBtn.click();
-      await page.waitForTimeout(300);
-    }
+    await expect(selectAllBtn).toBeVisible();
+
+    await selectAllBtn.click();
+    // toggleSelectAll() (wanted.html) flips `allSelected`, which the button's
+    // own label is bound to -- the real, observable effect of the click.
+    await expect(selectAllBtn).toContainText('Deselect All');
   });
 
   test('movie card hover actions visible', async ({ page }) => {
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
+    // scripts/seed_e2e_data.py always seeds two active movies, and the
+    // Wanted grid's default filter is "All" (wanted.html), so a card is
+    // guaranteed here -- the old `if (await movieCard.isVisible())` guard
+    // could never be false, and even inside it nothing was ever asserted.
     const movieCard = page.locator('.poster-card, [data-movie-id]').first();
-    if (await movieCard.isVisible()) {
-      await movieCard.hover();
-      await page.waitForTimeout(300);
-      // Refresh button should be visible on hover
-    }
+    await expect(movieCard).toBeVisible();
+
+    // The refresh button (movie_cards.html) is `opacity-0 group-hover:opacity-100`
+    // -- present but transparent until hover, so `toBeVisible()` alone cannot
+    // tell "shown on hover" from "always there"; the opacity IS the behaviour.
+    const refreshBtn = movieCard.getByRole('button', { name: /refresh metadata/i });
+    await expect(refreshBtn).toHaveCSS('opacity', '0');
+    await movieCard.hover();
+    await expect(refreshBtn).toHaveCSS('opacity', '1');
   });
 
   test('movie card click navigates to detail', async ({ page }) => {
     await page.goto('/wanted/');
     await waitForPageReady(page);
 
+    // Same guarantee as above: the seeded library always has a card here.
     const movieLink = page.locator('a[href*="/movie/"]').first();
-    if (await movieLink.isVisible()) {
-      await movieLink.click();
-      await waitForPageReady(page);
-      expect(page.url()).toContain('/movie/');
-    }
+    await expect(movieLink).toBeVisible();
+
+    await movieLink.click();
+    await waitForPageReady(page);
+    expect(page.url()).toContain('/movie/');
   });
 });
 
