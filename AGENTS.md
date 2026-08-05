@@ -102,7 +102,7 @@ orchestrator reading the diff, not by an agent).
   (`core/db/sqlite_adapter.py`) have both produced live defects; treat changes
   near them as new work, not corrections
 - `lens-qa` must check `tests/e2e/` for conditional test bodies
-  (`if (await x.isVisible()) { ... }`), which pass while asserting nothing , 
+  (`if (await x.isVisible()) { ... }`), which pass while asserting nothing. 
   the pattern was removed once in `movie-detail.spec.ts` and still exists
   elsewhere
 - `lens-operability` should assume the reader is the operator at 3am with only

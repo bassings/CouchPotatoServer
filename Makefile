@@ -16,7 +16,7 @@ setup: ## One-time: install Python+JS deps and git hooks so the local gate runs 
 	npx playwright install chromium
 	@echo "✅ Setup complete. 'git push' now runs the full gate (scripts/verify.sh)."
 
-verify: ## Full local gate — mirrors CI (lint + py unit + ui unit + e2e)
+verify: ## Full local gate — mirrors CI (lint + py unit + py integration + ui unit + e2e)
 	./scripts/verify.sh
 
 verify-fast: ## Quick gate — lint + unit only, skips E2E

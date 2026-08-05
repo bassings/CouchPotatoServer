@@ -55,9 +55,15 @@ mutants/
 /TOOLS.md
 /USER.md
 
-# E2E test data dirs (any suffix) - never commit test data. T1.7: every
-# per-worker dir (.e2e-w<N>-data/) matches this glob already; the old
-# fixed-name entries for the pre-T1.7 shared-server dirs (.e2e-data,
-# .e2e-data-mobile, .e2e-data-a11y) are redundant with it and gone.
-.e2e-*data/
+# E2E data dirs: never commit test data. Every one holds a generated api_key
+# and seeded provider credentials.
+#
+# Matches ANY .e2e-* name, not `.e2e-*data/`. That narrower glob required the
+# name to END in "data", which is why `.e2e-data-mobile` and `.e2e-data-a11y`
+# needed hand-written entries, and why `make check-secrets` was red on master
+# until T1.7. Removing those two entries in favour of the narrow glob (as an
+# earlier commit on this branch did) un-ignored two directories that still
+# exist on any machine which ran the suite before T1.7, each holding a live
+# key. A pattern that covers the class cannot regress that way.
+.e2e-*
 .claude/worktrees/

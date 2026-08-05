@@ -169,17 +169,37 @@
   putting the network call back. If it is ever worth closing, fake the provider
   *inside the server* so the real handler and template run with no internet.
 
-- **RESOLVED (T1.7).** E2E specs used to be state-coupled through one shared
+- **PARTIAL (T1.7).** E2E specs used to be state-coupled through one shared
   server at `workers: 1` (a spec clicking "Mark as Done" changed what
-  `release_controls.spec.ts` saw), which both made the suite intermittently
-  red and blocked parallelism (~20% flake at `workers: 5`, per this doc's own
-  prior measurement). `tests/e2e/fixtures.ts` gives every Playwright worker
-  its own CouchPotato server, port and data dir; `test.describe.configure({
-  mode: 'serial' })` on categories/profiles and the old `workers: 1` are both
-  deleted, not amended. `tests/e2e/isolation-a-mutate.spec.ts` +
-  `isolation-b-assert.spec.ts` are a direct, deliberately-run proof (not just
-  a green suite): they fail at `--workers=1` (one worker, nothing to isolate
-  from) and pass at `--workers=2`/`4`.
+  `release_controls.spec.ts` saw). `tests/e2e/fixtures.ts` now gives every
+  Playwright worker its own CouchPotato server, port and data dir, and
+  `test.describe.configure({ mode: 'serial' })` on categories/profiles is gone.
+  `isolation-a-mutate.spec.ts` + `isolation-b-assert.spec.ts` run as their own
+  project at `--workers=2` as a direct proof rather than a green suite.
+
+  **Parallelism did NOT land, and `workers: 1` stays** (`playwright.config.ts`).
+  Measured on the T1.7 tree: **0 of 5 parallel runs passed**. Per-worker
+  isolation cannot remove cross-file coupling when Playwright runs fewer
+  workers than spec files, so two coupled specs still share a worker.
+  AC-SIMP-12 made parallelism conditional on the isolated suite being both
+  faster and green; it was neither.
+
+  **Method note, retained deliberately:** n=3 and n=4 both came back all-green
+  before the n=5 run found the flake. Do not conclude "parallel is safe" from a
+  handful of runs; this failure mode needs ten or more.
+
+  **Residual, ~2 runs in 10 on the full chromium suite.** Eliminated by
+  measurement during PR 1, each individually: seeding (15/15 clean standalone,
+  and a failed seed can no longer be skipped), the data (all seeded documents
+  intact at the moment of failure), server latency (74 ms peak across 63 polls
+  during a failing run), rate limiting (localhost exempt; 340 consecutive
+  requests all 200), scheduled jobs (every interval is 12-24 h with its first
+  fire at now-plus-interval), and any one spec's mutation
+  (`movie-detail.spec.ts` passes 8/8 alone; preceding it with either
+  `interactions.e2e.spec.ts` or `filters.spec.ts` reproduces at the same rate).
+  What remains correlates with elapsed time and volume, not with which tests
+  ran. Host contention on longer runs is the standing hypothesis and is not a
+  code defect.
 
 ## Lessons learned
 
