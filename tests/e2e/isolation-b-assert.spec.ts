@@ -1,10 +1,5 @@
 import { test, expect } from './fixtures';
-
-// Deliberately duplicated, NOT imported from isolation-a-mutate.spec.ts:
-// importing a .spec.ts file executes its module body, which would
-// re-register that file's OWN top-level test() call a second time here.
-// Keep this in sync with isolation-a-mutate.spec.ts's ISOLATION_CATEGORY_NAME.
-const ISOLATION_CATEGORY_NAME = 'AC-QA-50 Isolation Leak Probe';
+import { ISOLATION_CATEGORY_NAME, awaitMutation } from './isolation-sentinel';
 
 /**
  * AC-QA-50, other half of the pair -- see isolation-a-mutate.spec.ts's
@@ -13,14 +8,29 @@ const ISOLATION_CATEGORY_NAME = 'AC-QA-50 Isolation Leak Probe';
  *
  * Asserts the category list is PRISTINE: the category
  * isolation-a-mutate.spec.ts creates (and never deletes) must not be
- * visible from THIS worker's server. Passing at `--workers` >= 2 proves
- * the two specs got separate, isolated servers. It is NOT meaningful at
- * `--workers=1` -- with one worker, this spec and the mutating one
- * necessarily share it (a worker's server persists across every file that
- * worker runs), and per-worker isolation has nothing to isolate from in
- * that case by construction, not by luck.
+ * visible from THIS worker's server.
+ *
+ * The two preconditions below are the whole test; the visibility assertion
+ * on its own is worthless. Playwright runs the two spec files concurrently
+ * on separate workers, so this spec used to reach `not.toBeVisible()`
+ * before the other had created anything -- passing against an empty world,
+ * which per-worker isolation being completely broken would not have
+ * changed. And at `--workers=1` both halves share one worker, so the
+ * mutation legitimately reaches this server and there is nothing to
+ * isolate from; that is a misconfigured run, not a leak, and it fails with
+ * a message saying so rather than a confusing "leaked category visible".
  */
-test('asserts the category list has no leaked mutation from another worker', async ({ page }) => {
+test('asserts the category list has no leaked mutation from another worker', async ({ page, workerServer }, testInfo) => {
+  const mutation = await awaitMutation(testInfo.project.outputDir);
+
+  expect(
+    mutation.baseURL,
+    `isolation-a-mutate ran on THIS worker's server (${workerServer.baseURL}), so its ` +
+    `category is expected here and nothing about isolation is being tested. That ` +
+    `happens when the pair is run on a single worker: use \`npm run test:isolation\`, ` +
+    `which pins --workers=2.`,
+  ).not.toBe(workerServer.baseURL);
+
   await page.goto('/settings/');
   await expect(page.locator('h1')).toContainText('Settings');
 

@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { ISOLATION_CATEGORY_NAME, publishMutation } from './isolation-sentinel';
 
 /**
  * AC-QA-50: a DIRECT test of per-worker isolation, not just a green suite.
@@ -30,14 +31,12 @@ import { test, expect } from './fixtures';
  *     tests/e2e/isolation-b-assert.spec.ts --project=chromium --workers=2
  * and again at a different worker count (4, 8), to vary the schedule.
  *
- * The category name is deliberately duplicated in isolation-b-assert.spec.ts
- * rather than imported from here: importing a .spec.ts file executes its
- * module body, which would re-register THIS file's own top-level test()
- * call a second time in the importer.
+ * Concurrency is why this publishes a sentinel at the end: the two workers
+ * run at the same time, so without a happens-after edge isolation-b-assert
+ * regularly asserted before this file had created anything, and passed
+ * because nothing existed yet. See isolation-sentinel.ts.
  */
-const ISOLATION_CATEGORY_NAME = 'AC-QA-50 Isolation Leak Probe';
-
-test('mutates global category state and leaves the mutation in place', async ({ page }) => {
+test('mutates global category state and leaves the mutation in place', async ({ page, workerServer }, testInfo) => {
   await page.goto('/settings/');
   await expect(page.locator('h1')).toContainText('Settings');
 
@@ -59,6 +58,14 @@ test('mutates global category state and leaves the mutation in place', async ({ 
   await expect(
     panel.getByRole('button', { name: new RegExp('Delete category: ' + ISOLATION_CATEGORY_NAME, 'i') }),
   ).toBeVisible();
+
+  // Only now -- after the mutation is confirmed present on this worker's
+  // server -- release isolation-b-assert. Publishing any earlier would
+  // hand it the same false green the sentinel exists to close.
+  publishMutation(testInfo.project.outputDir, {
+    baseURL: workerServer.baseURL,
+    parallelIndex: testInfo.parallelIndex,
+  });
 
   // No cleanup. See file header.
 });

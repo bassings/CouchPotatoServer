@@ -91,6 +91,14 @@ export default defineConfig({
       name: 'isolation',
       testMatch: /.*isolation-.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
+      // isolation-b-assert legitimately blocks until its partner, running
+      // on the OTHER worker, has finished creating the category (see
+      // tests/e2e/isolation-sentinel.ts -- without that barrier the pair
+      // passed vacuously). That wait is budgeted at 60s, on top of this
+      // worker's own server start, so the 30s global timeout below cannot
+      // hold it. Deliberately above 60s so a missing partner reports the
+      // sentinel's explanatory message rather than a bare timeout.
+      timeout: 120_000,
     },
     /* Mobile viewport testing */
     {
