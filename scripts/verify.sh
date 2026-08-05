@@ -134,6 +134,12 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # green" for a long time.
   npm run test:e2e -- --project=chromium --fail-on-flaky-tests \
     || fail "E2E tests failed"
+  # AC-QA-50's isolation proof, pinned to 2 workers because it only
+  # demonstrates anything when the mutating and asserting specs land on
+  # different workers. The chromium project above runs at workers: 1
+  # (AC-SIMP-12), so this cannot ride along with it.
+  npm run test:isolation -- --fail-on-flaky-tests \
+    || fail "E2E worker-isolation proof failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed
   # for a long time without anything running it. Scoped by testMatch to

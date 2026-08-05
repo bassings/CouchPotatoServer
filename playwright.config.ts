@@ -21,6 +21,14 @@ export default defineConfig({
   /* Fail the build on CI if you accidentally left test.only in the source code. */
   forbidOnly: !!process.env.CI,
   /* Retry on CI only */
+  // AC-SIMP-12: parallelism was always conditional on the isolated suite
+  // actually being faster AND green. Measured 2026-08-05 on the T1.7
+  // tree: 0 of 5 parallel runs passed, dominated by 'no movie card in
+  // the Wanted grid'. Per-worker isolation cannot remove cross-file
+  // coupling when Playwright runs fewer workers than spec files, so
+  // two coupled specs still share a worker. The isolation lands; the
+  // parallelism does not, until that coupling is fixed.
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
@@ -49,13 +57,39 @@ export default defineConfig({
        * shared seeded movie, so running it here also pollutes the desktop run.
        * The a11y specs have their own project for the same reason.
        */
-      testIgnore: /.*\.(mobile|a11y)\.spec\.ts/,
+      // `isolation-*` is excluded here and runs as its own project below: the
+      // pair only demonstrates anything at >= 2 workers, and this project runs
+      // at workers: 1 (AC-SIMP-12). Left in, isolation-b-assert fails every
+      // run by construction, because with one worker it shares that worker
+      // with isolation-a-mutate and the mutation legitimately reaches it.
+      testIgnore: /.*(\.(mobile|a11y)\.spec|isolation-.*\.spec)\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     /* Accessibility tests project */
     {
       name: 'accessibility',
       testMatch: /.*\.a11y\.spec\.ts/,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      /*
+       * AC-QA-50's direct isolation proof, deliberately its own project.
+       *
+       * isolation-a-mutate creates a category and never deletes it;
+       * isolation-b-assert asserts it is not visible. That demonstrates
+       * something only when the two land on DIFFERENT workers, so it needs
+       * at least 2. The main chromium project runs at workers: 1
+       * (AC-SIMP-12), which is why this cannot simply live there.
+       *
+       * A separate project rather than a conditional skip, because AC-QA-52
+       * measures the suite by test count with 0 skipped. A skip here would
+       * silently retire the only proof that isolation works, which is exactly
+       * the vacuous-guard shape this repo keeps finding in its own suite.
+       *
+       * Run it with `npm run test:isolation` (pins --workers=2).
+       */
+      name: 'isolation',
+      testMatch: /.*isolation-.*\.spec\.ts/,
       use: { ...devices['Desktop Chrome'] },
     },
     /* Mobile viewport testing */

@@ -13,7 +13,8 @@
     "test:a11y": "npx playwright test --project=accessibility",
     "test:lighthouse": "npx lhci autorun",
     "test:mutation": "npx stryker run",
-    "test:all": "npm run test:unit && npm run test:e2e && npm run test:lighthouse"
+    "test:all": "npm run test:unit && npm run test:e2e && npm run test:lighthouse",
+    "test:isolation": "npx playwright test --project=isolation --workers=2"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",

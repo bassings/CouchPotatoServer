@@ -256,7 +256,10 @@ jobs:
     - name: Run E2E tests
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
-      run: npm run test:e2e -- --project=chromium --fail-on-flaky-tests
+      run: |
+        npm run test:e2e -- --project=chromium --fail-on-flaky-tests
+        # AC-QA-50 isolation proof, pinned to 2 workers (see playwright.config.ts)
+        npm run test:isolation -- --fail-on-flaky-tests
 
     # Small-screen coverage. AGENTS.md treats a mobile layout regression that
     # blocks a core flow as high-priority, and the mobile-chrome project sat

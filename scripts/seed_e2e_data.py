@@ -119,6 +119,25 @@ DONE_RELEASE_IMDB_ID = 'tt9999903'
 WANTED_MOVIE_ID = 'e2e-seed-movie-004'
 WANTED_MOVIE_IMDB_ID = 'tt9999904'
 
+#: Two more no-release movies, so the Wanted grid does not depend on a single
+#: document surviving all 135 specs.
+#:
+#: T1.9 made the has_releases filter actually filter, which means the Wanted
+#: page shows ONLY movies with no releases. That left exactly one qualifying
+#: movie (WANTED_MOVIE_ID), so any spec that gave it a release, deleted it or
+#: marked it done emptied the grid for every spec that ran afterwards.
+#: Measured 2026-08-05: 1 failure in 6 full chromium runs, always
+#: "no movie card in the Wanted grid", on a different spec each time.
+#:
+#: Titles must not contain "Wanted" or "Available": those words collide with
+#: filters.spec.ts's accessible-name locators against each card's own buttons
+#: and trip Playwright strict mode (measured, see the comment below).
+WANTED_MOVIE_IDS = (
+    (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E No-Release Movie'),
+    ('e2e-seed-movie-005', 'tt9999905', 'E2E Second No-Release Movie'),
+    ('e2e-seed-movie-006', 'tt9999906', 'E2E Third No-Release Movie'),
+)
+
 #: Two distinct qualities, both present in the seeded profile's `qualities`
 #: list -- otherwise the profile-matching filter in
 #: `couchpotato/ui/__init__.py::_releases_ctx` would hide them (`r.get(
@@ -341,7 +360,7 @@ def seed(data_dir):
               # mode. Measured: e2e-seed-movie-004 titled "E2E Wanted Only
               # Movie" broke filters.spec.ts's "should have filter buttons",
               # "clicking Wanted filter", and "clicking All" tests this way.
-              (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E No-Release Movie', 'active', []),
+              *[(mid, imdb, title, 'active', []) for mid, imdb, title in WANTED_MOVIE_IDS],
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',
