@@ -849,6 +849,264 @@ def test_posix_sh_runner_pipe_is_not_advised_to_use_bash_only_features(tmp_path)
     assert "bash-only" in messages[0], "should say why pipefail isn't the remedy here"
 
 
+# ── Rule 6: vacuous E2E guards ───────────────────────────────────────────────
+#
+# `tests/e2e/**`'s own defect class (T1.4): a Playwright test whose only
+# assertion lives inside `if (await x.isVisible()/count())`, so the test
+# passes whether or not the guard is ever true. AGENTS.md used to ask
+# `lens-qa` to keep re-finding this by hand ("the pattern was removed once in
+# movie-detail.spec.ts and still exists elsewhere") — this rule is what
+# retires that.
+
+
+def _e2e_spec(tmp_path, name="feature.spec.ts"):
+    """A `tests/e2e/<name>` file under tmp_path — `_is_e2e_spec` requires an
+    actual `e2e` path segment, so every test in this section needs one."""
+    e2e_dir = tmp_path / "tests" / "e2e"
+    e2e_dir.mkdir(parents=True, exist_ok=True)
+    return e2e_dir / name
+
+
+def test_flags_expect_inside_an_isvisible_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows a thing', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    line_no, message = findings[0]
+    assert line_no == 3, "should point at the `if` line, not the expect() line"
+    assert "expect(" in message
+    assert "isVisible" in message or "count" in message
+
+
+def test_flags_expect_inside_a_count_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) {\n"
+        "    expect(await cards.count()).toBeGreaterThan(0);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 3
+
+
+def test_does_not_flag_an_assertion_outside_the_guard(tmp_path):
+    """The real defect this rule targets is the assertion living INSIDE the
+    guard with nothing outside it — checkNoErrors-style patterns (an
+    assertion that always runs, with an unrelated action inside the guard)
+    are exactly what T1.4 decided were NOT vacuous."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks if present', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "  expect(errors).toHaveLength(0);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_does_not_flag_a_guard_with_no_expect_at_all(tmp_path):
+    """A click-only guard with zero assertions anywhere is a real defect too
+    (T1.4 fixed several by hand), but it is a DIFFERENT shape than this rule
+    covers -- catching it needs knowing whether the whole enclosing test()
+    asserts anything anywhere, not just this block. Out of scope by design,
+    documented in check_e2e_spec_guards' own docstring."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks if present', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_opt_out_with_a_reason_is_not_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok: only rendered for a fixture this suite cannot produce.\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_opt_out_with_no_reason_is_itself_flagged(tmp_path):
+    """A bare `vacuous-guard-ok:` with nothing after the colon is
+    indistinguishable from silencing the check -- exactly the false-green
+    this rule exists to prevent, so it must be flagged too."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok:\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "no reason" in findings[0][1]
+
+
+def test_opt_out_with_only_whitespace_after_the_colon_is_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok:    \n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "no reason" in findings[0][1]
+
+
+def test_opt_out_must_be_on_the_guards_own_line(tmp_path):
+    """A comment elsewhere (even the line above) does not count -- "near the
+    guard" is not something the next edit can reliably preserve."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  // vacuous-guard-ok: this comment is one line too early\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "vacuous-guard-ok" in findings[0][1]
+
+
+def test_finds_the_matching_close_brace_across_nested_braces(tmp_path):
+    """The guard body contains its own nested braces (an object literal, an
+    arrow function) before the expect() -- the close-brace scan must not
+    stop at the first `}` it sees."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('nested', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await page.route('**/x', route => route.fulfill({ status: 200 }));\n"
+        "    const opts = { a: 1, b: { c: 2 } };\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 3
+
+
+def test_expect_after_the_guard_closes_is_not_pulled_in(tmp_path):
+    """A close-brace scan that overshoots would treat a LATER, unrelated
+    expect() as belonging to this guard and wrongly excuse it, or double
+    count it against the wrong guard."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('two guards', async ({ page }) => {\n"
+        "  const a = page.locator('a');\n"
+        "  if (await a.isVisible()) {\n"
+        "    await a.click();\n"
+        "  }\n"
+        "  const b = page.locator('b');\n"
+        "  if (await b.count() > 0) {\n"
+        "    await expect(b).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 7, "should point at the second guard (b), not the first (a)"
+
+
+def test_a_commented_out_guard_is_not_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('x', async ({ page }) => {\n"
+        "  // if (await btn.isVisible()) { expect(btn).toBeVisible(); }\n"
+        "  expect(1).toBe(1);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_helpers_ts_is_in_scope_not_only_spec_files(tmp_path):
+    """AC-QA-42 scopes this to every file under tests/e2e/**, not only
+    *.spec.ts -- a guard like this could land in a shared helper just as
+    easily as in a spec (e.g. tests/e2e/helpers.ts)."""
+    helper = _e2e_spec(tmp_path, name="helpers.ts")
+    helper.write_text(
+        "export async function maybeClick(page) {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    expect(await btn.isEnabled()).toBe(true);\n"
+        "  }\n"
+        "}\n"
+    )
+
+    findings = findings_for(helper)
+    assert len(findings) == 1, findings
+
+
+def test_a_ts_file_outside_tests_e2e_is_not_scanned_by_this_rule(tmp_path):
+    """Scope check: the identical pattern in a non-e2e file is not this
+    rule's concern (jsdom geometry aside, Rule 1 already covers vitest specs
+    on their own terms)."""
+    other = tmp_path / "tests" / "unit" / "ui" / "widget.spec.ts"
+    other.parent.mkdir(parents=True)
+    other.write_text(
+        "it('x', () => {\n"
+        "  if (someCondition()) {\n"
+        "    expect(1).toBe(1);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(other) == []
+
+
+def test_checker_is_clean_on_tests_e2e_under_rule_6():
+    result = run_checker(REPO_ROOT / "tests" / "e2e")
+    assert result.returncode == 0, (
+        f"check_test_traps.py rule 6 is not clean on tests/e2e:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+
+
 # ── Whole-tree behaviour ────────────────────────────────────────────────────
 
 
@@ -894,6 +1152,7 @@ def test_default_roots_all_exist_and_are_covered():
     for expected in (
         REPO_ROOT / "tests" / "unit" / "test_check_test_traps.py",
         REPO_ROOT / "tests" / "unit" / "ui" / "movie-filter.spec.ts",  # nested
+        REPO_ROOT / "tests" / "e2e" / "interactions.e2e.spec.ts",  # rule 6's target set
         REPO_ROOT / "scripts" / "verify.sh",
         REPO_ROOT / "scripts" / "release" / "next_beta_version.py",  # nested
         REPO_ROOT / ".githooks" / "pre-push",

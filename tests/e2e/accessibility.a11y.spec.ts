@@ -547,7 +547,7 @@ test.describe('Accessibility', () => {
     await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 20000 });
 
     const trigger = page.locator('[data-testid="restore-to-wanted"]');
-    if ((await trigger.count()) === 0) {
+    if ((await trigger.count()) === 0) { // vacuous-guard-ok: primes the shared FEAT-008 fixture into 'done' status if an earlier spec has not already -- suite ordering, not something this test controls; the block's own assertions (Mark as Done becomes visible, then the restore trigger) are real either way.
       const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDone).toBeVisible({ timeout: 5000 });
       await markDone.click();

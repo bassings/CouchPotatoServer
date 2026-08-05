@@ -275,7 +275,7 @@ test.describe('Add Movie Page', () => {
     await waitForPageReady(page);
 
     const addBtn = page.locator('button:has-text("Add")').first();
-    if (await addBtn.isVisible({ timeout: 5000 })) {
+    if (await addBtn.isVisible({ timeout: 5000 })) { // vacuous-guard-ok: this search is real/unmocked (unlike search.spec.ts), so a result -- and its Add button -- is not guaranteed; checkNoErrors below is the assertion that always runs.
       await addBtn.click();
       await page.waitForTimeout(2000);
       
@@ -583,7 +583,7 @@ test.describe('Settings Page', () => {
 
     // Click first visible Test button
     const testBtn = page.locator('button:has-text("Test")').first();
-    if (await testBtn.isVisible({ timeout: 3000 })) {
+    if (await testBtn.isVisible({ timeout: 3000 })) { // vacuous-guard-ok: whether a Test button exists at all depends on which searcher providers are registered, which this test does not control; checkNoErrors below is the assertion that always runs.
       const responsePromise = page.waitForResponse(
         resp => resp.url().includes('test'),
         { timeout: 15000 }

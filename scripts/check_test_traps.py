@@ -56,7 +56,7 @@ Checks performed:
   5. **Orphaned test files.** A tracked file named ``test_*.py`` (pytest.ini's
      own ``python_files`` convention) that no pytest invocation in
      ``scripts/verify.sh`` or ``.github/workflows/ci.yml`` actually executes.
-     Not hypothetical either: ``tests/integration/`` sat exactly like this , 
+     Not hypothetical either: ``tests/integration/`` sat exactly like this ,
      "covered" by ``pytest.ini``'s ``testpaths = tests`` on paper, invoked by
      no runner in practice: until the PR that added this rule also wired it
      in. Deliberately keyed on the **runner invocations themselves**, not on
@@ -68,6 +68,22 @@ Checks performed:
      comment-required ``ORPHAN_ALLOWLIST`` for files that are deliberately
      local-only by design (``tests/local/test_real_database.py``, gated on a
      39 MB machine-local backup that will never exist in CI).
+
+  6. **Vacuous E2E guards.** ``expect(`` inside an
+     ``if (await x.isVisible()/count()) { ... }`` block under ``tests/e2e/**``
+     — that shape lets a Playwright test pass while asserting nothing, because
+     the guard can be false with nothing outside it to catch the gap (T1.4,
+     AGENTS.md's ``lens-qa`` note: "the pattern was removed once in
+     ``movie-detail.spec.ts`` and still exists elsewhere" — this rule retires
+     the need for a human to keep re-finding it). Opt out with a same-line
+     trailing comment, ``// vacuous-guard-ok: <reason>``, for a guard whose
+     precondition is genuinely outside the test's control (a fixture gap, an
+     environment-dependent provider state) rather than something the test
+     could make unconditional — see ``movie-detail.spec.ts``'s "Mark Failed &
+     Re-search requires confirmation when shown" for a real example. The
+     opt-out itself is checked: present with no text after the colon, it is
+     flagged too, so ``// vacuous-guard-ok:`` cannot become a silent universal
+     bypass.
 
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
@@ -112,6 +128,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_ROOTS = [
     REPO_ROOT / "tests" / "unit",
+    REPO_ROOT / "tests" / "e2e",
     REPO_ROOT / "scripts",
     REPO_ROOT / ".githooks",
     REPO_ROOT / ".github" / "workflows",
@@ -746,6 +763,128 @@ def check_orphaned_test_files(
         )
 
 
+# ── Rule 6: vacuous E2E guards ───────────────────────────────────────────────
+
+# AC-QA-42 scopes this to "under tests/e2e/**" — every `.ts`/`.js` file
+# there, not only `*.spec.ts`: `helpers.ts` is exactly the kind of file a
+# guard like this could land in via a shared helper, and a rule that only
+# looked at spec files would miss it.
+E2E_FILE_SUFFIXES = (".ts", ".js")
+
+# A guard line: `if (`, an `await`, a call to `.isVisible(` or `.count(`
+# somewhere in the condition, and the block opens on the SAME physical line
+# (the codebase's own uniform style — every real instance found while writing
+# this rule looked like `if (await x.isVisible()) {`). A condition split
+# across lines is a false negative, same trade-off Rule 1 makes for
+# same-file/same-property: catching the real, common shape beats chasing every
+# way JS could theoretically be formatted.
+GUARD_CONDITION_RE = re.compile(r"\bif\s*\(.*\bawait\b.*\.(?:isVisible|count)\s*\(")
+
+# A trailing comment naming why this specific guard cannot be made
+# unconditional. Must be on the SAME line as the `if` (where every opt-out
+# written for T1.4 puts it) — a comment three lines away could belong to
+# anything, and "near the guard" is not a check the next edit can rely on.
+OPT_OUT_RE = re.compile(r"//\s*vacuous-guard-ok:\s*(.*)$")
+
+EXPECT_CALL_RE = re.compile(r"\bexpect\s*\(")
+
+
+def _is_e2e_spec(path: Path) -> bool:
+    if not path.name.endswith(E2E_FILE_SUFFIXES):
+        return False
+    return "e2e" in {part.lower() for part in path.parts}
+
+
+def _is_guard_if_line(line: str) -> bool:
+    """A comment-stripped line that opens an isVisible()/count() guard block."""
+    stripped = line.rstrip()
+    if not stripped.endswith("{"):
+        return False
+    return bool(GUARD_CONDITION_RE.search(stripped))
+
+
+def _find_matching_brace(cleaned_lines: list[str], start_idx: int) -> int:
+    """Index of the line whose `}` closes the `{` ending ``cleaned_lines[start_idx]``.
+
+    Heuristic brace counting over comment-stripped source, same trade-off as
+    the rest of this file: it does not additionally blank out string-literal
+    contents, so a `{`/`}` character inside a JS string could in principle
+    miscount. Every real guard body in this suite is plain Playwright
+    calls and `expect(...)` assertions with no such string, so this is
+    accepted rather than building a full parser for it.
+    """
+    depth = 0
+    for idx in range(start_idx, len(cleaned_lines)):
+        line = cleaned_lines[idx]
+        segment = line if idx != start_idx else line[line.rfind("{"):]
+        for ch in segment:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return idx
+    return len(cleaned_lines) - 1
+
+
+def check_e2e_spec_guards(path: Path, text: str):
+    """Rule 6: ``expect(`` inside an ``if (await x.isVisible()/count())`` guard.
+
+    That shape lets a Playwright test pass while asserting nothing: the guard
+    can resolve false with no assertion outside it to catch the gap. Scans
+    comment-stripped lines (``strip_js_comments``, shared with Rule 1) for a
+    guard line, finds its matching closing brace, and flags any ``expect(``
+    strictly between them — UNLESS the guard's own line carries a same-line
+    ``// vacuous-guard-ok: <reason>`` comment, checked against the RAW (not
+    comment-stripped) line, with a non-empty reason after the colon.
+
+    Deliberately does not flag a guard with NO ``expect(`` inside it at all
+    (a click-only conditional): that is a different, harder-to-detect shape
+    (it requires knowing whether the enclosing `test(...)` asserts anything
+    ANYWHERE, not just within this block) and is out of this rule's scope —
+    T1.4 fixed those by hand; this rule guards against the shape regressing,
+    which is the ``expect(`` case.
+    """
+    raw_lines = text.split("\n")
+    cleaned_lines = strip_js_comments(text)
+
+    for idx, line in enumerate(cleaned_lines):
+        if not _is_guard_if_line(line):
+            continue
+
+        close_idx = _find_matching_brace(cleaned_lines, idx)
+        body = "\n".join(cleaned_lines[idx + 1:close_idx])
+        if not EXPECT_CALL_RE.search(body):
+            continue
+
+        line_no = idx + 1
+        raw_line = raw_lines[idx] if idx < len(raw_lines) else ""
+        opt_out = OPT_OUT_RE.search(raw_line)
+
+        if opt_out is None:
+            yield (
+                line_no,
+                "expect( inside an `if (await ...isVisible()/count())` guard -- "
+                "this can pass while asserting nothing, if the guard is ever "
+                "false. Make the precondition unconditional if it is actually "
+                "guaranteed, assert both branches if it is not, or opt out with "
+                "a same-line `// vacuous-guard-ok: <reason>` comment if the "
+                "guard is genuinely outside this test's control.",
+            )
+            continue
+
+        reason = opt_out.group(1).strip()
+        if not reason:
+            yield (
+                line_no,
+                "`// vacuous-guard-ok:` opt-out has no reason after the colon -- "
+                "a bare opt-out is indistinguishable from silencing the check, "
+                "which is the exact false-green this rule exists to prevent. "
+                "Say why the guard cannot be made unconditional or assert both "
+                "branches instead.",
+            )
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -759,6 +898,8 @@ def check_file(path: Path):
 
     if _is_vitest_spec(path):
         yield from check_vitest_spec(path, text)
+    elif _is_e2e_spec(path):
+        yield from check_e2e_spec_guards(path, text)
     elif path.name == "Makefile" or path.name.endswith(".mk"):
         yield from check_makefile(path, text)
     elif path.name.endswith(WORKFLOW_SUFFIXES):

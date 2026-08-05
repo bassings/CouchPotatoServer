@@ -180,10 +180,10 @@ test.describe('Quality Profiles', () => {
     const qualityItems = modal.locator('[role="listitem"]');
     await expect(qualityItems.first()).toBeVisible();
 
-    if (await qualityItems.count() >= 2) {
+    if (await qualityItems.count() >= 2) { // vacuous-guard-ok: reordering needs at least 2 qualities in the profile being edited, which this test does not control.
       const firstLabel = await qualityItems.first().locator('span.flex-1').textContent();
       const moveDownBtns = modal.getByRole('button', { name: /quality down/i });
-      if (await moveDownBtns.count() > 0) {
+      if (await moveDownBtns.count() > 0) { // vacuous-guard-ok: nested under the >= 2 qualities guard above for the same reason.
         await moveDownBtns.first().click();
         // The previously-first quality should no longer be first.
         await expect(qualityItems.first().locator('span.flex-1')).not.toHaveText(firstLabel || '');
