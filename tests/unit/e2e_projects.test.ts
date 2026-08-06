@@ -133,8 +133,19 @@ function declaredProjects(): string[] {
   // seen. The first version anchored on `^      name: '…',$`, so a trailing
   // comment or a reformat made a project invisible and the guard silently
   // stopped covering it.
-  const source = read('playwright.config.ts');
-  return [...source.matchAll(/^\s*name:\s*['"]([^'"]+)['"]\s*,/gm)].map((m) => m[1]);
+  //
+  // stripComments FIRST, and for the same reason projectLiteralCount does it:
+  // the two must read the SAME text or their counts cannot be compared. When
+  // this one read the raw source, block-commenting a project out -- an
+  // ordinary thing to do while chasing a flake -- counted as a name but not
+  // as a literal, so the cross-check below fired on a correct config and told
+  // the reader to go looking for an unreadable project name that did not
+  // exist. A blocking gate crying wolf, which is what this file's own
+  // sibling rule warns teaches people to bypass it.
+  //
+  // The key may be quoted (`"name": 'x'`); JSON-ish spellings are legal TS.
+  const source = stripComments(read('playwright.config.ts'));
+  return [...source.matchAll(/^\s*["']?name["']?\s*:\s*['"`]([^'"`]+)['"`]\s*,/gm)].map((m) => m[1]);
 }
 
 describe('Playwright project coverage', () => {

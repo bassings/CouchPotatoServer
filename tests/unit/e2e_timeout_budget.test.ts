@@ -71,7 +71,11 @@ function projectTimeouts(): number[] {
     .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
     .replace(/expect:\s*\{[^}]*\}/s, '');
 
-  const all = [...source.matchAll(/^\s*timeout:\s*([0-9_]+)\s*,?/gm)].map((m) => toNumber(m[1]));
+  // The key may be quoted: `"timeout": 15000` is legal TS, and a spelling
+  // invisible to BOTH the value regex and the key count below would slip
+  // through unchecked -- the cross-check only helps if the two disagree.
+  const all = [...source.matchAll(/^\s*["']?timeout["']?\s*:\s*([0-9_]+)\s*,?/gm)]
+    .map((m) => toNumber(m[1]));
   expect(all.length, 'no `timeout:` found in playwright.config.ts').toBeGreaterThan(0);
 
   // Cross-check: every `timeout:` key in the code must have been READ, not
@@ -80,7 +84,7 @@ function projectTimeouts(): number[] {
   // silently -- and a skipped timeout is one that can sit under the readiness
   // budget with this guard green, which is the entire failure this file
   // exists to prevent. Counting keys cannot make that mistake.
-  const keys = [...source.matchAll(/\btimeout\s*:/g)].length;
+  const keys = [...source.matchAll(/["']?\btimeout\b["']?\s*:/g)].length;
   expect(
     all.length,
     `playwright.config.ts has ${keys} \`timeout:\` key(s) outside the expect ` +

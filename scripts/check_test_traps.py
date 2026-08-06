@@ -502,7 +502,6 @@ def check_shell_script(path: Path, text: str):
             strip_shell_comments(ln, blank_strings=True)
             for ln in lines if re.search(r"(?:^|[;&|])\s*set\s+-", ln)
         ]
-        set_lines = " ".join(set_lines_list)
         # Tokenised rather than pattern-matched against the whole line.
         # Two false positives on correct scripts, both from a BLOCKING gate,
         # and both because the old regexes anchored on `set -<cluster>`:
