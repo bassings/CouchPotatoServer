@@ -9,20 +9,42 @@ A table is the fix. Any change to the routing or the body slice is now scored
 against all of these at once, which is what surfaced shape 23 -- a false
 positive no individual test could see.
 
-Wrong-answer counts measured against this table, so a future edit can tell
-improvement from drift. Each is a real spelling this rule shipped at some
-point in review rounds 3 to 7:
+Wrong-answer counts, RE-DERIVED at round 8 by scoring this table against the
+actual historical files from git (`git show <sha>:scripts/check_test_traps.py`)
+and against one-line variants of the shipped file. Reproduce, do not trust:
 
-    shipped (LAST block opener on the line)   0 / 25
-    first block opener on the line            1 / 25   <- shape 23
-    line.index("{")                           3 / 25
-    line.rfind("{")                           3 / 25
-    gated on `not opens_block`                5 / 25
-    no inline slice at all                   16 / 25
+    shipped                                    0 / 30
+    4a8e9d00  round 6, first `){`              1 / 30   shape 23
+    d9c70c83  round 7, last `){`               3 / 30   shapes 26-28
+    dc4fdab5  round 4                          2 / 30
+    65ca81f7  round 5                          5 / 30
+    eada3f1b  round 3                         16 / 30
+    cd180e05  round 2                         16 / 30
+    9c11c598  original                        17 / 30
+
+    one-line variants of the shipped file:
+      take the LAST `){` instead of the first   3 / 30   shapes 26-28
+      skip the string blanking                  1 / 30   shape 23
+      routing forced to the indentation scan    2 / 30   shapes 29-30
+
+An earlier version of this table recorded 3/3/5/16 for four of these. Those
+were wrong, and wrong in an instructive way: they came from applying
+reconstructed slice spellings to the CURRENT file, producing hybrids that
+never shipped, rather than from the historical files themselves. 16 is not
+merely inaccurate, it is unreachable -- no version this rule ever shipped
+scores worse than 17, and none of the slice spellings scores worse than 3.
+If you change this table, score against `git show`, not against a
+reconstruction.
 
 Shapes with an expected count of 0 are as important as the 1s: a rule whose
 documented remedy for a false positive is an opt-out comment teaches people to
 silence it, which is worse than the vacuity it was written to catch.
+
+Two kinds of expected-0 live here and they are NOT the same. Most are correct
+silence. Shape 20 is a known BLIND SPOT, named as such: it is a genuinely
+vacuous guard the rule cannot see. If a future change makes shape 20 report 1,
+that is GOOD NEWS and the table should be updated -- not a regression to
+revert. Any shape whose name says BLIND SPOT carries that contract.
 """
 
 # Every shape is a whole spec file, so the checker sees what it sees in the
@@ -132,7 +154,7 @@ SHAPES = [
   "    await c.click();\n"
   "  }\n" + E, 1),
 
- ("20 multi-line condition (documented blind spot)", T +
+ ("20 multi-line condition (BLIND SPOT: expected 0 until fixed)", T +
   "  const c = page.locator('.card');\n"
   "  if (\n"
   "    await c.count() > 0\n"
@@ -165,4 +187,55 @@ SHAPES = [
   "  if (await c.count() > 0) { await expect(c).toBeVisible();\n"
   "    await c.screenshot({ path: 'x.png' });\n"
   "  }\n" + E, 1),
+
+ # --- added at review round 8 -------------------------------------------
+ # 26-29: a NESTED block opener after the assertion on the guard line. The
+ # "take the last `){`" spelling went silent on all four; none of the 25
+ # shapes above could see it, so the table scored 0/25 on the round that
+ # introduced the regression.
+ ("26 nested if on the guard line, expect before it, one-liner", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) { await expect(c).toBeVisible(); if (1 > 0) { await c.click(); } }\n" + E, 1),
+
+ ("27 nested if on the guard line, block closes later", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) { await expect(c).toBeVisible(); if (1 > 0) {\n"
+  "      await c.click();\n"
+  "    }\n"
+  "  }\n" + E, 1),
+
+ ("28 for-loop opener on the guard line after the expect", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) { await expect(c).toBeVisible(); for (let i = 0; i < 2; i++) { await c.click(); } }\n" + E, 1),
+
+ # 29-30: the rule's PRIMARY false-positive risk and its own recommended
+ # remedy. Forcing the routing to always use the enclosing-block scan scored
+ # 0/25 on the original table, so the corpus did not cover the routing at all
+ # despite claiming to.
+ ("29 one-line click-only guard, unconditional expect on the NEXT line", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) { await c.click(); }\n"
+  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 0),
+
+ ("30 braced click-only guard, expect after the closing brace", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) {\n"
+  "    await c.click();\n"
+  "  }\n"
+  "  await expect(page.locator('h1')).toBeVisible();\n" + E, 0),
+
+ # 31-32: the rule's OWN recommended remedy. Its message says "assert both
+ # branches if it is not", and it used to flag exactly that, so two live
+ # opt-outs in this suite existed only to silence the rule for complying.
+ ("31 both branches assert, one-liner", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) { await expect(c).toBeVisible(); } else { await expect(c).toHaveCount(0); }\n" + E, 0),
+
+ ("32 both branches assert, multi-line", T +
+  "  const c = page.locator('.card');\n"
+  "  if (await c.count() > 0) {\n"
+  "    await expect(c).toBeVisible();\n"
+  "  } else {\n"
+  "    await expect(c).toHaveCount(0);\n"
+  "  }\n" + E, 0),
 ]

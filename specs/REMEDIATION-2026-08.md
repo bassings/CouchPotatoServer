@@ -971,7 +971,9 @@ list is how the harness improves rather than merely runs:
     not its robustness across spellings.~~ The corpus is checked in at
     `tests/unit/rule6_guard_corpus.py` and scored by a parametrised test, with
     the wrong-answer count of every previous spelling recorded in its
-    docstring (1, 2, 2, 4, 12 out of 25 -- the shipped one is now 0). It
+    docstring, re-derived at round 8 against the real historical files
+    rather than reconstructions (shipped 0/30; the seven shipped versions
+    score 1, 2, 3, 5, 16, 16, 17). It
     earned its place on the first run by catching a false positive no
     individual test could see. Original text:
     **`AC-QA-42` pins Rule 6's semantics but not its robustness across

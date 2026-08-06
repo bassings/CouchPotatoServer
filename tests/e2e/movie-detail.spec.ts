@@ -225,7 +225,7 @@ test.describe('Movie Detail', () => {
     // fire -- and it turns into real, load-bearing coverage the day a
     // fixture exists for the 'downloaded' state.
     const markFailedButton = page.getByRole('button', { name: /mark failed\s*&\s*re-search/i });
-    if (await markFailedButton.count() > 0) { // vacuous-guard-ok: structurally unreachable without a 'downloaded'-status fixture (see coverage-gap comment above); the else branch below asserts the always-true case for real.
+    if (await markFailedButton.count() > 0) {
       let dialogMessage: string | null = null;
       page.once('dialog', async (dialog) => {
         dialogMessage = dialog.message();
@@ -252,7 +252,7 @@ test.describe('Movie Detail', () => {
     // branch is what actually runs and asserts something real every time
     // (vacuous-guard-ok, T1.4/AC-QA-42).
     const releaseMarkFailedButton = page.getByRole('button', { name: 'Mark failed', exact: true });
-    if (await releaseMarkFailedButton.count() > 0) { // vacuous-guard-ok: structurally unreachable without a 'downloaded'-status release fixture (see coverage-gap comment above); the else branch asserts the always-true case.
+    if (await releaseMarkFailedButton.count() > 0) {
       let dialogMessage: string | null = null;
       page.once('dialog', async (dialog) => {
         dialogMessage = dialog.message();

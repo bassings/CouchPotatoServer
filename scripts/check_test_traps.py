@@ -976,6 +976,54 @@ def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
     )
 
 
+def _else_branch_asserts(cleaned_lines: list[str], close_idx: int,
+                         search_from: int = 0) -> bool:
+    """Does the `else` attached to the guard closing at `close_idx` assert?
+
+    If it does, the test cannot pass while asserting nothing, which is the
+    whole property this rule protects -- and "assert both branches" is what
+    the rule's own message recommends. Flagging it anyway meant live opt-outs
+    existed purely to silence the rule for complying with its own advice.
+
+    Two constraints, both learned by getting them wrong:
+
+    - The `else` must follow the guard's CLOSING brace (`search_from` is the
+      offset just past the guard's opening brace on a one-liner). Searching
+      the whole line matched a guard's own `} else if (...)` prefix and read
+      the guard's assertion as the else branch's.
+    - The body is sliced from the ELSE's brace, not the line's first. On a
+      one-liner the guard's own `{` comes first.
+
+    Approximate, like the rest of this rule. A false negative only leaves the
+    guard flagged, which the written opt-out already handles.
+    """
+    if close_idx >= len(cleaned_lines):
+        return False
+
+    segment = cleaned_lines[close_idx][search_from:]
+    match = re.search(r"\}\s*else\b", segment)
+    if match:
+        rest, base_idx = segment[match.end():], close_idx
+    else:
+        # `}` and `else` on separate lines.
+        if close_idx + 1 >= len(cleaned_lines):
+            return False
+        nxt = cleaned_lines[close_idx + 1]
+        head = re.match(r"^\s*else\b", nxt)
+        if not head:
+            return False
+        rest, base_idx = nxt[head.end():], close_idx + 1
+
+    if "{" not in rest:
+        return bool(EXPECT_CALL_RE.search(rest))
+
+    else_close = _find_matching_brace(cleaned_lines, base_idx)
+    body = rest[rest.index("{") + 1:] + "\n" + "\n".join(
+        cleaned_lines[base_idx + 1:else_close]
+    )
+    return bool(EXPECT_CALL_RE.search(body))
+
+
 def _end_of_enclosing_block(cleaned_lines: list[str], start_idx: int) -> int:
     """First line STRICTLY LESS indented than `start_idx`: where its block ends.
 
@@ -1072,13 +1120,27 @@ def check_e2e_spec_guards(path: Path, text: str):
         # while template literals already appear in two locator calls in this
         # suite.
         opens_block = line.count("{") > line.count("}")
-        # The LAST `){` on the line, not the first. A condition can contain a
-        # literal `){` inside a string -- comment stripping does not blank
-        # string contents -- and taking the first match then slices from
-        # inside the condition and drags its text into the body, producing a
-        # false positive on correct code. The block opener is the last one.
-        _inline_matches = list(re.finditer(r"\)\s*\{", line))
-        inline_block = _inline_matches[-1] if _inline_matches else None
+        # Blank STRING CONTENTS first, then take the FIRST `){`.
+        #
+        # Taking the last match was the previous attempt, and it traded a
+        # false positive for a false-negative class: a nested block opener
+        # after the assertion on the guard line (`if (...) { await expect(x);
+        # if (n > 1) { ... } }`) made the slice start past the `expect(`, so
+        # the rule went silent on a genuinely vacuous guard. Wrong direction
+        # for a false-green gate.
+        #
+        # The root cause of both is that `strip_js_comments` does not blank
+        # string contents -- its own docstring says so -- so a literal `){`
+        # inside a selector looked like a block opener. Blanking the contents
+        # removes that without inventing a new heuristic, and the first match
+        # is then genuinely the block opener. Length is preserved so the
+        # offsets still index the real line.
+        _blanked = re.sub(
+            r"'[^']*'|\"[^\"]*\"|`[^`]*`",
+            lambda m: m.group(0)[0] + "-" * (len(m.group(0)) - 2) + m.group(0)[-1],
+            line,
+        )
+        inline_block = re.search(r"\)\s*\{", _blanked)
         if opens_block or inline_block:
             close_idx = _find_matching_brace(cleaned_lines, idx)
         else:
@@ -1094,9 +1156,8 @@ def check_e2e_spec_guards(path: Path, text: str):
         # joined slice below is empty -- the rule saw nothing in the most
         # compact spelling of the very shape it exists to catch.
         #
-        # Sliced from the LAST `){` on the line -- the block opener unless the
-        # condition contains a literal `){`, which the corpus in
-        # tests/unit/rule6_guard_corpus.py pins as shape 23. NOT `index("{")`,
+        # Sliced from the first `){` on the string-blanked line, which is the
+        # block opener. NOT `index("{")`,
         # which picks up the condition's own brace (a template literal), and
         # NOT `rfind("{")`, which misses an `expect(` preceding a nested
         # object literal.
@@ -1109,6 +1170,18 @@ def check_e2e_spec_guards(path: Path, text: str):
         inline_body = line[inline_block.end():] if inline_block else ""
         body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
         if not EXPECT_CALL_RE.search(body):
+            continue
+
+        # If the ELSE branch also asserts, the test cannot pass while
+        # asserting nothing, which is the whole property this rule protects.
+        # The rule used to flag it anyway -- while its own message recommended
+        # exactly that remedy ("assert both branches if it is not"), so two of
+        # the suite's live opt-outs existed purely to silence the rule for
+        # complying with its own advice. Every opt-out spent on a compliant
+        # pattern devalues the ones spent on genuine exceptions.
+        if _else_branch_asserts(
+                cleaned_lines, close_idx,
+                search_from=inline_block.end() if (inline_block and close_idx == idx) else 0):
             continue
 
         line_no = idx + 1

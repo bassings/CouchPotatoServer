@@ -442,7 +442,28 @@ destination, and the only other copy is deleted. So:
    unblock the RETRY. Returning True hands `_moveRenamedFiles` permission to
    delete the source folder, which is the whole mechanism T1.8 exists to
    guard. Unblocking a retry is safe; declaring the move done is not.
-3. **The comparison has THREE outcomes, not two: same, different, and
+3. **Establish that `old` and `dest` are DIFFERENT FILES before comparing
+   anything.** Content equality is necessary and not sufficient; identity is
+   the disqualifier. Measured with all the other constraints in place and a
+   library entry that is a symlink back to the download: the comparison opens
+   `dest`, follows the link to `old`, reports SAME, and the resume path
+   unlinks `old`.
+
+   ```
+   BEFORE real files: 1
+   moveFile returned: True
+   AFTER  source lexists: False
+   AFTER  dest lexists: True   isfile: False     <- dangling symlink
+   AFTER  real files remaining: []               <- THE FILM IS GONE
+   ```
+
+   A hardlink gives the same verdict, and `link` is the shipping
+   `file_action` while `default_file_action` is a separate setting, so
+   `link`-then-`move` is an ordinary configuration. Use `os.path.samefile`,
+   or `st_dev`+`st_ino` via `os.lstat`, and refuse to resume when they are
+   the same file or when `dest` is a symlink. Today's `os.path.lexists(dest)`
+   refusal is `lexists` precisely because symlinks reach that line.
+4. **The comparison has THREE outcomes, not two: same, different, and
    cannot tell.** Only *different* may authorise removing the destination.
    A helper that returns a bool collapses cannot-tell into different, and
    that re-creates the AC-DATA-6 defect: measured, the source-vanished race
@@ -460,6 +481,16 @@ Note also what the sketch silently broke in that run: `symlink(dest, old)`
 then raises `FileExistsError` and is swallowed, so the reverse symlink is
 never created. This entry's stated harm is "a seeding path never restored";
 the naive remedy turns that into "the seed is deleted".
+
+**The retry is blocked at TWO levels, and a fix that only addresses one is
+inert.** `moveFile`'s `lexists` refusal is the second; the first is
+`_moveRenamedFiles`'s own `os.path.exists(dst)` skip in `renamer/main.py`.
+Measured: driving the poisoned state through the real `_moveRenamedFiles`
+never calls `moveFile` at all, so a remedy satisfying every constraint above
+changes nothing for the user while the unit-level tripwire goes green. The
+obvious next step -- relax the caller skip -- is exactly what makes
+constraints 3 and 4 load-bearing rather than theoretical. Handle both in one
+change, and put the closure condition at the `_moveRenamedFiles` level.
 
 That is a behaviour change on the renamer's most destructive path and belongs
 in its own change with its own criteria, not as a fifth patch inside a
@@ -479,6 +510,25 @@ upgrade replacement, which adds a delete to this path. "The library copy is
 complete but the run reported failure" is a much worse question once
 something is deleting on the strength of that answer. **Close this before
 PR 4 touches `moveFile`.**
+
+### Recorded at the eighth review round (2026-08-06)
+
+**`Suggestions Page > tabs switch content` asserts that nothing crashed, not
+that anything switched.** `tests/e2e/interactions.e2e.spec.ts` clicks each tab
+and finishes on `checkNoErrors`, so it passes if clicking a tab does nothing
+at all. Both panels are `x-show`-driven and observable, so a real assertion is
+available. Pre-existing, and the sibling of an AC that is already satisfied
+(`AC-QA-40`), which is why it does not block this branch. Recorded because it
+has been raised in three separate review rounds with no home, and an
+unrecorded finding costs a round every time it is rediscovered -- the same
+lesson as spec gap 27.
+
+**Rule 6 has known blind spots, and the corpus now distinguishes them from
+correct silence.** `tests/unit/rule6_guard_corpus.py` shape 20 (a vacuous
+guard written with a multi-line condition) expects 0 because the rule cannot
+see it, not because silence is right. Any shape whose name says BLIND SPOT
+carries that contract: if a future change makes it report 1, that is good news
+and the table should be updated, not reverted.
 
 ## Lessons learned
 

@@ -736,6 +736,54 @@ class TestT18DataLossFixes:
         monkeypatch.setattr(os, 'unlink', real_unlink)
         _move(plugin, tmp_path, str(old), str(dest))
 
+        # ASSERT THE END STATE, not merely that the retry did not raise.
+        # Measured: a deliberately bad fix that unblocks the retry by
+        # `os.unlink(dest)` -- deleting whatever sits at the library path --
+        # XPASSed this test exactly as a safe fix does. Its pass condition was
+        # "nothing was raised", which is green for the whole family of
+        # remedies that are correct at the call they fix and destructive at
+        # the end state. That family is what rounds 2, 4 and 6 each shipped.
+        assert dest.read_bytes() == DOWNLOAD, 'the retry must land the source bytes'
+        assert not os.path.lexists(old), 'a completed move must consume the source'
+
+    @pytest.mark.xfail(strict=True, reason=(
+        'Second half of the deferral, and the half a naive fix gets wrong: '
+        'unblocking the retry must not be done by removing whatever is at the '
+        'destination. Same deferral as above; see docs/technical-debt.md.'
+    ))
+    def test_unblocking_the_retry_must_not_delete_a_different_file_at_the_destination(
+            self, tmp_path, monkeypatch):
+        """One fixture cannot tell a safe resume from a destructive one.
+
+        The sibling above proves a retry becomes possible. This proves it does
+        not become possible by destroying an unrelated file that happens to
+        occupy the destination: same size, deliberately different bytes, the
+        fixture AC-DATA-4 already ships for exactly this reason.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = _write(tmp_path / 'library/movie.mkv', LIBRARY)  # same size, other bytes
+
+        plugin = _mover(monkeypatch, file_action='move')
+
+        # Today this refuses, which is safe but leaves the retry blocked; the
+        # deferred fix must make it succeed WITHOUT touching LIBRARY's bytes.
+        try:
+            _move(plugin, tmp_path, str(old), str(dest))
+        except FileExistsError:
+            pass
+
+        assert dest.read_bytes() == LIBRARY, (
+            'a file already at the destination must never be removed to '
+            'unblock a retry: it is not this download, and nothing here knows '
+            'what it is'
+        )
+        assert Path(old).read_bytes() == DOWNLOAD, 'the source must survive'
+        # The deferred property: the caller is no longer permanently stuck.
+        raise AssertionError(
+            'deferred: the retry is still blocked at both levels '
+            '(moveFile lexists, and _moveRenamedFiles os.path.exists)'
+        )
+
     def test_a_reverse_symlink_whose_chmod_fails_still_leaves_a_usable_library(self, tmp_path, monkeypatch):
         """`shutil.move` is a composite too, and this branch is the third to
         reach the same permanent poisoning through it.
