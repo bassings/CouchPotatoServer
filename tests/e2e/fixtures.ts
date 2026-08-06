@@ -52,6 +52,20 @@ const BASE_PORT = 5150;
 //
 // So this is not a budget cut. The effective budget was 30s already; this
 // makes the remaining 25s spendable and the failure legible.
+//
+// The 5s the subtraction leaves is for everything BEFORE the poll loop:
+// `e2e_worker_data.py prepare`, the synchronous `seed_e2e_data.py` (a Python
+// interpreter start plus couchpotato imports), and `spawn`. That was
+// arithmetic when first written; measured since, on this machine:
+//
+//     prepare  0.07s
+//     seed     0.71s
+//     total    0.78s   against 5s of headroom
+//
+// Roughly 6x margin, so a CI runner several times slower than this one still
+// fits. If that ever stops being true the symptom is the OLD one -- a bare
+// `Fixture "workerServer" timeout ... during setup` with no server output --
+// so re-measure here before assuming the app is at fault.
 // tests/unit/e2e_timeout_budget.test.ts pins the ordering so the two
 // numbers cannot drift apart again.
 const READY_TIMEOUT_MS = 25_000;

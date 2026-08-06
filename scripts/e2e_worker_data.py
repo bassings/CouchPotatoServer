@@ -37,16 +37,22 @@ import shutil
 import sys
 
 #: AC-SEC-9: the basename must start with ".e2e" and end with "data".
-#: `.gitleaks.toml` (`^\.e2e-[^/]*data/`) keys off exactly that shape, so a
-#: worker dir named `.e2e-data-mobile` (the OLD convention) would not be
-#: excluded from the local secret scan.
 #:
-#: `.gitignore` no longer constrains the shape: it was deliberately widened
-#: on this branch from `.e2e-*data/` to `.e2e-*`, precisely so a name that
-#: does NOT end in "data" cannot be un-ignored. Citing it here as a reason to
-#: require the suffix was half-true when written and is now simply stale --
-#: the .gitignore side is a floor that catches every spelling, and this
-#: pattern is the narrower one that keeps the gitleaks exclusion honest.
+#: The suffix is THIS module's own contract, not an echo of another file's.
+#: Neither `.gitignore` (`.e2e-*`) nor `.gitleaks.toml` (`^\.e2e-[^/]*/`)
+#: requires it any more -- both were deliberately widened on this branch so
+#: that a name NOT ending in "data" cannot slip past them, which is what the
+#: earlier narrow forms allowed and why `.e2e-data-mobile` and
+#: `.e2e-data-a11y` once needed hand-written entries.
+#:
+#: So those two are a FLOOR that catches every spelling, and this regex is the
+#: narrower shape this deleting helper insists on for itself: a directory it
+#: did not create is not one it will remove.
+#:
+#: Earlier versions of this comment cited the narrow gitleaks pattern as the
+#: REASON for the suffix. That citation went stale in the very PR that widened
+#: it -- twice, since the first correction left the superseded paragraph
+#: standing underneath the new one.
 _WORKER_DIR_RE = re.compile(r'^\.e2e-[A-Za-z0-9_.-]+-data$')
 
 #: Default scratch root: the repo root, matching where every other E2E
