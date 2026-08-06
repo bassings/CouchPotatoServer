@@ -58,11 +58,16 @@ def settings(tmp_path):
     yield data
 
     Env.setting = original
-    api.clear(); api.update(old_api)
-    api_locks.clear(); api_locks.update(old_locks)
-    api_nonblock.clear(); api_nonblock.update(old_nonblock)
-    api_docs.clear(); api_docs.update(old_docs)
-    api_docs_missing.clear(); api_docs_missing.extend(old_missing)
+    api.clear()
+    api.update(old_api)
+    api_locks.clear()
+    api_locks.update(old_locks)
+    api_nonblock.clear()
+    api_nonblock.update(old_nonblock)
+    api_docs.clear()
+    api_docs.update(old_docs)
+    api_docs_missing.clear()
+    api_docs_missing.extend(old_missing)
 
 
 def _client():

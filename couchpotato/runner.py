@@ -269,6 +269,29 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.warning('%s %s %s line:%s', category.__name__, message, filename, lineno)
     warnings.showwarning = customwarn
 
+    # Resolve `auth_required` ONCE, at startup, and write it back.
+    #
+    # Absent means "config.ini predates this setting". Deriving from
+    # `bool(password)` keeps installs that had bothered to set a password
+    # protected instead of falling open on upgrade. Writing the resolved value
+    # back means that after the first boot it is an explicit 0 or 1 the
+    # operator can find with `grep` -- which matters because grepping
+    # config.ini is the documented lock-out recovery path, and a setting that
+    # only exists as an inference cannot be recovered from.
+    from couchpotato import auth_is_required
+    if Env.setting('auth_required', default=None) in (None, ''):
+        resolved = 1 if Env.setting('password') else 0
+        Env.setting('auth_required', value=resolved)
+        log.info('auth_required was not set; resolved to %s from the stored '
+                 'password and written to the settings file', resolved)
+
+    if not auth_is_required():
+        # WARNING, not INFO: an unauthenticated instance is a decision, and the
+        # log is where an operator checks whether they made it.
+        log.warning('Serving with authentication DISABLED -- anyone who can '
+                    'reach this port has full control of the library. Set a '
+                    'password and turn on "Require login" in Settings.')
+
     # Create FastAPI app
     from couchpotato import create_app
     web_base = ('/' + Env.setting('url_base').lstrip('/') + '/') if Env.setting('url_base') else '/'

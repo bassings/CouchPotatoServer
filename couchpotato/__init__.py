@@ -54,21 +54,52 @@ def get_db():
 
 # --- Authentication ---
 
+def auth_is_required() -> bool:
+    """Is the web interface gated on a session?
+
+    An EXPLICIT setting, not an inference from two unrelated fields. The old
+    gate was `if username and password:`, which meant a blank username silently
+    disabled authentication -- and the settings copy put "Leave empty to
+    disable authentication" on the USERNAME field, so the field that turned
+    auth off was the one whose description promised exactly that. Driven
+    directly, three of the four credential combinations returned "fully
+    public", including password-set-with-blank-username.
+
+    Absent (an upgrade from any config.ini written before this change) derives
+    from whether a password is set, so an install that had bothered to set one
+    stays protected rather than falling open on upgrade. `runner.py` writes the
+    resolved value back once at startup, after which it is an explicit 0 or 1
+    the operator can find with `grep` -- which matters, because grepping
+    config.ini is the documented lock-out recovery path.
+
+    Deliberately NOT a tri-state `None` default. `registerDefaults`
+    materialises the literal `auth_required = None` into config.ini on first
+    boot and `Env.setting`'s own default is `''`, so the natural
+    `Env.setting('auth_required', type='bool')` reads falsy and auth stays off
+    on every install, silently, with no failing test and no log line.
+    """
+    configured = Env.setting('auth_required', default=None)
+
+    if configured is None or configured == '':
+        return bool(Env.setting('password'))
+
+    if isinstance(configured, str):
+        return configured.strip().lower() in ('1', 'true', 'yes', 'on')
+    return bool(configured)
+
+
 def get_current_user(request: Request):
     """FastAPI dependency for cookie-based auth."""
-    username = Env.setting('username')
-    password = Env.setting('password')
-
-    if username and password:
-        user = request.cookies.get('user')
-        if not user:
-            return None
-        api_key = Env.setting('api_key')
-        if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
-            return user
-        return None
-    else:
+    if not auth_is_required():
         return True
+
+    user = request.cookies.get('user')
+    if not user:
+        return None
+    api_key = Env.setting('api_key')
+    if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
+        return user
+    return None
 
 
 def require_auth(request: Request):

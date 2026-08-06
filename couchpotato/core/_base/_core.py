@@ -270,10 +270,26 @@ config = [{
             'wizard': True,
             'options': [
                 {
+                    'name': 'auth_required',
+                    'default': 0,
+                    'type': 'bool',
+                    'label': 'Require login',
+                    'description': 'Require login for the web interface. Turned on '
+                                   'automatically the first time a password is set. '
+                                   'Turn off only for a trusted LAN.',
+                },
+                {
                     'name': 'username',
                     'default': '',
                     'label': 'Username',
-                    'description': 'Username for web interface login. Leave empty to disable authentication.',
+                    # The "leave empty to disable authentication" copy that used to
+                    # live here was not merely misleading, it described a real trap:
+                    # the old gate was `if username and password`, so a blank
+                    # username DID disable auth -- including for someone who had set
+                    # a password. The off-switch is `auth_required` now, and this
+                    # field means what it says.
+                    'description': 'Username for web interface login. Leave empty to '
+                                   'accept any username.',
                     'ui-meta' : 'rw',
                 },
                 {
@@ -281,7 +297,8 @@ config = [{
                     'default': '',
                     'type': 'password',
                     'label': 'Password',
-                    'description': 'Password for web interface login.',
+                    'description': 'Password for web interface login. Setting one turns '
+                                   '"Require login" on.',
                 },
                 {
                     'name': 'port',
