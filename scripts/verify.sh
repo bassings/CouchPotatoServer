@@ -76,7 +76,19 @@ PINNED_RUFF="$(grep -E '^ruff==' requirements-dev.txt | head -1 | sed -E 's/^ruf
 if [[ -z "$PINNED_RUFF" ]]; then
   fail "requirements-dev.txt has no 'ruff==X.Y.Z' pin to check the installed ruff against."
 fi
-INSTALLED_RUFF="$("$PYTHON" -m ruff --version | awk '{print $2}')"
+# Same `|| true` and same reason as the line above -- this construct was left
+# unguarded one line after the comment explaining why it is dangerous, which is
+# the "fix the instance, miss the class" shape. The import preflight further up
+# only proves `import ruff` works; a ruff whose CLI entry point is broken (a
+# partial install, a stale console-script shim) passes that and then kills the
+# gate here with no output at all. The -z guard turns "unexpected --version
+# format" into a named failure instead of the nonsense "installed ruff () does
+# not match the pin".
+INSTALLED_RUFF="$("$PYTHON" -m ruff --version 2>/dev/null | awk '{print $2}' || true)"
+if [[ -z "$INSTALLED_RUFF" ]]; then
+  fail "could not read the installed ruff version ('$PYTHON -m ruff --version' produced nothing).
+       Fix: $PYTHON -m pip install 'ruff==$PINNED_RUFF'"
+fi
 if [[ "$INSTALLED_RUFF" != "$PINNED_RUFF" ]]; then
   fail "installed ruff ($INSTALLED_RUFF) does not match the pin in requirements-dev.txt ($PINNED_RUFF).
        Fix: $PYTHON -m pip install 'ruff==$PINNED_RUFF'"

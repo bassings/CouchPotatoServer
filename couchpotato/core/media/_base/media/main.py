@@ -220,7 +220,14 @@ class MediaPlugin(MediaBase):
         status = list(status if isinstance(status, (list, tuple)) else [status])
 
         for s in status:
-            for ms in db.get_many('media_status', s):
+            # `with_doc` must be passed through. get_many's own default is
+            # True, so omitting it handed with_doc=False callers
+            # {'_id':…, 'doc':…} wrappers whose .get('status')/.get('type')
+            # were always None. Character for character the defect T1.9
+            # repaired in release/main.py's withStatus: same shape, twin
+            # function, one module away, and the T1.9 review only asked the
+            # "which other callers change" question about the release half.
+            for ms in db.get_many('media_status', s, with_doc = with_doc):
                 if with_doc:
                     try:
                         doc = db.get('id', ms['_id'])
@@ -234,6 +241,16 @@ class MediaPlugin(MediaBase):
                     except (ValueError, EOFError):
                         fireEvent('database.delete_corrupted', ms.get('_id'), traceback_error = traceback.format_exc(0))
                 else:
+                    # The type filter belongs on BOTH branches. Nested under
+                    # `if with_doc:` it was silently dropped here, so a
+                    # with_doc=False caller asking for one media type got
+                    # every type back -- a key-ignoring lookup, which is the
+                    # family this project has already shipped twice in
+                    # sqlite_adapter._query_index. Latent only because
+                    # `movie` is currently the sole registered media type.
+                    if types and ms.get('type') not in types:
+                        continue
+
                     yield ms
 
     def withIdentifiers(self, identifiers, with_doc = False):
