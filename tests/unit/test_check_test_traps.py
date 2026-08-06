@@ -38,6 +38,9 @@ CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_test_traps  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rule6_guard_corpus import SHAPES as RULE6_SHAPES  # noqa: E402
+
 
 def run_checker(*args):
     """Run the checker as a subprocess, the way CI and verify.sh invoke it."""
@@ -1328,6 +1331,29 @@ def test_the_guard_lines_condition_is_not_treated_as_body(tmp_path):
     )
 
     assert findings_for(spec) == []
+
+
+@pytest.mark.parametrize(
+    'name,source,expected',
+    [(n, src, exp) for n, src, exp in RULE6_SHAPES],
+    ids=[n.split()[0] for n, _s, _e in RULE6_SHAPES],
+)
+def test_rule6_guard_spelling_corpus(tmp_path, name, source, expected):
+    """Every guard spelling, scored in one place (spec gap 23).
+
+    The individual tests above each pin the shape whose round found it. This
+    scores the whole table on every edit, which is the difference between
+    "the last bug does not recur" and "the rule is right". Shape 23 -- a false
+    positive from a `){` inside a condition string -- is only visible here.
+    """
+    spec = _e2e_spec(tmp_path, name='corpus.spec.ts')
+    spec.write_text(source)
+
+    findings = findings_for(spec)
+    assert len(findings) == expected, (
+        '%s: expected %d finding(s), got %d\n%s'
+        % (name, expected, len(findings), findings)
+    )
 
 
 def test_an_early_return_guard_can_be_opted_out_of(tmp_path):

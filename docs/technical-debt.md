@@ -442,6 +442,19 @@ destination, and the only other copy is deleted. So:
    unblock the RETRY. Returning True hands `_moveRenamedFiles` permission to
    delete the source folder, which is the whole mechanism T1.8 exists to
    guard. Unblocking a retry is safe; declaring the move done is not.
+3. **The comparison has THREE outcomes, not two: same, different, and
+   cannot tell.** Only *different* may authorise removing the destination.
+   A helper that returns a bool collapses cannot-tell into different, and
+   that re-creates the AC-DATA-6 defect: measured, the source-vanished race
+   then takes the `else` branch whose `os.unlink(dest)` removes the only
+   copy left, and `test_failed_move_when_the_source_vanished_mid_flight_...`
+   reds with "the only good copy must not be touched". This is exactly the
+   "hardening" the spec already warns against -- today's code lets
+   `os.path.getsize(old)`'s `FileNotFoundError` propagate rather than
+   catching it, and that propagation IS the guard.
+
+   Constraint 1 as worded invites the bool; this constraint is why it must
+   not be taken.
 
 Note also what the sketch silently broke in that run: `symlink(dest, old)`
 then raises `FileExistsError` and is swallowed, so the reverse symlink is

@@ -701,23 +701,38 @@ class TestT18DataLossFixes:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        real_unlink = os.unlink
+        real_unlink, real_rename = os.unlink, os.rename
+
+        def _cross_device_rename(src, dst, *a, **kw):
+            # WITHOUT this the whole test is inert: on one filesystem
+            # `shutil.move` takes `os.rename` and SUCCEEDS, `os.unlink` is
+            # never called, and the assertion below then fails with
+            # FileNotFoundError because the source is legitimately gone. That
+            # is a successful move being reported as the deferred defect --
+            # a guard that fires on success and stays silent on the fix.
+            # Measured: it XFAILed for that reason, and still XFAILed against
+            # a tree where the property was genuinely fixed.
+            if str(src) == str(old):
+                raise OSError(18, 'simulated: cross-device link')
+            return real_rename(src, dst, *a, **kw)
 
         def _refuse_source_unlink(path, *a, **kw):
             if str(path) == str(old):
                 raise PermissionError('simulated: cannot delete from this mount')
             return real_unlink(path, *a, **kw)
 
+        monkeypatch.setattr(os, 'rename', _cross_device_rename)
         monkeypatch.setattr(os, 'unlink', _refuse_source_unlink)
         plugin = _mover(monkeypatch, file_action='move')
 
-        try:
+        # Pin the failure MODE, not merely that something raised.
+        with pytest.raises(PermissionError):
             _move(plugin, tmp_path, str(old), str(dest))
-        except Exception:
-            pass
 
         assert Path(old).read_bytes() == DOWNLOAD, 'the only other copy must survive'
+
         # The property that is NOT satisfied today: a later run can retry.
+        monkeypatch.setattr(os, 'rename', real_rename)
         monkeypatch.setattr(os, 'unlink', real_unlink)
         _move(plugin, tmp_path, str(old), str(dest))
 

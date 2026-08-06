@@ -1072,7 +1072,13 @@ def check_e2e_spec_guards(path: Path, text: str):
         # while template literals already appear in two locator calls in this
         # suite.
         opens_block = line.count("{") > line.count("}")
-        inline_block = re.search(r"\)\s*\{", line)
+        # The LAST `){` on the line, not the first. A condition can contain a
+        # literal `){` inside a string -- comment stripping does not blank
+        # string contents -- and taking the first match then slices from
+        # inside the condition and drags its text into the body, producing a
+        # false positive on correct code. The block opener is the last one.
+        _inline_matches = list(re.finditer(r"\)\s*\{", line))
+        inline_block = _inline_matches[-1] if _inline_matches else None
         if opens_block or inline_block:
             close_idx = _find_matching_brace(cleaned_lines, idx)
         else:
@@ -1088,9 +1094,12 @@ def check_e2e_spec_guards(path: Path, text: str):
         # joined slice below is empty -- the rule saw nothing in the most
         # compact spelling of the very shape it exists to catch.
         #
-        # Sliced from the BLOCK-opening brace, not `index("{")` or `rfind("{")`:
-        # `index` picks up the condition's own brace (a template literal), and
-        # `rfind` misses an `expect(` that precedes a nested object literal.
+        # Sliced from the LAST `){` on the line -- the block opener unless the
+        # condition contains a literal `){`, which the corpus in
+        # tests/unit/rule6_guard_corpus.py pins as shape 23. NOT `index("{")`,
+        # which picks up the condition's own brace (a template literal), and
+        # NOT `rfind("{")`, which misses an `expect(` preceding a nested
+        # object literal.
         # Slice whenever the line contains a block opener, INCLUDING when the
         # block also stays open. Gating this on `not opens_block` silenced a
         # braced guard whose `expect(` sits on the guard line while the block

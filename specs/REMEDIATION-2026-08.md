@@ -967,7 +967,14 @@ list is how the harness improves rather than merely runs:
 
 ### Spec gaps found at the third to sixth review rounds
 
-23. **`AC-QA-42` pins Rule 6's semantics but not its robustness across
+23. **CLOSED at the seventh round.** ~~`AC-QA-42` pins Rule 6's semantics but
+    not its robustness across spellings.~~ The corpus is checked in at
+    `tests/unit/rule6_guard_corpus.py` and scored by a parametrised test, with
+    the wrong-answer count of every previous spelling recorded in its
+    docstring (1, 2, 2, 4, 12 out of 25 -- the shipped one is now 0). It
+    earned its place on the first run by catching a false positive no
+    individual test could see. Original text:
+    **`AC-QA-42` pins Rule 6's semantics but not its robustness across
     spellings.** The same function regressed in four consecutive rounds, each
     time on a formatting shape rather than on the rule's meaning, and each
     round's fix was validated by one ad-hoc test for the shape that round
