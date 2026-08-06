@@ -331,6 +331,60 @@ test.describe('Accessibility', () => {
     await expect(main).toBeVisible();
   });
 
+  /**
+   * Named controls that must show a focus ring, checked directly rather than
+   * hoped for by tabbing.
+   *
+   * The test below presses Tab exactly once from a fresh `/`, which lands
+   * deterministically on the skip link and nothing else -- so it guarded
+   * base.html's global `:focus-visible` rule and not one control in the app.
+   * Every per-component override, which is where the defects are, was outside
+   * its reach: both of these carried `focus:outline-none`, i.e.
+   * `outline: 2px solid TRANSPARENT`, and had no visible keyboard focus at all.
+   */
+  const FOCUSABLE_CONTROLS = [
+    { path: '/', selector: '#filter-movies', what: 'the Wanted filter input' },
+    { path: '/add/', selector: 'input[placeholder*="search" i]', what: 'the Add-movie search input' },
+  ];
+
+  for (const { path, selector, what } of FOCUSABLE_CONTROLS) {
+    test(`${what} has a visible focus indicator`, async ({ page }) => {
+      await page.goto(path);
+      const control = page.locator(selector).first();
+      await expect(control, `${what} did not render at ${path}`).toBeVisible();
+      await control.focus();
+
+      const indicator = await control.evaluate((el) => {
+        const s = window.getComputedStyle(el);
+        const transparent = (c) =>
+          c === 'transparent' ||
+          /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*0\s*\)/.test(c);
+        return {
+          outlineStyle: s.outlineStyle,
+          outlineWidth: s.outlineWidth,
+          outlineColor: s.outlineColor,
+          outlineTransparent: transparent(s.outlineColor),
+          boxShadow: s.boxShadow,
+        };
+      });
+
+      const outlineVisible =
+        indicator.outlineStyle !== 'none' &&
+        parseFloat(indicator.outlineWidth || '0') > 0 &&
+        !indicator.outlineTransparent;
+      const shadowVisible = indicator.boxShadow !== 'none' && indicator.boxShadow !== '';
+
+      expect(
+        outlineVisible || shadowVisible,
+        `${what} has no visible focus indicator (WCAG 2.2 AA 2.4.7). ` +
+        `Computed: outline ${indicator.outlineStyle} ${indicator.outlineWidth} ` +
+        `${indicator.outlineColor}, box-shadow ${indicator.boxShadow}. ` +
+        `Tailwind's \`outline-none\` compiles to a TRANSPARENT 2px outline, so ` +
+        `\`focus:outline-none\` without a replacement looks styled and shows nothing.`,
+      ).toBe(true);
+    });
+  }
+
   test('Interactive elements should be keyboard accessible', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
