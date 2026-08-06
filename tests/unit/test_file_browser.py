@@ -8,6 +8,8 @@ Python 3 port. It was sitting on a live defect the whole time: see
 """
 #import sys
 import os
+import shutil
+import tempfile
 
 from unittest import mock
 import unittest
@@ -20,7 +22,12 @@ from couchpotato.core.plugins.browser import FileBrowser
 from couchpotato.core.softchroot import SoftChroot
 
 
-CHROOT_DIR = '/tmp/'
+# A per-test temporary directory, NOT the host's real /tmp. This file
+# inherited `CHROOT_DIR = '/tmp/'` from the un-run copy under couchpotato/,
+# and `view(CHROOT_DIR)` reaches FileBrowser.getDirectories, which does a real
+# os.listdir on it: a unit test whose duration and contents depend on whatever
+# the developer's machine has in /tmp. The assertions here are all about
+# chroot-relative paths, so nothing needs the real one.
 
 
 def test_view_returns_chroot_relative_directories_as_a_list(tmp_path):
@@ -61,11 +68,18 @@ class FileBrowserChrootedTest(TestCase):
 
     def setUp(self):
         self.b = FileBrowser()
+        self._tmp = tempfile.mkdtemp()
+        # realpath: on macOS the temp root is reached through a symlink, and
+        # SoftChroot compares resolved paths with a plain startswith.
+        self.chroot_dir = os.path.realpath(self._tmp) + os.path.sep
+
+    def tearDown(self):
+        shutil.rmtree(self._tmp, ignore_errors=True)
 
     def tuneMock(self, env):
         #set up mock:
         sc = SoftChroot()
-        sc.initialize(CHROOT_DIR)
+        sc.initialize(self.chroot_dir)
         env.get.return_value = sc
 
 
@@ -84,7 +98,14 @@ class FileBrowserChrootedTest(TestCase):
 
         self.tuneMock(env)
 
-        for path, parent in [('/asdf','/'), (CHROOT_DIR, '/'), ('/mnk/123/t', '/mnk/123/')]:
+        # Chroot-RELATIVE paths only. The third case used to be CHROOT_DIR
+        # itself, which only produced parent '/' because '/tmp' happens to be
+        # a single path component: chroot2abs prepends the chroot, so
+        # '/tmp' + '/tmp/' nested exactly one level. Against any real
+        # temporary directory that expectation is simply wrong, and the case
+        # added nothing -- the chroot root is '/' here, which
+        # test_view__chrooted_path_none already covers.
+        for path, parent in [('/asdf', '/'), ('/mnk/123/t', '/mnk/123/')]:
             r = self.b.view(path)
             path_strip = path
             if (path.endswith(os.path.sep)):

@@ -35,7 +35,15 @@ import time
 # runnable standalone (CI step, or a developer running it directly) without
 # relying on the caller having put the repo root / libs/ on sys.path already.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
+# realpath, matching e2e_worker_data.py:78. _is_safe_seed_target resolves the
+# candidate path with realpath and then compares it against this root, so an
+# abspath-only root makes the two halves of one comparison disagree wherever
+# the checkout is reached through a symlink (a CI cache link, a checkout under
+# /tmp on macOS). It fails closed -- a legitimate .e2e-* target is refused
+# with a misleading message -- but "fails closed" is not the same as correct,
+# and every test monkeypatched this to an already-resolved value, so the
+# mismatch was invisible.
+_REPO_ROOT = os.path.realpath(os.path.dirname(_SCRIPT_DIR))
 _LIBS_DIR = os.path.join(_REPO_ROOT, 'libs')
 for _path in (_REPO_ROOT, _LIBS_DIR):
     if _path not in sys.path:
@@ -348,8 +356,24 @@ def _bind_to_loopback(data_dir):
     the criterion it is meant to satisfy.
 
     Idempotent, and never clobbers an existing value.
+
+    Scoped to `.e2e*` data dirs. `_is_safe_seed_target` deliberately accepts a
+    developer's own populated `.config` (see its docstring's residual-risk
+    paragraph), and its residual risk was about seeding fixture ROWS: writing
+    a settings value into a real local instance is a different and larger
+    thing, and settings sit on the irreplaceable tier. A developer who ran
+    this against their live dev instance would find it stopped answering on
+    the LAN after the next restart, with nothing printed to say why. So this
+    declines outside the disposable naming convention, and says so either way.
     """
     import configparser
+
+    basename = os.path.basename(os.path.realpath(os.path.abspath(data_dir)).rstrip(os.sep))
+    if not basename.startswith('.e2e'):
+        print('  host: NOT pinned -- %r is not a .e2e* data dir, so its '
+              'settings are left alone (the server will use its configured '
+              'host)' % data_dir)
+        return False
 
     config_file = os.path.join(data_dir, 'config.ini')
     parser = configparser.RawConfigParser()
@@ -358,6 +382,7 @@ def _bind_to_loopback(data_dir):
     if not parser.has_section('core'):
         parser.add_section('core')
     if parser.has_option('core', 'host'):
+        print('  host: already set to %r, left unchanged' % parser.get('core', 'host'))
         return False
     parser.set('core', 'host', '127.0.0.1')
     os.makedirs(data_dir, exist_ok=True)

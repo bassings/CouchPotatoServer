@@ -11,6 +11,7 @@ Mirrors tests/unit/test_migrate_codernity_script.py's import pattern: scripts/
 is not a package, so bootstrap sys.path the same way the script itself does.
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -18,6 +19,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "libs"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import seed_e2e_data  # noqa: E402
+
+
+def _resolved(path):
+    """`_REPO_ROOT` is realpath'd in the module, so a fake root must be too.
+
+    `_is_safe_seed_target` realpaths the candidate and compares it against
+    `_REPO_ROOT`. On macOS `tmp_path` sits under a symlinked `/var`, so an
+    unresolved fake root makes every one of these tests compare a resolved
+    path against an unresolved prefix and report the wrong answer.
+    """
+    return os.path.realpath(str(path))
 
 
 class TestIsSafeSeedTarget:
@@ -41,22 +53,24 @@ class TestIsSafeSeedTarget:
 
         assert seed_e2e_data._is_safe_seed_target(str(real_library)) is False
 
-    def test_a_non_empty_e2e_named_directory_under_the_repo_is_safe(self, monkeypatch):
+    def test_a_non_empty_e2e_named_directory_under_the_repo_is_safe(self, tmp_path, monkeypatch):
         """The normal local dev loop: re-running the seed script against an
         already-seeded (non-empty) .e2e-data must keep working -- the script
         is idempotent by design (fixed _ids, see `_upsert`).
         """
-        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", str(REPO_ROOT))
-        target = REPO_ROOT / ".e2e-guard-test-data"
-        target.mkdir(exist_ok=True)
-        (target / "database_v2").mkdir(exist_ok=True)
-        try:
-            assert seed_e2e_data._is_safe_seed_target(str(target)) is True
-        finally:
-            (target / "database_v2").rmdir()
-            target.rmdir()
+        # Built under tmp_path, not under the real checkout. These fixtures
+        # used to be created in REPO_ROOT itself and removed in a `finally`,
+        # which a SIGKILL or a hard timeout skips: the unit suite could leave
+        # `.e2e-guard-test-data/` behind in someone's working tree. The
+        # monkeypatch was already here; only the value it points at changed.
+        fake_root = _resolved(tmp_path)
+        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", fake_root)
+        target = tmp_path / ".e2e-guard-test-data"
+        (target / "database_v2").mkdir(parents=True)
 
-    def test_a_non_empty_dot_config_under_the_repo_is_accepted_by_name(self, monkeypatch):
+        assert seed_e2e_data._is_safe_seed_target(str(target)) is True
+
+    def test_a_non_empty_dot_config_under_the_repo_is_accepted_by_name(self, tmp_path, monkeypatch):
         """Documents the guard's accepted residual risk: `.config` under the
         repo is allowed by name/location even when non-empty, because it is
         ALSO the conventional dev data dir name and re-seeding into one a
@@ -65,20 +79,12 @@ class TestIsSafeSeedTarget:
         directory that happens to hold real data -- see
         _is_safe_seed_target's docstring.
         """
-        import os
+        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", _resolved(tmp_path))
+        target = tmp_path / ".config"
+        target.mkdir()
+        (target / "marker").write_text("x")
 
-        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", str(REPO_ROOT))
-        target = REPO_ROOT / ".config"
-        preexisting = os.path.isdir(target)
-        if not preexisting:
-            target.mkdir()
-            (target / "marker").write_text("x")
-        try:
-            assert seed_e2e_data._is_safe_seed_target(str(target)) is True
-        finally:
-            if not preexisting:
-                (target / "marker").unlink()
-                target.rmdir()
+        assert seed_e2e_data._is_safe_seed_target(str(target)) is True
 
     def test_a_non_empty_e2e_named_directory_outside_the_repo_is_refused(self, tmp_path, monkeypatch):
         """The name alone isn't enough -- it must also resolve under this
@@ -86,7 +92,9 @@ class TestIsSafeSeedTarget:
         disk (a coincidence, or a copy-pasted path from a different project)
         isn't treated as ours.
         """
-        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", str(REPO_ROOT))
+        fake_root = tmp_path / "checkout"
+        fake_root.mkdir()
+        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", _resolved(fake_root))
         outside = tmp_path / ".e2e-elsewhere"
         outside.mkdir()
         (outside / "marker").write_text("x")
@@ -109,18 +117,18 @@ class TestIsSafeSeedTarget:
         empty directory (an empty one is safe by the earlier branch anyway,
         which is why the fixture must not be empty for this to mean anything).
         """
-        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", str(REPO_ROOT))
+        fake_root = tmp_path / "checkout"
+        fake_root.mkdir()
+        monkeypatch.setattr(seed_e2e_data, "_REPO_ROOT", _resolved(fake_root))
 
         real_library = tmp_path / "real-library"
         real_library.mkdir()
         (real_library / "config.ini").write_text("[core]\napi_key = live\n")
 
-        link = REPO_ROOT / ".e2e-symlink-guard-test"
+        link = fake_root / ".e2e-symlink-guard-test"
         link.symlink_to(real_library, target_is_directory=True)
-        try:
-            assert seed_e2e_data._is_safe_seed_target(str(link)) is False
-        finally:
-            link.unlink()
+
+        assert seed_e2e_data._is_safe_seed_target(str(link)) is False
 
 
 class TestBindToLoopback:
@@ -146,9 +154,58 @@ class TestBindToLoopback:
         parser.read(str(data_dir / "config.ini"), encoding="utf-8")
         return parser.get("core", "host", fallback=None)
 
+    def _e2e_dir(self, tmp_path):
+        """A `.e2e*`-named dir: the pin is scoped to the disposable convention."""
+        d = tmp_path / ".e2e-w0-data"
+        d.mkdir()
+        return d
+
     def test_a_fresh_data_dir_is_pinned_to_loopback(self, tmp_path):
-        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is True
-        assert self._host(tmp_path) == "127.0.0.1"
+        d = self._e2e_dir(tmp_path)
+        assert seed_e2e_data._bind_to_loopback(str(d)) is True
+        assert self._host(d) == "127.0.0.1"
+
+    def test_seed_actually_calls_it(self, tmp_path):
+        """The wiring, not the helper.
+
+        Two review lenses independently deleted `_bind_to_loopback(data_dir)`
+        from `seed()` and ran the whole suite: 2013 and 2108 tests passed,
+        nothing failed. Every other test in this class calls the helper
+        directly, so they proved it works and nothing proved it is called --
+        the same shape as the criterion it exists to satisfy. AC-SEC-16
+        guarded the argument instead of the exposure; AC-SEC-16b was written
+        to fix that and then guarded the helper instead of the call site.
+
+        This is the assertion that reddens when the line is removed, so the
+        exposure it closes cannot be silently reopened by a refactor of
+        `seed()`.
+        """
+        d = self._e2e_dir(tmp_path)
+
+        seed_e2e_data.seed(str(d))
+
+        assert self._host(d) == "127.0.0.1", (
+            "seed() must pin the host before the server can be started -- "
+            "without it every worker binds 0.0.0.0 with a generated api_key "
+            "and no password"
+        )
+
+    def test_it_declines_outside_the_disposable_naming_convention(self, tmp_path):
+        """`_is_safe_seed_target` accepts a developer's own populated
+        `.config`, and its residual-risk note is about seeding fixture ROWS.
+        Writing a settings value into a real local instance is a different and
+        larger thing: settings are on the irreplaceable tier, and the operator
+        would find their instance stopped answering on the LAN after the next
+        restart with nothing printed to say why.
+        """
+        real = tmp_path / ".config"
+        real.mkdir()
+        (real / "config.ini").write_text(
+            "[core]\nport = 5050\napi_key = live-key\n", encoding="utf-8",
+        )
+
+        assert seed_e2e_data._bind_to_loopback(str(real)) is False
+        assert self._host(real) is None, "a real .config must be left alone"
 
     def test_it_never_clobbers_a_host_the_operator_already_set(self, tmp_path):
         """Idempotent and non-destructive.
@@ -159,25 +216,27 @@ class TestBindToLoopback:
         value, and silently rewriting settings is the behaviour this repo
         treats as data loss, not as a fix.
         """
-        (tmp_path / "config.ini").write_text(
+        d = self._e2e_dir(tmp_path)
+        (d / "config.ini").write_text(
             "[core]\nhost = 192.168.1.50\n", encoding="utf-8",
         )
 
-        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is False
-        assert self._host(tmp_path) == "192.168.1.50"
+        assert seed_e2e_data._bind_to_loopback(str(d)) is False
+        assert self._host(d) == "192.168.1.50"
 
     def test_it_leaves_other_settings_alone(self, tmp_path):
         """The rewrite goes through configparser, so unrelated keys survive."""
-        (tmp_path / "config.ini").write_text(
+        d = self._e2e_dir(tmp_path)
+        (d / "config.ini").write_text(
             "[core]\nport = 5150\napi_key = seeded-key\n", encoding="utf-8",
         )
 
-        assert seed_e2e_data._bind_to_loopback(str(tmp_path)) is True
+        assert seed_e2e_data._bind_to_loopback(str(d)) is True
 
         import configparser
 
         parser = configparser.RawConfigParser()
-        parser.read(str(tmp_path / "config.ini"), encoding="utf-8")
+        parser.read(str(d / "config.ini"), encoding="utf-8")
         assert parser.get("core", "host") == "127.0.0.1"
         assert parser.get("core", "port") == "5150"
         assert parser.get("core", "api_key") == "seeded-key"
