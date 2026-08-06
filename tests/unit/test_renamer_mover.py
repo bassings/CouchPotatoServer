@@ -575,6 +575,96 @@ class TestT18DataLossFixes:
         assert Path(old).read_bytes() == DOWNLOAD, 'old is untouched -- the move never happened'
         assert not os.path.exists(dest), 'nothing reached the destination either'
 
+    def test_fix_c_a_partially_written_destination_is_removed_when_the_move_fails(self, tmp_path, monkeypatch):
+        """The fixture above is not hostile enough, and that hid a real gap.
+
+        Its `_failing_move` writes NOTHING before raising, so it can only ever
+        prove the exception propagates. `shutil.move`'s real fallback is
+        `copy2`, which on a full disk or a dropped mount writes part of the
+        file and THEN raises. Driven that way, T1.8 fix (c) left a truncated
+        .mkv sitting at the library filename: `_moveRenamedFiles` skipped that
+        file on every subsequent run (the fix (a) `lexists` guard refuses a
+        destination that already exists, so the retry could never succeed),
+        and the scanner attached the truncated file to the movie.
+
+        The default-move branch has cleaned this up since before T1.8
+        (mover.py:36-37); the symlink_reversed and copy branches did not.
+
+        Removing the partial cannot lose data: the source is intact in every
+        one of these cases, so the only copy being deleted is the one that is
+        already wrong.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        def _partial_move(src, dst):
+            Path(dst).write_bytes(DOWNLOAD[:400])  # a real, short write
+            raise OSError('simulated: disk full part-way through the copy')
+
+        monkeypatch.setattr(shutil, 'move', _partial_move)
+        plugin = _mover(monkeypatch, file_action='symlink_reversed')
+
+        with pytest.raises(OSError):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        assert Path(old).read_bytes() == DOWNLOAD, 'source must survive byte-identical'
+        assert not os.path.exists(dest), (
+            'a truncated destination must not be left in the library: it blocks '
+            'every retry through the lexists guard and the scanner will attach it'
+        )
+
+    def test_fix_c_a_complete_destination_is_kept_when_the_move_fails_afterwards(self, tmp_path, monkeypatch):
+        """The other direction: never delete a copy that is actually complete.
+
+        `shutil.move` can finish copying and then fail on its own final
+        `unlink(src)`. Deleting `dest` there would throw away a good copy of
+        the user's completed download to tidy up after a failure that already
+        succeeded at the part that matters. So the cleanup is conditional on
+        the destination being demonstrably short, not on the call having
+        raised.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        def _complete_then_fail(src, dst):
+            Path(dst).write_bytes(DOWNLOAD)  # the copy phase really completes
+            raise OSError('simulated: failure after the bytes were all written')
+
+        monkeypatch.setattr(shutil, 'move', _complete_then_fail)
+        plugin = _mover(monkeypatch, file_action='symlink_reversed')
+
+        with pytest.raises(OSError):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        assert Path(old).read_bytes() == DOWNLOAD, 'source must survive'
+        assert dest.read_bytes() == DOWNLOAD, 'a complete copy must never be discarded'
+
+    def test_a_partially_written_copy_is_removed_too(self, tmp_path, monkeypatch):
+        """The `copy` file_action has the same shape and the same gap.
+
+        Fixing only symlink_reversed would leave the identical truncated-file
+        outcome one branch away -- the "fix the instance, miss the class"
+        pattern this branch has already hit twice.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        def _partial_copy(src, dst):
+            Path(dst).write_bytes(DOWNLOAD[:400])
+            raise OSError('simulated: disk full part-way through the copy')
+
+        monkeypatch.setattr(shutil, 'copy', _partial_copy)
+        plugin = _mover(monkeypatch, file_action='copy')
+
+        with pytest.raises(OSError):
+            _move(plugin, tmp_path, str(old), str(dest))
+
+        assert Path(old).read_bytes() == DOWNLOAD, 'source must survive byte-identical'
+        assert not os.path.exists(dest), 'the partial copy must not be left in the library'
+
 
 # ---------------------------------------------------------------------------
 # T1.8 caller-level proof (AC-DATA-12 / AC-QA-17). The assertions above are a

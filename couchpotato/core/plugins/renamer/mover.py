@@ -10,6 +10,55 @@ from couchpotato.environment import Env
 log = CPLog(__name__)
 
 
+def _discard_partial_destination(old, dest):
+    """Remove `dest` when a transfer failed part-way through writing it.
+
+    `shutil.move` falls back to `copy2`, which on a full disk or a dropped
+    mount writes part of the file and then raises. T1.8 made that failure
+    propagate, which stopped the caller deleting the source -- but it left a
+    truncated file sitting at the library filename. `_moveRenamedFiles` then
+    skipped that file on every subsequent run, because fix (a)'s `lexists`
+    guard refuses a destination that already exists, so the retry could never
+    succeed; and the scanner attached the truncated file to the movie.
+
+    The default-move branch has cleaned this up since before T1.8. The `copy`
+    and `symlink_reversed` branches did not, which is the same "fix the
+    instance, miss the class" shape this area keeps producing.
+
+    Deleting here cannot lose data: `old` is intact in every one of these
+    cases, so the only copy being removed is one that is already wrong. The
+    two ways that could stop being true are both refused:
+
+    - the destination is the same size as the source, so the bytes did land
+      and the failure came afterwards (`shutil.move`'s own final unlink of the
+      source can fail on its own). Never discard a complete copy to tidy up
+      after a failure that already succeeded at the part that matters.
+    - the source cannot be sized at all, so complete and partial are
+      indistinguishable and what is at the destination may be the only copy
+      left. Keep it and let the exception carry the failure.
+    """
+    try:
+        if not os.path.lexists(dest):
+            return
+        dest_size = os.path.getsize(dest)
+        old_size = os.path.getsize(old)
+    except OSError:
+        log.warning('Could not compare "%s" with "%s" after a failed transfer, '
+                    'leaving the destination in place: %s',
+                    old, dest, traceback.format_exc(1))
+        return
+
+    if dest_size == old_size:
+        return
+
+    try:
+        os.unlink(dest)
+    except OSError:
+        log.warning('Failed removing the partial destination "%s" (%s of %s '
+                    'bytes); it will block every retry until removed by hand: %s',
+                    dest, dest_size, old_size, traceback.format_exc(1))
+
+
 class MoverMixin:
     """Mixin providing file move/copy/link methods for the Renamer class."""
 
@@ -38,14 +87,26 @@ class MoverMixin:
                         raise
             elif move_type == 'copy':
                 log.info('Copying "%s" to "%s"', old, dest)
-                shutil.copy(old, dest)
+                try:
+                    shutil.copy(old, dest)
+                except Exception:
+                    _discard_partial_destination(old, dest)
+                    raise
             elif move_type == 'symlink_reversed':
                 log.info('Reverse symlink "%s" to "%s"', old, dest)
                 # A failed move must not be swallowed here: if nothing reached
                 # `dest`, the caller (_moveRenamedFiles) must see this as a
                 # failure, not a success -- otherwise cleanup deletes the only
                 # copy of the file. Only the symlink-back is best-effort.
-                shutil.move(old, dest)
+                #
+                # The failure still propagates; the only thing this handler
+                # does is take a truncated `dest` back out of the library
+                # first, so the next run is able to retry at all.
+                try:
+                    shutil.move(old, dest)
+                except Exception:
+                    _discard_partial_destination(old, dest)
+                    raise
                 try:
                     symlink(dest, old)
                 except Exception:
@@ -73,7 +134,13 @@ class MoverMixin:
                             try:
                                 os.unlink(old_link)
                             except Exception:
-                                log.debug('Failed removing stray link file "%s": %s', old_link, traceback.format_exc())
+                                # WARNING, not DEBUG: setup_logging leaves the
+                                # root logger at INFO unless --debug, so a
+                                # DEBUG line here is emitted by nothing in
+                                # production -- and what it reports is a
+                                # `<file>.link` symlink left behind in the
+                                # user's media library.
+                                log.warning('Failed removing stray link file "%s": %s', old_link, traceback.format_exc())
 
             try:
                 os.chmod(dest, Env.getPermission('file'))
