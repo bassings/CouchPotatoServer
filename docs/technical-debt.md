@@ -701,3 +701,42 @@ scope and a reviewer can read the dedent directly against the original.
    `musllinux` wheels, so multi-arch builds don't compile from source.
 9. Scan the image before release with Trivy; target 0 CVEs (see
    `docs/development-process.md` → Release).
+
+**Mutation testing cannot run at all, so the `make mutation-changed` step
+CLAUDE.md prescribes per-change has never been runnable.** Found by running it
+rather than assuming.
+
+mutmut 3.x copies only `source_paths` into its `mutants/` sandbox and runs the
+tests inside it. `pyproject.toml` sets
+`source_paths = ["couchpotato/core/db/sqlite_adapter.py"]` with
+`tests_dir = ["tests/unit/"]`, so:
+
+    ModuleNotFoundError: No module named 'couchpotato.api'
+        tests/unit/test_add_via_url.py:17
+
+Narrowing `tests_dir` to the three adapter test files moves the failure one
+level down but does not fix it -- the sandbox holds the single mutated file and
+nothing it imports:
+
+    ModuleNotFoundError: No module named 'couchpotato.core.db.interface'
+        couchpotato/core/db/sqlite_adapter.py:15
+
+The scope that keeps runs fast (one file) is the same thing that makes the
+sandbox unimportable. Widening `source_paths` to `couchpotato/core/db/` would
+fix the imports and change what gets mutated -- a real trade between run time
+and coverage, not a config typo, which is why it is filed rather than guessed
+at here.
+
+Two things worth separating. The mutation testing this project actually relies
+on is done by hand -- break what the guard protects, watch it fail, restore,
+verify byte-identity by hash -- and that is what every "proven load-bearing"
+claim on the m0-safety-net branch rests on. What does not work is the automated
+sweep, which is informational by design and has no threshold. A missing
+convenience, not a missing gate.
+
+But `make mutation-changed` **exits 0 while printing `runner returned 1`**.
+That is deliberate ("Mutation results are INFORMATIONAL") and it is still an
+exit-code-swallowing shape in a repo that ships a guard against exactly that:
+the command reports success having measured nothing. Whoever fixes the sandbox
+should decide whether "the runner could not start" deserves to be
+distinguished from "the runner ran and found survivors".
