@@ -403,12 +403,31 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
+    # pull: true is load-bearing for the Trivy step below, not a tidy-up.
+    #
+    # `FROM python:3.14-alpine` is a floating tag, and with a GHA layer cache
+    # the scanned artefact stops being a function of the repo and becomes a
+    # function of whatever the cache happens to hold. Measured on PR #225: CI
+    # reported two fixable HIGHs -- setuptools 70.3.0 (CVE-2025-47273) and
+    # msgpack 1.1.2 (GHSA-6v7p-g79w-8964) -- while a fresh local build of the
+    # same commit had NEITHER PACKAGE INSTALLED AT ALL, and neither appears in
+    # requirements.txt. Both came from cached layers built on an older base
+    # that still bundled them; the current python:3.14-alpine ships no
+    # setuptools (verified against the pulled image).
+    #
+    # So the gate was failing on packages the image no longer contains, and
+    # would equally have PASSED on a stale-but-clean cache while the live base
+    # carried a new CVE. A security gate whose verdict depends on cache state
+    # is not a gate. `pull: true` re-pulls the base every run, so a base digest
+    # change invalidates the downstream layers and the scan sees what actually
+    # ships.
     - name: Build Docker image
       uses: docker/build-push-action@v7
       with:
         context: .
         load: true
         push: false
+        pull: true
         tags: couchpotato:test
         cache-from: type=gha
         cache-to: type=gha,mode=max

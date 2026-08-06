@@ -596,6 +596,33 @@ on a `None` key. That closes the whole family at one place instead of
 chasing callers, which is what this branch spent four rounds learning about
 `moveFile`.
 
+**A security gate that scans a cached artefact is not scanning what ships.**
+PR #225's `docker` job failed Trivy on two fixable HIGHs -- `setuptools`
+70.3.0 (CVE-2025-47273) and `msgpack` 1.1.2 (GHSA-6v7p-g79w-8964). Neither
+package is in `requirements.txt`, and a fresh local build of the same commit,
+on the same platform (linux/amd64), had **neither installed at all**: the
+current `python:3.14-alpine` ships no setuptools, verified against the pulled
+base. Both came from GHA-cached layers built on an older base.
+
+The failure direction was harmless -- a false positive on packages the image
+no longer contains. The other direction is not: the same mechanism would have
+reported CLEAN from a stale-but-clean cache while the live base carried a new
+CVE, and the release would have gone out on that. `FROM python:3.14-alpine` is
+a floating tag; combined with `cache-from: type=gha`, the scanned artefact was
+a function of cache state rather than of the repo.
+
+Fixed with `pull: true` on the build step, so a base digest change invalidates
+the downstream layers. The stronger fix -- pinning the base by digest, the way
+`GITLEAKS_IMAGE` is pinned in the Makefile for exactly this reason -- is not
+taken here because nothing yet updates that digest; it wants Dependabot's
+`docker` ecosystem enabled in the same change, which is its own PR.
+
+Worth noting how this was found, because the first two diagnoses were wrong: a
+local scan came back clean and I nearly concluded the fix had worked. It had,
+for `cryptography` -- but the local scan was of a *different image* from the
+one CI built, and the only way to see that was to read CI's actual Trivy table
+rather than trust a local reproduction of it.
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.
