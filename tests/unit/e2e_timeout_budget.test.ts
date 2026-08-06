@@ -64,10 +64,30 @@ function projectTimeouts(): number[] {
   // `expect: { timeout: 5000 }` is excised first: it is the per-assertion
   // timeout, unrelated to worker-fixture setup, and including it would make
   // this guard demand a readiness budget under five seconds.
-  const source = read('playwright.config.ts').replace(/expect:\s*\{[^}]*\}/s, '');
+  const source = read('playwright.config.ts')
+    // Comments first: this config explains every decision in prose, and the
+    // word "timeout" appears in that prose far more often than in code.
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/[^\n]*/g, '$1')
+    .replace(/expect:\s*\{[^}]*\}/s, '');
 
   const all = [...source.matchAll(/^\s*timeout:\s*([0-9_]+)\s*,?/gm)].map((m) => toNumber(m[1]));
   expect(all.length, 'no `timeout:` found in playwright.config.ts').toBeGreaterThan(0);
+
+  // Cross-check: every `timeout:` key in the code must have been READ, not
+  // merely most of them. The regex above wants digits and underscores only,
+  // so `timeout: 15e3`, `timeout : 15000` or a hex literal would be skipped
+  // silently -- and a skipped timeout is one that can sit under the readiness
+  // budget with this guard green, which is the entire failure this file
+  // exists to prevent. Counting keys cannot make that mistake.
+  const keys = [...source.matchAll(/\btimeout\s*:/g)].length;
+  expect(
+    all.length,
+    `playwright.config.ts has ${keys} \`timeout:\` key(s) outside the expect ` +
+    `block but only ${all.length} value(s) could be parsed: [${all.join(', ')}]. ` +
+    `An unparsed timeout is unchecked, and this guard would stay green while ` +
+    `a project timeout sat below the readiness budget.`,
+  ).toBe(keys);
 
   return all;
 }

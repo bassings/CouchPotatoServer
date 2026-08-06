@@ -1759,7 +1759,8 @@ class TestRule5WithoutGit:
     def test_the_authoritative_gates_both_pass_require_git(self):
         """The flag is worth nothing if the gates do not use it.
 
-        verify.sh is the local gate and ci.yml is its mirror (hard rule 4).
+        verify.sh is the local gate and ci.yml is its mirror (hard rule 2:
+        `make verify` must pass locally before every push, don't rely on CI).
         Both must opt in, or the skip branch is reachable from the run whose
         green means something. `make check-traps` deliberately does NOT, since
         it is the ad-hoc command and its own PYTHON may be a bare python3.
@@ -1878,6 +1879,45 @@ class TestRule3ParsingEdgeCases:
         assert len(messages) == 1, messages
         assert '-e (exit on error)' in messages[0], messages
         assert '-u (error on unset variable)' in messages[0], messages
+
+    def test_flags_belonging_to_another_command_on_the_line_are_not_counted(self, tmp_path):
+        """`sort -u` is not `set -u`.
+
+        The tokeniser walked every token on the line, so `set -e; sort -u
+        /etc/hosts` came back CLEAN -- a blocking gate passing a script that
+        genuinely lacks `-u`. Measured against the regex this parser replaced
+        (`git show f7f57b62`), which flagged it correctly: a regression
+        introduced by the rewrite that was meant to remove false results.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -e; sort -u /etc/hosts\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    def test_dash_dash_ends_options_for_its_own_command_only(self, tmp_path):
+        """`set -- alpha; set -eu` enables both. Breaking on `--` for the rest
+        of the physical line reported it as missing both -- a false positive on
+        a correct script, which the rule's own comment argues is not a harmless
+        nag."""
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- alpha; set -eu\necho "$1"\n')
+
+        assert findings_for(script) == []
+
+    def test_a_set_after_another_command_on_the_same_line_still_counts(self, tmp_path):
+        """`echo hi; set -eu` genuinely enables both.
+
+        The line filter required `set` to be the first thing on the line, so
+        this was reported as missing both -- a false positive that predates
+        the tokeniser and is closed by the same change.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\necho hi; set -eu\necho done\n')
+
+        assert findings_for(script) == []
 
     def test_a_trailing_semicolon_does_not_hide_a_long_form(self, tmp_path):
         # `set -o errexit; set -o nounset;` tokenises as `errexit;`/`nounset;`.

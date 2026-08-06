@@ -705,7 +705,7 @@ already `rm -rf` sibling paths in the repo root.
   `.github/workflows/ci.yml` with the same project, the same worker count and
   the same `--fail-on-flaky-tests`, and neither file special-cases
   `process.env.CI` to change what is executed. *Break:* remove one project's
-  invocation from either file; hard rule 4 says the local gate mirrors CI, and
+  invocation from either file; hard rule 2 says the local gate mirrors CI, and
   a divergence must be visible rather than inferred from two green ticks.
 - **AC-OPS-16** A failed seed is **red, not skipped**. Today **two** seed steps
   swallow failure into `:warning:` with `continue-on-error: true`

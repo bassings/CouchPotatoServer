@@ -27,7 +27,7 @@ import { describe, expect, it } from 'vitest';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
-/** The two files that actually decide what runs. Hard rule 4 makes them mirrors. */
+/** The two files that actually decide what runs. Hard rule 2 makes them mirrors. */
 const GATES = ['scripts/verify.sh', '.github/workflows/ci.yml'];
 
 /** Everywhere else a reader could copy a Playwright command from. */
@@ -90,6 +90,44 @@ function invocations(files: string[]): Invocation[] {
   return found;
 }
 
+/** Source with `//` and block comments removed, so braces in prose do not count. */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+}
+
+/**
+ * How many project object literals the `projects: [...]` array actually holds.
+ *
+ * The cross-check that makes `declaredProjects()` honest. That function is a
+ * regex over `name:`, so a project spelled in any way it does not anticipate
+ * is not reported as a problem -- it simply vanishes, and every check built on
+ * it passes while covering one project fewer. Measured, three ordinary
+ * spellings did exactly that: a backtick-quoted name, a `name` with no
+ * trailing comma, and a whole project written on one line. The first also
+ * carried a 15_000ms timeout, under the 25_000ms readiness budget, with all
+ * eight tests green.
+ *
+ * Counting literals cannot make the same mistake, because it does not care
+ * how the name is written.
+ */
+function projectLiteralCount(): number {
+  const source = stripComments(read('playwright.config.ts'));
+  const start = source.indexOf('projects:');
+  expect(start, 'no `projects:` array found in playwright.config.ts').toBeGreaterThan(-1);
+
+  let bracket = 0;
+  let brace = 0;
+  let count = 0;
+  for (let i = source.indexOf('[', start); i < source.length; i += 1) {
+    const c = source[i];
+    if (c === '[') bracket += 1;
+    else if (c === ']') { bracket -= 1; if (bracket === 0) break; }
+    else if (c === '{') { if (bracket === 1 && brace === 0) count += 1; brace += 1; }
+    else if (c === '}') brace -= 1;
+  }
+  return count;
+}
+
 function declaredProjects(): string[] {
   // Quote-agnostic and comment-tolerant: `name: "firefox", // slow` must be
   // seen. The first version anchored on `^      name: '…',$`, so a trailing
@@ -106,6 +144,17 @@ describe('Playwright project coverage', () => {
     // empty sets and pass vacuously.
     expect(declaredProjects().length, 'no projects parsed out of playwright.config.ts')
       .toBeGreaterThanOrEqual(4);
+    // The floor above only binds when an EXISTING project is reformatted. A
+    // newly ADDED project the regex cannot read leaves the count unchanged
+    // and every check below silently covers one project fewer. This is what
+    // makes an addition visible.
+    expect(
+      declaredProjects().length,
+      `playwright.config.ts declares ${projectLiteralCount()} project object(s) ` +
+      `but only ${declaredProjects().length} name(s) could be read: ` +
+      `[${declaredProjects().join(', ')}]. A project whose name this parser ` +
+      `cannot see is covered by nothing, and nothing else here would notice.`,
+    ).toBe(projectLiteralCount());
     expect(invocations(GATES).length, 'no playwright commands found in the gates')
       .toBeGreaterThanOrEqual(4);
   });

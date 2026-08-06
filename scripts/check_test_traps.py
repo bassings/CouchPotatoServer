@@ -500,7 +500,7 @@ def check_shell_script(path: Path, text: str):
         # terminate option parsing for a later one.
         set_lines_list = [
             strip_shell_comments(ln, blank_strings=True)
-            for ln in lines if re.match(r"\s*set\s+-", ln)
+            for ln in lines if re.search(r"(?:^|[;&|])\s*set\s+-", ln)
         ]
         set_lines = " ".join(set_lines_list)
         # Tokenised rather than pattern-matched against the whole line.
@@ -521,27 +521,36 @@ def check_shell_script(path: Path, text: str):
         # correct script to satisfy the gate, or learns to bypass the gate.
         enabled = set()
         for set_line in set_lines_list:
-            for raw_token in set_line.split():
-                # `;` is stripped because `set -o errexit; set -o nounset;`
-                # tokenises as `errexit;`/`nounset;`, which failed the equality
-                # below and was reported as missing BOTH flags. The regex this
-                # replaced accepted it, so the rewrite was a regression on the
-                # very false-positive class it was written to remove.
-                token = raw_token.rstrip(";")
-                if token == "--":
-                    # End of options: everything after it is a POSITIONAL
-                    # parameter, not a flag. `set -- -e -u` sets $1 and $2 and
-                    # enables nothing, and was being read as `set -eu`.
-                    break
-                if token.startswith("-") and not token.startswith("--"):
-                    # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES and is
-                    # deliberately not read as enabling.
-                    enabled.update(token[1:])
-                elif token in ("errexit", "nounset"):
-                    # Long forms, as in `set -o errexit`. Accepted wherever
-                    # they appear on a `set` line; `set +o errexit` is rare
-                    # enough, and perverse enough in a gate, not to model.
-                    enabled.add({"errexit": "e", "nounset": "u"}[token])
+            # Split into COMMANDS first, and read only the arguments of the
+            # ones that are actually `set`. Tokenising the whole line counted
+            # flags belonging to the next command: measured,
+            # `set -e; sort -u /etc/hosts` came back CLEAN, because `sort`'s
+            # `-u` was read as `set -u`. A blocking gate passing a script that
+            # genuinely lacks `-u` -- and a REGRESSION, since the regex this
+            # tokeniser replaced flagged it correctly.
+            #
+            # Splitting also removes the trailing `;` that `set -o nounset;`
+            # used to carry, so no separate strip is needed, and it makes `--`
+            # end options for ITS OWN command rather than for the rest of the
+            # line (`set -- alpha; set -eu` was being reported as missing
+            # both).
+            for command in re.split(r"[;&|]+", set_line):
+                tokens = command.split()
+                if not tokens or tokens[0] != "set":
+                    continue
+                for token in tokens[1:]:
+                    if token == "--":
+                        # End of options: everything after it is a POSITIONAL
+                        # parameter, not a flag. `set -- -e -u` sets $1 and $2
+                        # and enables nothing; it was read as `set -eu`.
+                        break
+                    if token.startswith("-") and not token.startswith("--"):
+                        # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES
+                        # and is deliberately not read as enabling.
+                        enabled.update(token[1:])
+                    elif token in ("errexit", "nounset"):
+                        # Long forms, as in `set -o errexit`.
+                        enabled.add({"errexit": "e", "nounset": "u"}[token])
 
         if "e" not in enabled:
             missing.append("-e (exit on error)")
@@ -901,7 +910,7 @@ def check_orphaned_test_files(
     path must be executed according to EVERY entry, not merely at least one:
     the local gate (verify.sh) and CI (ci.yml) are two independent gates, and
     a suite present in one but silently dropped from the other is still a
-    real gap: the local gate no longer mirrors CI (hard rule 4), or CI is
+    real gap: the local gate no longer mirrors CI (hard rule 2), or CI is
     carrying dead weight nobody runs locally. Union semantics here would have
     let this exact mutation through: deleting the tests/integration/
     invocation from verify.sh alone, while it stayed in ci.yml, must still be
