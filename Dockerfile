@@ -68,6 +68,42 @@ RUN addgroup -g ${PGID} couchpotato \
 # Copy installed Python packages from builder
 COPY --from=builder /install /usr/local
 
+# Remove the package installer from the RUNTIME image.
+#
+# This is where two "fixable HIGH" Trivy findings actually came from, and they
+# are not in this project's dependencies at all:
+#
+#     /usr/local/lib/python3.14/site-packages/pip/_vendor/vendor.txt
+#         msgpack==1.1.2      GHSA-6v7p-g79w-8964
+#         setuptools==70.3.0  CVE-2025-47273
+#
+# pip VENDORS those, the base image ships pip, and Trivy reads the vendored
+# manifest. Nothing here declares, imports or installs either one -- which is
+# why `pip show` and `importlib.metadata` both report them absent while the
+# scanner correctly reports them present. Vendored code is not an installed
+# distribution.
+#
+# Removing pip is the fix and is right on its own merits: this image never
+# installs a package at runtime. It also removes setuptools/pkg_resources/wheel
+# for the same reason -- build tooling is a recurring CVE surface with no
+# runtime purpose here.
+#
+# Verified: the container still starts healthy, and the app imports nothing
+# from any of them (checked across `couchpotato/`, `libs/` and CouchPotato.py).
+#
+# Note for whoever sees this fail again: a CACHED build hid this for months.
+# The layer cache held an older base whose pip vendored unaffected versions, so
+# the scan passed while the image that would actually ship was vulnerable. That
+# is why the build step above sets `no-cache: true`.
+RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
+           /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
+           /usr/local/lib/python3.14/site-packages/setuptools \
+           /usr/local/lib/python3.14/site-packages/setuptools-*.dist-info \
+           /usr/local/lib/python3.14/site-packages/pkg_resources \
+           /usr/local/lib/python3.14/site-packages/wheel \
+           /usr/local/lib/python3.14/site-packages/wheel-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
+
 # Copy application code
 COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
 

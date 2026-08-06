@@ -596,47 +596,57 @@ on a `None` key. That closes the whole family at one place instead of
 chasing callers, which is what this branch spent four rounds learning about
 `moveFile`.
 
-**A security gate that scans a cached artefact is not scanning what ships.**
-PR #225's `docker` job failed Trivy on two fixable HIGHs -- `setuptools`
-70.3.0 (CVE-2025-47273) and `msgpack` 1.1.2 (GHSA-6v7p-g79w-8964). Neither
-package is in `requirements.txt`, and a fresh local build of the same commit,
-on the same platform (linux/amd64), had **neither installed at all**: the
-current `python:3.14-alpine` ships no setuptools, verified against the pulled
-base. Both came from GHA-cached layers built on an older base.
+**The image shipped two fixable HIGH CVEs for as long as the layer cache hid
+them, and three of my diagnoses were wrong before the fourth was right.**
 
-The failure direction was harmless -- a false positive on packages the image
-no longer contains. The other direction is not: the same mechanism would have
-reported CLEAN from a stale-but-clean cache while the live base carried a new
-CVE, and the release would have gone out on that. `FROM python:3.14-alpine` is
-a floating tag; combined with `cache-from: type=gha`, the scanned artefact was
-a function of cache state rather than of the repo.
+PR #225's `docker` job failed Trivy on `setuptools` 70.3.0 (CVE-2025-47273) and
+`msgpack` 1.1.2 (GHSA-6v7p-g79w-8964). Neither is in `requirements.txt`, and
+`pip show` and `importlib.metadata` both reported them ABSENT from the built
+image. The scanner was right and both of those tools were, in a sense, also
+right:
 
-`pull: true` did NOT fix it, and the attempt is worth recording. The next run
-still reported `#9 COPY requirements.txt CACHED` and `#10 RUN pip install
-CACHED`: the base digest was unchanged, so the whole layer chain still matched
-and the same two findings came back. The cache holds layers that a clean build
-of the same inputs does not reproduce -- a `--no-cache --pull` build for
-linux/amd64, from the same base digest CI resolved, contains neither package --
-**and I could not account for the difference.**
+    /usr/local/lib/python3.14/site-packages/pip/_vendor/vendor.txt
+        msgpack==1.1.2
+        setuptools==70.3.0
 
-That unexplained gap is the argument, not a footnote to it. A scan whose result
-cannot be derived from the repo is not measuring the repo. So the cache is gone
-from this job (`no-cache: true`, `cache-from`/`cache-to` removed), at a cost of
-roughly two minutes, and the verdict is deterministic again.
+**pip vendors them, the base image ships pip, and Trivy reads the vendored
+manifest.** Vendored code is not an installed distribution, so every
+"is it installed?" check says no while the vulnerable code sits in the image.
 
-The stronger fix -- pinning the base by digest, the way `GITLEAKS_IMAGE` is
-pinned in the Makefile for exactly this reason -- is still not taken here,
-because nothing would update that digest; it wants Dependabot's `docker`
-ecosystem enabled in the same change, which is its own PR. Also still open: why
-the cached layers differ from a clean build at all. If that mechanism can put
-two packages into an image, it can put other things there, and the honest
-status is that it is unexplained rather than resolved.
+Why it surfaced now: the CI build used `cache-from: type=gha`, and the cache
+held layers from an older base whose pip vendored unaffected versions. A cached
+build scanned CLEAN while the image that would actually ship was vulnerable --
+the dangerous direction of a nondeterministic gate, and it had been that way
+silently. Removing the cache from the scanning build is what exposed it.
 
-Worth noting how this was found, because the first two diagnoses were wrong: a
-local scan came back clean and I nearly concluded the fix had worked. It had,
-for `cryptography` -- but the local scan was of a *different image* from the
-one CI built, and the only way to see that was to read CI's actual Trivy table
-rather than trust a local reproduction of it.
+Fixed by removing pip (and setuptools/pkg_resources/wheel) from the runtime
+stage. Correct on its own merits: this image never installs a package at
+runtime, and build tooling is a recurring CVE surface with no runtime purpose.
+Verified: Trivy clean with the CI flags, container starts healthy, no import
+errors, nothing in `couchpotato/`, `libs/` or `CouchPotato.py` imports any of
+them.
+
+**The diagnostic path is the lesson, not the fix.** In order, I concluded: (1)
+a new CVE needing a `cryptography` bump -- true, but a different finding; (2)
+a stale base image, "fixed" with `pull: true` -- wrong, the next run still
+reported every layer CACHED; (3) the layer cache itself, "fixed" with
+`no-cache: true` -- wrong as a diagnosis, though right as a policy, and it is
+what made the real cause visible; (4) speculative removal of the packages plus
+a `msgpack>=1.2.1` pin -- wrong, and reverted: msgpack is not a dependency of
+this project at all.
+
+What broke the loop was giving up on inference and running `find / -iname
+'*msgpack*'` inside the image, which pointed straight at `pip/_vendor/`. Three
+rounds of plausible reasoning lost to one directory listing. `--no-cache` also
+mattered: with the cache on, the local image was clean and the bug was
+invisible, so every local reproduction of CI's failure quietly disagreed with
+CI and I trusted the local one.
+
+Still open: nothing updates the base image digest, so `FROM python:3.14-alpine`
+remains a floating tag. Pinning it by digest -- the way `GITLEAKS_IMAGE` is
+pinned in the Makefile for exactly this reason -- wants Dependabot's `docker`
+ecosystem enabled in the same change, which is its own PR.
+
 
 ## Lessons learned
 
