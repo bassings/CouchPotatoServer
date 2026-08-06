@@ -145,12 +145,18 @@ def safe_rmtree(path, scratch_root=None):
     """
     resolved = validate_worker_data_dir(path, scratch_root=scratch_root)
 
-    # rstrip before the lstat. POSIX resolves a trailing slash, so
-    # os.path.islink('/a/link/') is False where os.path.islink('/a/link') is
-    # True -- one character turns this refusal off and deletes through the
-    # link. The test above it passed only because it spelled the path
-    # without the slash.
-    if os.path.islink(path.rstrip(os.sep)):
+    # normpath, not rstrip. POSIX resolves a trailing separator before the
+    # lstat, so os.path.islink('/a/link/') is False where
+    # os.path.islink('/a/link') is True -- one character turns this refusal
+    # off and deletes through the link.
+    #
+    # rstrip fixed exactly one spelling of a family. Measured, it still let
+    # `<link>/.`, `<link>/./` and `<link>/.//.` through, each deleting the
+    # symlink's target and its contents. normpath collapses all of them,
+    # including the doubled separators, in one call. Fixing the reported
+    # instance and missing the class is the shape this repo's own mover.py
+    # comments name three times as the mistake to avoid.
+    if os.path.islink(os.path.normpath(path)):
         raise UnsafeDataDirError(
             '%r is a symlink -- refusing to delete through it' % path
         )

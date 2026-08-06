@@ -489,9 +489,20 @@ def check_shell_script(path: Path, text: str):
     # requirement is back without the false positives.
     if shebang.startswith("#!") and ("bash" in shebang or "/bin/sh" in shebang):
         missing = []
-        set_lines = " ".join(
-            strip_shell_comments(ln) for ln in lines if re.match(r"\s*set\s+-", ln)
-        )
+        # blank_strings=True, like the pipefail check three rules up. Without
+        # it, `set -e; echo "run with set -u for stricter checking"` counted
+        # the `-u` INSIDE the string and the file came back clean -- the exact
+        # false-green class strip_shell_comments' own docstring records
+        # (`echo "hint: add set -o pipefail"` silenced rule 2 for a whole
+        # file), reintroduced two rules away by omitting one keyword.
+        #
+        # Kept per-line rather than joined, so a `--` on one `set` line cannot
+        # terminate option parsing for a later one.
+        set_lines_list = [
+            strip_shell_comments(ln, blank_strings=True)
+            for ln in lines if re.match(r"\s*set\s+-", ln)
+        ]
+        set_lines = " ".join(set_lines_list)
         # Tokenised rather than pattern-matched against the whole line.
         # Two false positives on correct scripts, both from a BLOCKING gate,
         # and both because the old regexes anchored on `set -<cluster>`:
@@ -509,16 +520,28 @@ def check_shell_script(path: Path, text: str):
         # A false positive here is not a harmless nag: the reader "fixes" a
         # correct script to satisfy the gate, or learns to bypass the gate.
         enabled = set()
-        for token in set_lines.split():
-            if token.startswith("-") and not token.startswith("--"):
-                # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES and is
-                # deliberately not read as enabling.
-                enabled.update(token[1:])
-            elif token in ("errexit", "nounset"):
-                # Long forms, as in `set -o errexit`. Accepted wherever they
-                # appear on a `set` line; `set +o errexit` is rare enough, and
-                # perverse enough in a gate, not to be worth modelling.
-                enabled.add({"errexit": "e", "nounset": "u"}[token])
+        for set_line in set_lines_list:
+            for raw_token in set_line.split():
+                # `;` is stripped because `set -o errexit; set -o nounset;`
+                # tokenises as `errexit;`/`nounset;`, which failed the equality
+                # below and was reported as missing BOTH flags. The regex this
+                # replaced accepted it, so the rewrite was a regression on the
+                # very false-positive class it was written to remove.
+                token = raw_token.rstrip(";")
+                if token == "--":
+                    # End of options: everything after it is a POSITIONAL
+                    # parameter, not a flag. `set -- -e -u` sets $1 and $2 and
+                    # enables nothing, and was being read as `set -eu`.
+                    break
+                if token.startswith("-") and not token.startswith("--"):
+                    # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES and is
+                    # deliberately not read as enabling.
+                    enabled.update(token[1:])
+                elif token in ("errexit", "nounset"):
+                    # Long forms, as in `set -o errexit`. Accepted wherever
+                    # they appear on a `set` line; `set +o errexit` is rare
+                    # enough, and perverse enough in a gate, not to model.
+                    enabled.add({"errexit": "e", "nounset": "u"}[token])
 
         if "e" not in enabled:
             missing.append("-e (exit on error)")

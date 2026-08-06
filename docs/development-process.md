@@ -257,7 +257,11 @@ practice it only happened nightly, which meant survivors went unreviewed and the
   read by nothing in the repo. Following the old line started a server on
   5050 that the suite then ignored.)
 - CI also runs the full suite. (See also AGENTS.md's local-verification step,
-  which runs the whole suite via `npm run test:e2e`.)
+  which runs the chromium and accessibility projects via
+  `npx playwright test --project=...`. Not the whole suite: the isolation
+  pair needs two workers and has its own script, and `npm run test:e2e --
+  --project=X` does NOT scope a run -- Playwright unions --project flags, so
+  composing on top of a script that already names projects widens it.)
 - For any UI change, check and update:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`

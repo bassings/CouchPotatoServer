@@ -403,8 +403,15 @@ class TestMigrationFailureModes:
             migrate(db_path, str(tmp_path / "null_t_dest"), verbose=False)
 
         message = str(excinfo.value)
-        # It must not claim to know where the problem is...
-        assert 'the other claimant is' not in message, message
+        # Anchored on a phrase that survives the source string's own line
+        # wrapping. `'the other claimant is'` -- the first spelling here --
+        # could NEVER appear: migrate.py wraps it as "the other\n   claimant
+        # is", so that assertion passed whatever the code did. It was found by
+        # two independent reviewers running the real migrate(), not by reading.
+        assert 'claimant is a row already in the destination' not in message, (
+            'the operator was told their source is clean and the destination '
+            'is at fault, for a NOT NULL failure in the source: %s' % message
+        )
         assert 'remove BOTH the' not in message, (
             'the operator was told to delete destination rows for a '
             'constraint that has nothing to do with duplicate identifiers: '

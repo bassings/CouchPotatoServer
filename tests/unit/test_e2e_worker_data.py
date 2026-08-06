@@ -180,6 +180,31 @@ class TestSafeRmtree:
         assert other_worker_real_dir.is_dir()
         assert (other_worker_real_dir / 'sentinel.txt').read_text() == 'worker 1 data'
 
+    @pytest.mark.parametrize('suffix', ['/', '//', '/.', '/./', '/.//.'])
+    def test_refuses_a_symlink_however_the_path_is_spelled(self, tmp_path, suffix):
+        # `rstrip(os.sep)` -- the first fix -- closed only the trailing-slash
+        # spelling. Measured, `<link>/.`, `<link>/./` and `<link>/.//.` still
+        # deleted the target and everything in it, because os.path.islink
+        # lstats the literal string and rstrip does not remove `/.`.
+        #
+        # Parametrised rather than folded into one assertion so the failure
+        # names the spelling that got through.
+        other_worker_real_dir = tmp_path / '.e2e-w1-data'
+        other_worker_real_dir.mkdir()
+        (other_worker_real_dir / 'sentinel.txt').write_text('worker 1 data')
+
+        symlink_path = tmp_path / '.e2e-w0-data'
+        symlink_path.symlink_to(other_worker_real_dir, target_is_directory=True)
+
+        with pytest.raises(UnsafeDataDirError):
+            safe_rmtree(str(symlink_path) + suffix, scratch_root=str(tmp_path))
+
+        assert other_worker_real_dir.is_dir(), (
+            'deleted through the symlink when it was spelled %r' % (str(symlink_path) + suffix)
+        )
+        assert (other_worker_real_dir / 'sentinel.txt').read_text() == 'worker 1 data'
+        assert symlink_path.is_symlink(), 'the symlink itself was removed'
+
     def test_refuses_a_symlink_given_with_a_trailing_slash(self, tmp_path):
         # POSIX resolves a trailing slash before the lstat, so
         # os.path.islink('/a/link/') is False while os.path.islink('/a/link')

@@ -42,7 +42,7 @@ function toNumber(literal: string): number {
 
 function readyTimeoutMs(): number {
   const source = read('tests/e2e/fixtures.ts');
-  const match = source.match(/^const READY_TIMEOUT_MS = ([0-9_]+);$/m);
+  const match = source.match(/^const READY_TIMEOUT_MS = ([0-9_]+)\s*;/m);
   expect(match, 'READY_TIMEOUT_MS declaration not found in tests/e2e/fixtures.ts').not.toBeNull();
   return toNumber(match![1]);
 }
@@ -53,14 +53,23 @@ function readyTimeoutMs(): number {
  * so the global value must be in this list on its own account.
  */
 function projectTimeouts(): number[] {
-  const source = read('playwright.config.ts');
+  // EVERY `timeout:` outside the `expect:` block, at any indentation, with or
+  // without a trailing comment. The first version anchored on exact
+  // indentation and a line ending in `,` -- so `timeout: 15_000, // firefox
+  // boots slower` was invisible, and a 15s project timeout could sit below the
+  // 25s readiness budget with this guard green. That is the precise defect the
+  // file exists to prevent, and in a config where every line carries an
+  // explanatory comment it is the likely spelling.
+  //
+  // `expect: { timeout: 5000 }` is excised first: it is the per-assertion
+  // timeout, unrelated to worker-fixture setup, and including it would make
+  // this guard demand a readiness budget under five seconds.
+  const source = read('playwright.config.ts').replace(/expect:\s*\{[^}]*\}/s, '');
 
-  const globalMatch = source.match(/^  timeout: ([0-9_]+),$/m);
-  expect(globalMatch, 'global `timeout:` not found in playwright.config.ts').not.toBeNull();
+  const all = [...source.matchAll(/^\s*timeout:\s*([0-9_]+)\s*,?/gm)].map((m) => toNumber(m[1]));
+  expect(all.length, 'no `timeout:` found in playwright.config.ts').toBeGreaterThan(0);
 
-  const overrides = [...source.matchAll(/^      timeout: ([0-9_]+),$/gm)].map((m) => toNumber(m[1]));
-
-  return [toNumber(globalMatch![1]), ...overrides];
+  return all;
 }
 
 describe('E2E readiness budget', () => {

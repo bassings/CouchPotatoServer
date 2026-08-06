@@ -781,9 +781,16 @@ the diff, not by an agent.
 > |---|---|---|
 > | AC-SIMP-1 | only the files listed below under `couchpotato/` | **9 unlisted modifications** (`db/migrate.py`, `db/sqlite_adapter.py`, `logger.py`, `plugins/browser.py`, `plugins/manage.py`, `settings.py`, `softchroot.py`, `templates/add.html`, `templates/partials/settings/profiles.html`) **and 3 unlisted deletions** (`core/plugins/browser_test.py`, `core/settings_test.py`, `core/softchroot_test.py`) |
 > | AC-SIMP-4 | no new file under `scripts/` | `scripts/e2e_worker_data.py` added |
-> | AC-SIMP-5 | `git ls-files \| wc -l` lower after than before | 650 → 653 |
+> | AC-SIMP-5 | `git ls-files \| wc -l` lower after than before | 650 → 656 |
 > | AC-SIMP-6 | 5-6 named new files under `tests/` | 19 |
 > | AC-SIMP-7 | `if (await` count strictly lower | 63 → 34. **PASSED** |
+>
+> Every row is scored at the branch tip with
+> `git ls-tree -r <ref> --name-only | wc -l` and
+> `git diff --name-status master...HEAD`. Re-score the WHOLE table when the
+> branch moves: an earlier version had AC-SIMP-5 at 653 (the count one commit
+> back) sitting beside an AC-SIMP-6 scored at the tip, so two rows in one
+> table measured different commits.
 >
 > The criteria below are left exactly as written rather than amended to fit,
 > because amending them is what broke them: AC-SIMP-1 was amended four times,

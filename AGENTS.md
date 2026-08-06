@@ -49,8 +49,8 @@ Before considering a change complete, run the narrowest relevant checks for the 
 ruff check .
 python -m pytest
 npm run test:unit
-npm run test:e2e -- --project=chromium
-npm run test:a11y
+npx playwright test --project=chromium
+npx playwright test --project=accessibility
 docker build -t couchpotato:test .
 ```
 

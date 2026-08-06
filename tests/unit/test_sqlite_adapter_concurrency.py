@@ -125,11 +125,15 @@ def test_concurrent_index_queries_do_not_misuse_the_connection(adapter):
 def test_concurrent_index_queries_hit_query_index_itself(adapter):
     """The same hammer, aimed at `_query_index`, and turned up until it bites.
 
-    Removing `@_synchronised` from `_query_index` alone was caught only
-    **3 runs in 5** by `test_concurrent_index_queries_do_not_misuse_the_
-    connection` above. A future change dropping that decorator therefore had
-    roughly a 40% chance of going green, on a defect whose symptom is
-    `media.list` returning the user an empty grid.
+    Removing `@_synchronised` from `_query_index` alone was caught by
+    `test_concurrent_index_queries_do_not_misuse_the_connection` above in
+    3 runs of 5 when first measured, and in **7 runs of 20** when re-measured
+    over a larger sample. So a future change dropping that decorator had
+    roughly a 65% chance of going green -- worse than the first figure said,
+    on a defect whose symptom is `media.list` returning the user an empty
+    grid. The small-sample number is kept here deliberately: it is why the
+    larger one was taken, and a guard's catch rate quoted from five runs is
+    not a measurement.
 
     The first attempt at a fix was to call `_query_index` directly, on the
     theory that `query()`'s per-row `get()` takes the same lock and

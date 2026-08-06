@@ -1842,6 +1842,61 @@ class TestRule3ShellOptionsAreBothPinned:
         assert findings_for(script) == []
 
 
+class TestRule3ParsingEdgeCases:
+    """Three spellings the tokenised parser got wrong, found by review.
+
+    Two false greens and one false positive, all measured by driving the real
+    checker. Kept as a separate class because they are about the PARSER, not
+    about which flags the rule demands.
+    """
+
+    def test_a_flag_mentioned_inside_a_string_does_not_count(self, tmp_path):
+        # `strip_shell_comments(ln)` without blank_strings=True read the `-u`
+        # inside the echo. That is the same false-green the pipefail rule
+        # already learned ("echo \"hint: add set -o pipefail\" silenced rule 2
+        # for a whole file"), reintroduced two rules away by dropping one
+        # keyword argument.
+        script = tmp_path / 'gate.sh'
+        script.write_text(
+            '#!/bin/bash\n'
+            'set -e; echo "run with set -u for stricter checking"\n'
+        )
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    def test_set_dash_dash_sets_positional_parameters_not_flags(self, tmp_path):
+        # `set -- -e -u` assigns $1 and $2. It enables nothing, and was being
+        # read as `set -eu` because the tokeniser skipped `--` and carried on.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- -e -u\necho "$1"\n')
+
+        messages = [m for _line, m in findings_for(script)]
+
+        assert len(messages) == 1, messages
+        assert '-e (exit on error)' in messages[0], messages
+        assert '-u (error on unset variable)' in messages[0], messages
+
+    def test_a_trailing_semicolon_does_not_hide_a_long_form(self, tmp_path):
+        # `set -o errexit; set -o nounset;` tokenises as `errexit;`/`nounset;`.
+        # The equality test missed both and the file was reported as missing
+        # BOTH flags -- a blocking gate rejecting a correct script, and a
+        # REGRESSION against the substring regex this parser replaced.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -o errexit; set -o nounset;\necho hi\n')
+
+        assert findings_for(script) == []
+
+    def test_a_later_set_line_is_not_terminated_by_an_earlier_dash_dash(self, tmp_path):
+        # Parsing is per-line, so `--` ends options for ITS line only.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- alpha beta\nset -eu\necho "$1"\n')
+
+        assert findings_for(script) == []
+
+
 class TestRule2FilterAlternatives:
     """Rule 2's filter list must be more than `tail`.
 

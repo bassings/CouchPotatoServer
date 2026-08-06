@@ -176,7 +176,17 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         # below: this is SQLite's own text, not our heading, and it degrades
         # to the cautious remedy rather than to a destructive one.
         if 'media_identifiers' not in str(exc):
+            # `collision` too, NOT just the remedy. The describer has already
+            # returned its False text -- "no duplicate media identifier in the
+            # source, so the other claimant is a row already in the
+            # destination" -- and that string is printed ABOVE the remedy. A
+            # first version of this fix keyed only the remedy, so the operator
+            # read a confident claim that their source was clean and the
+            # destination was at fault, two lines above a remedy admitting we
+            # could not tell. The confident half is the one people act on.
             found_in_source = None
+            collision = '  (the failure is not a duplicate media identifier; ' \
+                        'see the constraint named above)'
 
         if found_in_source is True:
             remedy = ('COPY THE SOURCE DIRECTORY FIRST -- this is the only '

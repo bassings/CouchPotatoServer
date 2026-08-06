@@ -52,7 +52,7 @@ const BASE_PORT = 5150;
 //
 // So this is not a budget cut. The effective budget was 30s already; this
 // makes the remaining 25s spendable and the failure legible.
-// tests/unit/test_e2e_timeout_budget.test.ts pins the ordering so the two
+// tests/unit/e2e_timeout_budget.test.ts pins the ordering so the two
 // numbers cannot drift apart again.
 const READY_TIMEOUT_MS = 25_000;
 const POLL_INTERVAL_MS = 250;
@@ -178,6 +178,15 @@ function writeServerLog(parallelIndex: number, workerIndex: number, output: stri
  * source by keeping READY_TIMEOUT_MS under the project timeout, so the
  * fixture raises into its own `catch` and cleans up normally.
  *
+ * Registering SIGINT/SIGTERM listeners normally SUPPRESSES Node's default
+ * terminate, which would be a real change to local Ctrl-C behaviour. It is not
+ * one here: Playwright's own worker already registers empty handlers for both
+ * (`node_modules/playwright/lib/common/index.js:1977-1980`, verified), so the
+ * default action is suppressed with or without this block and the runner is
+ * what actually ends the worker. Checked rather than assumed, because "my
+ * handler changed how Ctrl-C behaves" would be a poor thing to discover from
+ * a developer rather than from the source.
+ *
  * Synchronous and best-effort by necessity: an `exit` handler cannot await.
  * SIGKILL rather than SIGTERM for the same reason -- there is no time left
  * to wait for a graceful shutdown, and this only ever runs when the worker
@@ -188,6 +197,16 @@ const liveServers = new Set<ChildProcess>();
 for (const signal of ['exit', 'SIGINT', 'SIGTERM'] as const) {
   process.on(signal, () => {
     for (const proc of liveServers) {
+      // The liveness check is the point, not `proc.pid` being truthy. A
+      // server that crashed on its own is never removed from this set --
+      // `proc.on('exit')` only records it, and stopServer is what deletes,
+      // which for a mid-run crash may not run for minutes. `proc.pid` stays
+      // truthy after the child is reaped, so SIGKILL would then go to
+      // whatever the OS has since given that number. On a self-hosted
+      // developer's machine that is plausibly one of their own processes,
+      // and the catch below would swallow it silently. stopServer already
+      // uses exactly this test one function down.
+      if (proc.exitCode !== null || proc.signalCode !== null) continue;
       try {
         if (proc.pid) process.kill(proc.pid, 'SIGKILL');
       } catch {

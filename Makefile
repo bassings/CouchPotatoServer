@@ -5,6 +5,13 @@
 # Same resolution order scripts/verify.sh uses, so `make <target>` and the
 # gate run under the same interpreter and cannot disagree about which
 # dependencies are installed.
+#
+# Used by EVERY Python recipe below, not just one. When only check-traps used
+# it, this comment was a claim the file did not deliver: measured,
+# `make lint` ran ruff 0.15.0 from Homebrew python3 while the gate ran the
+# pinned 0.16.0 from the venv (requirements-dev.txt), so `make lint` green did
+# not mean the gate would be. `setup` deliberately still uses bare python3 --
+# it is the target that CREATES the environment.
 PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
 
 .PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
@@ -28,24 +35,24 @@ verify-fast: ## Quick gate — lint + unit only, skips E2E
 	./scripts/verify.sh --no-e2e
 
 lint: ## ruff lint only
-	python3 -m ruff check .
+	$(PYTHON) -m ruff check .
 
 security-lint: ## Static security lint (ruff bandit "S" rules — informational)
-	python3 -m ruff check --select S couchpotato/ CouchPotato.py
+	$(PYTHON) -m ruff check --select S couchpotato/ CouchPotato.py
 
 test-py: ## Python unit tests only
-	PYTHONPATH=libs python3 -m pytest tests/unit/ -q --tb=short
+	PYTHONPATH=libs $(PYTHON) -m pytest tests/unit/ -q --tb=short
 
 test-ui: ## UI unit tests (vitest) only
 	npm run test:unit
 
 test-e2e: ## E2E tests (Playwright, auto-starts server) only
-	npm run test:e2e -- --project=chromium
+	npx playwright test --project=chromium
 
 mutation: mutation-py mutation-js ## Run all mutation testing (slow)
 
 mutation-py: ## Python mutation testing (mutmut)
-	PYTHONPATH=libs python3 -m mutmut run
+	PYTHONPATH=libs $(PYTHON) -m mutmut run
 
 mutation-js: ## JS mutation testing (Stryker)
 	npm run test:mutation
@@ -55,7 +62,7 @@ mutation-js: ## JS mutation testing (Stryker)
 BASE ?= master
 
 mutation-changed: ## Mutation testing on changed files only (fast enough per-change)
-	python3 scripts/mutation_changed.py --base $(BASE)
+	$(PYTHON) scripts/mutation_changed.py --base $(BASE)
 
 check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates)
 	@# The venv, not the system interpreter. This checker needs PyYAML to read

@@ -85,7 +85,18 @@ class SoftChroot:
             #
             # Both need operator-authored input -- someone with write access
             # has to create the symlink, or type the setting. The FIRST is
-            # then reachable from the browse endpoint, by browsing to it:
+            # then reachable from BOTH callers of chroot2abs, and the more
+            # serious one is not the browse endpoint. `settings.py`'s
+            # `saveView` PERSISTS the result into config.ini for `directory`
+            # and `directories` options -- the renamer destination, the
+            # library folders, the download dirs. So the residual is not
+            # "a chrooted user can list a directory outside the jail", it is
+            # "a chrooted user can point the renamer at one", which is a write
+            # path against irreplaceable media.
+            #
+            # It is a residual, not a regression: before the traversal fix,
+            # `../../mnt` was written through verbatim, which is strictly
+            # worse. Via the browse endpoint it reads as:
             # measured, `chroot2abs('/link')` returns `<jail>/link` (normpath
             # is lexical and does not resolve symlinks), `is_subdir` agrees it
             # is inside, and `browser.py` lists the target's contents from
