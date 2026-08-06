@@ -151,6 +151,14 @@ DEFAULT_ROOTS = [
     REPO_ROOT / ".githooks",
     REPO_ROOT / ".github" / "workflows",
     REPO_ROOT / "Makefile",
+    # Repo-root shell scripts. Named individually rather than globbed,
+    # because a glob evaluated at import time silently covers nothing when a
+    # file is renamed -- and this list is exactly where that already went
+    # wrong: docker-entrypoint.sh is PID 1 in the shipped image, was the ONE
+    # file in the repo failing this script's own shell rule, and the rule
+    # could not see it. `test_default_roots_all_exist_and_are_covered` fails
+    # if any entry here stops existing.
+    REPO_ROOT / "docker-entrypoint.sh",
 ]
 
 # ── Rule 1: jsdom layout-zero properties ────────────────────────────────────
@@ -484,9 +492,37 @@ def check_shell_script(path: Path, text: str):
         set_lines = " ".join(
             strip_shell_comments(ln) for ln in lines if re.match(r"\s*set\s+-", ln)
         )
-        if not re.search(r"set\s+-[a-zA-Z]*e", set_lines):
+        # Tokenised rather than pattern-matched against the whole line.
+        # Two false positives on correct scripts, both from a BLOCKING gate,
+        # and both because the old regexes anchored on `set -<cluster>`:
+        #
+        #   set -o errexit -o nounset   -> flagged "missing -e". `nounset` was
+        #                                  accepted as a long form and
+        #                                  `errexit` was not, so the checker
+        #                                  rejected the most explicit correct
+        #                                  spelling of what it demands.
+        #   set -e -u                   -> flagged "missing -u". Separate
+        #                                  clusters do not sit adjacent to the
+        #                                  word `set`, so only the first was
+        #                                  ever read.
+        #
+        # A false positive here is not a harmless nag: the reader "fixes" a
+        # correct script to satisfy the gate, or learns to bypass the gate.
+        enabled = set()
+        for token in set_lines.split():
+            if token.startswith("-") and not token.startswith("--"):
+                # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES and is
+                # deliberately not read as enabling.
+                enabled.update(token[1:])
+            elif token in ("errexit", "nounset"):
+                # Long forms, as in `set -o errexit`. Accepted wherever they
+                # appear on a `set` line; `set +o errexit` is rare enough, and
+                # perverse enough in a gate, not to be worth modelling.
+                enabled.add({"errexit": "e", "nounset": "u"}[token])
+
+        if "e" not in enabled:
             missing.append("-e (exit on error)")
-        if not re.search(r"set\s+-[a-zA-Z]*u|nounset", set_lines):
+        if "u" not in enabled:
             missing.append("-u (error on unset variable)")
         if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
             missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
@@ -715,7 +751,7 @@ ORPHAN_ALLOWLIST = {
 PYTEST_INVOCATION_RE = re.compile(r"\bpytest\b(.*)$", re.MULTILINE)
 
 
-def _tracked_test_files(repo_root: Path) -> list[str]:
+def _tracked_test_files(repo_root: Path, require_git: bool = False) -> list[str]:
     """Tracked test-shaped ``.py`` files, via ``git ls-files``: NOT a filesystem walk.
 
     A filesystem walk would let an untracked local scratch file trip this
@@ -732,10 +768,45 @@ def _tracked_test_files(repo_root: Path) -> list[str]:
     Python 3 port defect that 500'd the settings file browser. A rule that
     only knows the prefix declares that tree clean.
     """
-    result = subprocess.run(
-        ["git", "ls-files"],
-        cwd=repo_root, capture_output=True, text=True, check=True,
-    )
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        # No git, or not a work tree. `scripts/test-local.sh` runs this suite
+        # inside python:3.14-alpine, which has no git, and an unhandled
+        # traceback there turned `make check-traps` into a crash and added
+        # seven red tests to the optional container run.
+        #
+        # This IS the silent-skip that the PyYAML branch 500 lines up refuses
+        # to do ("a check that quietly does nothing is the exact failure this
+        # script exists to prevent"), so the asymmetry needs a reason rather
+        # than a preference. The reason is that the two absences mean
+        # different things. PyYAML is in requirements-dev.txt and the workflow
+        # files are right there: its absence is a broken install, and a rule
+        # that COULD run does not. Git's absence removes the rule's input
+        # entirely -- "tracked" is not a property a tree has without it -- so
+        # there is nothing to check rather than something being left unchecked.
+        #
+        # That reasoning would still be an excuse if it let the real gate skip
+        # quietly, which is why `--require-git` exists and why scripts/verify.sh
+        # and ci.yml both pass it. The authoritative runs cannot take this
+        # branch at all; only the supplementary container run can, and it says
+        # so on stderr when it does.
+        if require_git:
+            raise SystemExit(
+                'test-trap check FAILED: --require-git was passed but git is '
+                'unavailable (%s: %s), so the orphaned-test rule cannot run. '
+                'This is the authoritative gate; it must not skip a rule '
+                'silently.' % (type(exc).__name__, exc)
+            )
+        print('note: orphan-test check skipped, git is unavailable (%s: %s). '
+              'Pass --require-git to make this an error.'
+              % (type(exc).__name__, exc), file=sys.stderr)
+        return []   # a LIST: the caller iterates this, and returning None
+                    # here traded a traceback in one place for a TypeError
+                    # in another.
     files = []
     for line in result.stdout.splitlines():
         path = line.strip()
@@ -785,6 +856,7 @@ def check_orphaned_test_files(
     *,
     tracked_files: list[str] | None = None,
     runner_texts: list[str] | None = None,
+    require_git: bool = False,
 ):
     """Rule 5: a tracked ``test_*.py`` file no runner invocation executes.
 
@@ -813,7 +885,7 @@ def check_orphaned_test_files(
     caught.
     """
     if tracked_files is None:
-        tracked_files = _tracked_test_files(repo_root)
+        tracked_files = _tracked_test_files(repo_root, require_git=require_git)
     if runner_texts is None:
         runner_texts = [
             VERIFY_SH.read_text(encoding="utf-8"),
@@ -1251,6 +1323,13 @@ def iter_files(roots: list[Path]) -> list[Path]:
 
 
 def main(argv: list[str]) -> int:
+    # --require-git turns "git is unavailable, so rule 5 cannot run" from a
+    # note on stderr into a hard failure. scripts/verify.sh and ci.yml pass
+    # it; the container run (scripts/test-local.sh, which has no git) does
+    # not. So the authoritative gates cannot skip a rule quietly, while the
+    # supplementary one still runs the other six rules instead of crashing.
+    require_git = "--require-git" in argv
+    argv = [a for a in argv if a != "--require-git"]
     roots = [Path(p) for p in argv] if argv else DEFAULT_ROOTS
     files = iter_files(roots)
 
@@ -1263,7 +1342,7 @@ def main(argv: list[str]) -> int:
     # Rule 5 is whole-repo by nature (git ls-files + both runner files), not
     # scoped by `roots`/argv the way rules 1-4 are, so it runs unconditionally
     # rather than being folded into the per-path loop above.
-    for path, line_no, message in check_orphaned_test_files():
+    for path, line_no, message in check_orphaned_test_files(require_git=require_git):
         print(f"{path}:{line_no}: {message}")
         total += 1
 

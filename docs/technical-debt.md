@@ -54,11 +54,31 @@
   broken) in `wizard.html`, `logs.html`, `settings.html`,
   `partials/movie_detail.html`'s `profileEditor()`, and
   `partials/movie_releases.html`.** Each double-runs its own `init()`
-  exactly like `wanted.html` did. Not fixed here -- out of scope for an
-  E2E-isolation PR to sweep every template -- but worth a dedicated pass;
-  whatever each `init()` does twice (fetches, listener registrations) is
-  waste at minimum and a latent bug at worst, the same shape three
-  independent fixes have now found in three different components.
+  exactly like `wanted.html` did.
+
+  What that costs, read from the code rather than assumed. `settingsPanel`
+  (`partials/settings/scripts.html:231`) issues `GET /settings/` and
+  `GET /updater.info/` twice per page load, and registers
+  `$watch('activeTab')` and `$watch('showAdvanced')` **twice**, so every tab
+  change recomputes twice. `logsPanel`'s `init()` also calls
+  `startAutoRefresh()` -- which does NOT leak an interval, because it calls
+  `stopAutoRefresh()` first (`:69-72`); the doubled poll a first reading
+  suggests is not there.
+
+  So the accurate severity is doubled work on page load and on every watched
+  state change, on hardware that is often a low-powered home server -- not a
+  second live bug. That is worse than the original entry implied ("not yet
+  proven to cause a user-visible failure") and better than an interval leak.
+  The doubled `$watch` is the same mechanism as the arrow-key bug, so the
+  claim that this shape is only theoretical does not hold.
+
+  **Still deferred, deliberately.** Not because it is unimportant, but
+  because PR 1 already failed AC-SIMP-1/4/5/6 (see the outcome box in
+  `specs/REMEDIATION-2026-08.md`) and sweeping five more templates in the PR
+  that just recorded "amending the scope criterion whenever it would fail is
+  what broke it" would be the same mistake with a different file list. It is
+  five one-attribute deletions plus the E2E updates hard rule 5 requires;
+  it wants its own PR and its own review, not a tenth round on this one.
 - **Events fired with no handler.** `fireEvent()` returns `[]` for an
   unhandled name, indistinguishable from "handled, found nothing", so a
   mis-wired event never fails — the feature behind it silently does nothing.
@@ -223,9 +243,22 @@
 
   Reproduced deterministically in `tests/unit/test_sqlite_adapter_concurrency.py`
   (8 threads, one adapter: 127 errors from `get()`, 316 from `query()`), and
-  fixed by serialising every connection touch. **This was never test-only:** a
-  read interleaving with a write on the same connection is the same misuse, and
-  a self-hosted install serves concurrent requests from an ordinary browser.
+  fixed by serialising every connection touch.
+
+  **This was never test-only** — but the reason given here first was the wrong
+  half. "A read interleaving with a write is the same misuse" sounds right and
+  is the one configuration that measured **zero** errors: CPython runs the
+  connection in SQLite's *serialized* threading mode, so read-vs-write is
+  already mutexed. What actually breaks is read-vs-read on the SAME SQL text,
+  because `sqlite3` keeps a per-connection prepared-statement cache and two
+  threads running the same statement reset each other's mid-flight (measured:
+  same SQL 334 errors, different SQL 0, reader-vs-writer 0, same SQL with
+  `cached_statements=0` 0). The claim that stands is the plain one: a
+  self-hosted install serves concurrent requests from an ordinary browser, and
+  `get()` issues one identical SELECT from every thread. The full measurement
+  is in `tests/unit/test_sqlite_adapter_concurrency.py`'s docstring, which was
+  honest about this while this entry was not — the doc a reader consults was
+  the weaker of the two.
 
   Why the earlier elimination round missed it: every measurement was taken from
   OUTSIDE the app (latency, rate limits, seed integrity, spec ordering). The
@@ -354,8 +387,12 @@ symlink still sits inside the new jail, so its target stays reachable, while
 `is_subdir` on the target itself returns False. `realpath` at `initialize` would close both; it was not taken for
 the reason above.
 
-**`compact()` now blocks every read for the duration of a VACUUM** (weekly, per
-`core/database.py`). Correct as far as it goes, since it previously took no lock
+**`compact()` now blocks every read for the duration of a VACUUM.** Not on a
+weekly *schedule*, which "weekly" here previously implied: `compact()` is wired
+to `database.setup.after` (`core/database.py:34`), i.e. it runs at STARTUP, and
+only if `last_db_compact` is more than 604800s old (`:325`). So a container that
+is never restarted never compacts at all, and one restarted daily compacts on
+the first start after each 7-day mark. Correct as far as it goes, since it previously took no lock
 at all, which was the misuse being fixed. VACUUM is atomic, so a restart
 mid-VACUUM cannot corrupt the file. Disappears with per-thread connections.
 
@@ -414,11 +451,20 @@ sub-call can fail" but **"what is true on disk afterwards"**: the bytes are
 complete at the destination and the run reports failure, so the `lexists`
 guard blocks every retry for ever and the reverse symlink is never created.
 
-**The shape that would close it** (deliberately not attempted here): decide
-success from the observable end state rather than from which call raised.
+**DO NOT DESIGN THE FIX HERE.** That instruction is itself a finding. Three
+review rounds were spent on a sketch of the shape a fix should take, and the
+sketch produced one Critical and two Highs -- each time correct-looking prose
+that destroyed the user's download when implemented literally. Designing a
+change to the renamer's most destructive path, inside a debt note, without a
+test harness around it, does not work; that is now measured rather than
+suspected.
 
-**Two constraints on that, and getting either wrong destroys the download.**
-The first draft of this paragraph said "if the destination survives at the
+What this branch DID establish, and what is worth carrying forward, is a set
+of constraints any fix must satisfy. Each was learned by writing a remedy that
+violated it and watching the film disappear. Treat them as a checklist for the
+change that closes this, not as a design:
+
+**Getting any of these wrong destroys the download.** The first draft said "if the destination survives at the
 same SIZE as the source, let the caller treat it as done". Review implemented
 that literally and measured the result; so did I:
 
@@ -430,7 +476,7 @@ download still on disk:          False
 ```
 
 The user's film is replaced by whatever bytes happened to be at the
-destination, and the only other copy is deleted. So:
+destination, and the only other copy is deleted. The constraints:
 
 1. **The end-state test must verify CONTENT, not size.** This file already
    knows that: `tests/unit/test_renamer_mover.py` carries an
@@ -529,6 +575,26 @@ guard written with a multi-line condition) expects 0 because the rule cannot
 see it, not because silence is right. Any shape whose name says BLIND SPOT
 carries that contract: if a future change makes it report 1, that is good news
 and the table should be updated, not reverted.
+
+**`db.get(index, None)` returns the FIRST row of that index, for every
+index.** Measured on a four-row quality fixture: `get('quality', None)`
+returned `bd50` (first inserted), while `get('quality', '')` correctly raised
+`KeyError`. All 22 branches of `_query_index` drop their `WHERE` clause when
+the key is `None`, and `get()` then returns `results[0]`. This is the family
+that produced two live defects already (`_query_index`'s `'media'` branch,
+its missing `'release_identifier'` branch).
+
+PR 1 fixed the one instance it could prove reachable (`movie/searcher.py`'s
+`:419` fallback). One more caller passes a profile-supplied identifier
+straight through (`searcher.py:319`), which would resolve to an arbitrary
+quality if a profile ever held a `None` entry -- reachability unproven, and
+byte-identical to `master`, so not a regression.
+
+The durable fix is at the seam, not per caller: make `get()` (as distinct
+from `query()`/`all()`, where "no key" legitimately means "everything") raise
+on a `None` key. That closes the whole family at one place instead of
+chasing callers, which is what this branch spent four rounds learning about
+`moveFile`.
 
 ## Lessons learned
 

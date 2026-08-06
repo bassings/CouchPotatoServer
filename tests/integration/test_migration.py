@@ -326,6 +326,93 @@ class TestMigrationIsRepeatable:
 class TestMigrationFailureModes:
     """What the operator sees when the source cannot be migrated as-is."""
 
+    def test_a_legacy_identifier_field_is_recognised_as_a_source_duplicate(self, tmp_path):
+        """The shape a REAL CodernityDB source has, which nothing exercised.
+
+        Pre-`identifiers` documents carry a flat `identifier` string.
+        `sqlite_adapter.insert_bulk` grafts that onto imdb on the WRITE side,
+        so it is what actually raises the UNIQUE violation -- and
+        `_describe_identifier_collision` has a matching graft on the READ side
+        so it can find the clash. Measured: deleting that read-side graft
+        survived all 20 migration tests, and `grep -c "'identifier':"` over
+        this file returned 0. The one shape a genuine old database produces
+        was the one shape never tested.
+
+        Getting it wrong is not cosmetic. Without the graft the describer
+        finds no clash, returns False, and the operator is told the source is
+        clean and pointed at deleting rows from the destination -- for a
+        source-side problem that will then fail identically on every retry,
+        while they are being steered away from the actual cause.
+        """
+        db_path = str(tmp_path / "legacy_source")
+        db = Database(db_path)
+        db.create()
+        inserted_ids = [
+            db.insert({
+                '_t': 'media', 'type': 'movie', 'status': 'active',
+                'title': 'Legacy %d' % i,
+                'identifier': 'tt0000002',   # legacy flat field, no `identifiers`
+            })['_id']
+            for i in (1, 2)
+        ]
+        db.close()
+
+        with pytest.raises(RuntimeError) as excinfo:
+            migrate(db_path, str(tmp_path / "legacy_dest"), verbose=False)
+
+        message = str(excinfo.value)
+        assert 'imdb=tt0000002' in message, message
+        for doc_id in inserted_ids:
+            assert doc_id in message, 'must name both colliding docs: %s' % message
+        # The source-side remedy, because the duplicate IS in the source.
+        assert 'COPY THE SOURCE DIRECTORY FIRST' in message, message
+        assert 'the other claimant is' not in message, (
+            'a source-side duplicate was routed to the destination-side '
+            'remedy: %s' % message
+        )
+
+    def test_a_constraint_other_than_the_identifier_index_is_not_given_the_duplicate_remedy(self, tmp_path):
+        """Not every IntegrityError is a duplicate identifier.
+
+        A comment here used to assert that the UNIQUE (provider, identifier)
+        index was "effectively the only IntegrityError reachable from
+        insert_bulk". Measured against a real adapter, that is false:
+
+            _t is None   -> NOT NULL constraint failed: documents._t
+            _rev is None -> NOT NULL constraint failed: documents._rev
+
+        `clean_doc_for_sqlite` strips `_rev` but NOT `_t`, so the first one
+        survives a real migrate() run on a corrupt source -- and a corrupt
+        source is exactly when someone leans on this diagnostic.
+
+        Before this test the describer found no clash, returned False, and the
+        operator was told "the source holds no duplicate, so the other
+        claimant is already in the destination" and walked through deleting
+        `documents` and `media_identifiers` rows from the destination. For a
+        source-side problem, with a destination that is empty. The three-state
+        `None` branch exists precisely for "we cannot tell" and could never be
+        reached, because the diagnostic succeeded and simply found nothing.
+        """
+        db_path = str(tmp_path / "null_t_source")
+        db = Database(db_path)
+        db.create()
+        db.insert({'_t': None, 'type': 'movie', 'title': 'Corrupt'})
+        db.close()
+
+        with pytest.raises(RuntimeError) as excinfo:
+            migrate(db_path, str(tmp_path / "null_t_dest"), verbose=False)
+
+        message = str(excinfo.value)
+        # It must not claim to know where the problem is...
+        assert 'the other claimant is' not in message, message
+        assert 'remove BOTH the' not in message, (
+            'the operator was told to delete destination rows for a '
+            'constraint that has nothing to do with duplicate identifiers: '
+            '%s' % message
+        )
+        # ...and must still protect the only rollback copy.
+        assert 'Do NOT edit the source' in message, message
+
     def test_a_duplicate_media_identifier_names_the_films_that_collide(self, tmp_path, sample_data):
         """A stopped migration must say WHICH film to fix.
 

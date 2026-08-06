@@ -100,7 +100,7 @@ step "1/7 ruff lint"
 
 # ── 2. False-green guard ────────────────────────────────────────────────────
 step "2/7 test-trap check"
-"$PYTHON" scripts/check_test_traps.py || fail "test-trap check found issues"
+"$PYTHON" scripts/check_test_traps.py --require-git || fail "test-trap check found issues"
 
 # ── 3. UI conformance ───────────────────────────────────────────────────────
 step "3/7 UI conformance check"
@@ -148,19 +148,27 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # passes on retry must still fail CI rather than quietly going green,
   # which is what let a 1-in-5 shared-state race pass as "the suite is
   # green" for a long time.
-  npm run test:e2e -- --project=chromium --fail-on-flaky-tests \
+  # `npx playwright test`, NOT `npm run test:e2e -- --project=...`.
+  # Playwright UNIONS repeated --project flags, and test:e2e now names its
+  # own three projects (it had to: a bare `npx playwright test` also selects
+  # the isolation project, which cannot pass at workers: 1). Composing on top
+  # of it therefore WIDENS this step instead of scoping it -- measured, this
+  # line ran chromium + accessibility + mobile-chrome, 158 tests, and the
+  # three separate steps below then re-ran two of them. The gate must name
+  # exactly what each step runs.
+  npx playwright test --project=chromium --fail-on-flaky-tests \
     || fail "E2E tests failed"
   # AC-QA-50's isolation proof, pinned to 2 workers because it only
   # demonstrates anything when the mutating and asserting specs land on
   # different workers. The chromium project above runs at workers: 1
   # (AC-SIMP-12), so this cannot ride along with it.
-  npm run test:isolation -- --fail-on-flaky-tests \
+  npx playwright test --project=isolation --workers=2 --fail-on-flaky-tests \
     || fail "E2E worker-isolation proof failed"
   # Small-screen coverage. AGENTS.md treats a mobile layout regression that
   # blocks a core flow as high-priority, and the mobile-chrome project existed
   # for a long time without anything running it. Scoped by testMatch to
   # *.mobile.spec.ts, so this adds seconds, not minutes.
-  npm run test:e2e -- --project=mobile-chrome --fail-on-flaky-tests \
+  npx playwright test --project=mobile-chrome --fail-on-flaky-tests \
     || fail "Mobile E2E tests failed"
   # Accessibility. These have their own project (testMatch *.a11y.spec.ts) and
   # the chromium project now testIgnores them -- previously they rode along in
@@ -168,7 +176,8 @@ if [[ "$RUN_E2E" -eq 1 ]]; then
   # SILENTLY DROPPED a11y from the local gate. CI has always run them as a
   # separate job (.github/workflows/ci.yml, `test:a11y`); this makes the local
   # gate mirror it, which is the whole contract of this script.
-  npm run test:a11y -- --fail-on-flaky-tests || fail "Accessibility tests failed"
+  npx playwright test --project=accessibility --fail-on-flaky-tests \
+    || fail "Accessibility tests failed"
 else
   step "7/7 E2E tests: SKIPPED (--no-e2e)"
 fi

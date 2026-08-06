@@ -2,6 +2,11 @@
 # Path to production: make setup → code → make verify (auto-enforced on push)
 #                     → PR → Claude review + remediate → merge → release.
 
+# Same resolution order scripts/verify.sh uses, so `make <target>` and the
+# gate run under the same interpreter and cannot disagree about which
+# dependencies are installed.
+PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
+
 .PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
 
 help: ## Show this help
@@ -53,7 +58,16 @@ mutation-changed: ## Mutation testing on changed files only (fast enough per-cha
 	python3 scripts/mutation_changed.py --base $(BASE)
 
 check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates)
-	python3 scripts/check_test_traps.py
+	@# The venv, not the system interpreter. This checker needs PyYAML to read
+	@# the workflow files, and it fails LOUDLY when it is missing rather than
+	@# skipping -- correct behaviour, but bare `python3` on a developer's Mac
+	@# has no PyYAML, so `make check-traps` (the command CLAUDE.md names) went
+	@# red with 7 findings on a clean tree while scripts/verify.sh, which uses
+	@# $$PYTHON, went green on the same tree. A gate that cries wolf from the
+	@# documented entry point trains the reader to ignore it, which is the
+	@# opposite of what a false-green guard is for. Overridable, and still
+	@# falls back to python3 so a clone with no venv gets the loud failure.
+	$(PYTHON) scripts/check_test_traps.py
 
 # Pinned version: an unpinned :latest changes the ruleset under you, so a clean
 # scan today can fail tomorrow with no code change. Bump deliberately.

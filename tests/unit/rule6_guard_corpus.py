@@ -9,30 +9,45 @@ A table is the fix. Any change to the routing or the body slice is now scored
 against all of these at once, which is what surfaced shape 23 -- a false
 positive no individual test could see.
 
-Wrong-answer counts, RE-DERIVED at round 8 by scoring this table against the
-actual historical files from git (`git show <sha>:scripts/check_test_traps.py`)
-and against one-line variants of the shipped file. Reproduce, do not trust:
+Wrong-answer counts, RE-DERIVED at round 10 against all 32 shapes by scoring
+this table against the actual historical files from git
+(`git show <sha>:scripts/check_test_traps.py`) and against one-line variants
+of the shipped file. Reproduce, do not trust:
 
-    shipped                                    0 / 30
-    4a8e9d00  round 6, first `){`              1 / 30   shape 23
-    d9c70c83  round 7, last `){`               3 / 30   shapes 26-28
-    dc4fdab5  round 4                          2 / 30
-    65ca81f7  round 5                          5 / 30
-    eada3f1b  round 3                         16 / 30
-    cd180e05  round 2                         16 / 30
-    9c11c598  original                        17 / 30
+    shipped                                    0 / 32
+    4a8e9d00  round 6, first `){`              3 / 32   shapes 23, 31, 32
+    d9c70c83  round 7, last `){`               5 / 32   shapes 26-28, 31, 32
+    dc4fdab5  round 4                          4 / 32   shapes 07, 23, 31, 32
+    65ca81f7  round 5                          7 / 32   shapes 03, 19, 24, 25, 27, 31, 32
+    eada3f1b  round 3                         17 / 32
+    cd180e05  round 2                         17 / 32
+    9c11c598  original                        18 / 32
 
     one-line variants of the shipped file:
-      take the LAST `){` instead of the first   3 / 30   shapes 26-28
-      skip the string blanking                  1 / 30   shape 23
-      routing forced to the indentation scan    2 / 30   shapes 29-30
+      take the LAST `){` instead of the first   3 / 32   shapes 26-28
+      skip the string blanking                  1 / 32   shape 23
+      drop the `opens_block or inline_block`
+        routing gate (`if True:`)               1 / 32   shape 16
 
-An earlier version of this table recorded 3/3/5/16 for four of these. Those
-were wrong, and wrong in an instructive way: they came from applying
-reconstructed slice spellings to the CURRENT file, producing hybrids that
-never shipped, rather than from the historical files themselves. 16 is not
-merely inaccurate, it is unreachable -- no version this rule ever shipped
-scores worse than 17, and none of the slice spellings scores worse than 3.
+THE DENOMINATOR IS PART OF THE MEASUREMENT. The previous table read `/ 30`,
+because it was scored when the corpus held 30 shapes and shapes 31-32 were
+added in the same commit. Every historical row therefore UNDERSTATED, and one
+of them understated in a way that falsified the table's own conclusion: the
+text asserted "no version this rule ever shipped scores worse than 17", while
+the original scores 18. Re-score the whole table when you add a shape; do not
+append a row.
+
+The round-8 table this replaces was itself a correction of a round-7 one that
+recorded 3/3/5/16. Those came from applying reconstructed slice spellings to
+the CURRENT file, producing hybrids that never shipped. Two corrections in
+three rounds, on a table whose entire purpose is to be trustworthy, is the
+argument for scoring it mechanically: the numbers above were produced by a
+script that loads each `git show` output as a module and asserts
+`hasattr(m, "check_file")` first -- because a zsh history-expansion bug once
+turned `git show "$c:scripts/..."` into an empty file, and an empty module
+scores every shape wrong, which looks exactly like a catastrophically bad
+historical version.
+
 If you change this table, score against `git show`, not against a
 reconstruction.
 

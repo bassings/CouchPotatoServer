@@ -36,11 +36,17 @@ import re
 import shutil
 import sys
 
-#: AC-SEC-9: the basename must start with ".e2e" and end with "data" --
-#: `.gitignore` (`.e2e-*data/`) and `.gitleaks.toml`
-#: (`^\.e2e-[^/]*data/`) both key off exactly that shape. A worker dir named
-#: `.e2e-data-mobile` (the OLD convention) matches neither and is refused
-#: here for the same reason those two files would leak it.
+#: AC-SEC-9: the basename must start with ".e2e" and end with "data".
+#: `.gitleaks.toml` (`^\.e2e-[^/]*data/`) keys off exactly that shape, so a
+#: worker dir named `.e2e-data-mobile` (the OLD convention) would not be
+#: excluded from the local secret scan.
+#:
+#: `.gitignore` no longer constrains the shape: it was deliberately widened
+#: on this branch from `.e2e-*data/` to `.e2e-*`, precisely so a name that
+#: does NOT end in "data" cannot be un-ignored. Citing it here as a reason to
+#: require the suffix was half-true when written and is now simply stale --
+#: the .gitignore side is a floor that catches every spelling, and this
+#: pattern is the narrower one that keeps the gitleaks exclusion honest.
 _WORKER_DIR_RE = re.compile(r'^\.e2e-[A-Za-z0-9_.-]+-data$')
 
 #: Default scratch root: the repo root, matching where every other E2E
@@ -139,7 +145,12 @@ def safe_rmtree(path, scratch_root=None):
     """
     resolved = validate_worker_data_dir(path, scratch_root=scratch_root)
 
-    if os.path.islink(path):
+    # rstrip before the lstat. POSIX resolves a trailing slash, so
+    # os.path.islink('/a/link/') is False where os.path.islink('/a/link') is
+    # True -- one character turns this refusal off and deletes through the
+    # link. The test above it passed only because it spelled the path
+    # without the slash.
+    if os.path.islink(path.rstrip(os.sep)):
         raise UnsafeDataDirError(
             '%r is a symlink -- refusing to delete through it' % path
         )

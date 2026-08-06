@@ -155,6 +155,29 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         # -- silently routed a genuine source-side duplicate to the
         # destination-side advice, with all 43 migration tests still green.
         found_in_source, collision = _describe_identifier_collision(cleaned)
+
+        # The duplicate-identifier remedies below are only sound if the
+        # constraint that failed IS the duplicate-identifier one. Measured
+        # against a real adapter, it is not the only reachable IntegrityError:
+        #
+        #   _t is None   -> NOT NULL constraint failed: documents._t
+        #   _rev is None -> NOT NULL constraint failed: documents._rev
+        #
+        # `clean_doc_for_sqlite` strips `_rev`, so the first survives a real
+        # migrate() on a corrupt source. A comment here previously claimed the
+        # UNIQUE index was "effectively the only" one; that was wrong, and it
+        # mattered because the describer then finds no clash, returns False,
+        # and the operator is walked through deleting rows from the
+        # destination to fix a problem in the source. The `None` branch exists
+        # for "cannot tell" and could not be reached, because the diagnostic
+        # did not fail -- it succeeded and correctly found nothing.
+        #
+        # Sniffing the message is acceptable HERE, unlike the branch choice
+        # below: this is SQLite's own text, not our heading, and it degrades
+        # to the cautious remedy rather than to a destructive one.
+        if 'media_identifiers' not in str(exc):
+            found_in_source = None
+
         if found_in_source is True:
             remedy = ('COPY THE SOURCE DIRECTORY FIRST -- this is the only '
                       'branch that asks you to edit your only rollback copy, '
@@ -225,12 +248,15 @@ def _describe_identifier_collision(docs: list) -> tuple:
             if len(ids) > 1
         ]
         if not clashes:
-            # NOT "the constraint that failed is a different one": measured,
-            # the UNIQUE(provider, identifier) index is effectively the only
-            # IntegrityError reachable from insert_bulk (documents uses
-            # INSERT OR REPLACE, media_tags too, and a single doc's identifier
-            # dict cannot violate the composite key). Saying otherwise
-            # contradicted the remedy printed directly below it.
+            # Reached only when the caller has already confirmed the failed
+            # constraint was the media_identifiers UNIQUE index (it keys off
+            # SQLite's own message before consulting this result), so "no
+            # duplicate in the source" really does mean the other claimant is
+            # in the destination. An earlier version of this comment asserted
+            # that index was the only reachable IntegrityError, which is false
+            # -- a NULL `_t` also violates NOT NULL and survives cleaning --
+            # and that wrong premise is what let a source-side corruption be
+            # answered with destination-side deletion advice.
             return (False, '  (no duplicate media identifier in the source, so the other\n'
                            '   claimant is a row already in the destination)')
         return (True, 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes))

@@ -250,7 +250,9 @@ behaviour first, then the fix lands, then the assertions invert.
 **(a) A directory at the destination is treated as a successful move.**
 `moveFile`'s destination-exists guard tests `os.path.exists(dest) and os.path.isfile(dest)`, so a
 directory does not fire the guard. Measured: the file moves *inside* it as
-`dest/<original basename>`: unrenamed: `os.chmod(dest, 0o644)` at `:69` then
+`dest/<original basename>`: unrenamed: `os.chmod(dest, Env.getPermission('file'))`
+at `mover.py:69` on `master` (the literal `0o644` written here before is not in
+the code; the value comes from the `permission_file` setting) then
 strips `+x` (measured `traversable: False`), and `True` is returned, so
 `_moveRenamedFiles` sets `moved_any=True` and cleanup deletes the source folder.
 *Fix:* test `os.path.exists(dest)` (or `lexists`) alone.
@@ -381,7 +383,8 @@ Delete: `couchpotato/simple_healthcheck.py`, `couchpotato/integration_test.py`,
   **predicate** counts **both** pytest naming conventions, `test_*.py` and
   `*_test.py`. `pytest.ini` narrows `python_files` to the first, which is
   exactly what made the suffix form dangerous: `couchpotato/settings_test.py`,
-  `couchpotato/softchroot_test.py` and `couchpotato/plugins/browser_test.py`
+  `couchpotato/core/softchroot_test.py` and
+  `couchpotato/core/plugins/browser_test.py`
   were tracked, read like a live suite, and were collected by nothing. They are
   **relocated into `tests/unit/`, not deleted** — 24 of their 26 tests passed
   immediately and the other two were failing on a live defect. *Break:* remove
@@ -704,9 +707,15 @@ already `rm -rf` sibling paths in the repo root.
   `process.env.CI` to change what is executed. *Break:* remove one project's
   invocation from either file; hard rule 4 says the local gate mirrors CI, and
   a divergence must be visible rather than inferred from two green ticks.
-- **AC-OPS-16** A failed seed is **red, not skipped**. Today `ci.yml:252,285,342`
-  swallow seed failure into `:warning:` with `continue-on-error: true`, and
-  the workflow's own message says tests "will skip instead of running". Per-spec
+- **AC-OPS-16** A failed seed is **red, not skipped**. Today **two** seed steps
+  swallow failure into `:warning:` with `continue-on-error: true`
+  (`ci.yml:253` and `:343` on `master`), and the workflow's own message says
+  tests "will skip instead of running". The third seed step, `:285`, does NOT:
+  it carries no `continue-on-error` and its message already says "mobile tests
+  will fail loudly", so it is the shape the other two should copy rather than a
+  third instance of the defect. An earlier version of this line listed all
+  three, which would have sent the implementer to "fix" the one that was
+  already right. Per-spec
   seeding turns one such chance into fifteen.
 - **AC-OPS-17** After a completed **and** an interrupted `make verify`,
   `pgrep -f CouchPotato.py` is empty. A port already in use fails naming the
@@ -724,7 +733,9 @@ already `rm -rf` sibling paths in the repo root.
   variable.py` (`removePyc`, see AC-SIMP-1) also touched -- not in the
   original file list, both load-bearing for T1.7 to work at all.
 - **AC-SIMP (new)** Delete the `firefox` and `webkit` project entries
-  (`playwright.config.ts:105-115`) as the **first** commit of T1.7. Verified
+  (`playwright.config.ts:117-125` on `master`; the `:105-115` written here
+  before is the **chromium** entry, which must NOT be deleted) as the
+  **first** commit of T1.7. Verified
   dead: only `chromium`, `mobile-chrome` and `accessibility` are ever invoked,
   and CI installs chromium only. Deleting them shrinks the task before it starts.
 - **Land T1.7 as the last commit of PR 1**, and take the ≥10-run measurement
@@ -761,6 +772,37 @@ already `rm -rf` sibling paths in the repo root.
 
 `lens-simplicity` runs at planning only; these are checked at review by reading
 the diff, not by an agent.
+
+> **OUTCOME: AC-SIMP-1, 4, 5 and 6 FAILED. Read this before auditing them.**
+>
+> Measured against `master` at the close of PR 1:
+>
+> | Criterion | Required | Actual |
+> |---|---|---|
+> | AC-SIMP-1 | only the files listed below under `couchpotato/` | **9 unlisted modifications** (`db/migrate.py`, `db/sqlite_adapter.py`, `logger.py`, `plugins/browser.py`, `plugins/manage.py`, `settings.py`, `softchroot.py`, `templates/add.html`, `templates/partials/settings/profiles.html`) **and 3 unlisted deletions** (`core/plugins/browser_test.py`, `core/settings_test.py`, `core/softchroot_test.py`) |
+> | AC-SIMP-4 | no new file under `scripts/` | `scripts/e2e_worker_data.py` added |
+> | AC-SIMP-5 | `git ls-files \| wc -l` lower after than before | 650 → 653 |
+> | AC-SIMP-6 | 5-6 named new files under `tests/` | 19 |
+> | AC-SIMP-7 | `if (await` count strictly lower | 63 → 34. **PASSED** |
+>
+> The criteria below are left exactly as written rather than amended to fit,
+> because amending them is what broke them: AC-SIMP-1 was amended four times,
+> each amendment individually defensible, and the mechanism designed to catch
+> scope growth was edited away by the growth it existed to catch. A criterion
+> that moves whenever it would fail measures nothing. The lesson is recorded
+> at line ~1075 in the PR 2 section as "PR 1's allowlist was the right shape
+> and failed because amending it was free" -- but a reader auditing PR 1
+> arrives *here*, 310 lines earlier, so the verdict belongs here too.
+>
+> What actually grew the scope is worth naming, because most of it was not
+> feature creep: `sqlite_adapter.py` is a production concurrency defect found
+> by reading the server log this PR started keeping, and `softchroot.py` is a
+> path-traversal fix made reachable by repairing the file browser. Those are
+> the precedence order working as intended (irrecoverable data loss and
+> security outrank a no-runtime-change constraint). The honest failure is
+> that nothing forced the trade-off to be *declared* at the moment it was
+> taken. `AGENTS.md` requires changes near `_query_index` to be reviewed as
+> new work rather than as corrections; that applied here and was not invoked.
 
 - **AC-SIMP-1 (amended)** Under `couchpotato/`, the diff contains only:
   (a) `core/media/movie/searcher.py`: the `:419`/`:429`/`:433` fallback,

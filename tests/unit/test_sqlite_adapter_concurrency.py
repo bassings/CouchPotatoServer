@@ -120,3 +120,42 @@ def test_concurrent_index_queries_do_not_misuse_the_connection(adapter):
     assert not errors, (
         'concurrent query() raised %d error(s), first: %r' % (len(errors), errors[0])
     )
+
+
+def test_concurrent_index_queries_hit_query_index_itself(adapter):
+    """The same hammer, aimed at `_query_index`, and turned up until it bites.
+
+    Removing `@_synchronised` from `_query_index` alone was caught only
+    **3 runs in 5** by `test_concurrent_index_queries_do_not_misuse_the_
+    connection` above. A future change dropping that decorator therefore had
+    roughly a 40% chance of going green, on a defect whose symptom is
+    `media.list` returning the user an empty grid.
+
+    The first attempt at a fix was to call `_query_index` directly, on the
+    theory that `query()`'s per-row `get()` takes the same lock and
+    desynchronises the threads before they re-enter it. Measured at the
+    original 8x40: **also 3 in 5**. The theory was wrong, or at least not the
+    binding constraint -- the window is simply narrow, and the fix is
+    pressure, not a shorter call path. Recorded because the plausible
+    explanation was the one that did not survive being run.
+
+    At 4 threads x 600 iterations, measured on the same tree:
+
+        mutated (no decorator)  -> caught 8 / 8
+        unmutated               -> 0 false reds in 8
+
+    Fewer threads and more iterations, not more of both: 8x600 caught 10/10
+    in the same probe but took 45s against 5.7s, and a guard nobody will wait
+    for gets deleted.
+
+    Same SQL text from every thread, which is what actually provokes it: the
+    per-connection statement cache hands them all the same prepared statement
+    and they reset each other's mid-flight.
+    """
+    errors = _hammer(lambda: adapter._query_index('media_status', 'active'),
+                     threads=4, iterations=600)
+
+    assert not errors, (
+        'concurrent _query_index() raised %d error(s), first: %r'
+        % (len(errors), errors[0])
+    )

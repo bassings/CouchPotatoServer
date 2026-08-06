@@ -55,8 +55,14 @@ mutants/
 /TOOLS.md
 /USER.md
 
-# E2E data dirs: never commit test data. Every one holds a generated api_key
-# and seeded provider credentials.
+# E2E data dirs: never commit test data. Every one holds a generated api_key.
+#
+# NOT "and seeded provider credentials": scripts/seed_e2e_data.py writes an
+# api_key and no password (see its own docstring). ci.yml rests the safety of
+# uploading test-results/ on that same fact, so the two statements have to
+# agree -- and the direction of the error mattered, because the version that
+# over-claimed was the one a reader would have used to argue the artefact
+# upload was unsafe.
 #
 # Matches ANY .e2e-* name, not `.e2e-*data/`. That narrower glob required the
 # name to END in "data", which is why `.e2e-data-mobile` and `.e2e-data-a11y`

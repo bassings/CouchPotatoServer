@@ -50,7 +50,7 @@ jobs:
     # rather than paying for another runner.
     # See scripts/check_test_traps.py and CLAUDE.md rules 9-11.
     - name: Run test-trap check
-      run: python scripts/check_test_traps.py
+      run: python scripts/check_test_traps.py --require-git
 
   # Fast static guardrail for the modern UI (couchpotato/ui/templates/**):
   # off-spec toggle sizing, legacy icon-font classes, raw hex colors. Pure
@@ -257,9 +257,9 @@ jobs:
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
       run: |
-        npm run test:e2e -- --project=chromium --fail-on-flaky-tests
+        npx playwright test --project=chromium --fail-on-flaky-tests
         # AC-QA-50 isolation proof, pinned to 2 workers (see playwright.config.ts)
-        npm run test:isolation -- --fail-on-flaky-tests
+        npx playwright test --project=isolation --workers=2 --fail-on-flaky-tests
 
     # Small-screen coverage. AGENTS.md treats a mobile layout regression that
     # blocks a core flow as high-priority, and the mobile-chrome project sat
@@ -270,7 +270,7 @@ jobs:
     - name: Run mobile E2E tests
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
-      run: npm run test:e2e -- --project=mobile-chrome --fail-on-flaky-tests
+      run: npx playwright test --project=mobile-chrome --fail-on-flaky-tests
 
     - name: Upload test artifacts
       uses: actions/upload-artifact@v7
@@ -351,7 +351,7 @@ jobs:
     - name: Run accessibility tests
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
-      run: npm run test:a11y -- --fail-on-flaky-tests
+      run: npx playwright test --project=accessibility --fail-on-flaky-tests
 
     - name: Upload accessibility report
       uses: actions/upload-artifact@v7

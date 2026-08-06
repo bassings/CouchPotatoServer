@@ -260,3 +260,67 @@ class SoftChrootUnnormalisedSetting(TestCase):
             sc = self._chroot(tmp, spelling)
             with self.assertRaises(ValueError, msg='escape allowed for %r' % spelling):
                 sc.chroot2abs('/../outside')
+
+
+class SoftChrootSiblingPrefix(TestCase):
+    """A directory whose NAME merely starts with the chroot's is outside it.
+
+    The containment check is `resolved.startswith(root + os.path.sep)`, and
+    the `+ os.path.sep` is the whole of it. Without that separator,
+    `/srv/media` contains `/srv/mediasecret` as far as `startswith` is
+    concerned -- the classic prefix bypass, and the single most common way a
+    path-containment check is got wrong.
+
+    Measured: dropping `+ os.path.sep` from softchroot.py survived the entire
+    rest of this file AND tests/unit/test_file_browser.py -- 29 passed, with
+    `/../mediasecret` and `/sub/../../mediasecret` both resolving to the
+    sibling directory. Every other escape in SoftChrootTraversal lands on the
+    PARENT of the chroot, which fails `startswith` with or without the
+    separator, so none of them could tell a sound check from a broken one.
+
+    The shipped code was correct. This class is the test that can fail.
+    """
+
+    def setUp(self):
+        import shutil
+        import tempfile
+
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+        # `<tmp>/media` and `<tmp>/mediasecret`: siblings, one a strict string
+        # prefix of the other. The second must be unreachable from the first.
+        self.jail = os.path.join(self.tmp, 'media')
+        self.sibling = os.path.join(self.tmp, 'mediasecret')
+        os.mkdir(self.jail)
+        os.mkdir(self.sibling)
+
+        self.sc = SoftChroot()
+        self.sc.initialize(self.jail)
+
+    def test_a_sibling_sharing_the_chroots_name_prefix_is_refused(self):
+        for path in ('/../mediasecret',
+                     '/../mediasecret/',
+                     '/sub/../../mediasecret',
+                     '/../mediasecret/private'):
+            with self.assertRaises(ValueError, msg='%r reached the sibling' % path):
+                self.sc.chroot2abs(path)
+
+    def test_is_subdir_agrees_that_the_sibling_is_outside(self):
+        """The two containment checks must not disagree.
+
+        `is_subdir` is a bare `startswith` against `self.chdir`, which keeps
+        its trailing separator -- so it is already correct here. Pinned
+        because a future "tidy-up" that strips that separator to match
+        `chroot2abs`'s `root` would open the same bypass in the other
+        function, where nothing else would notice.
+        """
+        self.assertFalse(self.sc.is_subdir(self.sibling))
+        self.assertFalse(self.sc.is_subdir(self.sibling + os.path.sep))
+        self.assertTrue(self.sc.is_subdir(os.path.join(self.jail, 'inside')))
+
+    def test_the_chroot_itself_and_its_real_children_still_resolve(self):
+        """The refusal must not be bought by refusing everything -- which is
+        exactly how the last two breaks of this function passed unnoticed."""
+        self.assertEqual(self.sc.chroot2abs('/'), self.jail)
+        self.assertEqual(self.sc.chroot2abs('/sub'), os.path.join(self.jail, 'sub'))

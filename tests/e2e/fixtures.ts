@@ -35,7 +35,26 @@ const PYTHON = process.env.PYTHON || (existsSync(VENV_PYTHON) ? VENV_PYTHON : 'p
 // Deliberately far from the app's own default (5050), so a stray dev
 // instance a developer left running never collides with a worker's port.
 const BASE_PORT = 5150;
-const READY_TIMEOUT_MS = 60_000;
+// MUST stay below the smallest project timeout in playwright.config.ts.
+// Playwright applies the PROJECT timeout as the worker-fixture setup slot
+// (`workerFixtureTimeout = this._project.project.timeout`), so a readiness
+// budget above it is not a longer budget -- it is an unreachable branch.
+// At 60_000 against a 30_000 project timeout, three of the four projects
+// killed the fixture at 30s and the AC-QA-58 diagnostic below (which names
+// the URL and prints the server's last output) could only ever print in the
+// `isolation` project, which overrides the timeout to 120s. Everywhere else
+// the developer got a bare `Fixture "workerServer" timeout ... during setup`
+// with no server output -- the exact experience this fixture was written to
+// eliminate -- and, because the timeout kills the fixture rather than
+// raising into it, the `catch` below never ran: no log persisted, no
+// stopServer, no data-dir cleanup, and a live CouchPotato.py left on the
+// port to poison the next run.
+//
+// So this is not a budget cut. The effective budget was 30s already; this
+// makes the remaining 25s spendable and the failure legible.
+// tests/unit/test_e2e_timeout_budget.test.ts pins the ordering so the two
+// numbers cannot drift apart again.
+const READY_TIMEOUT_MS = 25_000;
 const POLL_INTERVAL_MS = 250;
 // Playwright's own output directory: already gitignored, already cleaned per
 // run, already where traces and failure screenshots go.
@@ -136,7 +155,51 @@ function writeServerLog(parallelIndex: number, workerIndex: number, output: stri
 }
 
 /** Stop `proc`, escalating to SIGKILL if it ignores SIGTERM. */
+/**
+ * Servers this worker has spawned and not yet reaped.
+ *
+ * The ordinary paths (`catch` on a startup failure, teardown after `use`)
+ * both call stopServer, so this set is normally empty by the time the worker
+ * exits. This covers the worker being SIGNALLED instead -- it still runs its
+ * exit handlers, and without this the spawned CouchPotato.py is reparented to
+ * init, keeps port 5150 bound, and makes every later run fail on AC-DATA-26's
+ * "already exists" check for a reason unrelated to whatever actually broke.
+ *
+ * What it does NOT cover, measured rather than assumed: killing the Playwright
+ * RUNNER. `pkill -f "playwright test"` matches the runner, not its worker
+ * processes, so this handler never receives a signal and the server survives.
+ * Reproduced twice while working on this file -- both times the orphan then
+ * poisoned the next two gate runs with "already exists", and the second time
+ * it cost a wrong diagnosis before the stale run announced itself.
+ *
+ * Fixing that properly means the child dying with its parent, which POSIX
+ * gives no portable way to do. Not attempted here: the reachable path this
+ * was written for is a fixture timeout, and that one is now handled at the
+ * source by keeping READY_TIMEOUT_MS under the project timeout, so the
+ * fixture raises into its own `catch` and cleans up normally.
+ *
+ * Synchronous and best-effort by necessity: an `exit` handler cannot await.
+ * SIGKILL rather than SIGTERM for the same reason -- there is no time left
+ * to wait for a graceful shutdown, and this only ever runs when the worker
+ * is already going away.
+ */
+const liveServers = new Set<ChildProcess>();
+
+for (const signal of ['exit', 'SIGINT', 'SIGTERM'] as const) {
+  process.on(signal, () => {
+    for (const proc of liveServers) {
+      try {
+        if (proc.pid) process.kill(proc.pid, 'SIGKILL');
+      } catch {
+        // Already gone, or not ours any more. Nothing useful to do here.
+      }
+    }
+    liveServers.clear();
+  });
+}
+
 async function stopServer(proc: ChildProcess): Promise<void> {
+  liveServers.delete(proc);
   if (proc.exitCode !== null || proc.signalCode !== null) return;
 
   const exited = new Promise<void>((resolve) => proc.once('exit', () => resolve()));
@@ -195,6 +258,7 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       proc = spawn(PYTHON, ['CouchPotato.py', `--data_dir=${dataDir}`, `--port=${port}`, '--console_log'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
+      liveServers.add(proc);
       proc.stdout?.on('data', (d) => { output += decode(d); });
       proc.stderr?.on('data', (d) => { output += decode(d); });
       // Persistent, not once-during-startup: a server that dies mid-run is

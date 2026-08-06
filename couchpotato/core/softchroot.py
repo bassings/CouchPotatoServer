@@ -81,8 +81,22 @@ class SoftChroot:
             # symlinked directory INSIDE the jail reaches its target, and a
             # chroot setting containing `..` AFTER a symlink component (e.g.
             # `srv/link/..`) resolves to a lexical ancestor rather than the
-            # directory `isdir` accepted. Both need operator-authored input;
-            # neither is reachable from the browse endpoint.
+            # directory `isdir` accepted.
+            #
+            # Both need operator-authored input -- someone with write access
+            # has to create the symlink, or type the setting. The FIRST is
+            # then reachable from the browse endpoint, by browsing to it:
+            # measured, `chroot2abs('/link')` returns `<jail>/link` (normpath
+            # is lexical and does not resolve symlinks), `is_subdir` agrees it
+            # is inside, and `browser.py` lists the target's contents from
+            # outside the jail. An earlier version of this comment claimed
+            # neither was reachable, which was wrong and contradicted the note
+            # in chroot2abs 80 lines down.
+            #
+            # That is an ACCEPTED residual risk, not an oversight: realpath
+            # would close it and is refused above for the reason given there.
+            # Recorded here so the trade-off is visible at the line that makes
+            # it, rather than being rediscovered as a finding.
             # The rstrip is NOT redundant: abspath('/') is '/', and without it
             # chdir becomes '//', which is_root_abs and is_subdir both then
             # reject -- an operator with `soft_chroot = /` gets a browser that

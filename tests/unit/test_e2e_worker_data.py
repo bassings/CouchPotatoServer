@@ -180,6 +180,31 @@ class TestSafeRmtree:
         assert other_worker_real_dir.is_dir()
         assert (other_worker_real_dir / 'sentinel.txt').read_text() == 'worker 1 data'
 
+    def test_refuses_a_symlink_given_with_a_trailing_slash(self, tmp_path):
+        # POSIX resolves a trailing slash before the lstat, so
+        # os.path.islink('/a/link/') is False while os.path.islink('/a/link')
+        # is True. The refusal above is therefore bypassed by a single
+        # character, and it deletes through the link into worker 1's data.
+        #
+        # The test directly above passes only because it happens to spell the
+        # path without the slash -- which is why this case is pinned
+        # separately rather than folded into it. Callers in this repo build
+        # paths from an integer so nothing reaches it today; the guard is
+        # supposed to hold for the argument it was handed, not for the
+        # spelling its current callers happen to use.
+        other_worker_real_dir = tmp_path / '.e2e-w1-data'
+        other_worker_real_dir.mkdir()
+        (other_worker_real_dir / 'sentinel.txt').write_text('worker 1 data')
+
+        symlink_path = tmp_path / '.e2e-w0-data'
+        symlink_path.symlink_to(other_worker_real_dir, target_is_directory=True)
+
+        with pytest.raises(UnsafeDataDirError):
+            safe_rmtree(str(symlink_path) + os.sep, scratch_root=str(tmp_path))
+
+        assert other_worker_real_dir.is_dir()
+        assert (other_worker_real_dir / 'sentinel.txt').read_text() == 'worker 1 data'
+
     def test_refuses_a_path_that_exists_but_is_a_plain_file(self, tmp_path):
         # A worker dir that somehow ended up as a file, not a directory, is
         # refused rather than blindly unlinked -- it does not match what

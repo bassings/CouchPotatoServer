@@ -48,10 +48,13 @@ paths = [
 
   # LOCAL RUNTIME DATA — these hold genuine secrets (a real config.ini with API
   # keys, generated media.key/tetchy.key private keys, logs). All four are
-  # gitignored (`git check-ignore -v` reports .gitignore lines 31, 5, 62 and 37
-  # respectively -- re-verify with that command rather than trusting these
-  # numbers if .gitignore has moved since) and verified untracked, so they
-  # cannot reach the remote;
+  # gitignored and verified untracked, so they cannot reach the remote.
+  # Confirm with `git check-ignore -v <path>`, which names the .gitignore rule
+  # that matched. NO line numbers here on purpose: they were wrong twice on
+  # this branch alone (the `.e2e-*` rule moved from 62 to 68 when the pattern
+  # was widened), in a comment that already told the reader not to trust
+  # them. A citation nobody can rely on is worse than no citation, because
+  # the next reader spends time reconciling it;
   # excluding them keeps a local `make check-secrets` usable instead of drowning
   # in 40+ hits from your own dev instance.
   # If you ever see one of these paths reported as TRACKED, that is a real leak.

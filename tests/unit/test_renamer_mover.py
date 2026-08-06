@@ -506,7 +506,7 @@ class TestPermissions:
 
 class TestT18DataLossFixes:
 
-    def test_fix_a_a_directory_at_the_destination_is_refused_and_both_sides_are_untouched(self, tmp_path, monkeypatch):
+    def test_fix_a_a_directory_at_the_destination_is_refused_and_both_sides_are_untouched(self, tmp_path, monkeypatch, request):
         """T1.8 fix (a), `moveFile`'s `lexists` guard. FIXED: the top-of-function guard now
         tests os.path.lexists(dest) alone, so an existing DIRECTORY at `dest`
         is refused exactly like an existing file always was -- it no longer
@@ -521,6 +521,18 @@ class TestT18DataLossFixes:
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest_dir = tmp_path / 'library' / 'movie.mkv'
         dest_dir.mkdir(parents=True)  # empty: no basename collision inside
+        # Restore the execute bit whatever happens. The defect this test pins
+        # is precisely that the old code chmod'd the DIRECTORY to the file
+        # permission (0640); pytest then cannot recurse into it to clean up,
+        # so the tmp dir survives rotation, is renamed `garbage-<uuid>`, and
+        # accumulates. Not a live leak -- measured, a clean run of this file
+        # leaves zero non-executable directories -- but `make mutation-changed`
+        # over mover.py reverts exactly this guard, and three such piles were
+        # sitting in ~/tmp when a reviewer went looking. A cleanup that only
+        # works while the code is correct is not a cleanup.
+        request.addfinalizer(
+            lambda: dest_dir.is_dir() and os.chmod(dest_dir, 0o755)
+        )
         plugin = _mover(monkeypatch, file_action='move')
 
         with pytest.raises(Exception, match='already exists'):

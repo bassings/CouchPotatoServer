@@ -1702,3 +1702,172 @@ def test_reports_a_summary_when_clean(tmp_path):
     result = run_checker(spec)
     assert result.returncode == 0
     assert "passed" in result.stdout.lower()
+
+
+class TestRule5WithoutGit:
+    """Rule 5's input is `git ls-files`. What happens when git is not there.
+
+    `./scripts/test-local.sh` runs this suite inside `python:3.14-alpine`,
+    which ships no git. An unhandled `FileNotFoundError` there turned
+    `make check-traps` into a crash and took the container run from 34 red
+    to 40 red, all of them `FileNotFoundError: 'git'` and none of them a real
+    finding.
+
+    Catching it creates the opposite hazard, and it is the one this whole
+    script exists to prevent: a rule that silently does nothing while the
+    command still exits 0. That is why `--require-git` exists, and why these
+    tests pin BOTH directions. Without the second one, "we handled it" would
+    rest entirely on a comment.
+    """
+
+    @staticmethod
+    def _path_without_git(tmp_path):
+        """A PATH with no `git` on it, so the lookup raises FileNotFoundError."""
+        empty_bin = tmp_path / 'empty-bin'
+        empty_bin.mkdir()
+        return str(empty_bin)
+
+    def test_a_missing_git_skips_the_rule_rather_than_crashing(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, str(CHECKER)],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+            env={**os.environ, 'PATH': self._path_without_git(tmp_path)},
+        )
+
+        assert result.returncode == 0, (
+            'the checker crashed instead of skipping rule 5:\n%s' % result.stderr
+        )
+        assert 'Traceback' not in result.stderr, result.stderr
+        # The skip must be visible. A silent one is the failure mode.
+        assert 'orphan-test check skipped' in result.stderr, result.stderr
+        # The other six rules must still have run.
+        assert 'passed' in result.stdout.lower(), result.stdout
+
+    def test_require_git_turns_the_skip_into_a_failure(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, str(CHECKER), '--require-git'],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+            env={**os.environ, 'PATH': self._path_without_git(tmp_path)},
+        )
+
+        assert result.returncode != 0, (
+            '--require-git let the run pass with rule 5 skipped; stdout:\n%s'
+            % result.stdout
+        )
+        assert 'must not skip a rule silently' in result.stderr, result.stderr
+
+    def test_the_authoritative_gates_both_pass_require_git(self):
+        """The flag is worth nothing if the gates do not use it.
+
+        verify.sh is the local gate and ci.yml is its mirror (hard rule 4).
+        Both must opt in, or the skip branch is reachable from the run whose
+        green means something. `make check-traps` deliberately does NOT, since
+        it is the ad-hoc command and its own PYTHON may be a bare python3.
+        """
+        for relative in ('scripts/verify.sh', '.github/workflows/ci.yml'):
+            text = (REPO_ROOT / relative).read_text(encoding='utf-8')
+            invocations = [
+                line for line in text.splitlines()
+                if 'check_test_traps.py' in line and not line.strip().startswith('#')
+            ]
+            assert invocations, 'no check_test_traps.py invocation found in %s' % relative
+            for line in invocations:
+                assert '--require-git' in line, (
+                    '%s invokes the checker without --require-git, so a missing '
+                    'git would silently skip rule 5 in an authoritative gate: %s'
+                    % (relative, line.strip())
+                )
+
+    def test_git_present_but_failing_is_handled_the_same_way(self, tmp_path):
+        """`git ls-files` outside a work tree exits non-zero, not not-found.
+
+        A different exception class, the same consequence, and it is the one
+        that would bite a `pip install`-ed copy of this repo rather than a
+        container. Driven directly because the CLI always runs at REPO_ROOT.
+        """
+        assert check_test_traps._tracked_test_files(tmp_path) == []
+
+        with pytest.raises(SystemExit) as excinfo:
+            check_test_traps._tracked_test_files(tmp_path, require_git=True)
+        assert 'must not skip a rule silently' in str(excinfo.value)
+
+
+class TestRule3ShellOptionsAreBothPinned:
+    """Rule 3 asks for `-e` AND `-u`. Only the `-u` half could fail.
+
+    Measured: replacing the `-e` condition with `if False:` left all 131 tests
+    green. Every negative fixture in this file also omitted `-u`, so
+    `len(findings) == 1` held whether the `-e` check ran or not -- the
+    incidentally-passing shape, which reads as specific and is not.
+    """
+
+    def test_a_script_with_u_but_no_e_is_flagged(self, tmp_path):
+        # The one fixture the suite lacked: -u present, -e absent, so the
+        # finding can ONLY come from the -e half.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -u\necho hi\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-e (exit on error)' in findings[0][1], findings
+
+    def test_a_script_with_e_but_no_u_is_flagged(self, tmp_path):
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -e\necho hi\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    @pytest.mark.parametrize('set_line', [
+        'set -eu',
+        'set -e -u',
+        'set -o errexit -o nounset',
+        'set -e -o nounset',        # cluster and long form together
+        'set -o errexit -u',
+    ])
+    def test_the_long_forms_are_accepted(self, tmp_path, set_line):
+        """`set -o errexit -o nounset -o pipefail` is the canonical spelling.
+
+        It was FLAGGED as missing -e: `nounset` was accepted as a long form
+        and `errexit` was not, so a blocking gate rejected the most explicit
+        correct way to write the thing it demands. Whoever hit it would have
+        "fixed" a correct script to satisfy the checker.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\n%s\necho hi\n' % set_line)
+
+        assert findings_for(script) == []
+
+
+class TestRule2FilterAlternatives:
+    """Rule 2's filter list must be more than `tail`.
+
+    Measured: narrowing `FILTER_RE` to `tail` alone left all 131 tests green
+    -- only `tail` was ever exercised in a runner-pipe position, so twelve of
+    the thirteen alternatives were unguarded. `scripts/verify.sh` contains a
+    live `ruff --version | awk` pipeline that depends on one of them.
+    """
+
+    @pytest.mark.parametrize('filter_cmd', [
+        'tail -1', 'head -5', 'grep -c FAIL', 'tee out.log', "awk '{print $1}'",
+        "sed -n '1p'", 'sort', 'uniq', 'wc -l', 'cat', 'less', 'more', 'jq .',
+    ])
+    def test_every_filter_in_the_list_is_detected_after_a_runner(self, tmp_path, filter_cmd):
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -eu\npytest tests/ | %s\n' % filter_cmd)
+
+        findings = findings_for(script)
+
+        assert findings, 'pytest | %s was not flagged' % filter_cmd
+        assert any('exit' in message.lower() for _, message in findings), findings
+
+    def test_a_pipeline_with_pipefail_is_left_alone(self, tmp_path):
+        """The rule must not fire on a pipeline whose exit code is preserved,
+        or the remedy it prints would not clear the finding."""
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -euo pipefail\npytest tests/ | tail -1\n')
+
+        assert findings_for(script) == []

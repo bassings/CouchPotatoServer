@@ -251,7 +251,11 @@ practice it only happened nightly, which meant survivors went unreviewed and the
 - `make verify` runs them with an auto-started server, or run directly against
   a booted app:
   `.venv/bin/python CouchPotato.py --data_dir=.e2e-data --console_log` then
-  `CP_TEST_URL=http://localhost:5050 npx playwright test tests/e2e/<spec> --project=chromium --workers=1`.
+  `npx playwright test tests/e2e/<spec> --project=chromium`.
+  (No `CP_TEST_URL`, and no hand-started server: since T1.7 the worker
+  fixture starts and seeds its own instance per worker, and `CP_TEST_URL` is
+  read by nothing in the repo. Following the old line started a server on
+  5050 that the suite then ignored.)
 - CI also runs the full suite. (See also AGENTS.md's local-verification step,
   which runs the whole suite via `npm run test:e2e`.)
 - For any UI change, check and update:
