@@ -7,6 +7,7 @@ Usage:
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -127,13 +128,65 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         print(f"Writing to SQLite: {dest_path}")
 
     # Bulk insert
-    count = adapter.insert_bulk(cleaned)
+    try:
+        count = adapter.insert_bulk(cleaned)
+    except sqlite3.IntegrityError as exc:
+        # Almost always the UNIQUE (provider, identifier) index on
+        # media_identifiers: two media documents in the source claiming the
+        # same imdb id. That is not hypothetical here -- REG-004 exists
+        # because this project shipped duplicate media rows -- and a source
+        # written before that backstop can easily hold a pair.
+        #
+        # SQLite's own message names the constraint and nothing else, which
+        # leaves the operator with a migration that stops dead, an empty
+        # destination, and no idea which film to fix. Name the collision.
+        adapter.close()
+        raise RuntimeError(
+            'Migration aborted: %s\n%s\n\n'
+            'The destination has been left empty; the CodernityDB source is '
+            'untouched, so nothing is lost. Resolve the duplicate in the '
+            'source (or delete one of the two documents) and run the '
+            'migration again.' % (exc, _describe_identifier_collision(cleaned))
+        ) from exc
 
     if verbose:
         print(f"  Migrated {count} documents")
 
     adapter.close()
     return count, type_counts
+
+
+def _describe_identifier_collision(docs: list) -> str:
+    """Find the (provider, identifier) pairs claimed by more than one doc.
+
+    Best-effort and never raises: it runs while an exception is already being
+    handled, and a failure to produce a nicer message must not replace the
+    real one.
+    """
+    try:
+        owners: dict[tuple[str, str], list[str]] = {}
+        for doc in docs:
+            if doc.get('_t') != 'media':
+                continue
+            identifiers = dict(doc.get('identifiers') or {})
+            if doc.get('identifier') and 'imdb' not in identifiers:
+                identifiers['imdb'] = doc['identifier']
+            for provider, ident in identifiers.items():
+                if not ident:
+                    continue
+                owners.setdefault((provider, str(ident)), []).append(doc.get('_id', '?'))
+
+        clashes = [
+            '  %s=%s is claimed by %s' % (provider, ident, ', '.join(ids))
+            for (provider, ident), ids in sorted(owners.items())
+            if len(ids) > 1
+        ]
+        if not clashes:
+            return ('  (no duplicate media identifier was found in the source, so\n'
+                    '   the constraint that failed is a different one)')
+        return 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes)
+    except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
+        return '  (could not determine which identifiers collided)'
 
 
 def verify(source_path: str, dest_path: str, verbose: bool = False) -> bool:
