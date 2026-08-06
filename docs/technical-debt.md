@@ -648,7 +648,25 @@ pinned in the Makefile for exactly this reason -- wants Dependabot's `docker`
 ecosystem enabled in the same change, which is its own PR.
 
 
-## Lessons learned
+**Redundant double-locking in `sqlite_adapter.py` (`insert`, `update`,
+`delete`).** Raised by the cloud review on PR #225 and confirmed: those three
+carry `@_synchronised` AND take `with self._conn_lock:` inline
+(`:381`, `:440`, `:575`). `_conn_lock` is an `RLock` (`:107`), so it is
+harmless -- but it is confusing in exactly the file where confusion has already
+cost one production defect, and a future reader could remove the decorator
+believing the inline lock covers the method, or the reverse.
+
+**Deliberately NOT fixed on this branch, and the reason is the point.** The
+change is a dedent of roughly forty lines of concurrency-critical code, and
+because the RLock makes both versions behave identically, **the test suite
+cannot tell them apart**. That is an unverifiable edit to the highest-risk file
+in the PR, proposed after thirteen review rounds, on a branch where a fix has
+twice introduced a fresh defect (`AGENTS.md` and CLAUDE.md rule 11 both say to
+treat the next one as new work). A readability improvement that no test can
+confirm does not clear that bar at the end of a long branch.
+
+The right shape for it: its own small PR, where the diff is the only thing in
+scope and a reviewer can read the dedent directly against the original.
 
 1. Read `CLAUDE.md` at the START of every session before touching code.
 2. Always run `pytest tests/unit/ -q` + `ruff check .` before pushing — don't
