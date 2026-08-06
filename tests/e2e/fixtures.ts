@@ -41,6 +41,12 @@ const POLL_INTERVAL_MS = 250;
 // run, already where traces and failure screenshots go.
 const LOG_DIR = 'test-results';
 
+// Kept in step with scripts/seed_e2e_data.py's MOVIE_ID and with
+// release_controls.spec.ts's SEEDED_MOVIE_ID. Deliberately duplicated rather
+// than imported: this file must not import a .spec.ts (that re-registers its
+// tests) and the seed script is Python.
+const SEEDED_MOVIE_ID = 'e2e-seed-movie-001';
+
 type WorkerServer = { baseURL: string };
 type Exit = { code: number | null; signal: NodeJS.Signals | null };
 
@@ -82,7 +88,19 @@ async function waitForServer(getExit: () => Exit | null, url: string, getOutput:
       // first. So readiness means "serving library data", not "listening".
       if (res.ok) {
         const grid = await fetch(new URL('/partial/movies?status=active', url).href);
-        if (grid.ok && (await grid.text()).includes('poster-card')) return;
+        if (!grid.ok || !(await grid.text()).includes('poster-card')) {
+          await sleep(POLL_INTERVAL_MS);
+          continue;
+        }
+        // The movie-detail route pays its own cold start, and readiness that
+        // only covers the grid leaves the first spec to touch /movie/<id> to
+        // absorb it. Measured on the gate: release_controls.spec.ts skipped
+        // one test in 1 of 3 otherwise-identical runs, waiting 15s for the
+        // htmx swap to bring in #movie-releases -- a different test dropped
+        // each time, with the gate reporting green. Warming it here means
+        // the wait is paid once, by the harness, before any spec starts.
+        const detail = await fetch(new URL(`/partial/movie/${SEEDED_MOVIE_ID}`, url).href);
+        if (detail.ok && (await detail.text()).includes('movie-releases')) return;
       }
     } catch {
       // Not listening yet -- keep polling.
@@ -93,6 +111,28 @@ async function waitForServer(getExit: () => Exit | null, url: string, getOutput:
   throw new Error(
     `server at ${url} did not become ready within ${READY_TIMEOUT_MS}ms. Last output:\n${getOutput().slice(-4000)}`,
   );
+}
+
+/**
+ * Persist a worker's captured server output, and return where it went.
+ *
+ * Keyed on BOTH indices. `parallelIndex` is deliberately stable across a
+ * worker restart (that is why the data dir uses it), and `retries: 2` is on
+ * in CI -- so keying the filename on it alone meant the retry worker's
+ * teardown overwrote the log of the attempt that actually failed, on the one
+ * path where the log matters. `workerIndex` increments on every restart.
+ *
+ * Never throws: a missing log must not turn into the reported failure.
+ */
+function writeServerLog(parallelIndex: number, workerIndex: number, output: string): string {
+  try {
+    mkdirSync(LOG_DIR, { recursive: true });
+    const target = path.join(LOG_DIR, `server-p${parallelIndex}-w${workerIndex}.log`);
+    writeFileSync(target, output, 'utf-8');
+    return target;
+  } catch {
+    return '';
+  }
 }
 
 /** Stop `proc`, escalating to SIGKILL if it ignores SIGTERM. */
@@ -144,7 +184,15 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       // scripts/seed_e2e_data.py's own docstring establishes).
       execFileSync(PYTHON, ['scripts/seed_e2e_data.py', `--data_dir=${dataDir}`], { stdio: 'pipe' });
 
-      proc = spawn(PYTHON, ['CouchPotato.py', `--data_dir=${dataDir}`, `--port=${port}`], {
+      // --console_log is load-bearing, not noise. runner.py computes
+      // `console = (debug or options.console_log) and not quiet and not
+      // daemon`, so without it NO console handler is attached and every
+      // log.error -- including the one naming a failed startup -- goes only
+      // to <data_dir>/logs/CouchPotato.log, which the catch block below then
+      // deletes. Measured: the captured output was empty for exactly the
+      // failure the capture exists to explain. With it, PrivacyFilter is in
+      // the chain (couchpotato/core/logger.py), so the api_key is redacted.
+      proc = spawn(PYTHON, ['CouchPotato.py', `--data_dir=${dataDir}`, `--port=${port}`, '--console_log'], {
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       proc.stdout?.on('data', (d) => { output += decode(d); });
@@ -158,6 +206,10 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       await waitForServer(() => exited, `${baseURL}/`, () => output);
     } catch (err) {
       if (proc) await stopServer(proc);
+      // Persist BEFORE the cleanup below removes the data dir. The startup
+      // path is the one the fixture can spend 60 seconds in, and it was the
+      // one path that kept nothing.
+      writeServerLog(idx, workerInfo.workerIndex, output);
       // Best-effort: a worker that failed to start still frees its data
       // dir, so a Playwright retry of this same worker slot (AC-QA-56's
       // `retries: 2`) does not immediately fail a SECOND time on
@@ -182,14 +234,7 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
     // explain a mid-run failure was the one thing the run never kept.
     // test-results/ is Playwright's own output dir, already gitignored and
     // already where traces and screenshots land.
-    let logPath = '';
-    try {
-      mkdirSync(LOG_DIR, { recursive: true });
-      logPath = path.join(LOG_DIR, `server-w${idx}.log`);
-      writeFileSync(logPath, output, 'utf-8');
-    } catch {
-      // Never fail teardown over a log file.
-    }
+    const logPath = writeServerLog(idx, workerInfo.workerIndex, output);
 
     await stopServer(proc);
     execFileSync(PYTHON, ['scripts/e2e_worker_data.py', 'cleanup', String(idx)], { stdio: 'pipe' });

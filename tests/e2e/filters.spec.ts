@@ -32,28 +32,32 @@ test.describe('Filters', () => {
 
   test('should filter movies by text search', async ({ page }) => {
     const movieCards = page.locator('#movie-grid .poster-card');
+    // Unconditional. This used to be `if (initialCount > 0) { ... }`, so on an
+    // empty grid it asserted nothing and reported green -- and an empty grid
+    // is precisely the failure the readiness probe in fixtures.ts exists to
+    // prevent, so the one condition that would have caught it was the one the
+    // guard suppressed. scripts/seed_e2e_data.py seeds five active movies, so
+    // a zero here is the seed or the app being broken.
     const initialCount = await movieCards.count();
-    
-    if (initialCount > 0) {
-      // Get the title of the first movie
-      const firstTitle = await movieCards.first().getAttribute('data-title');
-      
-      // Type in the filter
-      const searchInput = page.locator('input[placeholder*="filter" i]');
-      await searchInput.fill(firstTitle || '');
-      
-      // Wait for filter to apply
-      await page.waitForTimeout(300);
-      
-      // The first movie should still be visible
-      const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-      const filteredCount = await visibleCards.count();
-      
-      // Filtered count should be less than or equal to initial
-      expect(filteredCount).toBeLessThanOrEqual(initialCount);
-      // And at least one card should be visible (the one we searched for)
-      expect(filteredCount).toBeGreaterThan(0);
-    }
+    expect(initialCount, 'no movie cards in the grid -- did the seed run?').toBeGreaterThan(0);
+
+    // Get the title of the first movie
+    const firstTitle = await movieCards.first().getAttribute('data-title');
+    expect(firstTitle, 'a poster card must carry data-title for the filter to match on').toBeTruthy();
+
+    // Type in the filter
+    const searchInput = page.locator('input[placeholder*="filter" i]');
+    await searchInput.fill(firstTitle || '');
+
+    // The assertion retries, so it waits for the client-side filter without a
+    // fixed sleep.
+    const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeLessThanOrEqual(initialCount);
+
+    // At least the one we searched for is still showing.
+    expect(await visibleCards.count()).toBeGreaterThan(0);
   });
 
   test('clicking Wanted filter should filter movies', async ({ page }) => {

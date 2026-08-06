@@ -643,6 +643,15 @@ already `rm -rf` sibling paths in the repo root.
   when `CI` is set**, so isolation implemented only there leaves CI running
   today's shared-state suite while local runs the isolated one: both green,
   testing different things (AC-OPS-15).
+- **AC-OPS-15** *(text supplied at review 2026-08-06; it was cited above as
+  satisfied while having no definition anywhere in this spec, which nobody can
+  verify)* **The local gate and CI run the same suite the same way.** Every
+  Playwright invocation in `scripts/verify.sh` has a counterpart in
+  `.github/workflows/ci.yml` with the same project, the same worker count and
+  the same `--fail-on-flaky-tests`, and neither file special-cases
+  `process.env.CI` to change what is executed. *Break:* remove one project's
+  invocation from either file; hard rule 4 says the local gate mirrors CI, and
+  a divergence must be visible rather than inferred from two green ticks.
 - **AC-OPS-16** A failed seed is **red, not skipped**. Today `ci.yml:252,285,342`
   swallow seed failure into `:warning:` with `continue-on-error: true`, and
   the workflow's own message says tests "will skip instead of running". Per-spec
@@ -836,6 +845,31 @@ list is how the harness improves rather than merely runs:
 13. **`AC-DATA-23` was written as a conditional** ("if the round-trip
     migration test is kept"). It was kept, and the criterion was still
     unwritten at review. Conditional acceptance criteria have no owner.
+
+14. **`AC-SIMP-7` measured a proxy, and the proxy moved without the property.**
+    It counted `if (await` occurrences in `tests/e2e/**` as a stand-in for "no
+    test asserts nothing". The count fell 63 → 34 while roughly 13
+    assertion-free tests survived, because moving one weak assertion outside
+    the brace satisfies the count. What T1.4 wanted was "every touched test
+    asserts a property named in its own title", which is not expressible as a
+    diff-level count. The survivors are recorded in `docs/technical-debt.md`
+    rather than being reported as done.
+15. **A criterion can guard the implementation instead of the exposure, twice
+    in a row.** `AC-SEC-16` guarded the `--port` argument while `host` did the
+    widening. `AC-SEC-16b` was written to fix that and then guarded the
+    `_bind_to_loopback` helper while the call site went untested: two review
+    lenses independently deleted the call and watched the whole suite pass.
+    The criterion shape that catches both rounds is **"the guard is proven at
+    the call site that makes it load-bearing, not only at the function that
+    implements it"**. Worth promoting into
+    `~/.claude/templates/SPEC-TEMPLATE.md`.
+16. **`AC-QA-11` asks for a caller-level proof that cannot exist.** It requires
+    T1.8 fix (a) to be demonstrated through `_moveRenamedFiles`, but
+    `renamer/main.py:154-157` refuses any pre-existing `dst` before `moveFile`
+    is reached, so the caller can never drive the branch. Amended: fix (a) is
+    proven at the unit level, and the file says so at
+    `tests/unit/test_renamer_mover.py:604-621` rather than quietly renaming the
+    test.
 
 **PR 1 acceptance:** `make verify` green **and `make check-secrets` green**;
 every new test proven load-bearing (break, watch fail, `git diff`-confirm,

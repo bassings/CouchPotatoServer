@@ -755,46 +755,69 @@ test.describe('Keyboard Navigation', () => {
     // either way.
     const cardLinks = page.locator('#movie-grid .poster-card a[href*="/movie/"]');
 
-    // At least one card is guaranteed: the seed script's two Wanted-page
-    // movies both start 'active', and (T1.7a) neither carries an
-    // already-'done' release any more, so the app's own `app.load` ->
-    // searchAll restatus pass (searcher.py) can no longer self-promote
-    // either of them to 'done'. e2e-seed-movie-002 can still be driven to
-    // 'done' explicitly by another spec's "Mark as Done" action, so a SECOND
-    // card is common but not guaranteed within a run; fail loudly rather
-    // than silently skip if even the first is ever missing (matches
-    // movie-detail.spec.ts's "FAIL, don't skip").
+    // TWO cards are guaranteed, so this is unconditional. The seed creates
+    // five 'active' movies (MOVIE_ID, DESTRUCTIVE_MOVIE_ID and the three
+    // WANTED_MOVIE_IDS), and (T1.7a) none of them carries an already-'done'
+    // release, so the app's own `app.load` -> searchAll restatus pass
+    // (searcher.py) cannot self-promote them out of the grid. Only
+    // e2e-seed-movie-002 can be driven to 'done' by another spec's "Mark as
+    // Done", which still leaves four.
+    //
+    // This used to read `if (count > 1) { ...arrows... } else { ...one
+    // assertion... }`, justified by a comment describing the OLD two-movie
+    // fixture. The else branch had become dead -- and the hoisted `count`
+    // also slipped past check_test_traps' Rule 6, which only knew the inline
+    // `if (await x.count() ...)` shape, so the first code written after that
+    // rule landed defeated it. Both are fixed: the rule now follows hoisted
+    // names, and this is no longer conditional.
     await expect(
       cardLinks.first(),
       'no movie card in the Wanted grid -- did scripts/seed_e2e_data.py run?',
     ).toBeVisible({ timeout: 10000 });
-    const count = await cardLinks.count();
+    expect(
+      await cardLinks.count(),
+      'the arrow-key roving focus needs at least two cards to move between',
+    ).toBeGreaterThan(1);
 
     const first = cardLinks.nth(0);
+    const second = cardLinks.nth(1);
     await first.focus();
     await expect(first).toBeFocused();
 
-    if (count > 1) {
-      const second = cardLinks.nth(1);
-      await page.keyboard.press('ArrowRight');
-      await expect(second).toBeFocused();
-      await page.keyboard.press('ArrowLeft');
-      await expect(first).toBeFocused();
-    } else {
-      // Only one card in the grid this run: there is nowhere to move focus
-      // TO, so the real assertion is that the handler does not throw or
-      // drop focus off the only card that exists.
-      await page.keyboard.press('ArrowRight');
-      await expect(first).toBeFocused();
-    }
+    await page.keyboard.press('ArrowRight');
+    await expect(second).toBeFocused();
+    await page.keyboard.press('ArrowLeft');
+    await expect(first).toBeFocused();
   });
 });
 
 test.describe('Error Handling', () => {
   test('404 page shows gracefully', async ({ page }) => {
-    await page.goto('/nonexistent-page-12345/');
-    // Should not crash, should show some content
-    await expect(page.locator('body')).toBeVisible();
+    // NOT `expect(body).toBeVisible()`: <body> is visible for any response
+    // with content, including a FastAPI JSON error payload or a rendered
+    // Python traceback. The app could start serving a raw 500 with a stack
+    // trace on every unknown path and that assertion would stay green -- in
+    // the one test named for error handling.
+    const response = await page.goto('/nonexistent-page-12345/');
+    expect(response, 'no response at all for the unknown path').not.toBeNull();
+    expect(
+      response!.status(),
+      'an unknown path must be a client error, not a server error',
+    ).toBe(404);
+    // Measured 2026-08-06: the app answers `{"detail":"Not Found"}` -- FastAPI's
+    // default JSON handler, with no HTML and no navigation. That is a real gap
+    // (a user who mistypes a URL gets a raw payload), recorded in
+    // docs/technical-debt.md rather than fixed here: an HTML error page is new
+    // product surface, not a safety net.
+    //
+    // What this test can and must pin is that the failure stays a clean,
+    // client-side 404 and never becomes a server error with a Python traceback
+    // in the response -- which is what the previous `expect(body).toBeVisible()`
+    // would have sailed straight past.
+    const body = await page.textContent('body');
+    expect(body).not.toContain('Traceback (most recent call last)');
+    expect(body).not.toContain('couchpotato/');
+    expect(body).toContain('Not Found');
   });
 
   test('invalid movie ID handles gracefully', async ({ page }) => {

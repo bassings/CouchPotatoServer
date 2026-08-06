@@ -69,7 +69,16 @@ export default defineConfig({
     {
       name: 'accessibility',
       testMatch: /.*\.a11y\.spec\.ts/,
-      use: { ...devices['Desktop Chrome'] },
+      // colorScheme is PINNED, not inherited. With no `cp-theme` in
+      // localStorage the app falls back to prefers-color-scheme, which was
+      // light only because that is Playwright's default -- so the six
+      // page-level scans were light by accident. A Playwright default change,
+      // or anyone adding `colorScheme: 'dark'` here, would silently convert
+      // every one of them to dark and delete the light-theme coverage with
+      // nothing going red: the mirror image of the blind spot AC-A11Y-10 was
+      // written to close. The dark scans assert their own theme
+      // (accessibility.a11y.spec.ts:151); this is the other half.
+      use: { ...devices['Desktop Chrome'], colorScheme: 'light' },
     },
     {
       /*

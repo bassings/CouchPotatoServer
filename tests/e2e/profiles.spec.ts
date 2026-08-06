@@ -255,8 +255,12 @@ test.describe('Quality Profiles', () => {
     const panel = await openProfilesTab(page);
     // Built-in profiles carry the "built-in" badge; their Delete buttons must be
     // disabled so the user never hits the backend's rejection as a cryptic toast.
+    // Assert the precondition, do not skip on it. Built-in profiles are
+    // created by the app's own profile.fill(), per worker, per run, so their
+    // absence is a regression -- and a strictly worse one than the disabled
+    // Delete button this test guards.
     const builtInRow = panel.locator('[role="listitem"]', { hasText: 'built-in' }).first();
-    if (await builtInRow.count() === 0) { test.skip(); return; }
+    await expect(builtInRow, 'no built-in profile rendered at all').toBeVisible();
     await expect(builtInRow.getByRole('button', { name: /delete profile/i })).toBeDisabled();
   });
 
@@ -288,7 +292,12 @@ test.describe('Quality Profiles', () => {
       );
 
     const before = await orderNames();
-    if (before.length < 2) { test.skip(); return; }
+    // Same reasoning as above: the seeded profile plus the built-in ones make
+    // two the floor, per worker, per run.
+    expect(
+      before.length,
+      'fewer than two profiles to reorder -- the seed or profile.fill() did not run',
+    ).toBeGreaterThanOrEqual(2);
     const firstLabel = before[0].replace(/^Edit profile:\s*/i, '');
 
     // Move the first profile down. With the ids[]/hidden[] repeated-key bug the

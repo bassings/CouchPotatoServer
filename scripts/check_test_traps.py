@@ -858,6 +858,25 @@ E2E_FILE_SUFFIXES = (".ts", ".js")
 # way JS could theoretically be formatted.
 GUARD_CONDITION_RE = re.compile(r"\bif\s*\(.*\bawait\b.*\.(?:isVisible|count)\s*\(")
 
+# The same guard, written with the await hoisted to a previous line:
+#
+#     const count = await cardLinks.count();
+#     ...
+#     if (count > 1) {            <- GUARD_CONDITION_RE cannot see this
+#
+# Moving one expression up a line defeated the rule entirely, and the first
+# new code written after the rule landed did exactly that
+# (interactions.e2e.spec.ts). A rule introduced to retire a human review step
+# has to survive the most obvious reformatting of the thing it looks for.
+#
+# Deliberately file-scoped rather than scope-aware: this is a regex-based
+# guard, not a JS parser, and a name bound to an awaited count anywhere in a
+# spec file is a name whose `if` is worth a written justification. The opt-out
+# below is the pressure valve.
+HOISTED_ASSIGNMENT_RE = re.compile(
+    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\b[^;]*\.(?:isVisible|count)\s*\("
+)
+
 # A trailing comment naming why this specific guard cannot be made
 # unconditional. Must be on the SAME line as the `if` (where every opt-out
 # written for T1.4 puts it) — a comment three lines away could belong to
@@ -873,12 +892,32 @@ def _is_e2e_spec(path: Path) -> bool:
     return "e2e" in {part.lower() for part in path.parts}
 
 
-def _is_guard_if_line(line: str) -> bool:
-    """A comment-stripped line that opens an isVisible()/count() guard block."""
+def _hoisted_guard_names(cleaned_lines: list[str]) -> set[str]:
+    """Names bound to an awaited `.isVisible()`/`.count()` anywhere in the file."""
+    names = set()
+    for line in cleaned_lines:
+        for match in HOISTED_ASSIGNMENT_RE.finditer(line):
+            names.add(match.group(1))
+    return names
+
+
+def _is_guard_if_line(line: str, hoisted_names: frozenset = frozenset()) -> bool:
+    """A comment-stripped line that opens an isVisible()/count() guard block.
+
+    Either written inline (`if (await x.count() > 1) {`) or with the await
+    hoisted to an earlier line and the resulting name used here.
+    """
     stripped = line.rstrip()
     if not stripped.endswith("{"):
         return False
-    return bool(GUARD_CONDITION_RE.search(stripped))
+    if GUARD_CONDITION_RE.search(stripped):
+        return True
+    condition = stripped[stripped.index("if"):] if "if" in stripped else ""
+    if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
+        return False
+    return any(
+        re.search(r"\b%s\b" % re.escape(name), condition) for name in hoisted_names
+    )
 
 
 def _find_matching_brace(cleaned_lines: list[str], start_idx: int) -> int:
@@ -925,9 +964,10 @@ def check_e2e_spec_guards(path: Path, text: str):
     """
     raw_lines = text.split("\n")
     cleaned_lines = strip_js_comments(text)
+    hoisted_names = frozenset(_hoisted_guard_names(cleaned_lines))
 
     for idx, line in enumerate(cleaned_lines):
-        if not _is_guard_if_line(line):
+        if not _is_guard_if_line(line, hoisted_names):
             continue
 
         close_idx = _find_matching_brace(cleaned_lines, idx)
@@ -942,7 +982,7 @@ def check_e2e_spec_guards(path: Path, text: str):
         if opt_out is None:
             yield (
                 line_no,
-                "expect( inside an `if (await ...isVisible()/count())` guard -- "
+                "expect( inside an `if (...isVisible()/count())` guard -- "
                 "this can pass while asserting nothing, if the guard is ever "
                 "false. Make the precondition unconditional if it is actually "
                 "guaranteed, assert both branches if it is not, or opt out with "

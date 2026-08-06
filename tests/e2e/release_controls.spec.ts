@@ -17,11 +17,11 @@ import { test, expect } from './fixtures';
  * movie with releases, let alone releases from multiple sources/qualities.
  * scripts/seed_e2e_data.py seeds exactly that (wired into playwright.config.ts's
  * webServer for local runs, and into the ui-e2e-tests/accessibility CI jobs) --
- * every test below still explicitly test.skip()s with a stated reason when
- * the library has no movie, no releases, or not enough variety to exercise a
- * given assertion (e.g. someone running this suite against their own,
- * unseeded instance), but the reason says plainly that the seed didn't run
- * rather than leaving it looking like a routine, expected skip.
+ * every test below ASSERTS its precondition rather than skipping on it. If the
+ * library has no movie, no releases, or not enough variety to exercise a given
+ * assertion, that is the seed having failed or the app having regressed, and
+ * either way it is a red -- not a routine, expected skip that quietly shrinks
+ * the suite. See NOTE ON PRECONDITIONS below for what changed and why.
  */
 
 test.describe('Release list controls', () => {
@@ -29,9 +29,11 @@ test.describe('Release list controls', () => {
    * A LARGER per-test budget than the 30s default, for this file only.
    *
    * beforeEach here waits for a server-rendered release table, and it spends
-   * from the same budget the test does. verify.sh now wipes the data dir before
-   * every run (so the gate's answer cannot depend on leftover state), which
-   * means every run pays seeding plus first request. Shaving the wait does not
+   * from the same budget the test does, and every run pays seeding plus a
+   * first request: fixtures.ts creates a fresh per-worker data dir and seeds
+   * it before the server starts. (This used to say verify.sh wipes the data
+   * dir. It does not, and did not after T1.7: verify.sh:120-129 now treats a
+   * surviving directory as a failure to surface rather than one to clean up.) Shaving the wait does not
    * work: no value is both long enough for a slow cold start and shorter than
    * the budget it comes out of -- at 30s the hook timed out at exactly 30.0s,
    * and at 20s a cold run still lost a test at 28.9s. The budget was the wrong
@@ -40,14 +42,21 @@ test.describe('Release list controls', () => {
   test.describe.configure({ timeout: 60000 });
 
   /*
-   * NOTE ON SKIP GUARDS. Six per-test `test.skip(await
-   * releases.locator('table').count() === 0, ...)` guards used to live in this
-   * file. They were removed: beforeEach already waits for that same table and
-   * skips with the same reason, so they were redundant -- and each was a
-   * non-retrying `.count()` standing in for a wait, the exact anti-pattern the
-   * comments below warn about. Measured: they raced the render and silently
-   * dropped a different test between otherwise identical gate runs (139 passed
-   * vs 138 passed + 1 skipped), which is lost coverage reported as green.
+   * NOTE ON PRECONDITIONS. Six per-test `test.skip(await
+   * releases.locator('table').count() === 0, ...)` guards used to live in
+   * this file; they were removed as redundant with beforeEach. The
+   * remaining ones have now been converted from skips into assertions.
+   *
+   * The justification for skipping was that someone might run this suite
+   * against their own, unseeded instance. T1.7 deleted that path:
+   * tests/e2e/fixtures.ts seeds every worker before its server starts and
+   * throws if the seed fails, so an unseeded server cannot reach these
+   * specs. What was left was a guard that trips on SLOWNESS and silently
+   * drops a different test each run while the gate reports green -- the
+   * harm this file's own comments already documented ("fired in 3 of 4
+   * runs, each time silently dropping a DIFFERENT test"), and which was
+   * measured again on this branch: 1 of 3 identical gate runs dropped
+   * 'sorting by size marks that column and reorders the rows'.
    */
 
   // The movie scripts/seed_e2e_data.py creates. Navigating straight to it,
@@ -80,9 +89,19 @@ test.describe('Release list controls', () => {
 
     // Distinguish a real load timeout (something is actually wrong/slow --
     // never a routine skip) from the legitimate "seed didn't run" case below.
-    test.skip(!swapped, 'timed out after 15s waiting for the movie detail htmx ' +
+    // FAIL, do not skip. Every one of this file's skip guards was justified
+    // at :20 as covering "someone running this suite against their own,
+    // unseeded instance" -- a path T1.7 deleted, because fixtures.ts seeds
+    // every worker before its server starts and throws if the seed fails.
+    // What survived was a slowness guard that silently drops a DIFFERENT
+    // test each run while the gate reports green: measured on this branch,
+    // 1 of 3 identical gate runs dropped 'sorting by size'. The readiness
+    // probe in fixtures.ts now warms this route so the cold start is paid
+    // once by the harness; if it is still not ready here, that is a
+    // regression and it should say so.
+    expect(swapped, 'timed out after 15s waiting for the movie detail htmx ' +
       'load to swap in #movie-releases -- this is a load/perf problem, not a ' +
-      'missing seed');
+      'missing seed').toBe(true);
 
     // Wait for the TABLE, not just the container. `#movie-releases` is attached
     // as soon as the outer partial swaps in, but its <table> is rendered a beat
@@ -99,10 +118,11 @@ test.describe('Release list controls', () => {
     // 20s, not 10s: this must tolerate a COLD START -- but it must also stay
     // UNDER playwright.config.ts's 30s per-test timeout, which beforeEach spends
     // from. Setting it to 30s made the wait unable to ever complete: the hook
-    // timed out at exactly 30.0s. Measured cold-start need is ~12-16s. verify.sh now wipes the
-    // data dir before every run (so the gate's answer cannot depend on what a
-    // previous run left behind), which means every run pays seeding plus first
-    // request. Measured: the first run after a clean dir skipped one test while
+    // timed out at exactly 30.0s. Measured cold-start need is ~12-16s. every run pays seeding plus first request:
+    // fixtures.ts creates a fresh per-worker data dir and seeds it before the
+    // server starts. (An earlier comment here said verify.sh wipes the data
+    // dir; it does not -- verify.sh:120-129 now treats a surviving directory
+    // as a failure to surface rather than something to clean up.) Measured: the first run after a clean dir skipped one test while
     // the second and third did not -- 5/6/6 passed across three runs. A guard
     // that trips on slowness silently drops coverage and reports green, which
     // is precisely what this file's own comments warn about.
@@ -111,11 +131,11 @@ test.describe('Release list controls', () => {
       .then(() => true)
       .catch(() => false);
 
-    test.skip(
-      !hasTable,
+    expect(
+      hasTable,
       `no seeded movie with releases at /movie/${SEEDED_MOVIE_ID} -- the seed ` +
       'did not run: scripts/seed_e2e_data.py --data_dir=<dir> before starting the server',
-    );
+    ).toBe(true);
   });
 
   test('the release table exposes sortable headers with aria-sort', async ({ page }) => {
@@ -130,11 +150,11 @@ test.describe('Release list controls', () => {
 
   test('sorting by size marks that column and reorders the rows', async ({ page }) => {
     const releases = page.locator('#movie-releases');
-    test.skip(
-      await releases.locator('tbody tr').count() < 2,
+    expect(
+      await releases.locator('tbody tr').count(),
       'need at least two releases to observe a reorder -- scripts/seed_e2e_data.py ' +
       'seeds 6, so this indicates the seed did not run rather than a routine skip',
-    );
+    ).toBeGreaterThanOrEqual(2);
 
     const before = await releases.locator('tbody tr').first().textContent();
 
@@ -153,12 +173,12 @@ test.describe('Release list controls', () => {
     const releases = page.locator('#movie-releases');
     const select = releases.locator('#rel-source');
     const options = await select.locator('option').allInnerTexts();
-    test.skip(
-      !options.some(o => /NZB/i.test(o)) || !options.some(o => /Torrent/i.test(o)),
+    expect(
+      options.some(o => /NZB/i.test(o)) && options.some(o => /Torrent/i.test(o)),
       'this movie has releases from only one source -- scripts/seed_e2e_data.py ' +
       'seeds both NZB and torrent releases, so this indicates the seed did not ' +
       'run rather than a routine skip',
-    );
+    ).toBe(true);
 
     await select.selectOption('nzb');
 
@@ -198,12 +218,12 @@ test.describe('Release list controls', () => {
   test('Download and Skip still work after a swap (B13)', async ({ page }) => {
     const releases = page.locator('#movie-releases');
     const actionButton = releases.locator('button', { hasText: /Download|Skip/ }).first();
-    test.skip(
-      await actionButton.count() === 0,
+    expect(
+      await actionButton.count(),
       'no release in this data has an actionable status (available/ignored) -- ' +
       'scripts/seed_e2e_data.py seeds both, so this indicates the seed did not run, ' +
       'not a routine skip',
-    );
+    ).toBeGreaterThan(0);
 
     await releases.getByRole('link', { name: /^Score/ }).click();
     await expect(page.locator('#movie-releases')).toBeVisible();

@@ -277,7 +277,23 @@ jobs:
       if: failure()
       with:
         name: playwright-report
-        path: playwright-report/
+        # test-results/ carries the per-worker application logs that
+        # tests/e2e/fixtures.ts writes (server-p<N>-w<M>.log). The HTML
+        # reporter only copies Playwright ATTACHMENTS into
+        # playwright-report/, so a file the fixture writes directly was not
+        # carried across, and the one artefact that can explain a mid-run
+        # server death died with the runner -- on the failure a reviewer
+        # meets most often, given the residual flake in
+        # docs/technical-debt.md.
+        #
+        # Checked before adding it: PrivacyFilter (couchpotato/core/logger.py)
+        # redacts the api_key, verified by grepping a real captured log for
+        # 32-char hex tokens (none) and for `api_key=` (all `xxx`). It does
+        # NOT redact filesystem paths, but on a runner those are
+        # /home/runner/work/..., not anyone's home directory.
+        path: |
+          playwright-report/
+          test-results/
         retention-days: 7
 
   accessibility:
@@ -330,7 +346,11 @@ jobs:
       if: always()
       with:
         name: accessibility-report
-        path: playwright-report/
+        # See the ui-e2e-tests job's upload step for why test-results/ is
+        # included and what was checked before including it.
+        path: |
+          playwright-report/
+          test-results/
         retention-days: 7
 
   # Summary job for branch protection — requires all test matrix jobs to pass

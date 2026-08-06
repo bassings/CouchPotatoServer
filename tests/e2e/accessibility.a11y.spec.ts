@@ -347,20 +347,28 @@ test.describe('Accessibility', () => {
     // Previously computed and discarded (`const outline = ...`, never
     // asserted) -- a focus style that regressed to `outline: none` with no
     // replacement would have passed this test silently.
-    // Assert on the LONGHANDS, and compare against the same element unfocused.
+    // Assert on the LONGHANDS **including the colour's alpha**.
     //
-    // The first repair of this test used `styles.outline !== 'none'`, which is
-    // always true: getComputedStyle returns the resolved shorthand, so an
-    // element with `outline: none` reports something like
-    // "rgb(0, 0, 0) none 3px" and never the literal string "none". Measured in
-    // real Chromium on a button with `outline: none; box-shadow: none`, that
-    // predicate returned true. It replaced a discarded value with an assertion
-    // that could not fail, in a test named for WCAG 2.4.7.
+    // Two repairs deep, and the second was still wrong. The first used
+    // `styles.outline !== 'none'`, which is always true: getComputedStyle
+    // resolves the shorthand, so an element with `outline: none` reports
+    // something like "rgb(0, 0, 0) none 3px" and never the literal "none".
+    // The second checked outlineStyle and outlineWidth -- better, but blind to
+    // this codebase's ACTUAL failure mode. Tailwind's `outline-none` utility
+    // compiles to `outline: 2px solid transparent` (verified in the vendored
+    // CDN bundle: `".outline-none":{outline:"2px solid transparent",...}`) and
+    // appears on 95 controls here, so a ring that is invisible to a sighted
+    // keyboard user reported style=solid, width=2px and passed.
+    //
+    // A transparent outline is not a focus indicator. Check the alpha.
     const hasVisibleFocusIndicator = await focusedElement.first().evaluate(el => {
       const focused = window.getComputedStyle(el);
+      const isTransparent = (colour) =>
+        colour === 'transparent' || /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*0\s*\)/.test(colour);
       const outlineVisible =
         focused.outlineStyle !== 'none' &&
-        parseFloat(focused.outlineWidth || '0') > 0;
+        parseFloat(focused.outlineWidth || '0') > 0 &&
+        !isTransparent(focused.outlineColor);
       const shadowVisible = focused.boxShadow !== 'none' && focused.boxShadow !== '';
       return outlineVisible || shadowVisible;
     });

@@ -1042,6 +1042,81 @@ def test_flags_expect_inside_an_isvisible_guard(tmp_path):
     assert "isVisible" in message or "count" in message
 
 
+def test_flags_a_guard_whose_await_was_hoisted_to_a_previous_line(tmp_path):
+    """Moving one expression up a line must not defeat the rule.
+
+    This is not hypothetical: the FIRST new code written after Rule 6 landed
+    did exactly this (`const count = await cardLinks.count();` then
+    `if (count > 1) {`), and the rule was silent on it. A guard introduced to
+    retire a human review step has to survive the most obvious reformatting
+    of the thing it looks for.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "\n"
+        "  if (total > 1) {\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 5, "should point at the `if` line"
+
+
+def test_flags_a_hoisted_isvisible_guard_too(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows a thing', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  const shown = await btn.isVisible();\n"
+        "  if (shown) {\n"
+        "    await expect(btn).toHaveText('Go');\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_does_not_flag_an_if_on_an_unrelated_name(tmp_path):
+    """The other direction. Only names bound to an awaited
+    isVisible()/count() count; an ordinary conditional must stay silent, or
+    the rule becomes noise everyone opts out of."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('branches on config', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "  const isCi = process.env.CI === '1';\n"
+        "  if (isCi) {\n"
+        "    await expect(cards).toHaveCount(total);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_a_hoisted_guard_can_be_opted_out_of_on_the_if_line(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "  if (total > 1) { // vacuous-guard-ok: the provider decides how many render.\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
 def test_flags_expect_inside_a_count_guard(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(

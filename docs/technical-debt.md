@@ -198,8 +198,101 @@
   (`movie-detail.spec.ts` passes 8/8 alone; preceding it with either
   `interactions.e2e.spec.ts` or `filters.spec.ts` reproduces at the same rate).
   What remains correlates with elapsed time and volume, not with which tests
-  ran. Host contention on longer runs is the standing hypothesis and is not a
-  code defect.
+  ran. ~~Host contention on longer runs is the standing hypothesis and is not a
+  code defect.~~
+
+  **ROOT CAUSE FOUND, 2026-08-06. It was a code defect, and the "host
+  contention" conclusion above was wrong.** The per-worker application log this
+  branch started retaining (`tests/e2e/fixtures.ts` → `test-results/`) carried,
+  in one failing run, ten of:
+
+  ```
+  sqlite3.InterfaceError: bad parameter or other API misuse
+    File ".../core/db/sqlite_adapter.py", line 308, in get
+      row = conn.execute("SELECT ... WHERE _id = ?", (key,)).fetchone()
+  ```
+
+  driving `Failed doing api request "media.list"` and `"profile.list"` — which
+  is exactly the reported symptom, an empty grid and a release table that never
+  appears. `open()`/`create()` build ONE `sqlite3.Connection` with
+  `check_same_thread=False`, FastAPI runs sync route handlers in a threadpool,
+  and only WRITES were serialised, so concurrent reads (and reads racing
+  writes) interleaved on the same connection. Some interleavings surface as
+  `KeyError('Document not found')` for a document that IS present, or
+  `TypeError: the JSON object must be str, bytes or bytearray, not NoneType`.
+
+  Reproduced deterministically in `tests/unit/test_sqlite_adapter_concurrency.py`
+  (8 threads, one adapter: 127 errors from `get()`, 316 from `query()`), and
+  fixed by serialising every connection touch. **This was never test-only:** a
+  read interleaving with a write on the same connection is the same misuse, and
+  a self-hosted install serves concurrent requests from an ordinary browser.
+
+  Why the earlier elimination round missed it: every measurement was taken from
+  OUTSIDE the app (latency, rate limits, seed integrity, spec ordering). The
+  evidence was in the application's own log, which nothing kept until this
+  branch made the harness retain it. That is the lesson, not the SQLite detail.
+
+### Deferred at PR 1's review (2026-08-06)
+
+Raised by the multi-lens review of `m0-safety-net`, investigated, and
+deliberately not fixed there. Each is pre-existing unless noted; the ones the
+branch caused were fixed in it.
+
+**Accessibility**
+
+- **`focus:outline-none` on ~93 remaining controls.** Tailwind's `outline-none`
+  compiles to `outline: 2px solid transparent` (verified in the vendored CDN
+  bundle) and at specificity (0,2,0) beats `base.html`'s `:focus-visible`
+  (0,1,0), so those controls have no visible keyboard focus ring. The two on
+  axe-scanned pages (`wanted.html` filter, `add.html` search) were fixed;
+  `wizard.html` alone holds 63. Use the `movie_releases.html:88` idiom.
+- **Reorder focus management, profiles and categories.** The quality list keys
+  `x-for` by INDEX, so the DOM node stays put and the item under the focused
+  button changes: pressing "move down" twice ping-pongs one item and the
+  control's accessible name changes with no announcement. The profile list keys
+  by `_id` and fails the opposite way: reaching a boundary disables the focused
+  button, which drops focus to `<body>`. Neither list announces the move.
+- **`#movie-grid` is an `aria-live` region wrapping the whole library.** On load
+  a screen reader hears every card; the filter mutates the region on each
+  keystroke. The count is already computed (`countText`) and should be
+  announced from a small `sr-only` region instead, as the empty state already is.
+- **Arrow keys move horizontally when the grid holds fewer cards than columns**
+  (`cols` is read from `gridTemplateColumns`, always 6). `Home`/`End` skip
+  `preventDefault` when already at the target, so `End` scrolls the page.
+- **The bulk-select checkbox's focus ring is clipped by `sr-only`** — it is the
+  first tab stop inside every card, and the only signal is the graphic
+  appearing, identical to hover.
+
+**Operability**
+
+- **`Dockerfile`'s HEALTHCHECK hardcodes 5050** while `--port` now ships in the
+  production image. An operator who adopts the flag gets a permanently
+  `unhealthy` container, and under a health-acting supervisor a restart loop
+  caused by a working change. Cheapest honest fix: say so in the `--port` help.
+- **Three `return`-on-error paths in `runCouchPotato` still exit 0** having
+  bound nothing (soft-chroot init failure, the generic soft-chroot exception,
+  and under-100 MB free space), and `CouchPotato.py:148`'s bare
+  `except OSError: pass` shadows the more careful handler below it, so an
+  `OSError` from `Loader.__init__` exits 0 with **no log line anywhere**. With
+  `restart: unless-stopped` that is a silent restart loop. T1.7 fixed only the
+  uvicorn call site.
+
+**Testing**
+
+- **~13 tests in `interactions.e2e.spec.ts` still assert nothing** about the
+  behaviour they name; their only assertion is `checkNoErrors`, which checks for
+  three console error strings. "clear logs button works" clicks Clear and
+  asserts nothing was cleared. AC-SIMP-7 measured `if (await` occurrences
+  (63 → 34) as a proxy, and the proxy moved while the population largely did
+  not.
+- **The unknown-path response is FastAPI's raw `{"detail":"Not Found"}`** —
+  measured 2026-08-06. Correct status, no traceback, but no HTML and no
+  navigation for a user who mistypes a URL. An error page is product surface,
+  not a safety net, so it was recorded rather than added.
+- **`removePyc` reaches into other workers' data dirs.** Every worker's startup
+  `os.rmdir`s any empty directory under the repo root, and T1.7 sites the
+  per-worker data dirs there. Self-healing in microseconds; it disappears if the
+  dirs ever move under the system temp dir.
 
 ## Lessons learned
 
