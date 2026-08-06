@@ -399,6 +399,24 @@ Delete: `couchpotato/simple_healthcheck.py`, `couchpotato/integration_test.py`,
   `simple_healthcheck` and the result pasted into the PR. In-repo evidence is
   complete (no consumers; the Docker HEALTHCHECK at `Dockerfile:89` uses stdlib
   `urllib` against `/`); the prod file is the only unchecked consumer.
+
+  **NOT SATISFIED, so the deletion is not taken in PR 1.** The production grep
+  needs SSH to `homemedia.maeewing.com`, which this branch could not perform.
+  The file is therefore RESTORED and its removal deferred to a follow-up gated
+  on that one command.
+
+  The criterion is deliberately not amended to fit what was achievable. That is
+  the mistake this same spec records at AC-SIMP-1, where amending the scope
+  criterion four times is what let scope control fail silently; doing it again
+  here, on a criterion protecting a production healthcheck, would be the same
+  error with higher stakes.
+
+  For the record, and it is why this is a deferral rather than a blocker: the
+  file is a `unittest.TestCase` carrying `#!/usr/bin/env python2` while
+  importing `from urllib.request import ...` (Python 3 only). It cannot execute
+  under its own shebang, so a compose `healthcheck:` invoking it would already
+  be failing today. That makes the residual risk small -- but "small" is not
+  the bar the criterion set, and the grep costs one command.
 - **AC-SEC-5** `/getkey/` is byte-identical after this PR, and
   `grep -rn getkey` returning only `couchpotato/__init__.py` and
   `tests/unit/test_fastapi_web.py` is captured in the PR body as the standing

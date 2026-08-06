@@ -74,7 +74,15 @@ check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, w
 	@# documented entry point trains the reader to ignore it, which is the
 	@# opposite of what a false-green guard is for. Overridable, and still
 	@# falls back to python3 so a clone with no venv gets the loud failure.
-	$(PYTHON) scripts/check_test_traps.py
+	@# --require-git, like scripts/verify.sh and ci.yml. Without it a
+	@# `git ls-files` failure is caught, noted on stderr and the run exits 0
+	@# with rule 5 (orphaned test files) never having executed -- and this is
+	@# the entry point CLAUDE.md's command table names, so it is the one most
+	@# likely to be run somewhere odd. The earlier justification for leaving it
+	@# bare was that the git-less Alpine container needs it: measured, nothing
+	@# git-less invokes this target at all (scripts/test-local.sh only mentions
+	@# the checker in a comment), so that reasoning was simply wrong.
+	$(PYTHON) scripts/check_test_traps.py --require-git
 
 # Pinned version: an unpinned :latest changes the ruleset under you, so a clean
 # scan today can fail tomorrow with no code change. Bump deliberately.

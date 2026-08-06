@@ -108,6 +108,26 @@ class Manage(Plugin):
             directories.sort()
             added_identifiers = []
 
+            # Did this scan actually SEE the whole library?
+            #
+            # The cleanup pass below deletes every terminal movie that is not in
+            # `added_identifiers`, with delete_from='all' -- media document,
+            # every release document, library entry, watch state, tags, profile
+            # and review state. It infers "this movie is gone" from "this scan
+            # did not find it", and that inference is only sound if the scan
+            # could see everywhere the movie might be.
+            #
+            # A directory that fails os.path.isdir below is logged and skipped,
+            # and nothing recorded that. So an unmounted NAS at scan time made
+            # `added_identifiers` empty and the cleanup purged the library. Not
+            # hypothetical on the hardware this runs on: the library sits on an
+            # NFS mount known to stall and drop, and full scans are scheduled,
+            # so the two coincide unattended and nobody is watching.
+            #
+            # Starts False for an EMPTY directory list: no configured library
+            # means nothing to compare against, so every movie looks missing.
+            library_fully_scanned = bool(directories)
+
             # Add some progress
             for directory in directories:
                 self.in_progress[os.path.normpath(directory)] = {
@@ -122,6 +142,8 @@ class Manage(Plugin):
                 self.in_progress[os.path.normpath(directory)]['started'] = tryInt(time.time())
 
                 if not os.path.isdir(folder):
+                    # NOT just a skip: this is what disarms the cleanup below.
+                    library_fully_scanned = False
                     if len(directory) > 0:
                         log.error('Directory doesn\'t exist: %s', folder)
                     continue
@@ -137,7 +159,7 @@ class Manage(Plugin):
                     break
 
             # If cleanup option is enabled, remove offline files from database
-            if self.conf('cleanup') and full and not self.shuttingDown():
+            if self.conf('cleanup') and full and not self.shuttingDown() and library_fully_scanned:
 
                 # Get movies with done status
                 total_movies, done_movies = fireEvent('media.list', types = 'movie', status = 'done', release_status = 'done', status_or = True, single = True)

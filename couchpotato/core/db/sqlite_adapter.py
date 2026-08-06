@@ -253,6 +253,19 @@ class SQLiteAdapter(DatabaseInterface):
             log.warning('Failed ensuring the unique media identifier index; '
                         'continuing without the DB-level backstop (REG-004).')
 
+    # @_synchronised on open()/create() too: these were the last two methods
+    # touching self._conn outside the lock, and the ONLY two that REASSIGN it.
+    #
+    # close() is decorated, so open() briefly took the lock and gave it back,
+    # then connected, set PRAGMAs and rebound self._conn entirely unlocked. A
+    # read on another thread landing in that window sees either the old,
+    # just-closed connection or a half-configured new one -- a
+    # ProgrammingError on a closed database, or a query running before the
+    # PRAGMAs are applied.
+    #
+    # Reentrant by design: open() calls close(), which takes the same RLock on
+    # the same thread. That is why _conn_lock is an RLock and not a Lock.
+    @_synchronised
     def open(self, path: str) -> None:
         if self._conn is not None:
             self.close()
@@ -266,6 +279,7 @@ class SQLiteAdapter(DatabaseInterface):
         # _init_schema), so self-upgrade the duplicate-media backstop here.
         self._ensure_unique_media_identifier_index()
 
+    @_synchronised
     def create(self, path: str) -> None:
         if self._conn is not None:
             self.close()

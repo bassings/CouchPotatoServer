@@ -428,11 +428,37 @@ function settingsPanel() {
         params.append('section', section);
         params.append('name', name);
         params.append('value', typeof value === 'boolean' ? (value ? '1' : '0') : String(value));
-        await fetch(CP.apiBase + '/settings.save/', {
+        const resp = await fetch(CP.apiBase + '/settings.save/', {
           method: 'POST',
           body: params
         });
-        
+
+        // The response is READ, not merely awaited. `fetch` rejects only on a
+        // network failure -- an HTTP error, or a 200 carrying
+        // `{"success": false}`, both resolve normally. So a REFUSED save used
+        // to fall straight through to the lines below: the rejected value was
+        // written into this.values, the dirty flag was cleared, and
+        // `lastSaved = true` drove the role="status" aria-live="polite" region
+        // in partials/settings/header.html. The user was told their setting
+        // saved, in writing and out loud, when the server had refused it.
+        //
+        // Newly reachable because of this same PR: settings.save now returns
+        // {'success': False} for a directory that resolves outside the soft
+        // chroot, where the old code silently let the traversal through. The
+        // security fix created a failure response nothing was listening for.
+        let payload = null;
+        try {
+          payload = await resp.json();
+        } catch (parseError) {
+          payload = null;  // non-JSON body; fall back to the status code
+        }
+        if (!resp.ok || (payload && payload.success === false)) {
+          const detail = (payload && payload.error) ? payload.error : ('HTTP ' + resp.status);
+          this.toast('Could not save ' + name + ': ' + detail, 'error');
+          this.saving = false;
+          return;   // leave the value dirty and unchanged: it did NOT save
+        }
+
         if (!this.values[section]) this.values[section] = {};
         this.values[section][name] = value;
         delete this.dirty[section + '.' + name];

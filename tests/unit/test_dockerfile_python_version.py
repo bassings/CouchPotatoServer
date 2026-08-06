@@ -162,3 +162,38 @@ def test_the_ruff_pin_agrees_across_requirements_dev_and_both_ci_jobs():
         'only, so this divergence is invisible locally and lints CI on a '
         'different version than the gate you ran.' % (pinned, sorted(set(installed)))
     )
+
+
+def test_the_cve_removal_step_is_not_pinned_to_a_python_minor_version():
+    """`rm -rf` exits 0 on a missing path, so a hardcoded minor version makes
+    the pip-removal step a silent no-op the day the base image is bumped.
+
+    That step exists to remove pip and its vendored setuptools/msgpack, which
+    Trivy flags as two fixable HIGHs (CVE-2025-47273, GHSA-6v7p-g79w-8964).
+    Written as `/usr/local/lib/python3.14/site-packages/...`, a bump to 3.15
+    leaves every path unmatched, the RUN succeeds, and the vulnerable pip walks
+    back into the shipped image with nothing going red -- the guard disarms
+    itself on an edit made somewhere else entirely.
+
+    Checked as "no version-specific site-packages path", not as "matches the
+    current FROM", deliberately: keeping the two in step is a rule someone has
+    to remember, and the glob needs no remembering at all.
+    """
+    text = DOCKERFILE.read_text(encoding="utf-8")
+
+    removal_lines = [
+        line for line in text.splitlines()
+        if "site-packages" in line and not line.lstrip().startswith("#")
+    ]
+    assert removal_lines, (
+        "no site-packages path found in the Dockerfile -- the CVE-removal step "
+        "has moved or been deleted, and this guard is no longer watching it"
+    )
+
+    pinned = [line.strip() for line in removal_lines
+              if re.search(r"python3\.\d+/site-packages", line)]
+    assert not pinned, (
+        "these Dockerfile paths hardcode a Python minor version, so they stop "
+        "matching (and silently remove nothing) when the base image is "
+        "bumped: %s" % pinned
+    )

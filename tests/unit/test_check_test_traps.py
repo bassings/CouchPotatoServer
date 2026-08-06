@@ -1762,10 +1762,16 @@ class TestRule5WithoutGit:
         verify.sh is the local gate and ci.yml is its mirror (hard rule 2:
         `make verify` must pass locally before every push, don't rely on CI).
         Both must opt in, or the skip branch is reachable from the run whose
-        green means something. `make check-traps` deliberately does NOT, since
-        it is the ad-hoc command and its own PYTHON may be a bare python3.
+        green means something.
+
+        `make check-traps` passes it too, since 2026-08-06. It was left bare on
+        the theory that the git-less Alpine container needs the lenient path --
+        measured, nothing git-less invokes that target at all
+        (`scripts/test-local.sh` only mentions the checker in a comment), so
+        the theory was wrong and the command CLAUDE.md's table names could
+        silently skip a rule.
         """
-        for relative in ('scripts/verify.sh', '.github/workflows/ci.yml'):
+        for relative in ('scripts/verify.sh', '.github/workflows/ci.yml', 'Makefile'):
             text = (REPO_ROOT / relative).read_text(encoding='utf-8')
             invocations = [
                 line for line in text.splitlines()

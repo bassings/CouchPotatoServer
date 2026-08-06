@@ -157,6 +157,15 @@ tailwind.config = {
   
   /* A11Y: Focus indicators (A11Y-013) */
   :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+  /* A11Y (WCAG 2.2 AA, 1.4.11 non-text contrast): the focus ring is a UI
+     component and needs 3:1 against its background. #35c5f4 measures 9.40:1 on
+     the dark background but only 1.85:1 on the light one (--cp-bg #f5f5f7), so
+     the light theme had a focus indicator that is technically present and
+     practically invisible -- which fails 1.4.11 while passing 2.4.7.
+     #0e7490 is the same darker accent already used for .text-cp-accent below,
+     for exactly this reason: 4.92:1 on the page background, 4.33:1 on the
+     lightest card surface. */
+  :root.light :focus-visible { outline-color: #0e7490; }
   :focus:not(:focus-visible) { outline: none; }
   
   /* A11Y: Skip link styles (A11Y-003) */

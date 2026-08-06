@@ -95,14 +95,23 @@ COPY --from=builder /install /usr/local
 # The layer cache held an older base whose pip vendored unaffected versions, so
 # the scan passed while the image that would actually ship was vulnerable. That
 # is why the build step above sets `no-cache: true`.
-RUN rm -rf /usr/local/lib/python3.14/site-packages/pip \
-           /usr/local/lib/python3.14/site-packages/pip-*.dist-info \
-           /usr/local/lib/python3.14/site-packages/setuptools \
-           /usr/local/lib/python3.14/site-packages/setuptools-*.dist-info \
-           /usr/local/lib/python3.14/site-packages/pkg_resources \
-           /usr/local/lib/python3.14/site-packages/wheel \
-           /usr/local/lib/python3.14/site-packages/wheel-*.dist-info \
-           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.14
+#
+# `python*` and `pip3*`, NOT `python3.14`/`pip3.14`: `rm -rf` exits 0 on a path
+# that does not exist, so a hardcoded minor version turns this whole step into
+# a silent no-op the day `FROM python:3.14-alpine` is bumped -- and pip, with
+# the two vendored CVEs this block exists to remove, walks straight back into
+# the shipped image with nothing red. A guard that disarms itself on an
+# unrelated edit is worse than no guard, because the next person reads it and
+# believes it. tests/unit/test_dockerfile_python_version.py pins that no
+# version-specific path creeps back in.
+RUN rm -rf /usr/local/lib/python*/site-packages/pip \
+           /usr/local/lib/python*/site-packages/pip-*.dist-info \
+           /usr/local/lib/python*/site-packages/setuptools \
+           /usr/local/lib/python*/site-packages/setuptools-*.dist-info \
+           /usr/local/lib/python*/site-packages/pkg_resources \
+           /usr/local/lib/python*/site-packages/wheel \
+           /usr/local/lib/python*/site-packages/wheel-*.dist-info \
+           /usr/local/bin/pip /usr/local/bin/pip3 /usr/local/bin/pip3.*
 
 # Copy application code
 COPY --chown=couchpotato:couchpotato . ${APP_DIR}/
