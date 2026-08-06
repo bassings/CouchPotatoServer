@@ -741,37 +741,25 @@ the command reports success having measured nothing. Whoever fixes the sandbox
 should decide whether "the runner could not start" deserves to be
 distinguished from "the runner ran and found survivors".
 
-**OPEN QUESTION, blocking PR 2's route-inventory test: `create_app()` alone
-does not produce the UI routes.**
+**ANSWERED (was an open question): `app.routes` does not contain the UI
+routes, because FastAPI 0.140 stopped flattening included routers.**
 
-The spec calls a route inventory ("every route either carries the auth
-dependency or is in an explicit public allowlist") PR 2's highest-value single
-criterion, because it fixes the class of defect `/getkey/` belongs to rather
-than one endpoint. Writing it needs a faithful application object to
-introspect. Measured, with `Env` set exactly as `tests/unit/test_fastapi_web.py`
-sets it:
+`app.include_router(...)` leaves a single `fastapi.routing._IncludedRouter`
+object in `app.routes`; the router's own routes hang off
+`.original_router.routes`. So a naive `for r in app.routes` sees 14 routes on
+this app and **zero** carrying `require_auth`, while the real figure is 80
+APIRoutes with 33 distinct protected paths and 11 public ones.
 
-    couchpotato.create_app('testkey123', '/')  ->  17 routes, no /wanted/
-    couchpotato.ui.create_router(require_auth) ->  33 routes, all carrying
-                                                   require_auth
-    app.include_router(that_router, prefix='') ->  adds exactly ONE route,
-                                                   with path=None
+That matters beyond the one test: any code, script or future check that
+introspects `app.routes` in this codebase silently misses every UI route, and
+its conclusion is not merely incomplete, it is inverted -- "no route is
+authenticated" is what a broken walk reports.
 
-`couchpotato/__init__.py:126-130` includes that router unconditionally and is
-not wrapped in a try, and `runner.py:303` builds the served app through the
-same `create_app`. The E2E suite proves the real server serves `/wanted/`, so
-the routes plainly exist in production -- something about how they are
-registered is not visible through `app.routes` in a bare in-process build.
+The route-inventory test now exists (`tests/unit/test_route_auth_inventory.py`)
+and walks `_IncludedRouter.original_router` recursively. It carries an explicit
+anti-vacuity test, because the false alarm above was produced TWICE during
+development -- once from an `Env` too crude for `create_app` to finish, once
+from the naive walk -- and both times it read like a catastrophic security
+finding. Reverting the walker to the naive form reds that guard; removing
+`Depends(require_auth)` from a single UI route reds the inventory itself.
 
-Not filed as a defect, because the evidence says production is fine; filed as
-an unanswered question that must be answered BEFORE the inventory test is
-written. A test that introspects an app it does not fully understand would
-report "0 routes protected", which reads like a catastrophic security finding
-and would be an artefact of the harness. That exact false alarm was produced
-twice while investigating this, and was caught only by an anti-vacuity
-assertion.
-
-Next step for whoever picks this up: find where the served route table
-actually comes from (the `/new` double-include at `:130` and the `path=None`
-entry are the two threads worth pulling), then write the inventory against
-that.
