@@ -642,10 +642,26 @@ mattered: with the cache on, the local image was clean and the bug was
 invisible, so every local reproduction of CI's failure quietly disagreed with
 CI and I trusted the local one.
 
-Still open: nothing updates the base image digest, so `FROM python:3.14-alpine`
-remains a floating tag. Pinning it by digest -- the way `GITLEAKS_IMAGE` is
-pinned in the Makefile for exactly this reason -- wants Dependabot's `docker`
-ecosystem enabled in the same change, which is its own PR.
+Still open, and **less blocked than this entry first claimed**:
+`FROM python:3.14-alpine` remains a floating tag. Two corrections to what was
+written here, both found by review and verified:
+
+- `GITLEAKS_IMAGE` (`Makefile:89`) is `zricethezav/gitleaks:v8.30.1` -- a TAG
+  pin, not a digest pin. It was cited here as the digest-pinning example to
+  follow; it is the same class of pin the Dockerfile already has, just a
+  narrower tag.
+- `.github/dependabot.yml:53` **already** declares
+  `package-ecosystem: "docker"`. The prerequisite this entry described as
+  needing to land "in the same change" has been in place all along.
+
+So the follow-up is simply: pin the base by digest and let the existing
+Dependabot docker config raise the bumps. It is a small, self-contained PR, not
+the two-part change recorded here before.
+
+Worth noting where the wrong version came from: both claims were written from
+memory of what the repo *probably* looked like, in an entry whose own subject
+is a bug that survived because three diagnoses were reasoned rather than
+measured. One `grep` of each file would have caught them.
 
 
 **Redundant double-locking in `sqlite_adapter.py` (`insert`, `update`,

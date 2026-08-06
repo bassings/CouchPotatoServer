@@ -853,8 +853,20 @@ the diff, not by an agent.
   precedence order puts irrecoverable data loss above the no-runtime-change
   constraint: see T1.8, and `--port` was added to scope as a T1.7
   prerequisite. Amended again 2026-08-05 for (e), (f) and (h).)*
-- **AC-SIMP-2** `requirements.txt` unchanged; `package.json` dependencies and
-  devDependencies unchanged. No new runtime or npm dependency.
+- **AC-SIMP-2 (amended 2026-08-06)** `requirements.txt` unchanged;
+  `package.json` dependencies and devDependencies unchanged. No new runtime or
+  npm dependency.
+  *(Amended 2026-08-06: `requirements.txt` DID change -- `cryptography`
+  49.0.0 → 50.0.0 and `pyOpenSSL` 26.3.0 → 26.4.0, coupled because 26.3.0 caps
+  `cryptography<50`. CVE-2026-69247 is a fixable HIGH in a shipped image and
+  the `docker` job is a required check, so the precedence order puts it above
+  the no-runtime-change constraint -- the same reasoning AC-SIMP-1's own
+  amendments already apply. Recorded here rather than left silent: a
+  constraint that quietly stops matching what shipped is the thing that made
+  AC-SIMP-1 fail to catch anything, and an amendment that is WRITTEN DOWN is
+  the opposite of one made by editing the criterion away. No devDependency or
+  npm change; `ruff>=0.16.0` → `ruff==0.16.0` in requirements-dev.txt is a
+  tightening of an existing pin, not a new dependency.)*
 - **AC-SIMP-3** No new configuration setting: zero additions to the settings
   lists in `core/_base/_core.py`, zero new `os.environ` / `Env.setting` reads
   under `couchpotato/`. *(One agreed exception: the `--port` CLI argument added
