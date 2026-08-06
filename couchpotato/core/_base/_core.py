@@ -8,7 +8,7 @@ import webbrowser
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
-from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compareVersions
+from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compareVersions, hash_password
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -87,7 +87,33 @@ class Core(Plugin):
             log.error('OpenSSL not available, please install for better requests validation: `https://pyopenssl.readthedocs.org/en/latest/install.html`: %s', traceback.format_exc())
 
     def md5Password(self, value):
-        return md5(value) if value else ''
+        """Hash a password on its way into config.ini.
+
+        The name is historical and now misleading: this returns **bcrypt**, not
+        MD5. It used to return `md5(value)`, so every password set through the
+        settings UI or the first-run wizard was written to config.ini as an
+        unsalted MD5 -- reversible for any password in a rainbow table.
+
+        bcrypt was reached only by the login-time upgrade
+        (`couchpotato/__init__.py:308`), which rehashes on a successful login
+        and therefore never ran for anyone who had not logged in. Until
+        `auth_required` landed, the server never asked anyone to log in. So the
+        users this hashing exists to protect were exactly the ones still on
+        MD5.
+
+        bcrypt OVER `md5(value)`, not over the plaintext. That is not a choice
+        made here: `login_post` computes `md5(form_password)` and passes it to
+        `check_password`, so hashing the plaintext directly would lock out
+        every existing and future user. Changing the inner encoding needs its
+        own migration and login-time upgrade, and is not a tidy-up to fold in
+        here.
+
+        The event name (`setting.save.core.password`) and this method name stay
+        as they are: renaming them is a separate change with its own blast
+        radius, and a wrong name with a correct docstring is safer than a
+        rename made at the same time as a security fix.
+        """
+        return hash_password(md5(value)) if value else ''
 
     def checkApikey(self, value):
         return value if value and len(value) > 3 else uuid4().hex

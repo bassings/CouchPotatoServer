@@ -137,10 +137,20 @@ def check_password(password, stored_hash):
             return False
 
     if is_legacy_md5_hash(stored_value):
-        # Legacy MD5 migration path: compare against existing MD5 hash so users
-        # can log in and have their password transparently upgraded to bcrypt.
-        # MD5 is used here only to verify an already-stored legacy hash, not to
-        # create new security-sensitive hashes. New passwords are always bcrypt.
+        # Legacy MD5 migration path: compare against an existing MD5 hash so
+        # users can log in and have their password transparently upgraded to
+        # bcrypt. MD5 is used here only to verify an already-stored legacy
+        # hash, never to create one.
+        #
+        # This comment used to end "New passwords are always bcrypt." That was
+        # FALSE from the day it was written: `_core.py`'s `md5Password`, wired
+        # to `setting.save.core.password`, stored `md5(value)` for every
+        # password set through the settings UI or the wizard, and bcrypt was
+        # reached only by the upgrade below -- which never runs for anyone who
+        # has not logged in. Fixed in `md5Password`; the sentence is corrected
+        # here because it is why nobody looked. A reassuring comment the code
+        # contradicts does not merely fail to help, it actively stops the next
+        # reader checking.
         # lgtm[py/weak-sensitive-data-hashing]
         return (
             hmac.compare_digest(password_value, stored_value) or
