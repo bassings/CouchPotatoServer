@@ -118,3 +118,50 @@ class SoftChrootEnabledTest(TestCase):
 
     def test_get_root(self):
         self.assertEqual( self.b.get_chroot(), CHROOT_DIR )
+
+
+class SoftChrootTraversal(TestCase):
+    """`chroot2abs` must not let a caller out of the chroot.
+
+    Reachable only since the FileBrowser `map`/`len` repair: before it, every
+    chroot-enabled call to `FileBrowser.view()` died with `TypeError: object of
+    type 'map' has no len()`, so the endpoint was inert and this path could not
+    be driven at all. Un-breaking it made a pre-existing weakness live, which
+    is the reason it is fixed in the same change rather than filed.
+
+    `chroot2abs` concatenated strings with no normalisation and `is_subdir` is
+    a bare `startswith`, so `..` segments survived. Measured before the fix: a
+    path of `/../&lt;empty dir outside the chroot&gt;` returned HTTP 200 with
+    `empty: True` -- a directory-existence oracle for arbitrary paths -- and a
+    non-empty one raised a ValueError carrying the operator's real filesystem
+    path, which `api.py` then wrote into the log with a full traceback.
+    `PrivacyFilter` redacts api keys and query parameters, not paths.
+    """
+
+    def setUp(self):
+        self.b = SoftChroot()
+        self.b.initialize(CHROOT_DIR)
+
+    def test_dotdot_escaping_the_chroot_is_refused(self):
+        for path in ('/..', '/../', '/../etc', '/subdir/../../etc', '/../../'):
+            with self.assertRaises(ValueError, msg='%r escaped the chroot' % path):
+                self.b.chroot2abs(path)
+
+    def test_the_refusal_does_not_disclose_the_resolved_path(self):
+        """The message goes into a logged traceback, so it must not carry the
+        path it just refused: that would turn the fix into the disclosure."""
+        try:
+            self.b.chroot2abs('/../secret_library')
+        except ValueError as exc:
+            assert CHROOT_DIR.rstrip('/') not in str(exc), str(exc)
+            assert 'secret_library' not in str(exc), str(exc)
+        else:
+            raise AssertionError('expected ValueError')
+
+    def test_dotdot_that_stays_inside_the_chroot_is_allowed(self):
+        """Refuse escapes, not every `..`. A path that normalises back inside
+        is legitimate, and clamping it would silently rewrite the request."""
+        self.assertEqual(self.b.chroot2abs('/a/../b'), CHROOT_DIR + 'b')
+
+    def test_the_chroot_root_itself_is_still_reachable(self):
+        self.assertEqual(self.b.chroot2abs('/'), CHROOT_DIR.rstrip(os.path.sep))

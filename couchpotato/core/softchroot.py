@@ -91,7 +91,11 @@ class SoftChroot:
         return abspath.startswith(self.chdir)
 
     def chroot2abs(self, path):
-        """ Converts chrooted path to absolute path"""
+        """ Converts chrooted path to absolute path
+
+        Raises:
+            ValueError: when `path` resolves outside the soft chroot.
+        """
 
         if None == self.enabled:
             raise RuntimeError('SoftChroot is not initialized')
@@ -104,7 +108,29 @@ class SoftChroot:
         if not path.startswith(os.path.sep):
             path = os.path.sep + path
 
-        return self.chdir[:-1] + path
+        # Normalise, then refuse anything that lands outside. `path` is
+        # attacker-influenced: it arrives on the directory.list query string
+        # and on settings values. Plain concatenation let '..' segments
+        # through, and nothing downstream caught them by itself -- is_subdir
+        # is a bare startswith, and abs2chroot only rejects a NON-EMPTY
+        # result, so an empty directory outside the chroot came back as a
+        # normal 200 and made this a directory-existence oracle.
+        #
+        # Refuse rather than clamp to the chroot root: silently rewriting a
+        # traversal into a legitimate request hides the attempt from the
+        # operator and returns a listing the caller did not ask for.
+        #
+        # The message deliberately carries neither the path nor the chroot.
+        # It surfaces through api.py's handler, which logs a full traceback,
+        # and PrivacyFilter redacts api keys and query parameters, not
+        # filesystem paths -- so naming the path here would replace the
+        # oracle with a disclosure.
+        resolved = os.path.normpath(self.chdir[:-1] + path)
+        root = self.chdir.rstrip(os.path.sep)
+        if resolved != root and not resolved.startswith(root + os.path.sep):
+            raise ValueError('path resolves outside the soft chroot')
+
+        return resolved
 
     def abs2chroot(self, path, force = False):
         """ Converts absolute path to chrooted path"""

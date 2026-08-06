@@ -13,6 +13,8 @@ from unittest import mock
 import unittest
 from unittest import TestCase
 
+import pytest
+
 
 from couchpotato.core.plugins.browser import FileBrowser
 from couchpotato.core.softchroot import SoftChroot
@@ -91,3 +93,44 @@ class FileBrowserChrootedTest(TestCase):
             self.assertEqual(r['home'], '/')
             self.assertEqual(r['parent'], parent)
             self.assertFalse(r['is_root'])
+
+
+def test_view_refuses_to_list_outside_the_chroot(tmp_path):
+    """The traversal is refused at the endpoint, not just in the helper.
+
+    There was no traversal test here at all, and until the `map`/`len` repair
+    above there could not usefully be one: every chroot-enabled call raised
+    TypeError before reaching any path handling. Measured on this branch
+    before the SoftChroot fix, `view('/../outside')` returned a normal
+    `{'dirs': [], 'empty': True}` for an empty directory outside the chroot
+    and a ValueError naming the real path for a non-empty one -- an existence
+    oracle and a path disclosure from one endpoint.
+
+    Both fixtures are created because the two cases took different branches:
+    a test with only the empty one would have missed the disclosure, and one
+    with only the non-empty one would have missed the oracle.
+    """
+    chroot = os.path.realpath(str(tmp_path / 'jail'))
+    os.mkdir(chroot)
+    os.mkdir(os.path.join(chroot, 'movies'))
+    outside_empty = os.path.join(os.path.realpath(str(tmp_path)), 'outside_empty')
+    outside_full = os.path.join(os.path.realpath(str(tmp_path)), 'outside_full')
+    os.mkdir(outside_empty)
+    os.mkdir(outside_full)
+    os.mkdir(os.path.join(outside_full, 'Real Name Films'))
+
+    soft_chroot = SoftChroot()
+    soft_chroot.initialize(chroot)
+
+    with mock.patch('couchpotato.core.plugins.browser.Env') as env:
+        env.get.return_value = soft_chroot
+
+        # Sanity: the legitimate call still works, so a blanket refusal
+        # cannot be mistaken for a passing traversal guard.
+        assert FileBrowser().view('/')['dirs'] == ['/movies/']
+
+        for escape in ('/../outside_empty', '/../outside_full', '/../..'):
+            with pytest.raises(ValueError) as excinfo:
+                FileBrowser().view(escape)
+            assert 'Real Name Films' not in str(excinfo.value)
+            assert chroot not in str(excinfo.value)
