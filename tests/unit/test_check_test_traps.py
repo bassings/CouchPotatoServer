@@ -1214,6 +1214,61 @@ def test_a_one_line_braced_guard_with_its_own_expect_is_still_flagged(tmp_path):
     assert len(findings_for(spec)) == 1
 
 
+def test_a_non_braced_guard_with_a_template_literal_condition_is_still_flagged(tmp_path):
+    """A balanced brace pair in the CONDITION is not a block.
+
+    `if (await page.locator(`#movie-${id}`).count() === 0) return;` was caught
+    before the routing was widened to "any brace on the line" and silent
+    after: the matcher balanced on the `${...}` inside the guard's own
+    condition, so the region collapsed to nothing. Template literals already
+    appear in two locator calls in this suite, so this is one ordinary edit
+    away, and it is the shape the rule most needs to survive -- the module's
+    own comment says it "has to survive the most obvious reformatting of the
+    thing it looks for".
+    """
+    spec = _e2e_spec(tmp_path)
+    # The template literal must be IN the guard condition. Hoisting it to the
+    # previous line is a different, already-handled shape -- the first draft
+    # of this test did exactly that and passed under the routing it was
+    # written to catch.
+    spec.write_text(
+        "test('has a card', async ({ page }) => {\n"
+        "  const id = 'abc';\n"
+        "  if (await page.locator(`#movie-${id}`).count() === 0) return;\n"
+        "  await expect(page.locator(`#movie-${id}`)).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_non_braced_guard_with_braces_in_a_selector_string_is_still_flagged(tmp_path):
+    """Same shape, the other common spelling."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has a card', async ({ page }) => {\n"
+        "  if (await page.locator('[data-json=\"{}\"]').count() === 0) return;\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_one_line_guard_with_a_nested_object_literal_is_still_flagged(tmp_path):
+    """The `expect(` precedes the nested `{`, so slicing from the LAST brace
+    would miss it and slicing from the first would pick up the condition's."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await expect(cards).toHaveCount(1, { timeout: 5 }); }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
 def test_an_early_return_guard_can_be_opted_out_of(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(

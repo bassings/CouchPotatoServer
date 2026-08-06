@@ -444,6 +444,52 @@ class TestMigrationFailureModes:
             'a source-side clash must not send the operator to the destination'
         )
 
+    @pytest.mark.parametrize('state,must_contain,must_not_contain', [
+        (True, 'Resolve the duplicate in the source', 'DESTINATION'),
+        (False, 'already in the destination', 'delete one of the two documents'),
+        (None, 'could not determine', 'delete one of the two documents'),
+    ])
+    def test_each_collision_state_maps_to_its_own_remedy(
+            self, tmp_path, monkeypatch, state, must_contain, must_not_contain):
+        """The state-to-remedy mapping, pinned AT THE CALLER.
+
+        Three tests already cover what `_describe_identifier_collision`
+        returns. None covered what `migrate()` does with it, and review
+        measured the cost: changing `is True` to `is not False` gives the
+        "could not determine" state the SOURCE-side advice, and `is not None`
+        gives it to a destination-side clash -- the exact defect an earlier
+        round fixed. All 17 migration tests stayed green under both.
+
+        This matters more than a normal mapping test because the source-side
+        remedy tells the operator to delete a document from the CodernityDB
+        source, which is their only rollback copy until they trust the SQLite
+        one. Issuing it on the wrong premise is the failure mode.
+        """
+        import couchpotato.core.db.migrate as migrate_mod
+
+        db_path = str(tmp_path / "src")
+        db = Database(db_path)
+        db.create()
+        for i in (1, 2):
+            db.insert({'_t': 'media', 'type': 'movie', 'status': 'active',
+                       'title': 'Dup %d' % i,
+                       'identifiers': {'imdb': 'tt0000009'}})
+        db.close()
+
+        monkeypatch.setattr(
+            migrate_mod, '_describe_identifier_collision',
+            lambda docs: (state, '  (stubbed diagnostic)'),
+        )
+
+        with pytest.raises(RuntimeError) as excinfo:
+            migrate(db_path, str(tmp_path / "dest"), verbose=False)
+
+        message = str(excinfo.value)
+        assert must_contain in message, message
+        assert must_not_contain not in message, message
+        # Every state must protect the source.
+        assert 'Do NOT edit the source' in message or state is True, message
+
     def test_an_interrupted_migration_leaves_no_partial_destination(self, codernity_db, tmp_path):
         """The case the repeatability tests name but do not exercise.
 

@@ -227,6 +227,10 @@ class TestFailedMoveRecovery:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         def _fake_move(src, dst, **kwargs):
+            assert 'copy_function' not in kwargs, (
+                'the default move branch deliberately keeps copy2 for mtime '
+                'preservation (AC-DATA-10b); it recovers on its own'
+            )
             Path(dst).write_bytes(LIBRARY)  # real write: same size, different content
             raise OSError('simulated: failure after the copy phase completed')
 
@@ -252,6 +256,10 @@ class TestFailedMoveRecovery:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         def _fake_move(src, dst, **kwargs):
+            assert 'copy_function' not in kwargs, (
+                'the default move branch deliberately keeps copy2 for mtime '
+                'preservation (AC-DATA-10b); it recovers on its own'
+            )
             Path(dst).write_bytes(LIBRARY)  # same size as DOWNLOAD, different bytes
             raise OSError('simulated: failure after the copy phase completed')
 
@@ -273,6 +281,10 @@ class TestFailedMoveRecovery:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         def _fake_move(src, dst, **kwargs):
+            assert 'copy_function' not in kwargs, (
+                'the default move branch deliberately keeps copy2 for mtime '
+                'preservation (AC-DATA-10b); it recovers on its own'
+            )
             Path(dst).write_bytes(DOWNLOAD[:1024])  # a real, short/partial write
             raise OSError('simulated: interrupted copy (disk full / dropped mount)')
 
@@ -303,6 +315,10 @@ class TestFailedMoveRecovery:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         def _fake_move(src, dst, **kwargs):
+            assert 'copy_function' not in kwargs, (
+                'the default move branch deliberately keeps copy2 for mtime '
+                'preservation (AC-DATA-10b); it recovers on its own'
+            )
             Path(dst).write_bytes(DOWNLOAD)  # the copy phase really completes
             os.remove(src)  # a concurrent actor removes `old` first
             raise FileNotFoundError(src)  # shutil.move's own final unlink(src) then fails
@@ -547,6 +563,10 @@ class TestT18DataLossFixes:
         real_replace, real_rename = os.replace, os.rename
 
         def _raising_replace(src, dst, **kwargs):
+            assert 'copy_function' not in kwargs, (
+                'the default move branch deliberately keeps copy2 for mtime '
+                'preservation (AC-DATA-10b); it recovers on its own'
+            )
             if str(src) == old_link_path:
                 raise OSError('simulated: replace of the fallback link failed')
             return real_replace(src, dst)

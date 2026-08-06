@@ -122,7 +122,7 @@ test.describe('Wanted Page', () => {
     const count = await filterBtns.count();
     expect(
       count,
-      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
+      'at 0 the clicks below never happen, so checkNoErrors passes on a page that never rendered the control -- green having exercised nothing',
     ).toBeGreaterThan(0);
     
     for (let i = 0; i < count; i++) {
@@ -389,11 +389,18 @@ test.describe('Suggestions Page', () => {
     await waitForPageReady(page);
 
     const tabs = page.locator('[role="tab"]');
+    // POLL, do not snapshot. The Settings tabs are `x-for` over `tabOrder`,
+    // which is populated only after `fetch('/settings/')` AND
+    // `fetch('/updater.info/')` both resolve, while `waitForPageReady` only
+    // waits for domcontentloaded plus `#main-content` (always-present base
+    // chrome). A bare `await tabs.count()` here is legitimately 0 on a slow
+    // run, so the precondition added to close a zero-iteration hole would
+    // have converted a silent vacuity into a flake -- which this repo rates
+    // as the worse of the two, because the remedy people learn is to re-run.
+    await expect
+      .poll(() => tabs.count(), { timeout: 10000 })
+      .toBeGreaterThan(0);
     const tabCount = await tabs.count();
-    expect(
-      tabCount,
-      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
-    ).toBeGreaterThan(0);
 
     for (let i = 0; i < tabCount; i++) {
       await tabs.nth(i).click();
@@ -472,11 +479,18 @@ test.describe('Settings Page', () => {
     await waitForPageReady(page);
 
     const tabs = page.locator('[role="tab"]');
+    // POLL, do not snapshot. The Settings tabs are `x-for` over `tabOrder`,
+    // which is populated only after `fetch('/settings/')` AND
+    // `fetch('/updater.info/')` both resolve, while `waitForPageReady` only
+    // waits for domcontentloaded plus `#main-content` (always-present base
+    // chrome). A bare `await tabs.count()` here is legitimately 0 on a slow
+    // run, so the precondition added to close a zero-iteration hole would
+    // have converted a silent vacuity into a flake -- which this repo rates
+    // as the worse of the two, because the remedy people learn is to re-run.
+    await expect
+      .poll(() => tabs.count(), { timeout: 10000 })
+      .toBeGreaterThan(0);
     const tabCount = await tabs.count();
-    expect(
-      tabCount,
-      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
-    ).toBeGreaterThan(0);
 
     for (let i = 0; i < tabCount; i++) {
       await tabs.nth(i).click();

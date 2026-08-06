@@ -221,8 +221,14 @@ def _describe_identifier_collision(docs: list) -> tuple:
             if len(ids) > 1
         ]
         if not clashes:
-            return (False, '  (no duplicate media identifier was found in the source, so\n'
-                           '   the constraint that failed is a different one)')
+            # NOT "the constraint that failed is a different one": measured,
+            # the UNIQUE(provider, identifier) index is effectively the only
+            # IntegrityError reachable from insert_bulk (documents uses
+            # INSERT OR REPLACE, media_tags too, and a single doc's identifier
+            # dict cannot violate the composite key). Saying otherwise
+            # contradicted the remedy printed directly below it.
+            return (False, '  (no duplicate media identifier in the source, so the other\n'
+                           '   claimant is a row already in the destination)')
         return (True, 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes))
     except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
         return (None, '  (could not determine which identifiers collided)')

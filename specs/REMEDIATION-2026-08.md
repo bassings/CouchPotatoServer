@@ -112,7 +112,7 @@ behaviour, the fix lands, the tests assert the new behaviour.
 
 ### T1.1: `moveFile` branch tests · M · risk: low
 
-`plugins/renamer/`MoverMixin.moveFile``. The only existing tests monkeypatch it away
+`MoverMixin.moveFile` (`plugins/renamer/mover.py`). The only existing tests monkeypatch it away
 (`test_renamer_cleanup_safety.py:70`).
 
 New `tests/unit/test_renamer_mover.py`. Real files in `tmp_path`, real `shutil`,
@@ -189,7 +189,14 @@ pass a content test.
     by `test_failed_move_with_a_short_destination_...`.
 
   **And no branch may use a composite `shutil` call whose non-copy half can
-  fail alone.** `shutil.copy` is copyfile+copymode; `shutil.move` falls back
+  fail alone.** ~~This clause is not achievable as written and is superseded;
+  see docs/technical-debt.md's "STOPPED after four rounds".~~ `shutil.move` is
+  `copy_function` **plus `os.unlink(src)`**, so `copy_function=copyfile`
+  removes one failing half and leaves another; measured, a read-only download
+  directory still leaves a complete destination and a permanent skip. Chasing
+  sub-calls does not converge, and the criterion should be restated in terms
+  of the end state on disk before PR 4 adds a delete to this path. The
+  original text follows, as the record of what was tried: `shutil.copy` is copyfile+copymode; `shutil.move` falls back
   to `copy2`, which is copyfile+copystat. Either one failing after the bytes
   land leaves a COMPLETE destination that the helper correctly refuses to
   remove and the `lexists` guard then blocks for ever. `copy` and the `link`
@@ -213,7 +220,7 @@ pass a content test.
   is green-on-macOS, red-on-Alpine.
 - **AC-DATA-15 / AC-QA-19** The `os.name == 'nt'` branch carries an explicit
   `skipif` whose reason **cites the `os.popen` string-concatenation at
-  ``moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)`**, so the gap is knowingly uncovered rather than silently
+  `moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)**, so the gap is knowingly uncovered rather than silently
   absent. (`lens-security` flagged that line as command injection reachable
   from indexer-supplied release names on Windows with `ntfs_permission`. Not
   PR 1's to fix: filed to PR 3, which already edits `renamer/`.)
@@ -237,7 +244,7 @@ All three verified by execution during planning. TDD: the T1.1 tests pin current
 behaviour first, then the fix lands, then the assertions invert.
 
 **(a) A directory at the destination is treated as a successful move.**
-``moveFile`'s destination-exists guard` tests `os.path.exists(dest) and os.path.isfile(dest)`, so a
+`moveFile`'s destination-exists guard tests `os.path.exists(dest) and os.path.isfile(dest)`, so a
 directory does not fire the guard. Measured: the file moves *inside* it as
 `dest/<original basename>`: unrenamed: `os.chmod(dest, 0o644)` at `:69` then
 strips `+x` (measured `traversable: False`), and `True` is returned, so
@@ -821,7 +828,7 @@ the diff, not by an agent.
 | Wire `tests/integration/` into CI | simplicity, QA, data | **Accepted, conditioned** | Measured 38 tests / 2.4 s, no fixing required, but 7 tests skip permanently in CI. Conditioned on AC-QA-35 |
 | Merge state-mutating specs into one serial file (the S-effort alternative to T1.7) | simplicity | **Rejected with evidence** | The mutating set is larger than three files: `movie-detail.spec.ts` and `small-screen.mobile.spec.ts` also mutate. Merging three leaves the coupling. Recorded so it is not re-proposed |
 | mypy gate (T6.7, PR 6) | simplicity | **Veto overridden** (Scott, 2026-08-03) | Simplicity's objection stands on its own terms: no defect has been identified that mypy would have caught. Kept anyway, scoped to `core/db/*`, as a **preventive** gate: that package is the highest-consequence code in the repo and already typed, so the gate starts green and ratchets rather than migrating. Recorded as a deliberate override, not an unanswered veto |
-| Fix `os.popen` injection at ``moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)` | security | **Deferred to PR 3** | Windows-only, gated on `ntfs_permission`. PR 3 already edits `renamer/`. Recorded in the T1.1 skip reason so it is not silently uncovered |
+| Fix `os.popen` injection at `moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`) | security | **Deferred to PR 3** | Windows-only, gated on `ntfs_permission`. PR 3 already edits `renamer/`. Recorded in the T1.1 skip reason so it is not silently uncovered |
 | Fix `extractor.py:174` (`cleanup` passed into the `use_default` slot) | QA | **Deferred to PR 3** | Real argument-position bug coupling two unrelated settings, but not on PR 1's path |
 | Move the renamer re-entrancy lock (T5.4) ahead of PR 4 | data | **Accepted** | Two concurrent moves to one destination destroy a file and both return `True`. PR 4 adds a delete to that path: shipping the delete before the lock turns "one download lost" into "the library copy lost too" |
 
@@ -1488,7 +1495,7 @@ pending a decision.
 ### T6.5: Remaining low-severity security · S
 
 `tarfile.extractall(filter='data')` (`_base/updater/main.py:373`); list-args
-`subprocess.run` instead of `os.popen` (`renamer/`moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)`); strip `/`, `\`
+`subprocess.run` instead of `os.popen` (`moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)); strip `/`, `\`
 and `..` in `renamer/namer.py:63`; validate `cors_origins` against `*` with
 credentials (`__init__.py:109-118`); self-host the Google Fonts references
 (`templates/login.html:25-26`, `ui/templates/base.html:53-54`); double

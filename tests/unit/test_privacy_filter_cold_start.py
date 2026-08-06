@@ -1,7 +1,7 @@
 """Pin the PrivacyFilter api-key redaction against a cold start."""
 import logging
-import os
 import sys
+import threading
 from unittest.mock import patch
 
 sys.path.insert(0, '.')
@@ -50,47 +50,65 @@ def test_the_key_is_redacted_even_if_the_first_record_predates_it():
     assert 'API_KEY' in later.msg
 
 
-def test_looking_up_the_key_does_not_re_enter_the_filter():
-    """The lookup must not recurse through the handler it is attached to.
+def test_a_concurrent_record_is_still_redacted_while_the_key_is_being_read():
+    """No record may escape unredacted because another thread is mid-lookup.
 
-    `Settings.get` logs at DEBUG when a property is not yet stored, and this
-    filter sits on the handler that record passes through, so reading the key
-    from inside the filter re-enters the filter. Measured with the key absent
-    and debug logging on: 124 nested lookups for a SINGLE record, ending in a
-    RecursionError the filter's own `except` swallows.
+    This replaces a test that pinned a recursion which cannot happen. The
+    belief was that `Env.setting` -> `Settings.get` logs when the property is
+    absent, so reading the key from inside the filter re-enters it; measured
+    against a fake written to log, that produced 124 nested lookups. Against
+    the REAL `Settings.get` it produces one: its only log is a META-option
+    warning that `api_key` never triggers, and the absent path returns through
+    `except Exception` silently. The recursion was manufactured by the fixture
+    that found it.
 
-    With the old `is None` cache that happened once per process. Re-reading
-    while falsy -- the fix for the cold-start leak -- made it happen on every
-    record, which is a cost that fix should not carry. Two guards, one test.
+    The guard added for it was not free. A single shared flag meant a second
+    thread took the "someone is already reading" branch, left `_api_key`
+    falsy, and skipped the redaction entirely -- emitting the key verbatim.
+    That is what this test pins, because it is the property that matters and
+    it is the one nothing was checking.
     """
-    calls = {'n': 0}
+    key = 'SUPERSECRETAPIKEY0123456789abcdef'
     f = PrivacyFilter()
+    lookup_started = threading.Event()
+    concurrent_done = threading.Event()
+    seen = {'n': 0}
+    seen_lock = threading.Lock()
 
-    class FakeEnv:
+    class SlowEnv:
         @staticmethod
         def get(name, **kw):
             return False if name == 'dev' else None
 
         @staticmethod
         def setting(name, **kw):
-            calls['n'] += 1
-            # Faithful to Settings.getProperty, which logs when absent.
-            logging.getLogger('probe').debug('Property "%s" not yet stored', name)
-            return None
+            with seen_lock:
+                seen['n'] += 1
+                first = seen['n'] == 1
+            if first:
+                # Only the WARMER blocks, and it blocks on an event rather
+                # than a sleep so the window is deterministic. A sleep made
+                # this pass whenever the main thread was descheduled past it.
+                # Later callers return at once: without the buggy guard the
+                # concurrent record does its own lookup, and if it blocked
+                # too the test would deadlock rather than discriminate.
+                lookup_started.set()
+                concurrent_done.wait(timeout=5)
+            return key
 
-    with patch('couchpotato.environment.Env', FakeEnv):
-        handler = logging.StreamHandler(open(os.devnull, 'w'))
-        handler.addFilter(f)
-        log = logging.getLogger('probe')
-        log.addHandler(handler)
-        log.setLevel(logging.DEBUG)
+    with patch('couchpotato.environment.Env', SlowEnv):
+        warmer = threading.Thread(target=lambda: f.filter(_record('warming the cache')))
+        warmer.start()
         try:
-            calls['n'] = 0
-            log.debug('a record logged before the key exists')
+            assert lookup_started.wait(timeout=5), 'the lookup never started'
+            concurrent = _record('GET /api/%s/movie.list' % key)
+            f.filter(concurrent)
         finally:
-            log.removeHandler(handler)
+            concurrent_done.set()
+            warmer.join(timeout=5)
 
-    assert calls['n'] == 1, (
-        'the api_key lookup re-entered the filter %d times for one record'
-        % calls['n']
+    assert key not in concurrent.msg, (
+        'a record was emitted with the api_key verbatim because another thread '
+        'was reading the key at the time: %s' % concurrent.msg
     )
+    assert 'API_KEY' in concurrent.msg

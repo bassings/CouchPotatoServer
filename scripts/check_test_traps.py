@@ -1061,12 +1061,19 @@ def check_e2e_spec_guards(path: Path, text: str):
         if not _is_guard_if_line(line, hoisted_names):
             continue
 
-        if "{" in line:
-            # `{` ANYWHERE on the line, not only at the end. A one-line guard
-            # (`if (await x.count() > 0) { click(); }`) has a real block, so
-            # the brace matcher is right for it -- keying on `endswith("{")`
-            # sent it down the indentation path instead and pulled in every
-            # following sibling, a false positive on correct code.
+        # Route on whether the line actually opens or contains a BLOCK, not on
+        # whether it contains any brace. `"{" in line` was too coarse: a
+        # non-braced guard whose CONDITION carries a balanced brace pair --
+        # `if (await page.locator(`#movie-${id}`).count() === 0) return;`, or a
+        # selector string containing `{}` -- went to the brace matcher, which
+        # balanced on the guard line itself, collapsed the region to nothing
+        # and reported clean. Measured across sixteen formatting shapes: that
+        # spelling was caught before the previous round and silent after it,
+        # while template literals already appear in two locator calls in this
+        # suite.
+        opens_block = line.count("{") > line.count("}")
+        inline_block = re.search(r"\)\s*\{", line)
+        if opens_block or inline_block:
             close_idx = _find_matching_brace(cleaned_lines, idx)
         else:
             # A non-braced guard (`if (cond) return;`) has no block, so the
@@ -1076,12 +1083,15 @@ def check_e2e_spec_guards(path: Path, text: str):
             # The affected region is the rest of the ENCLOSING block, which
             # indentation approximates cheaply and without a JS parser.
             close_idx = _end_of_enclosing_block(cleaned_lines, idx)
-        # The guard line's OWN tail counts as body. For a one-line guard
-        # (`if (cond) { await expect(x).toBeVisible(); }`) the braces balance
-        # on that line, so close_idx lands on it and the joined slice below is
-        # empty -- the rule saw nothing in the most compact spelling of the
-        # very shape it exists to catch.
-        inline_body = line[line.index("{") + 1:] if "{" in line else ""
+        # For a one-line guard (`if (cond) { await expect(x).toBeVisible(); }`)
+        # the braces balance on that line, so close_idx lands on it and the
+        # joined slice below is empty -- the rule saw nothing in the most
+        # compact spelling of the very shape it exists to catch.
+        #
+        # Sliced from the BLOCK-opening brace, not `index("{")` or `rfind("{")`:
+        # `index` picks up the condition's own brace (a template literal), and
+        # `rfind` misses an `expect(` that precedes a nested object literal.
+        inline_body = "" if opens_block else (line[inline_block.end():] if inline_block else "")
         body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
         if not EXPECT_CALL_RE.search(body):
             continue

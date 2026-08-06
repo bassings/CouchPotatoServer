@@ -50,7 +50,6 @@ class PrivacyFilter(logging.Filter):
     """Filter that redacts sensitive information from log messages."""
 
     _api_key = None
-    _reading_api_key = False
     _is_develop = None
 
     def filter(self, record):
@@ -99,24 +98,33 @@ class PrivacyFilter(logging.Filter):
         # as an artefact, so this redaction is load-bearing in a way it was not
         # when the caching was written. One dict lookup per record is a fair
         # price for removing the failure mode entirely.
-        if not self._api_key and not self._reading_api_key:
-            # The re-entrancy flag is not defensive decoration. `Settings.get`
-            # logs at DEBUG when a property is not yet stored, and this filter
-            # is attached to the handler that record passes through -- so
-            # looking the key up from inside the filter re-enters the filter.
-            # Measured with the key absent and debug logging on: 124 nested
-            # lookups for a single record, ending in a RecursionError that the
-            # filter's own `except` swallows. With the old `is None` cache that
-            # happened once per process; re-reading while falsy made it happen
-            # on EVERY record, which is a cost the fix should not carry.
-            self._reading_api_key = True
+        if not self._api_key:
+            # NO re-entrancy guard here, deliberately, and the reasoning is
+            # recorded because a previous round got it wrong in both
+            # directions.
+            #
+            # A guard was added on the belief that this lookup re-enters the
+            # filter: `Env.setting` -> `Settings.get`, and something logs when
+            # the property is absent. It does not. `Settings.get`'s only log
+            # is its META-option warning, which `api_key` is not; the absent
+            # path raises out of `self.p.get` into `except Exception: return
+            # default` and logs nothing. The DEBUG line that does exist,
+            # 'Property "%s" not yet stored', is in `getProperty`, reached by
+            # `Env.prop` and not by this call. The "124 nested lookups" that
+            # justified the guard were measured against a test fake written to
+            # log -- the recursion was manufactured by the fixture that then
+            # found it.
+            #
+            # And the guard was not free: a single shared flag meant that while
+            # one thread was inside the lookup, another skipped redaction
+            # entirely and emitted the api_key VERBATIM. Demonstrated. If a
+            # future change ever does make this path log, the fix is a
+            # thread-local flag, never a shared one.
             try:
                 from couchpotato.environment import Env
                 self._api_key = Env.setting('api_key') or ''
             except Exception:
                 self._api_key = ''
-            finally:
-                self._reading_api_key = False
 
         if self._api_key:
             msg = msg.replace(self._api_key, 'API_KEY')

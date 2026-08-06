@@ -376,6 +376,65 @@ connection in SQLite's *serialized* mode and the C library already mutexes each
 API call. The write path is covered by construction (every write method carries
 the same decorator on the same lock as every read), not by a test.
 
+### STOPPED after four rounds: `moveFile`'s composite-call class (2026-08-06)
+
+**This is a frame problem, recorded rather than fixed a fourth time**, per
+CLAUDE.md rule 11 ("after three failed fixes, question the frame, not the
+fix"). Four consecutive review rounds have each found the same class in the
+same function, each fix correct and each incomplete:
+
+| Round | Fixed | Missed |
+|---|---|---|
+| 2 | `copy` and `symlink_reversed` clean up a partial destination | the `link` fallback, which is the shipping default |
+| 3 | `shutil.copy` -> `copyfile` (copymode can fail alone) | `shutil.move`, the same composite shape |
+| 4 | `shutil.move(..., copy_function=copyfile)` (copystat) | `shutil.move`'s trailing `os.unlink(src)` |
+| 5 | -- | the frame |
+
+**The measurement.** Reproduced with no monkeypatching at all: a download
+directory the process cannot delete from (a `:ro` volume, a CIFS share
+without delete permission, `chflags uchg`, or on Windows the seeding client
+holding the file open, which is `symlink_reversed`'s entire reason to exist):
+
+```
+RESULT: raised PermissionError [Errno 13] Permission denied: .../downloads/movie.mkv
+source exists: True
+dest exists:   True   complete: True
+--- retry, as the next renamer run would ---
+RETRY: raised FileExistsError Destination ".../library/movie.mkv" already exists
+```
+
+Both `shutil.move` sites, and the default branch's inline recovery too: its
+recovery step IS `os.unlink(old)`, the call that just failed.
+
+**Why chasing sub-calls does not converge.** `shutil.move` is
+`copy_function(src, dst)` **then** `os.unlink(src)`; `shutil.copy` is
+`copyfile` + `copymode`; `copy2` is `copyfile` + `copystat`. Each fix removed
+one failing half and left another. The property that matters is not "which
+sub-call can fail" but **"what is true on disk afterwards"**: the bytes are
+complete at the destination and the run reports failure, so the `lexists`
+guard blocks every retry for ever and the reverse symlink is never created.
+
+**The shape that would close it** (deliberately not attempted here): decide
+success from the observable end state rather than from which call raised. If
+the destination survives at the same size as the source, the move has
+achieved what it exists to achieve; log loudly, continue, and let the caller
+treat it as done. That is a behaviour change on the renamer's most
+destructive path and belongs in its own change with its own criteria, not as
+a fifth patch inside a safety-net PR.
+
+**Nothing is lost today**, which is why this is deferred rather than
+blocking: the source survives in every measured case, `_moveRenamedFiles`
+sets `skipped` so cleanup is suppressed, and the state is strictly better
+than master's (which swallowed the failure and deleted the download). The
+harm is a film that is never re-processed and, for `symlink_reversed`, a
+seeding path never restored.
+
+**It stops being safe in PR 4.** `specs/REMEDIATION-2026-08.md` schedules
+upgrade replacement, which adds a delete to this path. "The library copy is
+complete but the run reported failure" is a much worse question once
+something is deleting on the strength of that answer. **Close this before
+PR 4 touches `moveFile`.**
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.
