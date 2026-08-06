@@ -143,10 +143,12 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         adapter.close()
         raise RuntimeError(
             'Migration aborted: %s\n%s\n\n'
-            'The destination has been left empty; the CodernityDB source is '
-            'untouched, so nothing is lost. Resolve the duplicate in the '
-            'source (or delete one of the two documents) and run the '
-            'migration again.' % (exc, _describe_identifier_collision(cleaned))
+            'No documents were written to %s. The file itself was created, and '
+            'anything already in it is unchanged -- do NOT delete it without '
+            'looking first. The CodernityDB source is untouched, so nothing is '
+            'lost. Resolve the duplicate in the source (or delete one of the '
+            'two documents) and run the migration again.'
+            % (exc, _describe_identifier_collision(cleaned), dest_path)
         ) from exc
 
     if verbose:

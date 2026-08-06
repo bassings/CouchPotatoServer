@@ -49,15 +49,24 @@ test.describe('Filters', () => {
     const searchInput = page.locator('input[placeholder*="filter" i]');
     await searchInput.fill(firstTitle || '');
 
-    // The assertion retries, so it waits for the client-side filter without a
-    // fixed sleep.
+    // Assert the DIRECTION and the IDENTITY, both of which are false for a
+    // no-op filter. The first repair of this test used
+    // `toBeLessThanOrEqual(initialCount)` and `toBeGreaterThan(0)`, and
+    // neither changes value between "the filter worked" and "the filter did
+    // nothing": with five seeded movies, `5 <= 5` is true on the poll's first
+    // evaluation, so it also returned before the filter had run at all. The
+    // only regression it could catch was a filter that hid everything -- in
+    // the file this round repaired for exactly that class of defect.
+    //
+    // The seeded titles are mutually non-substring (E2E Seed Movie, E2E
+    // Destructive Seed Movie, E2E No-Release Movie, E2E Second/Third
+    // No-Release Movie), so filtering on a full title must leave exactly one.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     await expect
       .poll(() => visibleCards.count(), { timeout: 5000 })
-      .toBeLessThanOrEqual(initialCount);
-
-    // At least the one we searched for is still showing.
-    expect(await visibleCards.count()).toBeGreaterThan(0);
+      .toBeLessThan(initialCount);
+    await expect(visibleCards).toHaveCount(1);
+    await expect(visibleCards.first()).toHaveAttribute('data-title', firstTitle || '');
   });
 
   test('clicking Wanted filter should filter movies', async ({ page }) => {

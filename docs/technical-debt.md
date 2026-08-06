@@ -294,6 +294,54 @@ branch caused were fixed in it.
   per-worker data dirs there. Self-healing in microseconds; it disappears if the
   dirs ever move under the system temp dir.
 
+### Deferred at PR 1's SECOND review round (2026-08-06)
+
+**`transaction()` holds the connection-wide lock across arbitrary event
+handlers, including blocking HTTP.** Introduced by the connection-serialisation
+fix above and knowingly left in. Before it, `transaction()` held a write-only
+lock, so a slow handler blocked writes; now it blocks reads too.
+`media/_base/media/main.py`'s `delete` fires `media.restatus` inside the
+transaction, `restatus` fires `<type>.downloaded`, and every enabled
+notification provider does a blocking `urlopen` with a 30 s default. With a
+provider configured and unreachable, every database read in the process stalls
+for up to 30 s per provider, and the container healthcheck can trip a restart
+that kills the transaction.
+
+Nothing is lost when it does (single connection, uncommitted, rolled back on
+close), so this is availability rather than recoverability, and review found no
+deadlock: `media_lock` is always taken before the connection lock, always for
+the same key, and nothing inside joins another thread.
+
+`fireEventAsync` was tried and reverted: it breaks three tests that assert the
+notification synchronously, and making them wait on a daemon thread trades an
+availability bug for a flaky one. The real fix is the design rule **no network
+I/O inside a database transaction** -- hoist the `media.restatus` calls out of
+the `with transaction:` block, which is what the sibling `notify.frontend` call
+already does. That belongs with the per-thread-connection work, not in a safety
+net PR.
+
+**`compact()` now blocks every read for the duration of a VACUUM** (weekly, per
+`core/database.py`). Correct as far as it goes, since it previously took no lock
+at all, which was the misuse being fixed. VACUUM is atomic, so a restart
+mid-VACUUM cannot corrupt the file. Disappears with per-thread connections.
+
+**Rule 6 of `check_test_traps.py` is a partial substitute for the review step
+`AGENTS.md` retired.** Five shapes remain invisible: a non-braced single
+statement `if`, a ternary, a logical-and short circuit, a destructured binding,
+and `test.skip(cond, ...)`. None is currently used in `tests/e2e/**`. They are
+listed in the rule's own module docstring; closing them properly needs a JS
+parser, at which point the rule should become an ESLint plugin rather than be
+extended again.
+
+**No behavioural test covers the adapter's write path under concurrency.**
+Two attempts were written and both were incidentally passing, which is recorded
+in `tests/unit/test_sqlite_adapter_concurrency.py`'s docstring: a mixed
+read/write hammer passed 30/30 against a deliberately split lock, and a
+"read must wait for a write" test passed too, because CPython runs the
+connection in SQLite's *serialized* mode and the C library already mutexes each
+API call. The write path is covered by construction (every write method carries
+the same decorator on the same lock as every read), not by a test.
+
 ## Lessons learned
 
 1. Read `CLAUDE.md` at the START of every session before touching code.

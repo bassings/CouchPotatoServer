@@ -867,9 +867,40 @@ list is how the harness improves rather than merely runs:
     T1.8 fix (a) to be demonstrated through `_moveRenamedFiles`, but
     `renamer/main.py:154-157` refuses any pre-existing `dst` before `moveFile`
     is reached, so the caller can never drive the branch. Amended: fix (a) is
-    proven at the unit level, and the file says so at
-    `tests/unit/test_renamer_mover.py:604-621` rather than quietly renaming the
-    test.
+    proven at the unit level, and the file says so in
+    `TestCallerLevelDataLossGuards`'s own comments rather than quietly renaming
+    the test. (Cited by symbol, not line: the first draft of this gap cited a
+    line range that three inserted tests had already shifted by ~90 lines,
+    which is the failure mode section 7 warns about.)
+
+### Spec gaps found at PR 1's second review round
+
+17. **Three production security/correctness changes shipped with no AC.** The
+    softchroot traversal refusal, the sqlite connection serialisation, and the
+    `withStatus` `with_doc`/types fix are all production behaviour changes made
+    in response to review findings, and none has a criterion. `AC-SEC-16b` and
+    `AC-QA-38b` were written when the same thing happened earlier in this PR;
+    these were not. **A review-driven production change needs an AC as much as
+    a planned one does** -- otherwise the second review round has nothing to
+    verify against and simply re-derives it.
+18. **No criterion states "no method touching the connection is left
+    unsynchronised".** The enumeration was done by hand, twice, by two
+    different lenses. That is exactly the kind of property a mechanical check
+    should own, and its absence is why `close()` was missed on the first pass.
+19. **Uploading the application log as a public CI artefact is a new
+    disclosure surface with no AC** saying what is permitted to appear in it.
+    What was actually verified is narrower than the comment claimed: the app's
+    own api_key is redacted in records emitted through logging handlers, while
+    direct `print()` paths and credentials in URL userinfo or path segments are
+    not filtered at all. There are none in the E2E environment, which is the
+    only reason this is safe today.
+20. **`AC-QA-43` ("each repaired test proven load-bearing") has no mechanism
+    behind it, and three tests written to satisfy this PR's own review were
+    incidentally passing** -- the interrupted-migration probe, the mixed
+    read/write concurrency hammer, and the repaired text-filter test. Each was
+    caught only because a lens ran a mutation the author had not. The criterion
+    should say **who** runs the mutation and that the result is recorded, not
+    just that it happened.
 
 **PR 1 acceptance:** `make verify` green **and `make check-secrets` green**;
 every new test proven load-bearing (break, watch fail, `git diff`-confirm,

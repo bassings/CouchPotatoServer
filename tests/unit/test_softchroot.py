@@ -165,3 +165,75 @@ class SoftChrootTraversal(TestCase):
 
     def test_the_chroot_root_itself_is_still_reachable(self):
         self.assertEqual(self.b.chroot2abs('/'), CHROOT_DIR.rstrip(os.path.sep))
+
+
+class SoftChrootUnnormalisedSetting(TestCase):
+    """An unnormalised `soft_chroot` setting must still work.
+
+    `initialize` only stripped trailing separators, so `self.chdir` kept any
+    interior `//`, `/.` or `/..`. Once `chroot2abs` started normalising its
+    result, it compared a NORMALISED path against an UNNORMALISED prefix and
+    never matched -- so a chroot of `/srv//media` initialised cleanly
+    (`os.path.isdir` accepts it) and then refused every path including its own
+    root. The file browser returned an error on every call and settings saves
+    silently failed, with a log line claiming the path resolved outside the
+    chroot, which was not true.
+
+    A regression introduced by the traversal fix, found at review. It failed
+    closed, so it was never a hole; it was a total functional break of the
+    chroot feature with a misleading diagnosis. Pinned here because
+    `os.path.isdir` will keep accepting these spellings.
+    """
+
+    def _chroot(self, tmp, spelling):
+        sc = SoftChroot()
+        sc.initialize(spelling)
+        return sc
+
+    def test_every_spelling_of_the_same_directory_behaves_identically(self):
+        import shutil
+        import tempfile
+
+        tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        if True:
+            jail = os.path.join(tmp, 'jail')
+            os.mkdir(jail)
+            os.mkdir(os.path.join(jail, 'movies'))
+
+            spellings = [
+                jail,
+                jail + os.path.sep,
+                jail + os.path.sep + os.path.sep,
+                jail + '/./',
+                os.path.join(tmp, '.', 'jail'),
+                os.path.join(tmp, 'jail', '..', 'jail'),
+            ]
+            for spelling in spellings:
+                assert os.path.isdir(spelling), spelling
+                sc = self._chroot(tmp, spelling)
+
+                resolved = sc.chroot2abs('/movies')
+                self.assertEqual(
+                    resolved, os.path.join(jail, 'movies'),
+                    'chroot2abs refused a legitimate path for chroot spelling %r' % spelling,
+                )
+                self.assertEqual(sc.chroot2abs('/'), jail, spelling)
+                self.assertTrue(sc.is_root_abs(jail), spelling)
+                self.assertEqual(sc.abs2chroot(os.path.join(jail, 'movies')), '/movies', spelling)
+
+    def test_an_escape_is_still_refused_for_every_spelling(self):
+        """The other direction: normalising the chroot must not reopen the
+        traversal the normalisation was added to close."""
+        import shutil
+        import tempfile
+
+        tmp = os.path.realpath(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, True)
+        jail = os.path.join(tmp, 'jail')
+        os.mkdir(jail)
+
+        for spelling in (jail, jail + '//', jail + '/./', os.path.join(tmp, '.', 'jail')):
+            sc = self._chroot(tmp, spelling)
+            with self.assertRaises(ValueError, msg='escape allowed for %r' % spelling):
+                sc.chroot2abs('/../outside')

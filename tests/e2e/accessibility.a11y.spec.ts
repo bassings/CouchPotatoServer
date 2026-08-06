@@ -352,19 +352,38 @@ test.describe('Accessibility', () => {
       await page.goto(path);
       const control = page.locator(selector).first();
       await expect(control, `${what} did not render at ${path}`).toBeVisible();
-      await control.focus();
-
+      // Read the style UNFOCUSED first, then focused, and require a
+      // difference. Checking only the focused state is not enough: Tailwind
+      // composes every ring/shadow utility as a permanent, non-'none'
+      // box-shadow, so an element carrying `shadow-md` reports a real
+      // box-shadow with real geometry whether it is focused or not. Measured:
+      // swapping this input's focus ring for `focus:outline-none shadow-md`
+      // passed a predicate that only looked at the focused state, and a
+      // sighted keyboard user would see nothing change.
+      //
+      // A focus indicator is by definition something that CHANGES on focus.
       const indicator = await control.evaluate((el) => {
-        const s = window.getComputedStyle(el);
+        const read = () => {
+          const s = window.getComputedStyle(el);
+          return { outlineStyle: s.outlineStyle, outlineWidth: s.outlineWidth,
+                   outlineColor: s.outlineColor, boxShadow: s.boxShadow };
+        };
+        el.blur();
+        const blurred = read();
+        el.focus();
+        const focused = read();
         const transparent = (c) =>
-          c === 'transparent' ||
+          !c || c === 'transparent' ||
           /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*0\s*\)/.test(c);
         return {
-          outlineStyle: s.outlineStyle,
-          outlineWidth: s.outlineWidth,
-          outlineColor: s.outlineColor,
-          outlineTransparent: transparent(s.outlineColor),
-          boxShadow: s.boxShadow,
+          ...focused,
+          outlineTransparent: transparent(focused.outlineColor),
+          changedOnFocus:
+            focused.outlineStyle !== blurred.outlineStyle ||
+            focused.outlineWidth !== blurred.outlineWidth ||
+            focused.outlineColor !== blurred.outlineColor ||
+            focused.boxShadow !== blurred.boxShadow,
+          blurredBoxShadow: blurred.boxShadow,
         };
       });
 
@@ -372,7 +391,25 @@ test.describe('Accessibility', () => {
         indicator.outlineStyle !== 'none' &&
         parseFloat(indicator.outlineWidth || '0') > 0 &&
         !indicator.outlineTransparent;
-      const shadowVisible = indicator.boxShadow !== 'none' && indicator.boxShadow !== '';
+      // Same rule as the sweep above: a transparent or geometry-less shadow
+      // is not an indicator. Tailwind's ring/shadow composition means any
+      // `shadow-*`/`ring-*` utility computes a non-'none' box-shadow at all
+      // times, so `!== 'none'` alone would silently retire this test the
+      // moment someone adds `shadow-md` to one of these inputs.
+      // Only a shadow that APPEARED on focus counts. A permanent decorative
+      // one is not an indicator, however solid it looks.
+      const shadowVisible =
+        indicator.boxShadow !== 'none' &&
+        indicator.boxShadow !== '' &&
+        indicator.boxShadow !== indicator.blurredBoxShadow;
+
+      expect(
+        indicator.changedOnFocus,
+        `${what} looks identical focused and unfocused, so there is no focus ` +
+        `indicator at all (WCAG 2.2 AA 2.4.7). Computed: outline ` +
+        `${indicator.outlineStyle} ${indicator.outlineWidth} ${indicator.outlineColor}, ` +
+        `box-shadow ${indicator.boxShadow}.`,
+      ).toBe(true);
 
       expect(
         outlineVisible || shadowVisible,
@@ -418,12 +455,30 @@ test.describe('Accessibility', () => {
     const hasVisibleFocusIndicator = await focusedElement.first().evaluate(el => {
       const focused = window.getComputedStyle(el);
       const isTransparent = (colour) =>
+        !colour ||
         colour === 'transparent' || /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*0\s*\)/.test(colour);
       const outlineVisible =
         focused.outlineStyle !== 'none' &&
         parseFloat(focused.outlineWidth || '0') > 0 &&
         !isTransparent(focused.outlineColor);
-      const shadowVisible = focused.boxShadow !== 'none' && focused.boxShadow !== '';
+      // The alpha check must apply to the SHADOW branch too, or it is
+      // pointless: the two are ORed, so a transparent shadow short-circuits
+      // the whole assertion. This is reachable, not theoretical -- the
+      // vendored Tailwind bundle composes every ring/shadow as
+      // `var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0
+      // #0000), var(--tw-shadow)`, all defaulting to `0 0 #0000`, so ANY
+      // element carrying a `shadow-*` or `ring-*` utility computes a
+      // non-'none' box-shadow permanently, focused or not.
+      const shadowVisible =
+        focused.boxShadow !== 'none' &&
+        focused.boxShadow !== '' &&
+        focused.boxShadow.split(/,(?![^(]*\))/).some((layer) => {
+          const colour = (layer.trim().match(/^(rgba?\([^)]*\)|#[0-9a-f]+|[a-z]+)/i) || [''])[0];
+          const lengths = (layer.match(/-?[\d.]+px/g) || []).map(parseFloat);
+          // A layer is visible only if it has a colour you can see AND some
+          // geometry: `rgb(0, 0, 0) 0px 0px 0px 0px` renders nothing.
+          return !isTransparent(colour) && lengths.some((n) => n !== 0);
+        });
       return outlineVisible || shadowVisible;
     });
     expect(

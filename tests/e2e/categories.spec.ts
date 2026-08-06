@@ -72,7 +72,7 @@ async function addCategoryNamed(page: Page, panel: Locator, name: string) {
 /** Delete a single category by exact name via the UI (best-effort, idempotent). */
 async function deleteCategoryNamed(page: Page, panel: Locator, name: string) {
   const delBtn = panel.getByRole('button', { name: 'Delete category: ' + name });
-  if (await delBtn.count() === 0) return;
+  if (await delBtn.count() === 0) return; // vacuous-guard-ok: idempotent teardown helper -- callers invoke it for names that may not exist, and the assertions below belong to the deletion, not to any test.
   await delBtn.first().click();
   const confirmDialog = page.getByTestId('category-delete-dialog');
   await expect(confirmDialog).toBeVisible();

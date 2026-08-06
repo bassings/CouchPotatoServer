@@ -265,11 +265,17 @@ class TestMigrationIsRepeatable:
         # NOT "no duplicate three-tuples": a UNIQUE index on
         # (provider, identifier) makes that state unreachable, so asserting it
         # is a guard that cannot fail sitting inside one that can. Measured:
-        # inserting a duplicate raises IntegrityError. What IS reachable, and
-        # what the second run could break, is the row COUNT drifting -- if
-        # _update_denormalized stopped DELETE-ing before INSERT-ing, the
-        # second run would raise rather than duplicate, and if it stopped
-        # writing at all the rows would vanish.
+        # inserting a duplicate raises IntegrityError.
+        #
+        # What the equality below IS: a drift detector, and `assert first_rows`
+        # is what carries most of the weight (disabling the identifier INSERT
+        # reds it). Note what makes the bulk path idempotent is the FOREIGN KEY
+        # cascade, not `_update_denormalized`'s explicit DELETE: schema.sql
+        # enables `PRAGMA foreign_keys` and media_identifiers.media_id is
+        # `ON DELETE CASCADE`, so `INSERT OR REPLACE INTO documents` clears the
+        # old rows before they are re-inserted. Review measured that: removing
+        # that DELETE changes nothing on this path. An earlier version of this
+        # comment claimed the DELETE was what held, which was not true.
         assert second_rows == first_rows, (
             'the second migration run changed media_identifiers from '
             f'{len(first_rows)} rows to {len(second_rows)}'
@@ -355,6 +361,21 @@ class TestMigrationFailureModes:
         assert 'imdb=tt0000001' in message, message
         for doc_id in inserted_ids:
             assert doc_id in message, 'the message must name both colliding docs: %s' % message
+
+        # The message makes a promise about the destination. Pin it, or the
+        # same one-line change to insert_bulk that the interrupted-run test
+        # guards would quietly make this message a lie -- and the operator
+        # acts on it.
+        adapter = SQLiteAdapter()
+        adapter.open(dest_path)
+        try:
+            written = list(adapter.all('id'))
+        finally:
+            adapter.close()
+        assert written == [], (
+            'the abort message promises no documents were written, but %d were'
+            % len(written)
+        )
         # The reassurance is load-bearing: an operator who thinks the source
         # was damaged may go looking for a backup they do not need.
         assert 'source is' in message and 'untouched' in message, message

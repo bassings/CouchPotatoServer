@@ -40,7 +40,18 @@ class SoftChroot:
                 raise SoftChrootInitError(2, 'SOFT-CHROOT is requested, but the folder doesn\'t exist', orig_chdir)
 
             self.enabled = True
-            self.chdir = chdir.rstrip(os.path.sep) + os.path.sep
+            # normpath, not just rstrip. `os.path.isdir` happily accepts
+            # `/srv//media`, `/srv/./media` and `/srv/x/../media`, so an
+            # operator's config.ini can hold any of them and the chroot
+            # initialises cleanly. Once chroot2abs started normalising ITS
+            # result, an unnormalised `chdir` meant the containment check
+            # compared a normalised path against an unnormalised prefix and
+            # never matched: every path was refused, including the chroot's
+            # own root, and the log said it resolved outside the chroot --
+            # which was not true. Fails closed, so it was never a hole; it
+            # was a total functional break of the feature with a misleading
+            # diagnosis, introduced by the traversal fix and found at review.
+            self.chdir = os.path.normpath(chdir).rstrip(os.path.sep) + os.path.sep
         else:
             self.enabled = False
 

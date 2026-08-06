@@ -1083,6 +1083,87 @@ def test_flags_a_hoisted_isvisible_guard_too(tmp_path):
     assert len(findings_for(spec)) == 1
 
 
+def test_flags_an_early_return_guard_with_no_block(tmp_path):
+    """`if (cond) return;` skips everything after it, braces or not.
+
+    `stripped.endswith("{")` made the whole non-braced family invisible, and
+    both forms are ordinary JS that Prettier produces. Two live instances
+    already existed in this suite when the rule was widened.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() === 0) return;\n"
+        "  await expect(cards.first()).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_hoisted_guard_whose_await_was_wrapped_to_the_next_line(tmp_path):
+    """Prettier wraps a long assignment. The rule must not be defeated by
+    formatting alone, which a per-line scan was."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const someVeryLongLocatorName = page.locator('.card');\n"
+        "  const total =\n"
+        "    await someVeryLongLocatorName.count();\n"
+        "  if (total > 1) {\n"
+        "    await expect(someVeryLongLocatorName.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_parenthesised_await_assignment(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  const shown = (await btn.isVisible());\n"
+        "  if (shown) {\n"
+        "    await expect(btn).toHaveText('Go');\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_reassigned_guard_name(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  let total = 0;\n"
+        "  total = await cards.count();\n"
+        "  if (total > 1) {\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_an_early_return_guard_can_be_opted_out_of(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "async function teardown(page) {\n"
+        "  const btn = page.locator('.del');\n"
+        "  if (await btn.count() === 0) return; // vacuous-guard-ok: idempotent teardown.\n"
+        "  await expect(btn).toBeVisible();\n"
+        "}\n"
+    )
+
+    assert findings_for(spec) == []
+
+
 def test_does_not_flag_an_if_on_an_unrelated_name(tmp_path):
     """The other direction. Only names bound to an awaited
     isVisible()/count() count; an ordinary conditional must stay silent, or

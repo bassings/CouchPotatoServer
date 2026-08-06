@@ -73,7 +73,7 @@ async function deleteTestProfile(page: Page) {
   try {
     const panel = await openProfilesTab(page);
     const delBtn = panel.getByRole('button', { name: new RegExp('Delete profile: ' + TEST_PROFILE_NAME, 'i') });
-    if (await delBtn.count() === 0) return;
+    if (await delBtn.count() === 0) return; // vacuous-guard-ok: idempotent teardown -- a test that never created the profile has nothing to delete, and the assertions below belong to the deletion, not to the test.
     await delBtn.first().click();
 
     const confirmDialog = page.getByTestId('delete-confirm-dialog');

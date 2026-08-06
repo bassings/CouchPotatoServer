@@ -32,7 +32,7 @@ test.describe('Release list controls', () => {
    * from the same budget the test does, and every run pays seeding plus a
    * first request: fixtures.ts creates a fresh per-worker data dir and seeds
    * it before the server starts. (This used to say verify.sh wipes the data
-   * dir. It does not, and did not after T1.7: verify.sh:120-129 now treats a
+   * dir. It does not, and did not after T1.7: verify.sh's E2E stage now treats a
    * surviving directory as a failure to surface rather than one to clean up.) Shaving the wait does not
    * work: no value is both long enough for a slow cold start and shorter than
    * the budget it comes out of -- at 30s the hook timed out at exactly 30.0s,
@@ -121,7 +121,7 @@ test.describe('Release list controls', () => {
     // timed out at exactly 30.0s. Measured cold-start need is ~12-16s. every run pays seeding plus first request:
     // fixtures.ts creates a fresh per-worker data dir and seeds it before the
     // server starts. (An earlier comment here said verify.sh wipes the data
-    // dir; it does not -- verify.sh:120-129 now treats a surviving directory
+    // dir; it does not -- verify.sh's E2E stage now treats a surviving directory
     // as a failure to surface rather than something to clean up.) Measured: the first run after a clean dir skipped one test while
     // the second and third did not -- 5/6/6 passed across three runs. A guard
     // that trips on slowness silently drops coverage and reports green, which

@@ -874,8 +874,27 @@ GUARD_CONDITION_RE = re.compile(r"\bif\s*\(.*\bawait\b.*\.(?:isVisible|count)\s*
 # spec file is a name whose `if` is worth a written justification. The opt-out
 # below is the pressure valve.
 HOISTED_ASSIGNMENT_RE = re.compile(
-    r"\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*await\b[^;]*\.(?:isVisible|count)\s*\("
+    r"\b(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\(?\s*await\b[^;]*?\.(?:isVisible|count)\s*\(",
+    re.DOTALL,
 )
+
+# WHAT THIS RULE STILL DOES NOT SEE, stated rather than left to silence.
+# AGENTS.md retired a human review step in favour of this rule, so the next
+# reviewer needs to know where the rule is a partial substitute. Measured by
+# review 2026-08-06 against 12 hand-built specs; the first four below were
+# closed in response, these remain open:
+#
+#   * a single-statement `if` with no braces and no `return`
+#         if (shown)
+#           await expect(...);
+#   * a ternary                      shown ? await expect(...) : null;
+#   * a logical-and short circuit    shown && await expect(...);
+#   * a destructured binding         const { count } = await probe();
+#   * `test.skip(total === 0, '...')` -- a skip, not an if
+#
+# None is currently used in tests/e2e/**. Closing them properly needs a JS
+# parser rather than more regexes, which is the point at which this rule
+# should be replaced by an ESLint plugin rather than extended again.
 
 # A trailing comment naming why this specific guard cannot be made
 # unconditional. Must be on the SAME line as the `if` (where every opt-out
@@ -893,12 +912,17 @@ def _is_e2e_spec(path: Path) -> bool:
 
 
 def _hoisted_guard_names(cleaned_lines: list[str]) -> set[str]:
-    """Names bound to an awaited `.isVisible()`/`.count()` anywhere in the file."""
-    names = set()
-    for line in cleaned_lines:
-        for match in HOISTED_ASSIGNMENT_RE.finditer(line):
-            names.add(match.group(1))
-    return names
+    """Names bound to an awaited `.isVisible()`/`.count()` anywhere in the file.
+
+    Scanned over the JOINED text, not line by line: Prettier wraps a long
+    assignment onto the next line (`const total =` / `  await x.count();`),
+    and a per-line scan missed that, so reformatting alone defeated the rule.
+    A bare reassignment (`total = await x.count();`) counts too.
+    """
+    return {
+        match.group(1)
+        for match in HOISTED_ASSIGNMENT_RE.finditer("\n".join(cleaned_lines))
+    }
 
 
 def _is_guard_if_line(line: str, hoisted_names: frozenset = frozenset()) -> bool:
@@ -908,13 +932,27 @@ def _is_guard_if_line(line: str, hoisted_names: frozenset = frozenset()) -> bool
     hoisted to an earlier line and the resulting name used here.
     """
     stripped = line.rstrip()
-    if not stripped.endswith("{"):
-        return False
-    if GUARD_CONDITION_RE.search(stripped):
+    if GUARD_CONDITION_RE.search(stripped) and stripped.endswith("{"):
         return True
-    condition = stripped[stripped.index("if"):] if "if" in stripped else ""
+    if not stripped.endswith("{"):
+        # A non-braced `if` and an early `return` are ordinary JS that
+        # Prettier will produce, and requiring a trailing `{` made both
+        # invisible. Two live examples already exist in this suite
+        # (`if (await delBtn.count() === 0) return;`), both in best-effort
+        # teardown helpers, so neither is vacuous today -- but the rule
+        # should see the shape.
+        if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
+            return False
+        return _condition_uses_a_guard_name(stripped, hoisted_names) or bool(
+            GUARD_CONDITION_RE.search(stripped)
+        )
     if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
         return False
+    return _condition_uses_a_guard_name(stripped, hoisted_names)
+
+
+def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
+    condition = line[line.index("if"):] if "if" in line else ""
     return any(
         re.search(r"\b%s\b" % re.escape(name), condition) for name in hoisted_names
     )

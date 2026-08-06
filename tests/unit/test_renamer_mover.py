@@ -369,14 +369,29 @@ class TestLinkFallback:
         assert os.path.realpath(old) == os.path.realpath(dest)
         assert not os.path.exists('%s.link' % old), 'a stray <old>.link must not survive'
 
-    def test_link_fallback_when_the_copy_itself_fails_poisons_the_destination_for_a_retry(self, tmp_path, monkeypatch):
-        """AC-DATA-10. When BOTH the hardlink attempt and the subsequent copy
-        fail partway, `old` survives (the unlink at :63 only runs after a
-        successful copy+symlink), but a truncated file is left at `dest`.
-        That truncated file then poisons any retry: the retry's own
-        top-of-function guard ('Destination "%s" already exists') fires,
-        because dest now exists as a file. Documented as known behaviour, not
-        fixed here.
+    def test_link_fallback_removes_its_partial_copy_when_the_copy_fails(self, tmp_path, monkeypatch):
+        """AC-DATA-10, INVERTED at review 2026-08-06.
+
+        When BOTH the hardlink attempt and the subsequent copy fail partway,
+        `old` survives -- and the partial `dest` is now removed rather than
+        left behind.
+
+        This test previously ASSERTED the truncated file must stay, as
+        documented known behaviour. That stopped being defensible once the
+        same commit cleaned up after `copy` and `symlink_reversed`: the suite
+        was pinning both directions of one property, in one file. And this is
+        the branch that matters most, because `link` is the shipping default
+        (`renamer/api.py`'s `file_action`) and the hardlink fails whenever the
+        download directory and the library are on different filesystems --
+        an SSD and a NAS, i.e. the ordinary setup. So the fallback copy here
+        is the likeliest place in the whole function to meet a full disk.
+
+        Left behind, the truncated file poisoned every retry: the
+        top-of-function `lexists` guard fires, `_moveRenamedFiles` sets
+        `skipped` forever, and the scanner attaches a file that plays for its
+        first few seconds to the movie. The download itself survives, so this
+        was expensive rather than irreplaceable -- which is why it was
+        accepted once and should not have been twice.
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -385,6 +400,8 @@ class TestLinkFallback:
             mover_module, 'link',
             lambda src, dst: (_ for _ in ()).throw(OSError('simulated: cannot hardlink')),
         )
+
+        _real_copy = shutil.copy
 
         def _fake_copy(src, dst):
             Path(dst).write_bytes(DOWNLOAD[:1024])  # real, truncated write
@@ -397,12 +414,17 @@ class TestLinkFallback:
             _move(plugin, tmp_path, str(old), str(dest))
 
         assert Path(old).read_bytes() == DOWNLOAD, 'source must survive a failed copy'
-        assert dest.exists() and dest.read_bytes() == DOWNLOAD[:1024], (
-            'a truncated file is left sitting at dest'
+        assert not os.path.exists(dest), (
+            'the partial copy must not be left at the library filename: it plays '
+            'for a few seconds, the scanner attaches it, and the lexists guard '
+            'makes every retry fail forever'
         )
 
-        with pytest.raises(Exception, match='already exists'):
-            _move(plugin, tmp_path, str(old), str(dest))
+        # And the point of removing it: the retry is now possible. Restore a
+        # working copy and drive it again.
+        monkeypatch.setattr(shutil, 'copy', _real_copy)
+        assert _move(plugin, tmp_path, str(old), str(dest)) is True
+        assert dest.read_bytes() == DOWNLOAD
 
     def test_link_with_both_hardlink_and_symlink_failing_degrades_to_a_plain_copy(self, tmp_path, monkeypatch):
         """AC-QA-14. Both link() and symlink() fail; moveFile degrades to a

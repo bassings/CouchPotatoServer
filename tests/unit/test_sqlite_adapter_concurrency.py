@@ -23,8 +23,36 @@ connection.
 
 The write path is the reason this is more than a flaky test: a read on one
 thread interleaving with a write on another misuses the same connection.
+
+**There is deliberately no behavioural test for the write path**, and the
+reason is worth recording because two attempts at one were both
+incidentally passing:
+
+1. A mixed read/write hammer. Review measured it against a PARTIAL fix
+   (reads on one lock, writes on another, so a read can still interleave
+   with a write): it passed 30 runs out of 30, while the two tests below
+   red 12 times out of 12 against the unfixed adapter. It detected nothing
+   its siblings did not.
+2. A deterministic "a read must wait for an in-flight write". Measured: it
+   passes under the split lock too, because CPython's `sqlite3` runs the
+   connection in SQLite's *serialized* threading mode, so the C library
+   already mutexes each API call. That test was measuring SQLite's internal
+   mutex, not this module's lock.
+
+Which also explains the shape of the defect: the C-level mutex protects a
+single API call, but `Connection.execute()` binds, steps and resets a
+statement across several of them, so two threads sharing the connection
+reset each other's statement mid-flight. That is what surfaces as
+`InterfaceError`, and it is why a read-vs-read hammer provokes it readily
+while a read-vs-write one does not.
+
+So the write path is covered **by construction, not by a test**: every
+write method carries the same `@_synchronised` decorator, on the same lock,
+as every read. If that ever stops being true, the two tests below still
+cover reads, and this note is the record that nothing covers the rest.
 """
 import threading
+import time
 
 import pytest
 
@@ -82,32 +110,4 @@ def test_concurrent_index_queries_do_not_misuse_the_connection(adapter):
 
     assert not errors, (
         'concurrent query() raised %d error(s), first: %r' % (len(errors), errors[0])
-    )
-
-
-def test_reads_concurrent_with_writes_do_not_misuse_the_connection(adapter):
-    """The half that matters beyond the test suite.
-
-    A read interleaving with a write on the same connection is the same
-    misuse, and a corrupted write is not recoverable by re-running.
-    """
-    counter = [0]
-    lock = threading.Lock()
-
-    def mixed():
-        with lock:
-            counter[0] += 1
-            n = counter[0]
-        if n % 3 == 0:
-            adapter.insert({
-                '_id': 'w-%05d' % n, '_t': 'media', 'type': 'movie',
-                'status': 'active', 'title': 'W%d' % n, 'identifiers': {},
-            })
-        else:
-            list(adapter.query('media_status', 'active'))
-
-    errors = _hammer(mixed, threads=6, iterations=30)
-
-    assert not errors, (
-        'mixed read/write raised %d error(s), first: %r' % (len(errors), errors[0])
     )

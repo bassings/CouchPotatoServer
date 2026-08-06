@@ -276,6 +276,7 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
+    @_synchronised
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()

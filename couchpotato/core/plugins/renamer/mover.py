@@ -118,7 +118,23 @@ class MoverMixin:
                     link(old, dest)
                 except Exception:
                     log.debug('Couldn\'t hardlink file "%s" to "%s". Symlinking instead. Error: %s.', old, dest, traceback.format_exc())
-                    shutil.copy(old, dest)
+                    # The same cleanup as the two branches above, and the one
+                    # that matters most: `link` is the SHIPPING DEFAULT
+                    # (renamer/api.py's `file_action` default), and the
+                    # hardlink fails whenever the download directory and the
+                    # library sit on different filesystems -- which is the
+                    # ordinary setup, an SSD download dir and a NAS library.
+                    # So this fallback copy is the most likely place in the
+                    # whole function to meet a full disk, and it was the one
+                    # branch left leaving a truncated file at the library
+                    # filename. Fixing only the two branches that were
+                    # reported would have been the same "fix the instance,
+                    # miss the class" mistake this area keeps producing.
+                    try:
+                        shutil.copy(old, dest)
+                    except Exception:
+                        _discard_partial_destination(old, dest)
+                        raise
                     old_link = '%s.link' % sp(old)
                     try:
                         symlink(dest, old_link)
