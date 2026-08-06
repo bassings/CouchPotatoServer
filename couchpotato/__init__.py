@@ -301,7 +301,24 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         form_password_md5 = md5(form_password)
 
         api_key_val = None
-        if (form.get('username') == username or not username) and (check_password(form_password_md5, password) or not password):
+        # `password and ...`, NOT `... or not password`.
+        #
+        # The old spelling short-circuited the entire credential check to True
+        # whenever no password was configured, so ANY submitted credentials
+        # were accepted and a valid `user` cookie -- the api_key itself -- was
+        # written to the browser. Not merely a UI bypass: that cookie is the
+        # credential the whole API authenticates with.
+        #
+        # A blank password already means `get_current_user` returns True and
+        # the instance is open, so refusing the login here costs nobody a
+        # session they needed. What it closes is the state PR 2 introduces:
+        # `auth_required` ON with no password set, one click away in the
+        # settings UI. That instance LOOKS protected -- there is a login page,
+        # it asks for credentials, it refuses nothing -- and admits everyone.
+        # A door locked in appearance only is worse than an open one, because
+        # it stops the operator looking for the lock.
+        if password and (form.get('username') == username or not username) \
+                and check_password(form_password_md5, password):
             api_key_val = Env.setting('api_key')
             if password and is_legacy_md5_hash(password):
                 Env.setting('password', value=hash_password(form_password_md5))
