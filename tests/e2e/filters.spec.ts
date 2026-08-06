@@ -79,16 +79,24 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have status "active" (wanted)
+    // All visible cards must be 'active'. Assert the population is non-empty
+    // FIRST: `for (let i = 0; i < Math.min(count, 5); i++)` runs zero times on
+    // an empty grid, and the inner `if (status)` skipped silently when the
+    // attribute was absent -- so this test asserted nothing at all whenever
+    // the filter hid everything, which is the regression it is named for.
+    // check_test_traps' Rule 6 cannot see an iteration-count guard, only an
+    // `if`, so nothing flagged it either.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-    const count = await visibleCards.count();
-    
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const status = await visibleCards.nth(i).getAttribute('data-status');
-      if (status) {
-        expect(status).toBe('active');
-      }
-    }
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeGreaterThan(0);
+
+    const statuses = await visibleCards.evaluateAll((cards) =>
+      cards.map((c) => c.getAttribute('data-status')),
+    );
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses).not.toContain(null);
+    expect(new Set(statuses)).toEqual(new Set(['active']));
   });
 
   test('clicking Available filter should filter movies', async ({ page }) => {
@@ -101,16 +109,21 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have data-has-releases="true" (has releases or downloading)
+    // Same shape, same fix as the Wanted case above. The seed creates one
+    // movie with a done release (DONE_RELEASE_MOVIE_ID), so Available is
+    // non-empty by construction and an empty result is a regression, not a
+    // reason to assert nothing.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-    const count = await visibleCards.count();
-    
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const hasReleases = await visibleCards.nth(i).getAttribute('data-has-releases');
-      if (hasReleases !== null) {
-        expect(hasReleases).toBe('true');
-      }
-    }
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeGreaterThan(0);
+
+    const flags = await visibleCards.evaluateAll((cards) =>
+      cards.map((c) => c.getAttribute('data-has-releases')),
+    );
+    expect(flags.length).toBeGreaterThan(0);
+    expect(flags).not.toContain(null);
+    expect(new Set(flags)).toEqual(new Set(['true']));
   });
 
   test('clicking All should show all movies', async ({ page }) => {

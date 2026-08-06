@@ -88,7 +88,18 @@ class MoverMixin:
             elif move_type == 'copy':
                 log.info('Copying "%s" to "%s"', old, dest)
                 try:
-                    shutil.copy(old, dest)
+                    # copyfile, NOT copy. `shutil.copy` is copyfile+copymode,
+                    # and when the bytes land but the chmod fails -- measured
+                    # on a mount that refuses chmod, as some FUSE and CIFS
+                    # setups do -- a COMPLETE destination is left behind. The
+                    # cleanup below then correctly refuses to remove it (never
+                    # discard a complete copy), and the `lexists` guard blocks
+                    # every retry for ever: the same permanent poisoning the
+                    # cleanup exists to remove, reached by a different door.
+                    # moveFile sets the permission itself a few lines later
+                    # and already treats that failure as non-fatal, so
+                    # copymode was buying nothing here.
+                    shutil.copyfile(old, dest)
                 except Exception:
                     _discard_partial_destination(old, dest)
                     raise
@@ -131,7 +142,8 @@ class MoverMixin:
                     # reported would have been the same "fix the instance,
                     # miss the class" mistake this area keeps producing.
                     try:
-                        shutil.copy(old, dest)
+                        # copyfile, not copy: see the `copy` branch above.
+                        shutil.copyfile(old, dest)
                     except Exception:
                         _discard_partial_destination(old, dest)
                         raise

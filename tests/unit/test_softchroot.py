@@ -121,7 +121,11 @@ class SoftChrootEnabledTest(TestCase):
 
 
 class SoftChrootTraversal(TestCase):
-    """`chroot2abs` must not let a caller out of the chroot.
+    """`chroot2abs` must not let a caller traverse out of the chroot with `..`.
+
+    LEXICAL containment only: a symlinked directory INSIDE the jail still
+    reaches its target, which is accepted and recorded in
+    docs/technical-debt.md. This class pins the `..` half.
 
     Reachable only since the FileBrowser `map`/`len` repair: before it, every
     chroot-enabled call to `FileBrowser.view()` died with `TypeError: object of
@@ -196,11 +200,16 @@ class SoftChrootUnnormalisedSetting(TestCase):
 
         tmp = os.path.realpath(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, tmp, True)
-        if True:
+        if True:  # placeholder-block, keeps the diff readable
             jail = os.path.join(tmp, 'jail')
             os.mkdir(jail)
             os.mkdir(os.path.join(jail, 'movies'))
 
+            # `jail + '/'` and `jail + '//'` were already handled by the old
+            # rstrip, so they are inert as guards and kept only as controls.
+            # The load-bearing entries are the interior `/./`, the `..`
+            # round-trip, and the relative forms, each of which reds without
+            # the realpath in `initialize`.
             spellings = [
                 jail,
                 jail + os.path.sep,
@@ -208,7 +217,21 @@ class SoftChrootUnnormalisedSetting(TestCase):
                 jail + '/./',
                 os.path.join(tmp, '.', 'jail'),
                 os.path.join(tmp, 'jail', '..', 'jail'),
+                os.path.relpath(jail, os.getcwd()),
             ]
+
+            # `/` is its own spelling and its own trap: without the rstrip,
+            # `abspath('/') + sep` is '//', which is_root_abs and is_subdir
+            # then both reject -- an operator with `soft_chroot = /` gets a
+            # browser that refuses every path. This function has now been
+            # broken twice in exactly that fail-closed shape, so the root case
+            # is pinned separately rather than trusted.
+            root_chroot = SoftChroot()
+            root_chroot.initialize(os.path.sep)
+            self.assertEqual(root_chroot.get_chroot(), os.path.sep)
+            self.assertTrue(root_chroot.is_root_abs(os.path.sep))
+            self.assertTrue(root_chroot.is_subdir('/etc'))
+            self.assertEqual(root_chroot.chroot2abs('/etc'), '/etc')
             for spelling in spellings:
                 assert os.path.isdir(spelling), spelling
                 sc = self._chroot(tmp, spelling)

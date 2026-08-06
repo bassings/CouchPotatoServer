@@ -39,12 +39,22 @@ incidentally passing:
    already mutexes each API call. That test was measuring SQLite's internal
    mutex, not this module's lock.
 
-Which also explains the shape of the defect: the C-level mutex protects a
-single API call, but `Connection.execute()` binds, steps and resets a
-statement across several of them, so two threads sharing the connection
-reset each other's statement mid-flight. That is what surfaces as
-`InterfaceError`, and it is why a read-vs-read hammer provokes it readily
-while a read-vs-write one does not.
+Which also explains the shape of the defect, and the shared object is more
+specific than "the connection". The C-level mutex protects a single API call,
+but `Connection.execute()` binds, steps and resets a prepared statement across
+several of them -- and sqlite3 keeps a per-connection LRU **statement cache**,
+so two threads running the SAME SQL text are handed the SAME prepared
+statement and reset each other's mid-flight.
+
+Measured, one connection, 5 x 2000 executions per configuration: two threads
+on the same SQL produced 334 `InterfaceError`s; two threads on DIFFERENT SQL
+produced 0; one reader against one writer produced 0; and the same-SQL case
+with `cached_statements=0` produced 0.
+
+That is why a read-vs-read hammer provokes it readily -- `get()` issues one
+identical SELECT from every thread -- while read-vs-write raises nothing even
+with no lock at all, which is precisely why no behavioural test for the write
+path is achievable here.
 
 So the write path is covered **by construction, not by a test**: every
 write method carries the same `@_synchronised` decorator, on the same lock,
@@ -52,7 +62,6 @@ as every read. If that ever stops being true, the two tests below still
 cover reads, and this note is the record that nothing covers the rest.
 """
 import threading
-import time
 
 import pytest
 

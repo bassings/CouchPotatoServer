@@ -141,14 +141,29 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         # leaves the operator with a migration that stops dead, an empty
         # destination, and no idea which film to fix. Name the collision.
         adapter.close()
+        collision = _describe_identifier_collision(cleaned)
+        # Only advise touching the SOURCE when the clash is actually in it.
+        # If the other claimant is a row already in the destination -- which
+        # happens on a re-run where a document's _id changed but its imdb id
+        # did not -- then "delete one of the two documents" points the
+        # operator at the CodernityDB source, which is their only rollback
+        # copy. That is a destructive instruction given on a false premise.
+        if collision.startswith('Duplicate'):
+            remedy = ('Resolve the duplicate in the source (or delete one of '
+                      'the two documents) and run the migration again.')
+        else:
+            remedy = ('The source holds no duplicate, so the other claimant is '
+                      'already in the destination -- most likely a previous '
+                      'run whose document _id changed while its identifier did '
+                      'not. Point --dest at a fresh path, or remove the stale '
+                      'row from the DESTINATION. Do NOT edit the source: it is '
+                      'your only rollback copy.')
         raise RuntimeError(
             'Migration aborted: %s\n%s\n\n'
             'No documents were written to %s. The file itself was created, and '
             'anything already in it is unchanged -- do NOT delete it without '
             'looking first. The CodernityDB source is untouched, so nothing is '
-            'lost. Resolve the duplicate in the source (or delete one of the '
-            'two documents) and run the migration again.'
-            % (exc, _describe_identifier_collision(cleaned), dest_path)
+            'lost. %s' % (exc, collision, dest_path, remedy)
         ) from exc
 
     if verbose:

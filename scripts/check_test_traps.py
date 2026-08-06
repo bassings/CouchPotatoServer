@@ -892,9 +892,20 @@ HOISTED_ASSIGNMENT_RE = re.compile(
 #   * a destructured binding         const { count } = await probe();
 #   * `test.skip(total === 0, '...')` -- a skip, not an if
 #
-# None is currently used in tests/e2e/**. Closing them properly needs a JS
-# parser rather than more regexes, which is the point at which this rule
-# should be replaced by an ESLint plugin rather than extended again.
+# None of THOSE is currently used in tests/e2e/**. But the list above is
+# `if`-shaped only, and that is not the whole class. Review found the rule
+# silent on ITERATION-COUNT guards, and one was live in the tree at the time:
+#
+#       for (let i = 0; i < Math.min(count, 5); i++) { ... expect(...) }
+#
+# runs zero times when `count` is 0, so every assertion inside it is skipped
+# on exactly the input the test exists to catch. `while`, `switch` and a
+# multi-line `if (` condition are silent for the same reason. Those instances
+# were fixed by hand; the rule still cannot see the shape.
+#
+# Closing any of this properly needs a JS parser rather than more regexes,
+# which is the point at which this rule should become an ESLint plugin rather
+# than be extended again.
 
 # A trailing comment naming why this specific guard cannot be made
 # unconditional. Must be on the SAME line as the `if` (where every opt-out
@@ -958,6 +969,28 @@ def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
     )
 
 
+def _end_of_enclosing_block(cleaned_lines: list[str], start_idx: int) -> int:
+    """First line at or below `start_idx`'s indentation, i.e. where its block ends.
+
+    Used only for guards with no `{`. Approximate by design: this is a regex
+    checker, not a parser, and the alternative (the brace matcher) was scanning
+    to end of file and producing false positives.
+    """
+    indent = len(cleaned_lines[start_idx]) - len(cleaned_lines[start_idx].lstrip())
+    for idx in range(start_idx + 1, len(cleaned_lines)):
+        line = cleaned_lines[idx]
+        if not line.strip():
+            continue
+        # STRICTLY less, not <=. An early return affects every statement that
+        # follows it at the SAME level, which is the whole point of the shape;
+        # stopping at the first sibling would find an empty body and flag
+        # nothing. Dedenting past the guard is where the enclosing block ends,
+        # and that is what keeps a sibling `test(...)` out of the body.
+        if len(line) - len(line.lstrip()) < indent:
+            return idx
+    return len(cleaned_lines)
+
+
 def _find_matching_brace(cleaned_lines: list[str], start_idx: int) -> int:
     """Index of the line whose `}` closes the `{` ending ``cleaned_lines[start_idx]``.
 
@@ -1008,7 +1041,16 @@ def check_e2e_spec_guards(path: Path, text: str):
         if not _is_guard_if_line(line, hoisted_names):
             continue
 
-        close_idx = _find_matching_brace(cleaned_lines, idx)
+        if line.rstrip().endswith("{"):
+            close_idx = _find_matching_brace(cleaned_lines, idx)
+        else:
+            # A non-braced guard (`if (cond) return;`) has no block, so the
+            # brace matcher would scan to end of file and pick up an unrelated
+            # test's `expect(` -- flagging a teardown helper that asserts
+            # nothing, and teaching people to silence the rule with an opt-out.
+            # The affected region is the rest of the ENCLOSING block, which
+            # indentation approximates cheaply and without a JS parser.
+            close_idx = _end_of_enclosing_block(cleaned_lines, idx)
         body = "\n".join(cleaned_lines[idx + 1:close_idx])
         if not EXPECT_CALL_RE.search(body):
             continue

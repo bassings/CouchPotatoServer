@@ -79,8 +79,24 @@ class PrivacyFilter(logging.Filter):
             msg = re.sub(r'(\?%s=)[^\&]+' % replace, r'?%s=xxx' % replace, msg)
             msg = re.sub(r'(&%s=)[^\&]+' % replace, r'&%s=xxx' % replace, msg)
 
-        # Replace api key
-        if self._api_key is None:
+        # Replace api key.
+        #
+        # Re-read while it is FALSY, not just while it is None. The old
+        # `is None` guard cached an empty string permanently, so a single log
+        # record reaching a handler before the key was generated disabled this
+        # redaction for the life of the process. Measured: a filter whose first
+        # record arrives pre-key then emits the key verbatim, while one whose
+        # first record arrives after it redacts correctly.
+        #
+        # No live gap today -- runner.py's only log calls between setup_logging
+        # and key generation are error paths that return immediately -- but the
+        # window is `warnings.showwarning = customwarn` followed by importing
+        # create_app, so one dependency deprecation warning would open it. The
+        # E2E harness now attaches a console handler and CI uploads that stream
+        # as an artefact, so this redaction is load-bearing in a way it was not
+        # when the caching was written. One dict lookup per record is a fair
+        # price for removing the failure mode entirely.
+        if not self._api_key:
             try:
                 from couchpotato.environment import Env
                 self._api_key = Env.setting('api_key') or ''

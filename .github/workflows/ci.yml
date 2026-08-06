@@ -282,15 +282,27 @@ jobs:
         # reporter only copies Playwright ATTACHMENTS into
         # playwright-report/, so a file the fixture writes directly was not
         # carried across, and the one artefact that can explain a mid-run
-        # server death died with the runner -- on the failure a reviewer
-        # meets most often, given the residual flake in
-        # docs/technical-debt.md.
+        # server death died with the runner.
         #
-        # Checked before adding it: PrivacyFilter (couchpotato/core/logger.py)
-        # redacts the api_key, verified by grepping a real captured log for
-        # 32-char hex tokens (none) and for `api_key=` (all `xxx`). It does
-        # NOT redact filesystem paths, but on a runner those are
-        # /home/runner/work/..., not anyone's home directory.
+        # Checked before adding it, and THIS IS THE WHOLE OF WHAT IS CHECKED.
+        # PrivacyFilter (couchpotato/core/logger.py) is attached to the console
+        # and file HANDLERS, so it only rewrites records that pass through
+        # them: raw stderr (an interpreter traceback, a bare print) does not.
+        # It replaces the configured api_key wherever it appears, and the
+        # values of api/apikey/api_key/password/username/h/uid/key/passkey when
+        # they appear as `?name=` or `&name=` query parameters. Nothing else.
+        # Request paths, which embed the api_key, never reach the log at all:
+        # runner.py passes access_log=False. Verified against a real captured
+        # log: no 32-char hex token, every `api_key=` reads `xxx`, no request
+        # lines.
+        #
+        # NOT covered: filesystem paths (on a runner those are
+        # /home/runner/work/..., not anyone's home directory), credentials in
+        # URL userinfo, and any secret in a URL path segment other than the
+        # api_key. The reason this is safe is that the E2E instance holds
+        # seeded fixture data and no third-party credentials, NOT that the
+        # filter is comprehensive. If that ever stops being true, this upload
+        # is the thing to revisit first.
         path: |
           playwright-report/
           test-results/
@@ -346,11 +358,21 @@ jobs:
       if: always()
       with:
         name: accessibility-report
-        # See the ui-e2e-tests job's upload step for why test-results/ is
-        # included and what was checked before including it.
-        path: |
-          playwright-report/
-          test-results/
+        path: playwright-report/
+        retention-days: 7
+
+    # test-results/ (which carries the application log) only on failure, NOT
+    # on always(). A green run's server log has no diagnostic value, artefacts
+    # on a public repo are downloadable by anyone who can see the run, and
+    # always() fires on cancellation too. The axe HTML report keeps its
+    # always() upload above; see the ui-e2e-tests job for the full scope of
+    # what is and is not redacted.
+    - name: Upload accessibility server logs
+      uses: actions/upload-artifact@v7
+      if: failure()
+      with:
+        name: accessibility-server-logs
+        path: test-results/
         retention-days: 7
 
   # Summary job for branch protection — requires all test matrix jobs to pass

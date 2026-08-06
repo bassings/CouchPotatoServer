@@ -40,7 +40,9 @@ class SoftChroot:
                 raise SoftChrootInitError(2, 'SOFT-CHROOT is requested, but the folder doesn\'t exist', orig_chdir)
 
             self.enabled = True
-            # normpath, not just rstrip. `os.path.isdir` happily accepts
+            # realpath, not just rstrip and not merely normpath.
+            #
+            # `os.path.isdir` happily accepts
             # `/srv//media`, `/srv/./media` and `/srv/x/../media`, so an
             # operator's config.ini can hold any of them and the chroot
             # initialises cleanly. Once chroot2abs started normalising ITS
@@ -51,7 +53,37 @@ class SoftChroot:
             # which was not true. Fails closed, so it was never a hole; it
             # was a total functional break of the feature with a misleading
             # diagnosis, introduced by the traversal fix and found at review.
-            self.chdir = os.path.normpath(chdir).rstrip(os.path.sep) + os.path.sep
+            #
+            # normpath alone left two more spellings broken the same way.
+            # Measured: a chroot of `./` normalises to `.`, so every absolute
+            # path the browser hands back is then refused, and a relative
+            # chroot works only until the process cwd moves. abspath pins both
+            # at startup and normalises on the way (it calls normpath), so the
+            # containment comparison in chroot2abs has a normalised prefix.
+            #
+            # abspath rather than realpath, deliberately. realpath would also
+            # make the containment root the same object `isdir` validated,
+            # which is the stricter choice -- but it REWRITES a symlinked
+            # chroot into its target, and an operator whose library lives at a
+            # symlinked path would find get_chroot(), and therefore every
+            # directory value the settings UI shows them, silently changed
+            # underneath. This is a safety-net PR and I have already
+            # introduced one regression in this function by being clever.
+            #
+            # Two limits follow, both lexical, both recorded in
+            # docs/technical-debt.md rather than left to be rediscovered: a
+            # symlinked directory INSIDE the jail reaches its target, and a
+            # chroot setting containing `..` AFTER a symlink component (e.g.
+            # `srv/link/..`) resolves to a lexical ancestor rather than the
+            # directory `isdir` accepted. Both need operator-authored input;
+            # neither is reachable from the browse endpoint.
+            # The rstrip is NOT redundant: abspath('/') is '/', and without it
+            # chdir becomes '//', which is_root_abs and is_subdir both then
+            # reject -- an operator with `soft_chroot = /` gets a browser that
+            # refuses every path. That is the third fail-closed break of this
+            # one function on this branch, so the root case is pinned in
+            # SoftChrootUnnormalisedSetting rather than trusted to reading.
+            self.chdir = os.path.abspath(chdir).rstrip(os.path.sep) + os.path.sep
         else:
             self.enabled = False
 
@@ -119,7 +151,8 @@ class SoftChroot:
         if not path.startswith(os.path.sep):
             path = os.path.sep + path
 
-        # Normalise, then refuse anything that lands outside. `path` is
+        # Normalise, then refuse anything that lands outside the LEXICAL
+        # chroot (see initialize: symlinks below the jail are not resolved). `path` is
         # attacker-influenced: it arrives on the directory.list query string
         # and on settings values. Plain concatenation let '..' segments
         # through, and nothing downstream caught them by itself -- is_subdir

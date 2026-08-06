@@ -1,5 +1,5 @@
 """Pins the current behaviour of `MoverMixin.moveFile`
-(couchpotato/core/plugins/renamer/mover.py:16-78) -- the function that moves,
+(`MoverMixin.moveFile`) -- the function that moves,
 copies, hardlinks or symlinks the user's completed download into the library.
 It had no real tests before this file: the only existing coverage
 (`test_renamer_cleanup_safety.py`) monkeypatches `moveFile` away entirely.
@@ -192,7 +192,7 @@ class TestHappyPaths:
         """AC-QA-5. file_action and default_file_action are set to DIFFERENT
         actions ('copy' vs 'move'); use_default=True must run 'move'. Asserted
         by observing the filesystem, not a mock's call args.
-        Break: delete the `if use_default:` block at :23-24.
+        Break: delete `moveFile`'s `if use_default:` block.
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -220,7 +220,7 @@ class TestFailedMoveRecovery:
         same size as the source -- e.g. a copy phase that completed writing
         before its final step failed -- is treated as 'the move actually
         succeeded', and the source is deleted.
-        Break: os.unlink(old) at :34 -> pass.
+        Break: the default-move branch's `os.unlink(old)` -> pass.
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -265,8 +265,8 @@ class TestFailedMoveRecovery:
     def test_failed_move_with_a_short_destination_restores_the_source_and_removes_the_partial_file(self, tmp_path, monkeypatch):
         """AC-DATA-5 / AC-QA-9. Source survives byte-identical, the partial
         destination is removed, the exception propagates.
-        Break, two directions: os.unlink(dest) at :37 -> pass; delete `raise`
-        at :38.
+        Break, two directions: the default-move branch's `os.unlink(dest)` -> pass; delete `raise`
+        in the default-move branch.
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
         dest = tmp_path / 'library/movie.mkv'
@@ -287,12 +287,12 @@ class TestFailedMoveRecovery:
 
     def test_failed_move_when_the_source_vanished_mid_flight_never_touches_the_destination(self, tmp_path, monkeypatch):
         """AC-DATA-6. Regression pin against 'hardening' os.path.getsize(old)
-        at mover.py:32. Simulates shutil.move's real fallback: the copy phase
+        in the default-move branch. Simulates shutil.move's real fallback: the copy phase
         completes (dest gets full, correct content), but its own final
         unlink(src) then fails because `old` was ALREADY removed by something
         else (a race). Today, the resulting FileNotFoundError from
         `os.path.getsize(old)` propagates BEFORE execution ever reaches
-        os.unlink(dest) at :37 -- that FileNotFoundError is the only thing
+        the default-move branch's `os.unlink(dest)` -- that FileNotFoundError is the only thing
         standing between this state and the else branch deleting the last
         remaining copy.
         """
@@ -349,7 +349,7 @@ class TestLinkFallback:
         that OS-level refusal; the copy, symlink, unlink and rename that
         follow are all real), moveFile falls back to a real copy plus a
         symlink that takes over `old`'s name.
-        Break: delete os.rename(old_link, old) at :64 -- no stray `<old>.link`
+        Break: delete `os.replace(old_link, old)` in the link fallback -- no stray `<old>.link`
         must survive.
         """
         old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
@@ -401,13 +401,13 @@ class TestLinkFallback:
             lambda src, dst: (_ for _ in ()).throw(OSError('simulated: cannot hardlink')),
         )
 
-        _real_copy = shutil.copy
+        _real_copy = shutil.copyfile
 
         def _fake_copy(src, dst):
             Path(dst).write_bytes(DOWNLOAD[:1024])  # real, truncated write
             raise OSError('simulated: interrupted copy (disk full)')
 
-        monkeypatch.setattr(shutil, 'copy', _fake_copy)
+        monkeypatch.setattr(shutil, 'copyfile', _fake_copy)
         plugin = _mover(monkeypatch, file_action='link')
 
         with pytest.raises(OSError):
@@ -422,7 +422,7 @@ class TestLinkFallback:
 
         # And the point of removing it: the retry is now possible. Restore a
         # working copy and drive it again.
-        monkeypatch.setattr(shutil, 'copy', _real_copy)
+        monkeypatch.setattr(shutil, 'copyfile', _real_copy)
         assert _move(plugin, tmp_path, str(old), str(dest)) is True
         assert dest.read_bytes() == DOWNLOAD
 
@@ -495,7 +495,7 @@ class TestPermissions:
 class TestT18DataLossFixes:
 
     def test_fix_a_a_directory_at_the_destination_is_refused_and_both_sides_are_untouched(self, tmp_path, monkeypatch):
-        """T1.8 fix (a), mover.py:19. FIXED: the top-of-function guard now
+        """T1.8 fix (a), `moveFile`'s `lexists` guard. FIXED: the top-of-function guard now
         tests os.path.lexists(dest) alone, so an existing DIRECTORY at `dest`
         is refused exactly like an existing file always was -- it no longer
         falls through to shutil.move, which used to place the file INSIDE the
@@ -521,7 +521,7 @@ class TestT18DataLossFixes:
         assert list(dest_dir.iterdir()) == [], 'nothing must land inside the directory'
 
     def test_fix_b_a_failed_replace_after_hardlink_fallback_leaves_old_intact_with_no_stray_link(self, tmp_path, monkeypatch):
-        """T1.8 fix (b), mover.py:60-69. FIXED: `old` is never unlinked ahead
+        """T1.8 fix (b), the link fallback. FIXED: `old` is never unlinked ahead
         of time -- `os.replace(old_link, old)` is atomic, so it either lands
         as the symlink or leaves `old` exactly as it was. When it fails (a
         real, reachable failure mode: another process holding `old_link`
@@ -571,7 +571,7 @@ class TestT18DataLossFixes:
         assert dest.read_bytes() == DOWNLOAD
 
     def test_fix_c_symlink_reversed_raises_when_the_move_fails_instead_of_reporting_success(self, tmp_path, monkeypatch):
-        """T1.8 fix (c), mover.py:42-52. FIXED: the initial shutil.move in the
+        """T1.8 fix (c), `moveFile`'s `symlink_reversed` branch. FIXED: the initial shutil.move in the
         symlink_reversed branch is no longer wrapped in a swallowing
         try/except -- a failed move now propagates out of moveFile entirely
         (only the best-effort symlink-back stays swallowed). `_moveRenamedFiles`
@@ -610,7 +610,7 @@ class TestT18DataLossFixes:
         and the scanner attached the truncated file to the movie.
 
         The default-move branch has cleaned this up since before T1.8
-        (mover.py:36-37); the symlink_reversed and copy branches did not.
+        (the default-move branch); symlink_reversed, copy and the link fallback did not.
 
         Removing the partial cannot lose data: the source is intact in every
         one of these cases, so the only copy being deleted is the one that is
@@ -663,6 +663,41 @@ class TestT18DataLossFixes:
         assert Path(old).read_bytes() == DOWNLOAD, 'source must survive'
         assert dest.read_bytes() == DOWNLOAD, 'a complete copy must never be discarded'
 
+    def test_a_copy_whose_chmod_fails_still_leaves_a_usable_library(self, tmp_path, monkeypatch):
+        """`shutil.copy` is copyfile + copymode, and the chmod can fail alone.
+
+        Measured at review on a mount that refuses chmod (some FUSE and CIFS
+        setups do): `copyfile` completed, `copymode` raised, and a COMPLETE
+        destination was left. `_discard_partial_destination` then correctly
+        refused to remove it -- never discard a complete copy -- and the
+        `lexists` guard blocked every retry for ever. The same permanent
+        poisoning the cleanup exists to remove, reached by a different door,
+        in the shipping-default branch.
+
+        `moveFile` sets the permission itself immediately afterwards and
+        already treats THAT failure as non-fatal, so copymode was buying
+        nothing. Using `copyfile` means a chmod-refusing mount no longer
+        breaks the rename at all.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        real_chmod = os.chmod
+
+        def _refusing_chmod(path, mode, *a, **kw):
+            # Only the destination: the fixture's own setup must still work.
+            if str(path) == str(dest):
+                raise PermissionError('simulated: chmod not supported on this mount')
+            return real_chmod(path, mode, *a, **kw)
+
+        monkeypatch.setattr(os, 'chmod', _refusing_chmod)
+        plugin = _mover(monkeypatch, file_action='copy')
+
+        assert _move(plugin, tmp_path, str(old), str(dest)) is True
+        assert dest.read_bytes() == DOWNLOAD, 'the copy must land despite the chmod'
+        assert Path(old).read_bytes() == DOWNLOAD, 'copy must not remove the source'
+
     def test_a_partially_written_copy_is_removed_too(self, tmp_path, monkeypatch):
         """The `copy` file_action has the same shape and the same gap.
 
@@ -678,7 +713,7 @@ class TestT18DataLossFixes:
             Path(dst).write_bytes(DOWNLOAD[:400])
             raise OSError('simulated: disk full part-way through the copy')
 
-        monkeypatch.setattr(shutil, 'copy', _partial_copy)
+        monkeypatch.setattr(shutil, 'copyfile', _partial_copy)
         plugin = _mover(monkeypatch, file_action='copy')
 
         with pytest.raises(OSError):
@@ -837,7 +872,7 @@ class TestCallerLevelDataLossGuards:
 @pytest.mark.skipif(
     os.name != 'nt',
     reason=(
-        "Windows-only branch (mover.py:70-71): os.popen('icacls \"' + dest + "
+        "Windows-only branch (moveFile's os.name == 'nt' check): os.popen('icacls \"' + dest + "
         '\'" * /reset /T\') builds a shell command by string concatenation '
         'from `dest`, which can carry indexer-supplied release names -- a '
         'real command-injection surface on Windows with ntfs_permission '

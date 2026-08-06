@@ -307,9 +307,14 @@ provider configured and unreachable, every database read in the process stalls
 for up to 30 s per provider, and the container healthcheck can trip a restart
 that kills the transaction.
 
-Nothing is lost when it does (single connection, uncommitted, rolled back on
-close), so this is availability rather than recoverability, and review found no
-deadlock: `media_lock` is always taken before the connection lock, always for
+Nothing is lost when it does (verified: SIGKILL mid-transaction leaves
+`PRAGMA integrity_check = ok`, an empty `foreign_key_check` and zero of the
+in-flight documents committed), so this is availability rather than
+recoverability. **The symptom on-call will actually be handed** is worth naming
+so nobody chases it as a phantom: the transaction in question wraps
+`media.delete`, so a healthcheck restart mid-delete rolls the delete back and
+the user sees a movie they deleted reappear. That is correct behaviour, not
+data loss. Review found no deadlock: `media_lock` is always taken before the connection lock, always for
 the same key, and nothing inside joins another thread.
 
 `fireEventAsync` was tried and reverted: it breaks three tests that assert the
@@ -319,6 +324,28 @@ I/O inside a database transaction** -- hoist the `media.restatus` calls out of
 the `with transaction:` block, which is what the sibling `notify.frontend` call
 already does. That belongs with the per-thread-connection work, not in a safety
 net PR.
+
+**The soft chroot is a LEXICAL boundary, not a real one.** `chroot2abs`
+normalises and refuses `..` escapes, and `initialize` now absolutises the
+chroot root, but neither resolves symlinks BELOW the jail: a symlinked
+directory inside the chroot reaches its target, so `directory.list` can
+enumerate outside it. Accepted, because creating such a link needs filesystem
+access to the jail, which is more privilege than the browse endpoint grants,
+and because the class docstring has always said "since it is not real chroot".
+Recorded here because it was accepted verbally at the second review round and
+**nothing was written down** -- an accepted risk with no record is
+indistinguishable from one nobody noticed, and the next person to read
+`softchroot.py` would reasonably conclude the boundary is real. Closing it
+means comparing `os.path.realpath` on both sides, which is a behaviour change
+(it rewrites a symlinked chroot into its target, changing every directory value
+the settings UI shows) and wants its own criterion.
+
+Related and same class: a chroot setting containing `..` AFTER a symlink
+component (`srv/link/..` where `srv/link` points elsewhere) passes
+`os.path.isdir`, which follows symlinks, while `abspath` resolves it lexically
+to `srv/` -- a lexical ancestor, strictly wider than the directory the operator
+configured. `realpath` at `initialize` would close both; it was not taken for
+the reason above.
 
 **`compact()` now blocks every read for the duration of a VACUUM** (weekly, per
 `core/database.py`). Correct as far as it goes, since it previously took no lock

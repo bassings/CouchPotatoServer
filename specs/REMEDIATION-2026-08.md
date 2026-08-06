@@ -158,9 +158,33 @@ pass a content test.
 - **AC-DATA-9 / AC-QA-13** `link` fallback, copy succeeds: `old` is a symlink
   resolving to `dest`, **no stray `<old>.link`**. *Break:* delete
   `os.rename(old_link, old)` at `:64`.
-- **AC-DATA-10** `link` fallback, copy fails part-way: source survives, a
+- **AC-DATA-10** ~~`link` fallback, copy fails part-way: source survives, a
   truncated file sits at `dest`, and a **second** call raises `Destination
-  already exists`: the destination-poisoning recorded as known behaviour.
+  already exists`: the destination-poisoning recorded as known behaviour.~~
+  **INVERTED at the second review round, 2026-08-06.** Accepting the
+  poisoning was itself the planning error. `link` is the shipping default and
+  its hardlink fails whenever the download directory and the library are on
+  different filesystems, so this is the likeliest branch in the function to
+  meet a full disk -- and the accepted outcome was a truncated file at the
+  library filename that `_moveRenamedFiles` then skipped on every subsequent
+  run, with the scanner attaching it to the movie. The criterion now reads:
+  `link` fallback, copy fails part-way: source survives, the partial `dest`
+  is **removed**, and a **second call succeeds**. *Break:* drop the
+  `_discard_partial_destination` call from the fallback.
+  Left visible rather than rewritten silently, because a stateless reviewer
+  reading the old text would have filed the correct behaviour as a
+  regression -- which is exactly the mechanism that produced the
+  fix-the-instance-miss-the-class history this PR keeps hitting.
+- **AC-DATA-10b** *(added at the same round)* **Every branch of `moveFile`
+  that writes bytes to `dest` removes a SHORT destination on failure, and
+  never removes an equal-size one.** One helper, enumerated call sites: the
+  default `move`, `copy`, `symlink_reversed`, and the `link` fallback. The
+  missing call site in round 2 was missed precisely because no criterion
+  enumerated the branches. *Break:* remove any one call; its branch's test
+  must red. Also: those branches use `shutil.copyfile`, not `shutil.copy` --
+  `copy` is copyfile+copymode, and a chmod that fails alone leaves a
+  COMPLETE destination, which the helper correctly refuses to remove and the
+  `lexists` guard then blocks for ever.
 - **AC-QA-14** `link` with both `link()` and `symlink()` failing: degrades to a
   plain copy, both paths exist, returns `True`.
 - **AC-QA-18** `os.chmod` raising is swallowed; the move still returns `True`
@@ -901,6 +925,17 @@ list is how the harness improves rather than merely runs:
     caught only because a lens ran a mutation the author had not. The criterion
     should say **who** runs the mutation and that the result is recorded, not
     just that it happened.
+21. **A shared helper on the most destructive path shipped with no AC.**
+    `_discard_partial_destination` has three call sites on the renamer's
+    delete path and was verified only by tests written after it. Gap 17 listed
+    three review-driven production changes with no criterion and missed this
+    one, which is the fourth and the most dangerous. Now `AC-DATA-10b`.
+22. **A criterion can be left pinning the behaviour its own fix inverted.**
+    `AC-DATA-10` accepted destination-poisoning as known behaviour; round 2
+    fixed the code and the test and left the criterion saying the opposite.
+    The spec is what the review cycle verifies against, so a later round would
+    have filed the fix as a regression. **When a review finding inverts an
+    AC, amending the AC is part of the fix, not follow-up.**
 
 **PR 1 acceptance:** `make verify` green **and `make check-secrets` green**;
 every new test proven load-bearing (break, watch fail, `git diff`-confirm,
