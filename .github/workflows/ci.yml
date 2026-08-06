@@ -403,24 +403,31 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
-    # pull: true is load-bearing for the Trivy step below, not a tidy-up.
+    # This job SCANS THE IMAGE, so the image it builds must be a function of
+    # the repo and nothing else. It is built without the layer cache on
+    # purpose; the ~2 extra minutes buy a deterministic security verdict.
     #
-    # `FROM python:3.14-alpine` is a floating tag, and with a GHA layer cache
-    # the scanned artefact stops being a function of the repo and becomes a
-    # function of whatever the cache happens to hold. Measured on PR #225: CI
+    # Measured on PR #225, and the reason this is not merely tidy-up. CI
     # reported two fixable HIGHs -- setuptools 70.3.0 (CVE-2025-47273) and
-    # msgpack 1.1.2 (GHSA-6v7p-g79w-8964) -- while a fresh local build of the
-    # same commit had NEITHER PACKAGE INSTALLED AT ALL, and neither appears in
-    # requirements.txt. Both came from cached layers built on an older base
-    # that still bundled them; the current python:3.14-alpine ships no
-    # setuptools (verified against the pulled image).
+    # msgpack 1.1.2 (GHSA-6v7p-g79w-8964). Neither package is in
+    # requirements.txt. A `--no-cache --pull` local build of the same commit,
+    # for the same platform (linux/amd64), from the SAME base digest CI
+    # resolved (python:3.14-alpine@sha256:a1321512...88f8), contains NEITHER:
+    # `ls site-packages` reports neither, pip's own "Successfully installed"
+    # line names neither, and the container starts healthy without them.
+    # Nothing in the tree imports them.
     #
-    # So the gate was failing on packages the image no longer contains, and
-    # would equally have PASSED on a stale-but-clean cache while the live base
-    # carried a new CVE. A security gate whose verdict depends on cache state
-    # is not a gate. `pull: true` re-pulls the base every run, so a base digest
-    # change invalidates the downstream layers and the scan sees what actually
-    # ships.
+    # Adding `pull: true` alone did NOT fix it -- the build still reported
+    # `#9 COPY requirements.txt CACHED` and `#10 RUN pip install CACHED`,
+    # because the base digest was unchanged so the whole chain still matched.
+    # The cache holds layers that a clean build of the same inputs does not
+    # reproduce, and I could not account for that difference. That is precisely
+    # why the cache does not belong in front of a security scan: the verdict
+    # was not derivable from the repo.
+    #
+    # The direction it failed in was harmless -- a false positive on packages
+    # the image does not contain. The other direction ships: a stale-but-clean
+    # cache reports CLEAN while the live base carries a new CVE.
     - name: Build Docker image
       uses: docker/build-push-action@v7
       with:
@@ -428,9 +435,8 @@ jobs:
         load: true
         push: false
         pull: true
+        no-cache: true
         tags: couchpotato:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
 
     - name: Test container starts
       run: |

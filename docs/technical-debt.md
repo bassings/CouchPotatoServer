@@ -611,11 +611,26 @@ CVE, and the release would have gone out on that. `FROM python:3.14-alpine` is
 a floating tag; combined with `cache-from: type=gha`, the scanned artefact was
 a function of cache state rather than of the repo.
 
-Fixed with `pull: true` on the build step, so a base digest change invalidates
-the downstream layers. The stronger fix -- pinning the base by digest, the way
-`GITLEAKS_IMAGE` is pinned in the Makefile for exactly this reason -- is not
-taken here because nothing yet updates that digest; it wants Dependabot's
-`docker` ecosystem enabled in the same change, which is its own PR.
+`pull: true` did NOT fix it, and the attempt is worth recording. The next run
+still reported `#9 COPY requirements.txt CACHED` and `#10 RUN pip install
+CACHED`: the base digest was unchanged, so the whole layer chain still matched
+and the same two findings came back. The cache holds layers that a clean build
+of the same inputs does not reproduce -- a `--no-cache --pull` build for
+linux/amd64, from the same base digest CI resolved, contains neither package --
+**and I could not account for the difference.**
+
+That unexplained gap is the argument, not a footnote to it. A scan whose result
+cannot be derived from the repo is not measuring the repo. So the cache is gone
+from this job (`no-cache: true`, `cache-from`/`cache-to` removed), at a cost of
+roughly two minutes, and the verdict is deterministic again.
+
+The stronger fix -- pinning the base by digest, the way `GITLEAKS_IMAGE` is
+pinned in the Makefile for exactly this reason -- is still not taken here,
+because nothing would update that digest; it wants Dependabot's `docker`
+ecosystem enabled in the same change, which is its own PR. Also still open: why
+the cached layers differ from a clean build at all. If that mechanism can put
+two packages into an image, it can put other things there, and the honest
+status is that it is unexplained rather than resolved.
 
 Worth noting how this was found, because the first two diagnoses were wrong: a
 local scan came back clean and I nearly concluded the fix had worked. It had,
