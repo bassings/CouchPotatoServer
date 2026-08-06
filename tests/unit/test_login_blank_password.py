@@ -131,3 +131,60 @@ class TestConfiguredPasswordStillWorks:
         response = _client().post('/login/', data={'username': 'admin', 'password': 'wrong'})
 
         assert not _logged_in(response)
+
+
+class TestGetKeyDoesNotLeakTheApiKey:
+    """`/getkey/` had the identical `or not password` flaw, and it is worse here.
+
+    `login_post` at least issues a cookie. This endpoint returns the api_key
+    itself in a JSON body, over GET, with the credentials in the query string --
+    so the request line lands in access logs, proxy logs and browser history,
+    and an unauthenticated caller received the key outright whenever no
+    password was configured.
+
+    NOT deleted here, though the spec calls for that eventually: its only
+    referrer is `couchpotato/simple_healthcheck.py:76`, whose own removal is
+    blocked on AC-OPS-12's production grep. Closing the hole does not depend on
+    resolving that, so it is closed now and the deletion follows separately.
+    """
+
+    def test_no_password_configured_does_not_hand_out_the_api_key(self, settings):
+        from couchpotato.core.helpers.variable import md5
+
+        settings['password'] = ''
+
+        # `u` is the md5 of the username, which is not a secret -- it is
+        # whatever the operator typed, commonly `admin`, and it is displayed in
+        # the settings UI. An earlier version of this test passed `u=anything`
+        # and went green against the UNFIXED code, because the username check
+        # rejected it before the password check was ever reached. That is the
+        # incidentally-passing shape: it looked like a leak test and was
+        # measuring the wrong clause.
+        body = _client().get('/getkey/?u=%s&p=anything' % md5('admin')).json()
+
+        assert body.get('api_key') is None, (
+            'an unauthenticated GET received the api_key because no password '
+            'is configured. The credentials are in the query string, so this '
+            'is also logged wherever request lines are logged.'
+        )
+        assert body.get('success') is False
+
+    def test_the_correct_password_still_returns_the_key(self, settings):
+        from couchpotato.core.helpers.variable import hash_password, md5
+
+        settings['password'] = hash_password(md5('correct-horse'))
+
+        body = _client().get('/getkey/?u=%s&p=%s' % (md5('admin'), md5('correct-horse'))).json()
+
+        assert body.get('api_key') == 'testkey123', (
+            'the fix broke the endpoint for a correctly configured install'
+        )
+
+    def test_a_wrong_password_returns_nothing(self, settings):
+        from couchpotato.core.helpers.variable import hash_password, md5
+
+        settings['password'] = hash_password(md5('correct-horse'))
+
+        body = _client().get('/getkey/?u=%s&p=%s' % (md5('admin'), md5('wrong'))).json()
+
+        assert body.get('api_key') is None

@@ -303,7 +303,18 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             p_param = request.query_params.get('p', '')
 
             api_key_val = None
-            if (u_param == md5(username) or not username) and (check_password(p_param, password) or not password):
+            # `password and ...`, the same fix as login_post and for the same
+            # reason -- `or not password` short-circuited the credential check
+            # to True whenever no password was configured.
+            #
+            # Worse here than at login: this returns the api_key itself, in a
+            # JSON body, over GET, with the credentials in the query string --
+            # so the request line lands in access logs, proxy logs and browser
+            # history, and an unauthenticated caller received the key outright.
+            # The `u` parameter is no protection: it is the md5 of the
+            # username, which is not a secret.
+            if password and (u_param == md5(username) or not username) \
+                    and check_password(p_param, password):
                 api_key_val = Env.setting('api_key')
                 if password and is_legacy_md5_hash(password):
                     Env.setting('password', value=hash_password(p_param))
