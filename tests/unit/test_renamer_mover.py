@@ -226,7 +226,7 @@ class TestFailedMoveRecovery:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _fake_move(src, dst):
+        def _fake_move(src, dst, **kwargs):
             Path(dst).write_bytes(LIBRARY)  # real write: same size, different content
             raise OSError('simulated: failure after the copy phase completed')
 
@@ -251,7 +251,7 @@ class TestFailedMoveRecovery:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _fake_move(src, dst):
+        def _fake_move(src, dst, **kwargs):
             Path(dst).write_bytes(LIBRARY)  # same size as DOWNLOAD, different bytes
             raise OSError('simulated: failure after the copy phase completed')
 
@@ -272,7 +272,7 @@ class TestFailedMoveRecovery:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _fake_move(src, dst):
+        def _fake_move(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD[:1024])  # a real, short/partial write
             raise OSError('simulated: interrupted copy (disk full / dropped mount)')
 
@@ -302,7 +302,7 @@ class TestFailedMoveRecovery:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _fake_move(src, dst):
+        def _fake_move(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD)  # the copy phase really completes
             os.remove(src)  # a concurrent actor removes `old` first
             raise FileNotFoundError(src)  # shutil.move's own final unlink(src) then fails
@@ -403,7 +403,7 @@ class TestLinkFallback:
 
         _real_copy = shutil.copyfile
 
-        def _fake_copy(src, dst):
+        def _fake_copy(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD[:1024])  # real, truncated write
             raise OSError('simulated: interrupted copy (disk full)')
 
@@ -546,12 +546,12 @@ class TestT18DataLossFixes:
         # since the unpatched syscall would then simply succeed.
         real_replace, real_rename = os.replace, os.rename
 
-        def _raising_replace(src, dst):
+        def _raising_replace(src, dst, **kwargs):
             if str(src) == old_link_path:
                 raise OSError('simulated: replace of the fallback link failed')
             return real_replace(src, dst)
 
-        def _raising_rename(src, dst):
+        def _raising_rename(src, dst, **kwargs):
             if str(src) == old_link_path:
                 raise OSError('simulated: rename of the fallback link failed')
             return real_rename(src, dst)
@@ -585,7 +585,7 @@ class TestT18DataLossFixes:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _failing_move(src, dst):
+        def _failing_move(src, dst, **kwargs):
             raise OSError('simulated: disk full / dropped mount, nothing written')
 
         monkeypatch.setattr(shutil, 'move', _failing_move)
@@ -620,7 +620,7 @@ class TestT18DataLossFixes:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _partial_move(src, dst):
+        def _partial_move(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD[:400])  # a real, short write
             raise OSError('simulated: disk full part-way through the copy')
 
@@ -650,7 +650,7 @@ class TestT18DataLossFixes:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _complete_then_fail(src, dst):
+        def _complete_then_fail(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD)  # the copy phase really completes
             raise OSError('simulated: failure after the bytes were all written')
 
@@ -662,6 +662,45 @@ class TestT18DataLossFixes:
 
         assert Path(old).read_bytes() == DOWNLOAD, 'source must survive'
         assert dest.read_bytes() == DOWNLOAD, 'a complete copy must never be discarded'
+
+    def test_a_reverse_symlink_whose_chmod_fails_still_leaves_a_usable_library(self, tmp_path, monkeypatch):
+        """`shutil.move` is a composite too, and this branch is the third to
+        reach the same permanent poisoning through it.
+
+        On a cross-device move `shutil.move` falls back to `copy2`, which is
+        copyfile PLUS copystat. Measured with a real cross-device fallback and
+        a chmod-refusing destination: the file landed COMPLETE, the
+        PermissionError propagated, `_discard_partial_destination` correctly
+        refused to delete a complete copy, and the `lexists` guard then made
+        every retry raise FileExistsError for ever -- so the film was never
+        linked back and the renamer failed on it on every subsequent run.
+
+        Round 3 closed this for `copy` by dropping `shutil.copy`; the class
+        was not closed until `shutil.move` was recognised as the same shape.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        real_rename, real_chmod = os.rename, os.chmod
+
+        def _cross_device_rename(src, dst, *a, **kw):
+            # Force shutil.move down its copy fallback, as a move between an
+            # SSD download dir and a NAS library does.
+            raise OSError(18, 'simulated: cross-device link')
+
+        def _refusing_chmod(path, mode, *a, **kw):
+            if str(path) == str(dest):
+                raise PermissionError('simulated: chmod not supported on this mount')
+            return real_chmod(path, mode, *a, **kw)
+
+        monkeypatch.setattr(os, 'rename', _cross_device_rename)
+        monkeypatch.setattr(os, 'chmod', _refusing_chmod)
+        plugin = _mover(monkeypatch, file_action='symlink_reversed')
+
+        assert _move(plugin, tmp_path, str(old), str(dest)) is True
+        assert dest.read_bytes() == DOWNLOAD, 'the move must land despite the chmod'
+        assert os.path.islink(old), 'the reverse symlink must still be created'
 
     def test_a_copy_whose_chmod_fails_still_leaves_a_usable_library(self, tmp_path, monkeypatch):
         """`shutil.copy` is copyfile + copymode, and the chmod can fail alone.
@@ -709,7 +748,7 @@ class TestT18DataLossFixes:
         dest = tmp_path / 'library/movie.mkv'
         dest.parent.mkdir(parents=True, exist_ok=True)
 
-        def _partial_copy(src, dst):
+        def _partial_copy(src, dst, **kwargs):
             Path(dst).write_bytes(DOWNLOAD[:400])
             raise OSError('simulated: disk full part-way through the copy')
 
@@ -802,12 +841,12 @@ class TestCallerLevelDataLossGuards:
         # See the unit-level test_fix_b for why both are patched.
         real_replace, real_rename = os.replace, os.rename
 
-        def _raising_replace(src, dst):
+        def _raising_replace(src, dst, **kwargs):
             if str(src) == old_link_path:
                 raise OSError('simulated: replace of the fallback link failed')
             return real_replace(src, dst)
 
-        def _raising_rename(src, dst):
+        def _raising_rename(src, dst, **kwargs):
             if str(src) == old_link_path:
                 raise OSError('simulated: rename of the fallback link failed')
             return real_rename(src, dst)
@@ -850,7 +889,7 @@ class TestCallerLevelDataLossGuards:
         dest.parent.mkdir(parents=True, exist_ok=True)
         source_folder = str(old.parent)
 
-        def _failing_move(src, dst):
+        def _failing_move(src, dst, **kwargs):
             raise OSError('simulated: disk full / dropped mount, nothing written')
 
         monkeypatch.setattr(shutil, 'move', _failing_move)

@@ -120,6 +120,10 @@ test.describe('Wanted Page', () => {
     // Click each filter button
     const filterBtns = page.locator('button:has-text("All"), button:has-text("Wanted"), button:has-text("Available")');
     const count = await filterBtns.count();
+    expect(
+      count,
+      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
+    ).toBeGreaterThan(0);
     
     for (let i = 0; i < count; i++) {
       await filterBtns.nth(i).click();
@@ -386,6 +390,10 @@ test.describe('Suggestions Page', () => {
 
     const tabs = page.locator('[role="tab"]');
     const tabCount = await tabs.count();
+    expect(
+      tabCount,
+      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
+    ).toBeGreaterThan(0);
 
     for (let i = 0; i < tabCount; i++) {
       await tabs.nth(i).click();
@@ -465,6 +473,10 @@ test.describe('Settings Page', () => {
 
     const tabs = page.locator('[role="tab"]');
     const tabCount = await tabs.count();
+    expect(
+      tabCount,
+      'the loop below runs zero times at 0, so every assertion inside it would be skipped on exactly the input this test exists to catch',
+    ).toBeGreaterThan(0);
 
     for (let i = 0; i < tabCount; i++) {
       await tabs.nth(i).click();

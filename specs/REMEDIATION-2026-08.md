@@ -112,7 +112,7 @@ behaviour, the fix lands, the tests assert the new behaviour.
 
 ### T1.1: `moveFile` branch tests · M · risk: low
 
-`plugins/renamer/mover.py:16-78`. The only existing tests monkeypatch it away
+`plugins/renamer/`MoverMixin.moveFile``. The only existing tests monkeypatch it away
 (`test_renamer_cleanup_safety.py:70`).
 
 New `tests/unit/test_renamer_mover.py`. Real files in `tmp_path`, real `shutil`,
@@ -175,16 +175,33 @@ pass a content test.
   reading the old text would have filed the correct behaviour as a
   regression -- which is exactly the mechanism that produced the
   fix-the-instance-miss-the-class history this PR keeps hitting.
-- **AC-DATA-10b** *(added at the same round)* **Every branch of `moveFile`
-  that writes bytes to `dest` removes a SHORT destination on failure, and
-  never removes an equal-size one.** One helper, enumerated call sites: the
-  default `move`, `copy`, `symlink_reversed`, and the `link` fallback. The
-  missing call site in round 2 was missed precisely because no criterion
-  enumerated the branches. *Break:* remove any one call; its branch's test
-  must red. Also: those branches use `shutil.copyfile`, not `shutil.copy` --
-  `copy` is copyfile+copymode, and a chmod that fails alone leaves a
-  COMPLETE destination, which the helper correctly refuses to remove and the
-  `lexists` guard then blocks for ever.
+- **AC-DATA-10b** *(added at the second review round; corrected at the
+  fourth, which found it mis-enumerated)* **Every branch of `moveFile` that
+  writes bytes to `dest` removes a SHORT destination on failure, and never
+  removes an equal-size one.** Four byte-writing branches, **three** helper
+  call sites plus one inline equivalent:
+  - `copy`, `symlink_reversed` and the `link` fallback each call
+    `_discard_partial_destination`. *Break:* remove any one call; a distinct
+    named test reds for each.
+  - the default `move` branch implements the property **inline**, with
+    different edge semantics (`os.path.exists` rather than `lexists`, and on
+    an equal-size destination it unlinks the SOURCE and returns True). Pinned
+    by `test_failed_move_with_a_short_destination_...`.
+
+  **And no branch may use a composite `shutil` call whose non-copy half can
+  fail alone.** `shutil.copy` is copyfile+copymode; `shutil.move` falls back
+  to `copy2`, which is copyfile+copystat. Either one failing after the bytes
+  land leaves a COMPLETE destination that the helper correctly refuses to
+  remove and the `lexists` guard then blocks for ever. `copy` and the `link`
+  fallback use `shutil.copyfile`; `symlink_reversed` passes
+  `copy_function=shutil.copyfile`. The default `move` deliberately does not,
+  because it recovers on its own and mtime preservation is worth keeping on
+  the most common path.
+
+  This criterion was written to stop a branch being missed by enumeration and
+  was itself mis-enumerated twice: first claiming four call sites where three
+  exist, then covering `shutil.copy` while `shutil.move` had the same shape.
+  Recorded rather than quietly corrected, because that is the finding.
 - **AC-QA-14** `link` with both `link()` and `symlink()` failing: degrades to a
   plain copy, both paths exist, returns `True`.
 - **AC-QA-18** `os.chmod` raising is swallowed; the move still returns `True`
@@ -196,7 +213,7 @@ pass a content test.
   is green-on-macOS, red-on-Alpine.
 - **AC-DATA-15 / AC-QA-19** The `os.name == 'nt'` branch carries an explicit
   `skipif` whose reason **cites the `os.popen` string-concatenation at
-  `mover.py:71`**, so the gap is knowingly uncovered rather than silently
+  ``moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)`**, so the gap is knowingly uncovered rather than silently
   absent. (`lens-security` flagged that line as command injection reachable
   from indexer-supplied release names on Windows with `ntfs_permission`. Not
   PR 1's to fix: filed to PR 3, which already edits `renamer/`.)
@@ -220,7 +237,7 @@ All three verified by execution during planning. TDD: the T1.1 tests pin current
 behaviour first, then the fix lands, then the assertions invert.
 
 **(a) A directory at the destination is treated as a successful move.**
-`mover.py:19` tests `os.path.exists(dest) and os.path.isfile(dest)`, so a
+``moveFile`'s destination-exists guard` tests `os.path.exists(dest) and os.path.isfile(dest)`, so a
 directory does not fire the guard. Measured: the file moves *inside* it as
 `dest/<original basename>`: unrenamed: `os.chmod(dest, 0o644)` at `:69` then
 strips `+x` (measured `traversable: False`), and `True` is returned, so
@@ -228,12 +245,12 @@ strips `+x` (measured `traversable: False`), and `True` is returned, so
 *Fix:* test `os.path.exists(dest)` (or `lexists`) alone.
 
 **(b) The hardlink fallback unlinks the source before the rename.**
-`mover.py:60-64`. Measured with `link()` and `os.rename` both failing: `old`
+the `link` fallback. Measured with `link()` and `os.rename` both failing: `old`
 gone, stray `<old>.link` left, return `True`. *Fix:* drop `os.unlink(old)` at
 `:63`, use `os.replace(old_link, old)`: atomic, never leaves `old` absent.
 
 **(c) `symlink_reversed` swallows a failed move and returns `True`.**
-`mover.py:42-51`. Measured: move fails, exception swallowed at `:46-47`, symlink
+the `symlink_reversed` branch. Measured: move fails, exception swallowed, symlink
 then fails and is swallowed at `:50-51`, `chmod` fails and is swallowed at
 `:72-73`, returns `True` with the source unmoved and nothing at the destination.
 `_moveRenamedFiles:160-162` then sets `moved_any=True`, `skipped` stays `False`,
@@ -804,7 +821,7 @@ the diff, not by an agent.
 | Wire `tests/integration/` into CI | simplicity, QA, data | **Accepted, conditioned** | Measured 38 tests / 2.4 s, no fixing required, but 7 tests skip permanently in CI. Conditioned on AC-QA-35 |
 | Merge state-mutating specs into one serial file (the S-effort alternative to T1.7) | simplicity | **Rejected with evidence** | The mutating set is larger than three files: `movie-detail.spec.ts` and `small-screen.mobile.spec.ts` also mutate. Merging three leaves the coupling. Recorded so it is not re-proposed |
 | mypy gate (T6.7, PR 6) | simplicity | **Veto overridden** (Scott, 2026-08-03) | Simplicity's objection stands on its own terms: no defect has been identified that mypy would have caught. Kept anyway, scoped to `core/db/*`, as a **preventive** gate: that package is the highest-consequence code in the repo and already typed, so the gate starts green and ratchets rather than migrating. Recorded as a deliberate override, not an unanswered veto |
-| Fix `os.popen` injection at `mover.py:71` | security | **Deferred to PR 3** | Windows-only, gated on `ntfs_permission`. PR 3 already edits `renamer/`. Recorded in the T1.1 skip reason so it is not silently uncovered |
+| Fix `os.popen` injection at ``moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)` | security | **Deferred to PR 3** | Windows-only, gated on `ntfs_permission`. PR 3 already edits `renamer/`. Recorded in the T1.1 skip reason so it is not silently uncovered |
 | Fix `extractor.py:174` (`cleanup` passed into the `use_default` slot) | QA | **Deferred to PR 3** | Real argument-position bug coupling two unrelated settings, but not on PR 1's path |
 | Move the renamer re-entrancy lock (T5.4) ahead of PR 4 | data | **Accepted** | Two concurrent moves to one destination destroy a file and both return `True`. PR 4 adds a delete to that path: shipping the delete before the lock turns "one download lost" into "the library copy lost too" |
 
@@ -1338,7 +1355,7 @@ If any step fails, the destination is untouched and the download survives.
 the download directory are frequently different mounts on this project's target
 deployment, so the temp file must be created in the **destination** directory,
 not the source. This interacts directly with `moveFile`'s hardlink/symlink
-fallback branches (`mover.py:59-64`), which PR 1 now covers: reuse those tests
+fallback branches (the `link` fallback), which PR 1 now covers: reuse those tests
 as the foundation rather than writing a parallel harness.
 
 **Acceptance (every one is a destructive-direction test):**
@@ -1471,7 +1488,7 @@ pending a decision.
 ### T6.5: Remaining low-severity security · S
 
 `tarfile.extractall(filter='data')` (`_base/updater/main.py:373`); list-args
-`subprocess.run` instead of `os.popen` (`renamer/mover.py:71`); strip `/`, `\`
+`subprocess.run` instead of `os.popen` (`renamer/`moveFile`'s `os.name == 'nt'` branch (`os.popen`/`icacls`)`); strip `/`, `\`
 and `..` in `renamer/namer.py:63`; validate `cors_origins` against `*` with
 credentials (`__init__.py:109-118`); self-host the Google Fonts references
 (`templates/login.html:25-26`, `ui/templates/base.html:53-54`); double

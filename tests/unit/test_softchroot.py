@@ -194,7 +194,7 @@ class SoftChrootUnnormalisedSetting(TestCase):
         sc.initialize(spelling)
         return sc
 
-    def test_every_spelling_of_the_same_directory_behaves_identically(self):
+    def test_every_plausible_spelling_of_the_same_directory_behaves_identically(self):
         import shutil
         import tempfile
 

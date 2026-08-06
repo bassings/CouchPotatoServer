@@ -40,7 +40,13 @@ class SoftChroot:
                 raise SoftChrootInitError(2, 'SOFT-CHROOT is requested, but the folder doesn\'t exist', orig_chdir)
 
             self.enabled = True
-            # realpath, not just rstrip and not merely normpath.
+            # abspath, not just rstrip and not merely normpath.
+            #
+            # (The operation named on THIS line matters: three of this
+            # function's breaks on this branch came from edits made after
+            # reading this comment, and `realpath` here reds eight existing
+            # tests. The reasoning for abspath over realpath is 20 lines
+            # down; this line must not contradict it.)
             #
             # `os.path.isdir` happily accepts
             # `/srv//media`, `/srv/./media` and `/srv/x/../media`, so an

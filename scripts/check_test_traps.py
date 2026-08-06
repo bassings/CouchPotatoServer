@@ -903,6 +903,13 @@ HOISTED_ASSIGNMENT_RE = re.compile(
 # multi-line `if (` condition are silent for the same reason. Those instances
 # were fixed by hand; the rule still cannot see the shape.
 #
+# And for a guard with NO braces at all, the region is approximated by
+# indentation (see `_end_of_enclosing_block`), which is narrower than what
+# `return` really does. Measured as silent: a non-braced guard nested one
+# block deeper than the assertions it skips, and one whose body contains a
+# line at column 0 (a template literal handed to `page.setContent` or
+# `addInitScript`). Neither is live in tests/e2e/** today.
+#
 # Closing any of this properly needs a JS parser rather than more regexes,
 # which is the point at which this rule should become an ESLint plugin rather
 # than be extended again.
@@ -970,11 +977,24 @@ def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
 
 
 def _end_of_enclosing_block(cleaned_lines: list[str], start_idx: int) -> int:
-    """First line at or below `start_idx`'s indentation, i.e. where its block ends.
+    """First line STRICTLY LESS indented than `start_idx`: where its block ends.
 
-    Used only for guards with no `{`. Approximate by design: this is a regex
-    checker, not a parser, and the alternative (the brace matcher) was scanning
-    to end of file and producing false positives.
+    Used only for guards with no `{` at all. Approximate by design -- this is a
+    regex checker, not a parser -- and knowingly narrower than what `return`
+    actually does, which is exit the whole function. Two consequences, both
+    measured and both recorded in the module's WHAT THIS RULE STILL DOES NOT
+    SEE list rather than left as silence:
+
+    - a guard nested one block deeper than the assertions it skips is missed,
+      because the region stops at the dedent;
+    - a body containing a line at column 0 (a template literal passed to
+      `page.setContent` or `addInitScript`) ends the region early.
+
+    The alternative, which this replaced, was the brace matcher scanning to end
+    of file: that flagged a teardown helper because an unrelated test lower in
+    the file happened to contain `expect(`, and the documented remedy for a
+    false positive is an opt-out comment, which is how a rule that replaced a
+    human review step trains people to silence it.
     """
     indent = len(cleaned_lines[start_idx]) - len(cleaned_lines[start_idx].lstrip())
     for idx in range(start_idx + 1, len(cleaned_lines)):
@@ -1041,7 +1061,12 @@ def check_e2e_spec_guards(path: Path, text: str):
         if not _is_guard_if_line(line, hoisted_names):
             continue
 
-        if line.rstrip().endswith("{"):
+        if "{" in line:
+            # `{` ANYWHERE on the line, not only at the end. A one-line guard
+            # (`if (await x.count() > 0) { click(); }`) has a real block, so
+            # the brace matcher is right for it -- keying on `endswith("{")`
+            # sent it down the indentation path instead and pulled in every
+            # following sibling, a false positive on correct code.
             close_idx = _find_matching_brace(cleaned_lines, idx)
         else:
             # A non-braced guard (`if (cond) return;`) has no block, so the
@@ -1051,7 +1076,13 @@ def check_e2e_spec_guards(path: Path, text: str):
             # The affected region is the rest of the ENCLOSING block, which
             # indentation approximates cheaply and without a JS parser.
             close_idx = _end_of_enclosing_block(cleaned_lines, idx)
-        body = "\n".join(cleaned_lines[idx + 1:close_idx])
+        # The guard line's OWN tail counts as body. For a one-line guard
+        # (`if (cond) { await expect(x).toBeVisible(); }`) the braces balance
+        # on that line, so close_idx lands on it and the joined slice below is
+        # empty -- the rule saw nothing in the most compact spelling of the
+        # very shape it exists to catch.
+        inline_body = line[line.index("{") + 1:] if "{" in line else ""
+        body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
         if not EXPECT_CALL_RE.search(body):
             continue
 

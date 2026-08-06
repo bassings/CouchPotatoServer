@@ -79,24 +79,31 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards must be 'active'. Assert the population is non-empty
-    // FIRST: `for (let i = 0; i < Math.min(count, 5); i++)` runs zero times on
-    // an empty grid, and the inner `if (status)` skipped silently when the
-    // attribute was absent -- so this test asserted nothing at all whenever
-    // the filter hid everything, which is the regression it is named for.
-    // check_test_traps' Rule 6 cannot see an iteration-count guard, only an
-    // `if`, so nothing flagged it either.
+    // Assert on `data-has-releases`, NOT `data-status`.
+    //
+    // The first repair of this test checked that every visible card was
+    // 'active' -- which the Wanted chip cannot change and never could.
+    // `wanted.html` fetches `partial/movies?status=active`, so every card in
+    // the grid is already active, and `movie-filter.js`'s wanted branch is
+    // `matchStatus = !card.hasReleases` and does not read `card.status` at
+    // all. Measured over the real `matchesFilter` and the seeded grid: the
+    // data-status set is {"active"} with the chip, without it, and with the
+    // OPPOSITE chip. Deleting the click above left the test green.
+    //
+    // So the regression it is named for -- the Wanted chip failing to hide
+    // movies that have releases, which has shipped on this codebase once
+    // already -- had no assertion behind it. The population poll (the earlier
+    // repair) is kept: it closes the zero-iteration hole.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     await expect
       .poll(() => visibleCards.count(), { timeout: 5000 })
       .toBeGreaterThan(0);
 
-    const statuses = await visibleCards.evaluateAll((cards) =>
-      cards.map((c) => c.getAttribute('data-status')),
+    const flags = await visibleCards.evaluateAll((cards) =>
+      cards.map((c) => c.getAttribute('data-has-releases')),
     );
-    expect(statuses.length).toBeGreaterThan(0);
-    expect(statuses).not.toContain(null);
-    expect(new Set(statuses)).toEqual(new Set(['active']));
+    expect(flags).not.toContain(null);
+    expect(new Set(flags)).toEqual(new Set(['false']));
   });
 
   test('clicking Available filter should filter movies', async ({ page }) => {
@@ -109,10 +116,14 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // Same shape, same fix as the Wanted case above. The seed creates one
-    // movie with a done release (DONE_RELEASE_MOVIE_ID), so Available is
-    // non-empty by construction and an empty result is a regression, not a
-    // reason to assert nothing.
+    // Same shape, same fix as the Wanted case above.
+    //
+    // Available is non-empty because MOVIE_ID and DESTRUCTIVE_MOVIE_ID carry
+    // RELEASES -- NOT because of DONE_RELEASE_MOVIE_ID, which an earlier
+    // version of this comment named. That movie is seeded with media status
+    // 'done' deliberately, so `partial/movies?status=active` never returns it
+    // and it is not in this grid at all. Naming the wrong guarantee is how
+    // someone trimming the seed removes the wrong document.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
     await expect
       .poll(() => visibleCards.count(), { timeout: 5000 })

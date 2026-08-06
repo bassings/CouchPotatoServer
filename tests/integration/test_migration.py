@@ -380,6 +380,70 @@ class TestMigrationFailureModes:
         # was damaged may go looking for a backup they do not need.
         assert 'source is' in message and 'untouched' in message, message
 
+    def test_the_remedy_differs_by_where_the_clash_actually_is(self, tmp_path):
+        """Three states, and each issues a DIFFERENT destructive instruction.
+
+        The branch used to key on the message starting with 'Duplicate'.
+        Measured at review: renaming the describer's heading -- an ordinary
+        copy edit -- routed a genuine source-side duplicate to the
+        destination-side advice, with every migration test still green.
+        Neither branch had a test at all.
+
+        The stakes are why this is pinned rather than reasoned about: the
+        source-side remedy tells the operator to delete a document from the
+        CodernityDB source, which is their only rollback copy until they trust
+        the SQLite one. Getting that branch wrong points them at it on a false
+        premise.
+        """
+        from couchpotato.core.db.migrate import _describe_identifier_collision
+
+        source_clash = [
+            {'_id': 'a', '_t': 'media', 'identifiers': {'imdb': 'tt1'}},
+            {'_id': 'b', '_t': 'media', 'identifiers': {'imdb': 'tt1'}},
+        ]
+        no_clash = [
+            {'_id': 'a', '_t': 'media', 'identifiers': {'imdb': 'tt1'}},
+            {'_id': 'b', '_t': 'media', 'identifiers': {'imdb': 'tt2'}},
+        ]
+
+        found, text = _describe_identifier_collision(source_clash)
+        assert found is True
+        assert 'imdb=tt1' in text and 'a' in text and 'b' in text
+
+        found, _text = _describe_identifier_collision(no_clash)
+        assert found is False
+
+        # A hostile input the describer cannot read: it must say so rather
+        # than report "no duplicate", because the caller turns False into
+        # "the clash is in your destination, go delete a row there".
+        class _Hostile(dict):
+            def get(self, *a, **kw):
+                raise RuntimeError('simulated: unreadable document')
+
+        found, text = _describe_identifier_collision([_Hostile()])
+        assert found is None, 'a failed diagnostic must not masquerade as "no duplicate"'
+        assert 'could not determine' in text
+
+    def test_a_source_side_duplicate_advises_the_source_and_nothing_else(self, tmp_path):
+        """End to end: the message an operator actually reads."""
+        db_path = str(tmp_path / "dup_source")
+        db = Database(db_path)
+        db.create()
+        for i in (1, 2):
+            db.insert({'_t': 'media', 'type': 'movie', 'status': 'active',
+                       'title': 'Duplicate %d' % i,
+                       'identifiers': {'imdb': 'tt0000001'}})
+        db.close()
+
+        with pytest.raises(RuntimeError) as excinfo:
+            migrate(db_path, str(tmp_path / "dup_dest"), verbose=False)
+
+        message = str(excinfo.value)
+        assert 'Resolve the duplicate in the source' in message
+        assert 'DESTINATION' not in message, (
+            'a source-side clash must not send the operator to the destination'
+        )
+
     def test_an_interrupted_migration_leaves_no_partial_destination(self, codernity_db, tmp_path):
         """The case the repeatability tests name but do not exercise.
 

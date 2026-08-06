@@ -418,6 +418,22 @@ test.describe('Accessibility', () => {
    * its reach: both of these carried `focus:outline-none`, i.e.
    * `outline: 2px solid TRANSPARENT`, and had no visible keyboard focus at all.
    */
+  //
+  // SCOPE, stated rather than left to be discovered: text inputs only, and
+  // two of them out of ~100 `focus:outline-none` sites across 17 templates.
+  // The probe focuses PROGRAMMATICALLY with no prior keyboard event, and
+  // base.html has `:focus:not(:focus-visible) { outline: none }`, so these
+  // pass only because Chromium always matches `:focus-visible` on a text
+  // field. Adding a button or a link here -- movie_releases.html has several
+  // -- would report "no visible focus indicator" for a compliant control.
+  // Tab to such a control instead of calling focus().
+  //
+  // Known remaining limits of the probe itself, none reachable in these
+  // templates today: `visible` ANDs across properties, so a permanently
+  // visible outline plus any shadow change on focus passes; alpha is only
+  // detected in legacy `rgba()`, not `oklab()`/`color()`; `outline-offset` is
+  // never read, so a ring pushed off-screen passes; and sub-pixel widths or
+  // near-zero alphas count as visible.
   const FOCUSABLE_CONTROLS = [
     { path: '/', selector: '#filter-movies', what: 'the Wanted filter input' },
     { path: '/add/', selector: 'input[placeholder*="search" i]', what: 'the Add-movie search input' },

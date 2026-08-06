@@ -329,9 +329,15 @@ net PR.
 normalises and refuses `..` escapes, and `initialize` now absolutises the
 chroot root, but neither resolves symlinks BELOW the jail: a symlinked
 directory inside the chroot reaches its target, so `directory.list` can
-enumerate outside it. Accepted, because creating such a link needs filesystem
-access to the jail, which is more privilege than the browse endpoint grants,
-and because the class docstring has always said "since it is not real chroot".
+enumerate outside it. Accepted, but the reachability argument is NOT
+"only the operator can do this". A link can also arrive as content: the
+download and extraction paths write third-party archives into a directory that
+is normally inside the jail, which is exactly why
+`scanner/folder_scanner.py` defends against planted symlinks for SCANNING
+(PR #151). It does not defend the browse path. The impact stays low because
+`directory.list` is api-key authenticated on a single-key install, and because
+the class docstring has always said "since it is not real chroot" -- but the
+reason should be the real one.
 Recorded here because it was accepted verbally at the second review round and
 **nothing was written down** -- an accepted risk with no record is
 indistinguishable from one nobody noticed, and the next person to read
@@ -343,8 +349,9 @@ the settings UI shows) and wants its own criterion.
 Related and same class: a chroot setting containing `..` AFTER a symlink
 component (`srv/link/..` where `srv/link` points elsewhere) passes
 `os.path.isdir`, which follows symlinks, while `abspath` resolves it lexically
-to `srv/` -- a lexical ancestor, strictly wider than the directory the operator
-configured. `realpath` at `initialize` would close both; it was not taken for
+to `srv/` -- a lexical ancestor. Wider by REACHABILITY rather than lexically: the
+symlink still sits inside the new jail, so its target stays reachable, while
+`is_subdir` on the target itself returns False. `realpath` at `initialize` would close both; it was not taken for
 the reason above.
 
 **`compact()` now blocks every read for the duration of a VACUUM** (weekly, per

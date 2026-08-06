@@ -1151,6 +1151,69 @@ def test_flags_a_reassigned_guard_name(tmp_path):
     assert len(findings_for(spec)) == 1
 
 
+def test_a_non_braced_guards_region_stops_at_the_enclosing_block(tmp_path):
+    """A teardown helper must not be flagged because of an unrelated test.
+
+    Review measured that this whole narrowing was uncovered: reverting it left
+    all 90 trap tests green. The pre-fix code ran the brace matcher for a line
+    with no `{`, so `line[line.rfind("{"):]` was the last character, depth
+    never balanced, and the "body" ran to end of file -- picking up a sibling
+    `test(...)`'s `expect(` and flagging a helper that asserts nothing.
+    The documented remedy for a false positive is an opt-out comment, so this
+    trained people to silence the rule.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "async function teardown(page) {\n"
+        "  const btn = page.locator('.del');\n"
+        "  if (await btn.count() === 0) return;\n"
+        "  await btn.click();\n"
+        "}\n"
+        "\n"
+        "test('unrelated', async ({ page }) => {\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_a_one_line_braced_guard_uses_the_brace_matcher(tmp_path):
+    """`if (cond) { ... }` all on one line has a real block.
+
+    Keying the branch on `endswith("{")` sent this down the indentation path,
+    which then ran to the end of the enclosing block and pulled in every
+    following sibling -- a false positive on correct code, reintroducing
+    through a different door the exact outcome the narrowing was written to
+    remove. `{` anywhere on the line is the right test.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks then asserts', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await cards.first().click(); }\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    # The guard's own block contains no expect(, and the assertion that
+    # follows it is unconditional, so there is nothing to flag.
+    assert findings_for(spec) == []
+
+
+def test_a_one_line_braced_guard_with_its_own_expect_is_still_flagged(tmp_path):
+    """The other direction, so the fix above cannot become a blanket exemption."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts only sometimes', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await expect(cards.first()).toBeVisible(); }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
 def test_an_early_return_guard_can_be_opted_out_of(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(

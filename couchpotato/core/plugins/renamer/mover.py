@@ -114,7 +114,25 @@ class MoverMixin:
                 # does is take a truncated `dest` back out of the library
                 # first, so the next run is able to retry at all.
                 try:
-                    shutil.move(old, dest)
+                    # copy_function=copyfile, for the same reason the `copy`
+                    # branch does not use `shutil.copy`: `shutil.move` is not
+                    # a single operation either. On a cross-device move -- an
+                    # SSD download dir and a NAS library, i.e. the ordinary
+                    # setup -- it falls back to `copy2`, which is copyfile
+                    # PLUS copystat, and copystat's chmod fails on the same
+                    # mounts. Measured: the destination lands COMPLETE, the
+                    # PermissionError propagates, the cleanup correctly
+                    # refuses to delete a complete copy, and the `lexists`
+                    # guard then blocks every retry for ever. Identical
+                    # failure, identical door, third branch.
+                    #
+                    # NOT applied to the default-move branch above: that one
+                    # already recovers (it unlinks the source on an equal-size
+                    # destination and returns True), and forcing copyfile
+                    # there would drop mtime preservation on the most common
+                    # path for no benefit. Here mtime is already the accepted
+                    # trade, as it is in `copy`.
+                    shutil.move(old, dest, copy_function=shutil.copyfile)
                 except Exception:
                     _discard_partial_destination(old, dest)
                     raise

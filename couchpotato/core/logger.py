@@ -50,6 +50,7 @@ class PrivacyFilter(logging.Filter):
     """Filter that redacts sensitive information from log messages."""
 
     _api_key = None
+    _reading_api_key = False
     _is_develop = None
 
     def filter(self, record):
@@ -88,20 +89,34 @@ class PrivacyFilter(logging.Filter):
         # record arrives pre-key then emits the key verbatim, while one whose
         # first record arrives after it redacts correctly.
         #
-        # No live gap today -- runner.py's only log calls between setup_logging
-        # and key generation are error paths that return immediately -- but the
-        # window is `warnings.showwarning = customwarn` followed by importing
-        # create_app, so one dependency deprecation warning would open it. The
+        # The window is real, not hypothetical: `runner.py` calls
+        # setup_logging and then `log.debug('Started with options %s', options)`
+        # unconditionally, BEFORE the api_key is generated. (An earlier version
+        # of this comment claimed the only calls in between were error paths
+        # that return immediately. That was wrong, and it was the premise the
+        # whole justification rested on.) The
         # E2E harness now attaches a console handler and CI uploads that stream
         # as an artefact, so this redaction is load-bearing in a way it was not
         # when the caching was written. One dict lookup per record is a fair
         # price for removing the failure mode entirely.
-        if not self._api_key:
+        if not self._api_key and not self._reading_api_key:
+            # The re-entrancy flag is not defensive decoration. `Settings.get`
+            # logs at DEBUG when a property is not yet stored, and this filter
+            # is attached to the handler that record passes through -- so
+            # looking the key up from inside the filter re-enters the filter.
+            # Measured with the key absent and debug logging on: 124 nested
+            # lookups for a single record, ending in a RecursionError that the
+            # filter's own `except` swallows. With the old `is None` cache that
+            # happened once per process; re-reading while falsy made it happen
+            # on EVERY record, which is a cost the fix should not carry.
+            self._reading_api_key = True
             try:
                 from couchpotato.environment import Env
                 self._api_key = Env.setting('api_key') or ''
             except Exception:
                 self._api_key = ''
+            finally:
+                self._reading_api_key = False
 
         if self._api_key:
             msg = msg.replace(self._api_key, 'API_KEY')

@@ -141,23 +141,40 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         # leaves the operator with a migration that stops dead, an empty
         # destination, and no idea which film to fix. Name the collision.
         adapter.close()
-        collision = _describe_identifier_collision(cleaned)
-        # Only advise touching the SOURCE when the clash is actually in it.
-        # If the other claimant is a row already in the destination -- which
-        # happens on a re-run where a document's _id changed but its imdb id
-        # did not -- then "delete one of the two documents" points the
+        # THREE states, and a structured return rather than sniffing the
+        # message text. Only advise touching the SOURCE when the clash is
+        # actually in it: if the other claimant is a row already in the
+        # destination -- a re-run where a document's _id changed but its imdb
+        # id did not -- then "delete one of the two documents" points the
         # operator at the CodernityDB source, which is their only rollback
-        # copy. That is a destructive instruction given on a false premise.
-        if collision.startswith('Duplicate'):
+        # copy. And when the diagnostic itself failed we know nothing, so
+        # asserting either premise would be inventing one.
+        #
+        # Keyed on a bool, not on `collision.startswith('Duplicate')`:
+        # measured, renaming the describer's heading -- an ordinary copy edit
+        # -- silently routed a genuine source-side duplicate to the
+        # destination-side advice, with all 43 migration tests still green.
+        found_in_source, collision = _describe_identifier_collision(cleaned)
+        if found_in_source is True:
             remedy = ('Resolve the duplicate in the source (or delete one of '
                       'the two documents) and run the migration again.')
-        else:
+        elif found_in_source is False:
             remedy = ('The source holds no duplicate, so the other claimant is '
                       'already in the destination -- most likely a previous '
                       'run whose document _id changed while its identifier did '
-                      'not. Point --dest at a fresh path, or remove the stale '
-                      'row from the DESTINATION. Do NOT edit the source: it is '
-                      'your only rollback copy.')
+                      'not. Point --dest at a fresh path, or remove BOTH the '
+                      'stale `documents` row and its `media_identifiers` row '
+                      'from the DESTINATION: the sqlite3 CLI has '
+                      '`PRAGMA foreign_keys` OFF by default, so deleting the '
+                      'document alone leaves the identifier claim behind and '
+                      'the next run fails identically. Do NOT edit the source: '
+                      'it is your only rollback copy.')
+        else:
+            remedy = ('The diagnostic could not determine which identifiers '
+                      'collided, so do not act on a guess: inspect both the '
+                      'source and the destination for the constraint named '
+                      'above before deleting anything. Do NOT edit the source '
+                      'until you know: it is your only rollback copy.')
         raise RuntimeError(
             'Migration aborted: %s\n%s\n\n'
             'No documents were written to %s. The file itself was created, and '
@@ -173,8 +190,13 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
     return count, type_counts
 
 
-def _describe_identifier_collision(docs: list) -> str:
+def _describe_identifier_collision(docs: list) -> tuple:
     """Find the (provider, identifier) pairs claimed by more than one doc.
+
+    Returns ``(found_in_source, text)``. ``found_in_source`` is True, False, or
+    None when the diagnostic itself failed -- three states, because the caller
+    issues a DESTRUCTIVE instruction based on it and "could not tell" must not
+    collapse into "no duplicate".
 
     Best-effort and never raises: it runs while an exception is already being
     handled, and a failure to produce a nicer message must not replace the
@@ -199,11 +221,11 @@ def _describe_identifier_collision(docs: list) -> str:
             if len(ids) > 1
         ]
         if not clashes:
-            return ('  (no duplicate media identifier was found in the source, so\n'
-                    '   the constraint that failed is a different one)')
-        return 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes)
+            return (False, '  (no duplicate media identifier was found in the source, so\n'
+                           '   the constraint that failed is a different one)')
+        return (True, 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes))
     except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
-        return '  (could not determine which identifiers collided)'
+        return (None, '  (could not determine which identifiers collided)')
 
 
 def verify(source_path: str, dest_path: str, verbose: bool = False) -> bool:
