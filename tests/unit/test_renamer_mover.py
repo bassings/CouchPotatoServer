@@ -256,10 +256,6 @@ class TestFailedMoveRecovery:
         dest.parent.mkdir(parents=True, exist_ok=True)
 
         def _fake_move(src, dst, **kwargs):
-            assert 'copy_function' not in kwargs, (
-                'the default move branch deliberately keeps copy2 for mtime '
-                'preservation (AC-DATA-10b); it recovers on its own'
-            )
             Path(dst).write_bytes(LIBRARY)  # same size as DOWNLOAD, different bytes
             raise OSError('simulated: failure after the copy phase completed')
 
@@ -563,10 +559,6 @@ class TestT18DataLossFixes:
         real_replace, real_rename = os.replace, os.rename
 
         def _raising_replace(src, dst, **kwargs):
-            assert 'copy_function' not in kwargs, (
-                'the default move branch deliberately keeps copy2 for mtime '
-                'preservation (AC-DATA-10b); it recovers on its own'
-            )
             if str(src) == old_link_path:
                 raise OSError('simulated: replace of the fallback link failed')
             return real_replace(src, dst)
@@ -682,6 +674,52 @@ class TestT18DataLossFixes:
 
         assert Path(old).read_bytes() == DOWNLOAD, 'source must survive'
         assert dest.read_bytes() == DOWNLOAD, 'a complete copy must never be discarded'
+
+    @pytest.mark.xfail(strict=True, reason=(
+        "DEFERRED, not fixed: shutil.move is copy_function + os.unlink(src), "
+        "and the unlink can fail alone. See docs/technical-debt.md's "
+        "'STOPPED after four rounds'. xfail(strict=True) so the day it is "
+        "closed this XPASSes and the suite reds, forcing acknowledgement -- "
+        "the deferral was prose only, and PR 4 removes the caller guard that "
+        "currently stands between this state and a deleted download."
+    ))
+    def test_a_move_whose_source_unlink_fails_should_not_block_every_retry(self, tmp_path, monkeypatch):
+        """The end state that would close the composite class.
+
+        Injected on `os.unlink` for the SOURCE path rather than by making the
+        directory read-only: `scripts/test-local.sh` runs the container with
+        no `--user`, so a mode-0555 directory does not stop root and the
+        fixture would silently fail to reproduce under AC-DATA-17.
+
+        Asserts what a correct fix must deliver, and deliberately NOT that the
+        move is 'done': the source must survive (it is the only other copy),
+        and the retry must not be permanently blocked. Declaring success here
+        would authorise `_moveRenamedFiles` to delete the download, which is
+        the trap the recorded remedy sketch walked into.
+        """
+        old = _write(tmp_path / 'downloads/movie.mkv', DOWNLOAD)
+        dest = tmp_path / 'library/movie.mkv'
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        real_unlink = os.unlink
+
+        def _refuse_source_unlink(path, *a, **kw):
+            if str(path) == str(old):
+                raise PermissionError('simulated: cannot delete from this mount')
+            return real_unlink(path, *a, **kw)
+
+        monkeypatch.setattr(os, 'unlink', _refuse_source_unlink)
+        plugin = _mover(monkeypatch, file_action='move')
+
+        try:
+            _move(plugin, tmp_path, str(old), str(dest))
+        except Exception:
+            pass
+
+        assert Path(old).read_bytes() == DOWNLOAD, 'the only other copy must survive'
+        # The property that is NOT satisfied today: a later run can retry.
+        monkeypatch.setattr(os, 'unlink', real_unlink)
+        _move(plugin, tmp_path, str(old), str(dest))
 
     def test_a_reverse_symlink_whose_chmod_fails_still_leaves_a_usable_library(self, tmp_path, monkeypatch):
         """`shutil.move` is a composite too, and this branch is the third to

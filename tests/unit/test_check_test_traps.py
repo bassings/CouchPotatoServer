@@ -1269,6 +1269,67 @@ def test_a_one_line_guard_with_a_nested_object_literal_is_still_flagged(tmp_path
     assert len(findings_for(spec)) == 1
 
 
+def test_a_braced_guard_with_its_expect_on_the_guard_line_is_flagged(tmp_path):
+    """The block opens here and closes later, with the assertion up top.
+
+    Slicing the guard line's tail only when the braces balanced silenced this
+    shape, and arbitrarily: written `} else if (...) {` it was still flagged,
+    because the leading `}` balanced the count and routed it differently. Two
+    spellings of one shape must not disagree.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const c = page.locator('.card');\n"
+        "  if (await c.count() > 0) { await expect(c).toBeVisible();\n"
+        "    await c.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_the_else_if_spelling_of_that_shape_agrees(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const c = page.locator('.card');\n"
+        "  if (false) {\n"
+        "  } else if (await c.count() > 0) { await expect(c).toBeVisible();\n"
+        "    await c.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_the_guard_lines_condition_is_not_treated_as_body(tmp_path):
+    """Slice from the BLOCK opener, not from the first brace on the line.
+
+    `line.index("{")` picks up a brace inside the CONDITION -- a template
+    literal, or a selector containing braces -- so everything from there
+    onwards, including the rest of the condition, is scanned as if it were the
+    guard's body. A condition that merely mentions `expect(` then produces a
+    finding against a guard whose block asserts nothing, which is a false
+    positive on correct code, and the documented remedy for a false positive
+    is an opt-out comment.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks a labelled control', async ({ page }) => {\n"
+        # The `expect(` must sit AFTER the condition's own brace, or slicing
+        # from that brace never reaches it and the fixture proves nothing --
+        # which is what the first draft of this test did.
+        "  if (await page.getByText('{0} expect(x)').count() > 0) { await page.click('.go'); }\n"
+        "  await page.waitForTimeout(1);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
 def test_an_early_return_guard_can_be_opted_out_of(tmp_path):
     spec = _e2e_spec(tmp_path)
     spec.write_text(

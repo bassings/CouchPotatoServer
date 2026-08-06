@@ -156,8 +156,12 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         # destination-side advice, with all 43 migration tests still green.
         found_in_source, collision = _describe_identifier_collision(cleaned)
         if found_in_source is True:
-            remedy = ('Resolve the duplicate in the source (or delete one of '
-                      'the two documents) and run the migration again.')
+            remedy = ('COPY THE SOURCE DIRECTORY FIRST -- this is the only '
+                      'branch that asks you to edit your only rollback copy, '
+                      'and the sentence above about the source being untouched '
+                      'stops being true the moment you do. Then resolve the '
+                      'duplicate in the source (or delete one of the two '
+                      'documents) and run the migration again.')
         elif found_in_source is False:
             remedy = ('The source holds no duplicate, so the other claimant is '
                       'already in the destination -- most likely a previous '

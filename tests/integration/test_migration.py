@@ -439,13 +439,14 @@ class TestMigrationFailureModes:
             migrate(db_path, str(tmp_path / "dup_dest"), verbose=False)
 
         message = str(excinfo.value)
-        assert 'Resolve the duplicate in the source' in message
+        assert 'resolve the duplicate in the source' in message
+        assert 'COPY THE SOURCE DIRECTORY FIRST' in message
         assert 'DESTINATION' not in message, (
             'a source-side clash must not send the operator to the destination'
         )
 
     @pytest.mark.parametrize('state,must_contain,must_not_contain', [
-        (True, 'Resolve the duplicate in the source', 'DESTINATION'),
+        (True, 'resolve the duplicate in the source', 'DESTINATION'),
         (False, 'already in the destination', 'delete one of the two documents'),
         (None, 'could not determine', 'delete one of the two documents'),
     ])
@@ -487,8 +488,14 @@ class TestMigrationFailureModes:
         message = str(excinfo.value)
         assert must_contain in message, message
         assert must_not_contain not in message, message
-        # Every state must protect the source.
-        assert 'Do NOT edit the source' in message or state is True, message
+        if state is True:
+            # The ONE branch that asks the operator to edit their only
+            # rollback copy must tell them to take a copy first, and must not
+            # leave the earlier "the source is untouched" sentence standing
+            # unqualified.
+            assert 'COPY THE SOURCE DIRECTORY FIRST' in message, message
+        else:
+            assert 'Do NOT edit the source' in message, message
 
     def test_an_interrupted_migration_leaves_no_partial_destination(self, codernity_db, tmp_path):
         """The case the repeatability tests name but do not exercise.

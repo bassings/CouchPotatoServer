@@ -415,12 +415,44 @@ complete at the destination and the run reports failure, so the `lexists`
 guard blocks every retry for ever and the reverse symlink is never created.
 
 **The shape that would close it** (deliberately not attempted here): decide
-success from the observable end state rather than from which call raised. If
-the destination survives at the same size as the source, the move has
-achieved what it exists to achieve; log loudly, continue, and let the caller
-treat it as done. That is a behaviour change on the renamer's most
-destructive path and belongs in its own change with its own criteria, not as
-a fifth patch inside a safety-net PR.
+success from the observable end state rather than from which call raised.
+
+**Two constraints on that, and getting either wrong destroys the download.**
+The first draft of this paragraph said "if the destination survives at the
+same SIZE as the source, let the caller treat it as done". Review implemented
+that literally and measured the result; so did I:
+
+```
+moveFile returned True -> caller treats it as DONE
+library bytes are the DOWNLOAD? False
+cleanup called on source folder: True     (driven through _moveRenamedFiles)
+download still on disk:          False
+```
+
+The user's film is replaced by whatever bytes happened to be at the
+destination, and the only other copy is deleted. So:
+
+1. **The end-state test must verify CONTENT, not size.** This file already
+   knows that: `tests/unit/test_renamer_mover.py` carries an
+   `xfail(strict=True)` for exactly this
+   (`test_failed_move_with_equal_size_but_different_content_should_not_be_accepted`,
+   AC-DATA-4), which XPASSes and reds the suite the day a checksum is added.
+   A remedy that reintroduces size-as-proof walks straight into it.
+2. **An end-state "success" must NOT authorise cleanup.** At most it should
+   unblock the RETRY. Returning True hands `_moveRenamedFiles` permission to
+   delete the source folder, which is the whole mechanism T1.8 exists to
+   guard. Unblocking a retry is safe; declaring the move done is not.
+
+Note also what the sketch silently broke in that run: `symlink(dest, old)`
+then raises `FileExistsError` and is swallowed, so the reverse symlink is
+never created. This entry's stated harm is "a seeding path never restored";
+the naive remedy turns that into "the seed is deleted".
+
+That is a behaviour change on the renamer's most destructive path and belongs
+in its own change with its own criteria, not as a fifth patch inside a
+safety-net PR. **PR 4 also rewrites `renamer/main.py`'s pre-existing-`dst`
+refusal, which is currently the last thing standing between the poisoned
+state and this outcome, so the two must be designed together.**
 
 **Nothing is lost today**, which is why this is deferred rather than
 blocking: the source survives in every measured case, `_moveRenamedFiles`

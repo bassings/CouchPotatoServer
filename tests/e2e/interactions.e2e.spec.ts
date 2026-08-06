@@ -389,17 +389,12 @@ test.describe('Suggestions Page', () => {
     await waitForPageReady(page);
 
     const tabs = page.locator('[role="tab"]');
-    // POLL, do not snapshot. The Settings tabs are `x-for` over `tabOrder`,
-    // which is populated only after `fetch('/settings/')` AND
-    // `fetch('/updater.info/')` both resolve, while `waitForPageReady` only
-    // waits for domcontentloaded plus `#main-content` (always-present base
-    // chrome). A bare `await tabs.count()` here is legitimately 0 on a slow
-    // run, so the precondition added to close a zero-iteration hole would
-    // have converted a silent vacuity into a flake -- which this repo rates
-    // as the worse of the two, because the remedy people learn is to re-run.
-    await expect
-      .poll(() => tabs.count(), { timeout: 10000 })
-      .toBeGreaterThan(0);
+    // Suggestions renders exactly two tabs as static server-side markup
+    // (suggestions.html), so assert the count rather than polling for one.
+    // The Settings version of this loop DOES need a poll, for a reason that
+    // does not apply here -- an earlier version of this comment carried that
+    // justification into this file, where it is simply false.
+    await expect(tabs).toHaveCount(2);
     const tabCount = await tabs.count();
 
     for (let i = 0; i < tabCount; i++) {
@@ -488,7 +483,11 @@ test.describe('Settings Page', () => {
     // have converted a silent vacuity into a flake -- which this repo rates
     // as the worse of the two, because the remedy people learn is to re-run.
     await expect
-      .poll(() => tabs.count(), { timeout: 10000 })
+      .poll(() => tabs.count(), {
+        message: 'the settings tabs never rendered: tabOrder is populated only '
+          + 'after /settings/ and /updater.info/ both resolve',
+        timeout: 10000,
+      })
       .toBeGreaterThan(0);
     const tabCount = await tabs.count();
 

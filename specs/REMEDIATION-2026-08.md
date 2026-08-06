@@ -188,22 +188,26 @@ pass a content test.
     an equal-size destination it unlinks the SOURCE and returns True). Pinned
     by `test_failed_move_with_a_short_destination_...`.
 
-  **And no branch may use a composite `shutil` call whose non-copy half can
-  fail alone.** ~~This clause is not achievable as written and is superseded;
-  see docs/technical-debt.md's "STOPPED after four rounds".~~ `shutil.move` is
-  `copy_function` **plus `os.unlink(src)`**, so `copy_function=copyfile`
-  removes one failing half and leaves another; measured, a read-only download
-  directory still leaves a complete destination and a permanent skip. Chasing
-  sub-calls does not converge, and the criterion should be restated in terms
-  of the end state on disk before PR 4 adds a delete to this path. The
-  original text follows, as the record of what was tried: `shutil.copy` is copyfile+copymode; `shutil.move` falls back
-  to `copy2`, which is copyfile+copystat. Either one failing after the bytes
-  land leaves a COMPLETE destination that the helper correctly refuses to
-  remove and the `lexists` guard then blocks for ever. `copy` and the `link`
-  fallback use `shutil.copyfile`; `symlink_reversed` passes
+  **SUPERSEDED at the fifth review round: the clause below is not achievable
+  as written, and the sixth round found that its recorded remedy DELETES THE
+  DOWNLOAD if implemented literally.** `shutil.move` is `copy_function` PLUS
+  `os.unlink(src)`, so removing one failing half always leaves another; four
+  rounds of trying is the evidence. See docs/technical-debt.md's "STOPPED
+  after four rounds" for the measurement, the frame diagnosis, and the two
+  constraints any replacement must satisfy (verify CONTENT not size; an
+  end-state success must unblock the retry, never authorise cleanup).
+  **Do not attempt a fifth fix against the struck text below.** It is kept as
+  the record of what was tried:
+
+  ~~And no branch may use a composite `shutil` call whose non-copy half can
+  fail alone. `shutil.copy` is copyfile+copymode; `shutil.move` falls back to
+  `copy2`, which is copyfile+copystat. Either one failing after the bytes land
+  leaves a COMPLETE destination that the helper correctly refuses to remove
+  and the `lexists` guard then blocks for ever. `copy` and the `link` fallback
+  use `shutil.copyfile`; `symlink_reversed` passes
   `copy_function=shutil.copyfile`. The default `move` deliberately does not,
   because it recovers on its own and mtime preservation is worth keeping on
-  the most common path.
+  the most common path.~~
 
   This criterion was written to stop a branch being missed by enumeration and
   was itself mis-enumerated twice: first claiming four call sites where three
@@ -960,6 +964,40 @@ list is how the harness improves rather than merely runs:
     The spec is what the review cycle verifies against, so a later round would
     have filed the fix as a regression. **When a review finding inverts an
     AC, amending the AC is part of the fix, not follow-up.**
+
+### Spec gaps found at the third to sixth review rounds
+
+23. **`AC-QA-42` pins Rule 6's semantics but not its robustness across
+    spellings.** The same function regressed in four consecutive rounds, each
+    time on a formatting shape rather than on the rule's meaning, and each
+    round's fix was validated by one ad-hoc test for the shape that round
+    happened to notice. What closes it is a **checked-in, table-driven corpus
+    of guard spellings with expected verdicts**, so any routing edit is scored
+    against all of them at once instead of against the last bug.
+24. **A review-driven REMOVAL needs an AC as much as an addition.** Round 5
+    removed `PrivacyFilter`'s re-entrancy guard, correctly, with nothing
+    stating the property now relied on: *no shared mutable state gates
+    redaction*. This is the third recurrence of gap 17's shape after
+    `AC-SEC-16b` and `AC-QA-38b` were written for exactly it.
+25. **Nothing says how a loop precondition must be written.** Round 3 added
+    them, round 4's version was a flake, round 5 converted two to polls and
+    put the wrong justification on one. One line would have prevented all
+    three: *a precondition over asynchronously rendered content polls; over
+    server-rendered content it asserts an exact count.*
+26. **`AC-QA-21`'s "under 2 s" has no mechanical enforcement.** Measured
+    0.56 s to 1.89 s across four runs; the worst is within 6% of the bar and
+    nothing fails if it crosses.
+27. **A deferral recorded in prose is not a guard, and a recorded REMEDY can
+    itself be a defect.** Round 5 deferred the `moveFile` composite class with
+    a documented remedy sketch. Round 6 implemented that sketch literally and
+    measured that it **deletes the download**: it accepted size equality as
+    proof of success, which this repo already carries an `xfail(strict=True)`
+    against (`AC-DATA-4`), and returning success authorises `_moveRenamedFiles`
+    to delete the source. The deferral is now an `xfail(strict=True)` that
+    XPASSes the day it is closed, and the remedy carries the two constraints
+    any replacement must satisfy. **A deferral needs a failing test and its
+    remedy needs the same scrutiny as code**, because the next person will
+    implement it exactly as written.
 
 **PR 1 acceptance:** `make verify` green **and `make check-secrets` green**;
 every new test proven load-bearing (break, watch fail, `git diff`-confirm,

@@ -1091,7 +1091,13 @@ def check_e2e_spec_guards(path: Path, text: str):
         # Sliced from the BLOCK-opening brace, not `index("{")` or `rfind("{")`:
         # `index` picks up the condition's own brace (a template literal), and
         # `rfind` misses an `expect(` that precedes a nested object literal.
-        inline_body = "" if opens_block else (line[inline_block.end():] if inline_block else "")
+        # Slice whenever the line contains a block opener, INCLUDING when the
+        # block also stays open. Gating this on `not opens_block` silenced a
+        # braced guard whose `expect(` sits on the guard line while the block
+        # closes later -- and arbitrarily so: the identical shape written
+        # `} else if (...) {` was still flagged, because the leading `}`
+        # balanced the count and sent it down the other path.
+        inline_body = line[inline_block.end():] if inline_block else ""
         body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
         if not EXPECT_CALL_RE.search(body):
             continue
