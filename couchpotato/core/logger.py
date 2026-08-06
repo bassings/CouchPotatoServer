@@ -24,7 +24,26 @@ INFO2 = 21
 logging.addLevelName(INFO2, 'INFO')
 
 # Privacy filter patterns
-_REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'uid', 'key', 'passkey']
+_REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'uid', 'key', 'passkey',
+                    'token', 'authkey', 'torrent_pass', 'sid']
+
+#: Names redacted even OUTSIDE a query string, i.e. bare `name=value` in prose.
+#:
+#: The query-param pass below only matches `?name=` and `&name=`, so anything
+#: logged outside a URL went through in the clear. Three live call sites did
+#: exactly that: `notifications/telegrambot.py:37` logs `token=%s` at ERROR
+#: (so it reaches production logs, and a Telegram bot token is a full
+#: send-as-this-bot credential), `downloaders/synology.py:125` logs `sid=%s`,
+#: and `http_client.py:236` logs whole URLs whose parameter names were not all
+#: in the list above.
+#:
+#: Deliberately NARROWER than _REPLACE_PRIVATE: `h`, `uid`, `key` and
+#: `username` are too generic to match bare assignments safely -- `key=` alone
+#: appears in ordinary dict-dumping messages, and eating those destroys the
+#: diagnostic the operator needed. A redaction nobody can read around is one
+#: that gets switched off.
+_REPLACE_PRIVATE_BARE = ['api_key', 'apikey', 'password', 'passkey', 'token', 'authkey',
+                         'torrent_pass', 'sid']
 
 
 class ColorFormatter(logging.Formatter):
@@ -78,6 +97,18 @@ class PrivacyFilter(logging.Filter):
         for replace in _REPLACE_PRIVATE:
             msg = re.sub(r'(\?%s=)[^\&]+' % replace, r'?%s=xxx' % replace, msg)
             msg = re.sub(r'(&%s=)[^\&]+' % replace, r'&%s=xxx' % replace, msg)
+
+        # Bare `name=value`, outside any query string.
+        #
+        # Stops at whitespace or at any of `&,;)]}'"` so the REST of the
+        # message survives -- `token=SECRET and the response was 404` must keep
+        # the 404. A filter that swallows the line removes the reason the line
+        # was logged, and the operator turns it off.
+        #
+        # \b on the left so `mytoken=` is left alone rather than
+        # half-redacted.
+        for replace in _REPLACE_PRIVATE_BARE:
+            msg = re.sub(r'\b(%s=)[^\s&,;)\]}\'"]+' % replace, r'\1xxx', msg)
 
         # Replace api key.
         #

@@ -1295,9 +1295,38 @@ CSP build of Alpine is used. Land the header with the E2E suite as the guard: a 
 
 ### T2.6: QW2 + QW7: TLS verification and log redaction · S · risk: low
 
-- `core/downloaders/synology.py:140`: `verify=False` while POSTing
+- ~~`core/downloaders/synology.py:140`: `verify=False` while POSTing
   `account`/`passwd`. Honour the global `ssl_verify` setting; this is the last
-  `verify=False` in the tree.
+  `verify=False` in the tree.~~ **RETRACTED as written -- this fix closes
+  nothing, and the real exposure is worse. Verified 2026-08-07 by reading the
+  file:**
+
+  `synology.py:109-110` hardcodes the scheme:
+
+  ```python
+  self.download_url = 'http://%s:%s/webapi/DownloadStation/task.cgi' % (host, port)
+  self.auth_url     = 'http://%s:%s/webapi/auth.cgi' % (host, port)
+  ```
+
+  `verify` is a TLS parameter. On an `http://` URL `requests` never reaches a
+  TLS handshake, so `verify=False` at `:140` is unreachable and honouring
+  `ssl_verify` there would change no observable behaviour. Shipping it would
+  produce a commit that reads like a TLS hardening fix and hardens nothing --
+  the same "fix the appearance" shape T1.5 already cost this project once.
+
+  **The actual finding:** `_login` (`:117-121`) POSTs `account` and `passwd`
+  over plaintext HTTP on every download action, so the operator's NAS password
+  crosses the LAN in the clear. The `host` setting (`:227-229`, "Hostname with
+  port. Usually localhost:5000") accepts no scheme, so a user whose DSM offers
+  HTTPS on 5001 cannot opt in even if they want to.
+
+  **Correct fix, deferred to its own task:** honour a scheme if the user
+  supplies one in `host`, default to `http://` for compatibility, and set
+  `verify=True` whenever the resolved scheme is https. Not taken here because
+  it changes downloader transport and cannot be exercised without a real
+  Synology -- and a downloader that silently stops working is a worse outcome
+  for the operator than the exposure it fixes. It wants a device to test
+  against, which is a prerequisite this branch does not have.
 - Extend `PrivacyFilter`'s allowlist (`core/logger.py:27`) with `token`,
   `authkey`, `torrent_pass`, `sid`, `passkey`; fix the three call sites that log
   secrets outside query-param form: `notifications/telegrambot.py:37`,
