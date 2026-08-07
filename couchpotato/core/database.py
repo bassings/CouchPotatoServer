@@ -211,17 +211,18 @@ class Database:
             log.debug('Failed deleting corrupted: %s', traceback.format_exc())
 
     def reindex(self, **kwargs):
+        """API view kept for compatibility; there is nothing to reindex.
 
-        success = True
-        try:
-            db = self.getDB()
-            db.reindex()
-        except Exception:
-            log.error('Failed index: %s', traceback.format_exc())
-            success = False
+        SQLite maintains its indexes automatically, so `reindex` is a documented no-op on this adapter -- and its signature requires an `index_name` nobody passed, making every one of these a guaranteed TypeError.
+
+        The endpoint stays so any client or bookmark calling `database.reindex`
+        still gets a well-formed success response instead of a 500, but it no
+        longer pretends to do work. Reporting success is honest here: the
+        indexes genuinely are up to date.
+        """
 
         return {
-            'success': success
+            'success': True
         }
 
     def compact(self, try_repair = True, **kwargs):
@@ -313,7 +314,6 @@ class Database:
                     fireEventAsync('app.restart')
                 else:
                     log.error('Migration failed and couldn\'t recover database. Please report on GitHub, with this message.')
-                    db.reindex()
 
                 return
 

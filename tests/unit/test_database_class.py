@@ -381,15 +381,34 @@ class TestDatabaseReindex:
             db.db = MagicMock()
             return db
 
-    def test_reindex_success(self, database_instance):
-        result = database_instance.reindex()
-        assert result['success'] is True
-        database_instance.db.reindex.assert_called_once()
+    def test_reindex_reports_success_without_touching_the_adapter(self, database_instance):
+        """The API view no longer calls `db.reindex()`, and must not.
 
-    def test_reindex_handles_exception(self, database_instance):
-        database_instance.db.reindex.side_effect = Exception("Reindex failed")
+        These two tests previously asserted that it DID -- `assert_called_once`
+        on a MagicMock, which passed happily while the real adapter method
+        raised `TypeError` for every caller, because its signature requires an
+        `index_name` that nobody passed. A mock with an auto-generated
+        signature cannot reproduce that, so the tests pinned a call that had
+        never once worked against the real object.
+
+        SQLite maintains its indexes automatically, so there is nothing to do
+        and reporting success is honest. The endpoint stays for compatibility.
+        """
         result = database_instance.reindex()
-        assert result['success'] is False
+
+        assert result['success'] is True
+        database_instance.db.reindex.assert_not_called()
+
+    def test_reindex_cannot_fail(self, database_instance):
+        """No adapter call means no failure path.
+
+        The old test made `db.reindex` raise and asserted `success is False`.
+        That branch no longer exists: keeping it would mean keeping a call
+        whose only observable behaviour was to raise.
+        """
+        database_instance.db.reindex.side_effect = Exception('should never be reached')
+
+        assert database_instance.reindex()['success'] is True
 
 
 # ─── Additional Edge Cases for Migration Modules ─────────────────────────────

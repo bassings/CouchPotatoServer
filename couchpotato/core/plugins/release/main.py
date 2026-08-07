@@ -151,9 +151,9 @@ class Release(Plugin):
             except Exception:
                 log.debug('Failed cleaning up orphaned releases: %s', traceback.format_exc())
 
-        if reindex > 0:
-            db.reindex()
-
+        # The `reindex` counter above is left in place: it still records how
+        # many corrupt or orphaned releases this pass met, which is worth
+        # keeping. What is gone is the call it used to gate -- SQLite maintains its indexes automatically, so `reindex` is a documented no-op on this adapter -- and its signature requires an `index_name` nobody passed, making every one of these a guaranteed TypeError.
         del media_exist
 
         # get movies last_edit more than a week ago

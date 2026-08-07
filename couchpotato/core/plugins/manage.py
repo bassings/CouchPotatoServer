@@ -238,10 +238,14 @@ class Manage(Plugin):
                     if self.shuttingDown():
                         break
 
-                if not self.shuttingDown():
-                    db = get_db()
-                    db.reindex()
-
+            # No reindex here any more. `db.reindex()` took a required
+            # `index_name` nobody passed, so it raised TypeError -- caught by
+            # the `except` below, which logged "Failed updating library" and
+            # skipped the line immediately after it. That line is the
+            # COMPLETION TIMESTAMP, so every full scan reported failure and
+            # recorded nothing, and the next scan repeated the entire library
+            # walk. SQLite maintains its indexes itself; there was never any
+            # work to do here.
             Env.prop(last_update_key, time.time())
         except Exception:
             log.error('Failed updating library: %s', traceback.format_exc())
