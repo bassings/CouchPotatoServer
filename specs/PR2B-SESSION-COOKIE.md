@@ -583,6 +583,63 @@ claims.
   (`tests/unit/test_api_key_exposure_inventory.py`); the one sentence stating
   the residue does not.
 
+## D15 — D14 amended: the bootstrap requires a READABLE store
+
+My D14 wording was underspecified and the tranche E implementer found it by
+turning an existing test red rather than by arguing about it.
+
+`get_session_secret()` returns `None` for **two different situations**: this
+install has never had a secret, and the property store just raised. AC-SEC-33
+requires the second to fail closed and issue no cookie. Read literally, D14 told
+the implementer to create a secret in both — and creating one on a raising store
+writes a fresh secret over a row nobody can read, signing every live session out
+on the strength of a transient fault.
+
+**Amended:** the bootstrap fires only when the store is readable and simply has
+no secret in it. Implemented as `if not secret and
+session_secret_store_is_readable():` in `login_post`.
+
+Recorded as a decision-quality note, not only a code note: an orchestrator
+decision that read as complete was not, and the check that caught it was running
+the existing suite.
+
+## D16 — `pytest.ini` is test configuration, like the scripts
+
+Tranche E added one line (an `auth_off` marker) and asked whether it breaches
+AC-SIMP-3. Same ruling as `scripts/seed_e2e_data.py` and
+`scripts/check_test_traps.py`: AC-SIMP-3 governs "non-test, non-spec, non-docs"
+files. **No third amendment is needed; the nine-file product set holds.**
+
+## Known intermittent: `tests/e2e/suggestions.spec.ts:99`
+
+`expect(alert).toBeFocused()` failed twice during full `make verify` runs and
+has never failed in isolation.
+
+| Evidence | Result |
+|---|---|
+| my full `make verify`, machine running five agents | **FAIL** |
+| my full `make verify`, idle machine | pass (exit 0) |
+| the spec alone, 5 consecutive runs | 5/5 pass |
+| full E2E on the stashed, untouched tip | 137/137 pass |
+| CI `ui-e2e-tests`, last 30 runs, with `--fail-on-flaky-tests` | 27 success, 0 fail |
+
+Not caused by this branch: the spec is untouched here, the rate limiter exempts
+localhost before limiting, and both sign-out controls sit inside
+`{% if auth_required %}` while E2E seeds no password, so the shell renders
+identically. `fail()` already defers focus with `$nextTick`, so the naive
+"focus a hidden element" race is not it either.
+
+**Read honestly: five isolated runs is weaker evidence than five full runs under
+load**, and both failures occurred under contention. The likeliest cause is
+focus timing under a loaded machine, with "something steals focus after
+`fail()`" still open — `_loading_panel.html` is shared and the page renders more
+than one instance.
+
+**Deliberately not "fixed" by adding a retry or loosening the assertion.** That
+converts a real signal into a permanently hidden one, and CI's
+`--fail-on-flaky-tests` would stop reporting it. If it recurs on an idle
+machine, hypothesis one is the place to look.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
