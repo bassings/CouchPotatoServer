@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+from urllib.parse import urlparse
 import json
 import os
 import re
@@ -715,6 +716,43 @@ def _expire_legacy_root_cookie(response) -> None:
     )
 
 
+def _cross_origin_post(request) -> bool:
+    """Is this POST demonstrably from somewhere other than this app?
+
+    `SameSite=Lax` is the second layer the logout route relies on, and it does
+    NOT scope to an origin -- it scopes to a SITE, which ignores the port and
+    covers subdomains of the same registrable domain. This project's own
+    deployment is the example: Jackett on :9117 and CouchPotato on :5050 of the
+    same host are same-site, so a compromised sibling's cross-origin POST DOES
+    carry the session cookie. `require_auth` then passes and the secret
+    rotates, signing the operator out of every device -- repeatably.
+
+    An Origin check rather than a token, because AC-SIMP-11 forbids CSRF token
+    machinery and header validation is not that.
+
+    Returns True ONLY when a header is present and disagrees. A request with
+    neither `Origin` nor `Referer` is allowed through: refusing would risk
+    locking an operator out from behind a proxy that strips them, and a browser
+    always sends `Origin` on the cross-origin POST this exists to stop. Absent
+    evidence is not evidence.
+    """
+    stated = request.headers.get('origin')
+    if not stated:
+        referer = request.headers.get('referer')
+        if not referer:
+            return False
+        parsed = urlparse(referer)
+        stated = '%s://%s' % (parsed.scheme, parsed.netloc) if parsed.netloc else ''
+        if not stated:
+            return False
+
+    host = request.headers.get('host')
+    if not host:
+        return False
+
+    return urlparse(stated).netloc != host
+
+
 def session_cookie_attributes() -> dict:
     """The ONE source of the session cookie's attributes, set and delete alike.
 
@@ -1375,6 +1413,14 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.post(web_base + 'logout/')
     @app.post(web_base + 'logout')
     async def logout(request: Request, user=Depends(require_auth)):
+        if _cross_origin_post(request):
+            # A same-site sibling app (another port on this host) can make the
+            # browser send this POST WITH the session cookie, because SameSite
+            # scopes to a site rather than an origin. Refuse before rotating:
+            # otherwise any app sharing the host can sign the operator out at
+            # will, and keep doing it.
+            raise HTTPException(status_code=403, detail='Cross-origin sign-out refused')
+
         # NOTHING TO REVOKE, SO NOTHING IS WRITTEN.
         #
         # With authentication off, `get_current_user` returns True for

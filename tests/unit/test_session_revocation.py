@@ -701,3 +701,63 @@ class TestExactlyOneFunctionWritesTheSecret:
 def _request(cookie=None):
     from types import SimpleNamespace
     return SimpleNamespace(cookies=({SESSION_COOKIE_NAME: cookie} if cookie else {}))
+
+
+class TestASiblingAppCannotSignTheOperatorOut:
+    """P2 review finding: `SameSite=Lax` does not scope to an ORIGIN.
+
+    It scopes to a SITE, which ignores port and covers subdomains of the same
+    registrable domain. This project's own deployment is the example: Jackett
+    runs on :9117 and CouchPotato on :5050 of the same host, so a compromised
+    or malicious sibling is same-site and the browser DOES attach the session
+    cookie to its cross-origin POST.
+
+    `require_auth` therefore succeeds and the secret rotates, signing the
+    operator out of every device. Not credential theft -- but repeatable, and
+    it stops them getting back in for as long as the sibling keeps firing.
+
+    The defence is an Origin check, not a token: AC-SIMP-11 forbids CSRF token
+    machinery, and header validation is not that.
+
+    Deliberately refuses only when Origin or Referer is PRESENT and does not
+    match. A client that sends neither is allowed through, because refusing
+    would risk locking out an operator behind a proxy that strips them -- and
+    a browser always sends `Origin` on a cross-origin POST, which is the case
+    this exists to stop.
+    """
+
+    def test_a_cross_origin_post_does_not_rotate(self, env):
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        client, _ = log_in(env)
+
+        response = client.post('/logout/', headers={'origin': 'http://localhost:9117'})
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == before, (
+            'a POST from a same-site sibling app rotated the signing secret, '
+            'so any app sharing this host can sign the operator out at will'
+        )
+        assert response.status_code in (400, 403), response.status_code
+
+    def test_a_same_origin_post_still_signs_out(self, env):
+        """The counterweight, and the one that matters: sign-out must work."""
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        client, _ = log_in(env)
+
+        response = client.post('/logout/', headers={'origin': 'http://testserver'})
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before, (
+            'the operator can no longer sign out from the app itself'
+        )
+        assert response.status_code in (302, 303), response.status_code
+
+    def test_a_post_with_no_origin_header_still_signs_out(self, env):
+        """No header, no verdict. Refusing here would lock out an operator
+        behind a proxy that strips it, and a browser always sends Origin on
+        the cross-origin POST this guards against."""
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        client, _ = log_in(env)
+
+        client.post('/logout/')
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before
+

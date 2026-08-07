@@ -411,3 +411,52 @@ class TestTheErrorMessageIsAssociatedWithTheField:
 
         assert 'aria-invalid' not in field, field
         assert 'aria-describedby' not in field, field
+
+
+class TestTheNoticeIsAssociatedWithWhereFocusLands:
+    """P2 review finding. WCAG 3.3.1, the notice case rather than the error one.
+
+    After an expiry, a revocation, or the D5 upgrade, the user is redirected
+    here and focus goes straight to Username. The explanation sits above the
+    form in a `role="status"` region that was already in the document when it
+    loaded -- and static live-region content is not reliably announced on
+    initial load. Nothing described the focused field either.
+
+    So the person is dropped into a text box with no stated reason for having
+    been interrupted, and never hears that their existing password still
+    works. The error case was fixed earlier in this PR; this is the same
+    defect on the path a user is far more likely to hit.
+    """
+
+    def _page(self, client, reason):
+        return client.get('/login/?reason=%s' % reason).text
+
+    def _attrs_of(self, html, element_id):
+        field = html[html.index('id="%s"' % element_id):]
+        return field[:field.index('>')]
+
+    @pytest.mark.parametrize('reason', ['signed_out', 'session_ended'])
+    def test_the_initially_focused_field_points_at_the_notice(self, client, reason):
+        html = self._page(client, reason)
+        username = self._attrs_of(html, 'username')
+
+        assert 'autofocus' in username, (
+            'focus no longer lands on username for %r, so this test is '
+            'measuring the wrong field' % reason)
+        assert 'aria-describedby="login-message"' in username, (
+            'the field that receives focus does not reference the notice, so '
+            'a screen-reader user lands in it with no stated reason: %s' % username)
+
+    @pytest.mark.parametrize('reason', ['signed_out', 'session_ended'])
+    def test_a_notice_does_not_mark_the_field_invalid(self, client, reason):
+        """A notice is not a mistake. `aria-invalid` here would announce an
+        error to somebody who has not made one."""
+        username = self._attrs_of(self._page(client, reason), 'username')
+
+        assert 'aria-invalid' not in username, username
+
+    def test_a_first_visit_still_references_nothing(self, client):
+        """The counterweight: no message, no association to make."""
+        username = self._attrs_of(client.get('/login/').text, 'username')
+
+        assert 'aria-describedby' not in username, username

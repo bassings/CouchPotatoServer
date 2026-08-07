@@ -128,6 +128,42 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
+- [ ] T14: the password-change rotation commits before the save does — state: queued (no deps)
+
+      P2 review finding on #229, **attempted and withdrawn**, so it is a task
+      rather than a fix.
+
+      `Core.md5Password` is the VALUE hook: it runs while the settings save is
+      still in progress, before `Settings.save()` writes `config.ini`. Rotating
+      there means a save that then fails -- read-only config directory, a
+      permissions change, an I/O error -- has already signed the operator out
+      of every device for a change that was never persisted, and after a
+      restart the OLD password is still authoritative.
+
+      **The fix is available and clean.**
+      `fireEvent('setting.save.<section>.<option>.after')` fires AFTER
+      `self.save()` (`core/settings.py:514`), so a save that raises never
+      reaches it. Moving the rotation there couples it to the commit rather
+      than the attempt, and takes the rotation out of the value hook where an
+      exception risks the auth_required lockout that T-M6 is also about.
+
+      One wrinkle to design around: the `.after` hook receives no value, so it
+      cannot tell a password being SET from one being CLEARED, and D10 says
+      clearing must not rotate. A flag set in `md5Password` and consumed by the
+      after-hook works, but must be assigned unconditionally so a failed save
+      cannot leave it set for the next one.
+
+      **Why it is deferred.** Three attempts to measure in this area produced
+      nothing usable: the ordering test passes on the current code, and I could
+      not prove it is non-vacuous -- a successful save through the same harness
+      would not demonstrably rotate either, so the test may be asserting
+      nothing. Shipping a guard that looks like coverage and is not is worse
+      than shipping none. Project rule 11 already applies to this function on
+      this branch.
+
+      Do it with a working harness: assert first that a SUCCESSFUL save
+      rotates, then that a failing one does not.
+
 - [ ] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: queued (no deps)
 
       Review Medium on #229, confirmed by execution and then **attempted and

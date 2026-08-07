@@ -177,6 +177,20 @@ tailwind.config = {
             spellcheck="false"
             value="{{ username_value }}"
             {% if focus_field != 'password' %}autofocus{% endif %}
+            {#- WCAG 3.3.1, the NOTICE case. After an expiry, a revocation or
+                the D5 upgrade, focus lands HERE and the explanation sits above
+                the form in a `role="status"` region that was already in the
+                document when it loaded -- and static live-region content is
+                not reliably announced on initial load. Without this the user
+                is dropped into a text box with no stated reason for the
+                interruption, and never hears that their existing password
+                still works.
+
+                No `aria-invalid`: a notice is not a mistake, and marking the
+                field invalid would announce an error to somebody who has not
+                made one. That half stays on the password field, for the
+                rejected case only. -#}
+            {% if message_text and focus_field != 'password' %}aria-describedby="login-message"{% endif %}
             class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
           >
         </div>
