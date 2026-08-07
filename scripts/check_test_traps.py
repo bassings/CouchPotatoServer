@@ -131,6 +131,7 @@ finding.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import subprocess
@@ -1315,6 +1316,62 @@ def check_e2e_spec_guards(path: Path, text: str):
             )
 
 
+#: pytest's caplog resolves a level given as a STRING through
+#: `logging.getLevelName`, and `couchpotato/core/logger.py` calls
+#: `logging.addLevelName(21, 'INFO')` to register INFO2. That overwrites
+#: `_nameToLevel['INFO']` from 20 to 21, so `caplog.at_level('INFO')` sets the
+#: threshold ABOVE every genuine `log.info()` record and captures none of them.
+#:
+#: Only INFO is remapped, which is why `'ERROR'` and `'WARNING'` are fine and
+#: why no existing test has ever tripped over this.
+_CAPLOG_LEVEL_METHODS = {"at_level", "set_level"}
+_REMAPPED_LEVEL_NAMES = {"INFO"}
+
+
+def check_python_test(path: Path, text: str):
+    """Flag `caplog.at_level("INFO")`, which silently captures nothing.
+
+    Parsed with `ast` rather than matched with a regex, deliberately: this
+    checker's OWN test file contains the offending call inside string literals
+    as fixture source, and a regex would flag itself. An AST walk only sees real
+    calls, so the rule needs no self-exemption entry to stay clean.
+    """
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr not in _CAPLOG_LEVEL_METHODS:
+            continue
+        for arg in list(node.args) + [kw.value for kw in node.keywords]:
+            if isinstance(arg, ast.Constant) and arg.value in _REMAPPED_LEVEL_NAMES:
+                yield (
+                    node.lineno,
+                    "caplog.%s(%r) captures NOTHING: couchpotato/core/logger.py "
+                    "calls logging.addLevelName(21, 'INFO'), which remaps the "
+                    "name so the string resolves to 21 and every real INFO "
+                    "record (level 20) is dropped. Use the int form "
+                    "logging.INFO instead. This reads as 'the code never "
+                    "logged' and costs a debugging detour."
+                    % (func.attr, arg.value),
+                )
+
+
+def _is_python_test(path: Path) -> bool:
+    # Deliberately keyed on the `test_*.py` name alone, NOT on a `tests/` path
+    # component: the rule must fire on a synthetic fixture written to a tmp_path
+    # as well as on the real suite, and an earlier version that required
+    # `"tests" in path.parts` passed its own tests vacuously for exactly that
+    # reason -- the fixture was never scanned.
+    return path.suffix == ".py" and path.name.startswith("test_")
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -1326,7 +1383,9 @@ def check_file(path: Path):
     except (OSError, UnicodeDecodeError):
         return
 
-    if _is_vitest_spec(path):
+    if _is_python_test(path):
+        yield from check_python_test(path, text)
+    elif _is_vitest_spec(path):
         yield from check_vitest_spec(path, text)
     elif _is_e2e_spec(path):
         yield from check_e2e_spec_guards(path, text)
