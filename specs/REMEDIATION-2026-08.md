@@ -95,7 +95,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
-- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: building · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs written by /plan-cycle (M15 satisfied)
+- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: awaiting-ci #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs, review cycle 7 fixed / 4 deferred
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
@@ -146,6 +146,28 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 31** — **PR #229 raised** for T4 after `make verify` went green
+  (exit 0, captured to a log rather than through a pipe). Five implementation
+  tranches, then a nine-lens review returning eleven findings: seven fixed,
+  four deferred with reasons in `specs/PR2B-SESSION-COOKIE.md`.
+
+  Two of the fixed findings were criteria a tranche had reported DONE and had
+  not built (AC-DESIGN-7's `HX-Redirect`, AC-OPS-47's log clause), which is the
+  argument for the review gate existing at all. One was a **lockout**: on a
+  `url_base` install the pre-upgrade `path=/` cookie shadowed the new one and
+  the operator could not log in, while the page told them their password still
+  worked. AC-SEC-44's upgrade drill missed it because that drill runs at root,
+  where the two paths coincide.
+
+  **I introduced a startup crash and the gate caught it.** The posture log
+  called `session_cookie_attributes()` above the line that sets `web_base`, so
+  a real server died on boot -- and all three of my unit tests passed because
+  every one of them monkeypatched the function that breaks. Fixed by ordering,
+  plus a test that drives the real function and one that pins the ordering by
+  source. That is the second fix on this branch to introduce a defect; both
+  were caught before push, which is the frame holding rather than failing.
+
 
 - **Tick 10** — #228 merged (`085160eb`, verified from `gh pr view`, 19/19
   green). **T9 stays unticked:** what merged is the PR 7 *plan*;
