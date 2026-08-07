@@ -84,16 +84,38 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     #: the one being fixed. Only the key changes, from the header to the path.
     _ALWAYS_LIMITED_ROUTES = ('/login', '/logout', '/getkey')
 
-    def _is_auth_route(self, path: str) -> bool:
-        """Is `path` one of the credential-checking routes?
+    #: Routes where only a state-changing method is a credential ATTEMPT.
+    #:
+    #: `GET /login/` renders the form. Counting it against the limit meant the
+    #: browser's initial page load spent a slot -- with `rate_limit_max=1` the
+    #: correct-password POST that followed was refused for the whole window --
+    #: and more generally, refreshing the form silently reduced how many times
+    #: you could try your own password.
+    #:
+    #: `/getkey` is deliberately absent: it RETURNS the api_key for a username
+    #: and password, so a GET of it is a credential check and exempting it by
+    #: method would reopen the door AC-SEC-42 closed.
+    _READ_ONLY_EXEMPT_ROUTES = ('/login', '/logout')
+    _READ_ONLY_METHODS = ('GET', 'HEAD', 'OPTIONS')
+
+    def _is_auth_route(self, path: str, method: str = 'POST') -> bool:
+        """Is this request a credential ATTEMPT worth counting?
 
         Matched on the LAST SEGMENT, not with `startswith`. Every route is
         served under `web_base`, so on an install at `/couchpotato/` a prefix
         test would miss `/couchpotato/login/` and leave exactly the route this
         exists to protect unthrottled -- on the installs most likely to be
         behind a shared, reachable host.
+
+        The METHOD matters too: see `_READ_ONLY_EXEMPT_ROUTES`.
         """
-        return '/' + path.rstrip('/').rsplit('/', 1)[-1] in self._ALWAYS_LIMITED_ROUTES
+        segment = '/' + path.rstrip('/').rsplit('/', 1)[-1]
+        if segment not in self._ALWAYS_LIMITED_ROUTES:
+            return False
+        if (segment in self._READ_ONLY_EXEMPT_ROUTES
+                and (method or '').upper() in self._READ_ONLY_METHODS):
+            return False
+        return True
 
     def _refusal(self, request, path: str, retry_after: int):
         """The 429, as a page when a person is reading it and JSON otherwise.
@@ -109,7 +131,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         headers = {'Retry-After': str(retry_after)}
 
-        if self._is_auth_route(path) and 'text/html' in request.headers.get('accept', ''):
+        if self._is_auth_route(path, request.method) and 'text/html' in request.headers.get('accept', ''):
             try:
                 from couchpotato import render_login_page
 
@@ -156,7 +178,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         path = request.scope.get('path', '')
-        auth_route = self._is_auth_route(path)
+        auth_route = self._is_auth_route(path, request.method)
 
         # Don't rate-limit static assets or cached files.
         if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):

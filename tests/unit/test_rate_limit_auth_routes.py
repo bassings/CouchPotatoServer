@@ -417,3 +417,55 @@ class TestARateLimitedSignOutDoesNotShowTheSignInForm:
 
         assert response.status_code == 429
         assert 'sign-in attempts' in response.text.lower(), response.text[:400]
+
+
+class TestViewingTheLoginPageDoesNotSpendACredentialAttempt:
+    """The limit counts credential ATTEMPTS, not page views.
+
+    `_is_auth_route` keyed on the path alone, so `GET /login/` -- rendering the
+    form -- consumed a slot. With `rate_limit_max=1` the browser's initial GET
+    takes the only one and the correct-password POST that follows is refused
+    for the whole window. More generally, opening or refreshing the form
+    silently reduces how many times you may try your own password.
+
+    `/getkey` is deliberately NOT in this exemption: it is a GET that returns
+    the api_key for a username and password, so it IS a credential check
+    whatever the method.
+    """
+
+    def test_a_get_of_the_login_page_leaves_the_attempt_budget_intact(self, client):
+        # `accept: text/html`, because this models a BROWSER opening the form,
+        # which is the reported defect. A GET of /login/ is no longer counted
+        # as a credential attempt, but it is still subject to the GENERAL
+        # limit like any other page -- and the general limit exempts ordinary
+        # navigation. Both are deliberate: not spending a password attempt is
+        # the fix; leaving page loads entirely unlimited would not be.
+        html = {'accept': 'text/html'}
+        for _ in range(MAX + 3):
+            assert client.get('/login/', headers=html).status_code == 200
+
+        response = client.post('/login/', data={'password': 'wrong'},
+                               headers={'accept': 'text/html'})
+
+        assert response.status_code != 429, (
+            'viewing the login form spent the credential-attempt budget, so a '
+            'user who refreshed the page cannot try their own password'
+        )
+
+    def test_posting_credentials_is_still_limited(self, client):
+        """The counterweight: the exemption must not disarm the limiter."""
+        codes = [client.post('/login/', data={'password': 'w%d' % i},
+                             headers={'accept': 'text/html'}).status_code
+                 for i in range(MAX + 2)]
+
+        assert 429 in codes, (
+            'the login POST is no longer rate limited at all: %s' % codes)
+
+    def test_getkey_stays_limited_on_get(self, client):
+        """`/getkey` returns the api_key for credentials, so a GET of it IS an
+        attempt. Exempting it by method would open the exact door AC-SEC-42
+        closed."""
+        codes = [client.get('/getkey/').status_code for _ in range(MAX + 2)]
+
+        assert 429 in codes, (
+            '/getkey/ is no longer limited on GET: %s' % codes)

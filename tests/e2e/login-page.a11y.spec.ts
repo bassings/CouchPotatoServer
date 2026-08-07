@@ -146,7 +146,11 @@ test.describe('Login page accessibility', () => {
         await page.keyboard.press('Tab');
       }
 
-      for (const id of ['username', 'password', 'remember_me']) {
+      // `button:submit` included, and it was not before: the probe RECORDED
+      // it and the loop never checked it, so deleting the submit button's
+      // focus indicator left both theme cases green. axe does not measure
+      // visual focus contrast either, so nothing covered it at all.
+      for (const id of ['username', 'password', 'remember_me', 'button:submit']) {
         const probe = seen.get(id);
         expect(probe, `#${id} was never reached by Tab (seen: ${[...seen.keys()].join(', ')})`).toBeTruthy();
         expect(probe!.visible, `#${id} focus indicator: ${probe!.outline}`).toBe(true);
