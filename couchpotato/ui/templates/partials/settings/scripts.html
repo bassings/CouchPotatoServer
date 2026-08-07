@@ -459,9 +459,35 @@ function settingsPanel() {
           return;   // leave the value dirty and unchanged: it did NOT save
         }
 
+        // Store what the SERVER stored, not what we submitted.
+        //
+        // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
+        // submitted `1` into `0` when no password is set, refusing to create an
+        // unrecoverable lockout. The response is `success: true` -- the write
+        // genuinely happened -- so the refusal path above does not catch it,
+        // and writing `value` here left the "Require login" checkbox ticked,
+        // the dirty flag cleared and "Saved" announced, while the server stayed
+        // PUBLIC. The UI stated the opposite of the truth about whether
+        // authentication was on.
+        //
+        // `payload.value` is absent on any older/other response shape, so fall
+        // back to the submitted value rather than writing `undefined`.
+        const stored = (payload && 'value' in payload) ? payload.value : value;
+
         if (!this.values[section]) this.values[section] = {};
-        this.values[section][name] = value;
+        this.values[section][name] = stored;
         delete this.dirty[section + '.' + name];
+
+        // Say so when the server did not take what was asked for. Silently
+        // showing a different value than the one just typed is how the
+        // operator ends up believing a security control is on.
+        if (payload && payload.changed) {
+          this.toast(
+            name.replace(/_/g, ' ') + ' could not be set to that value; the server stored "'
+              + stored + '" instead. Check the log for the reason.',
+            'error', 6000,
+          );
+        }
         
         const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
         if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;

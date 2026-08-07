@@ -113,23 +113,39 @@ def auth_is_required() -> bool:
     if not wants_auth:
         return False
 
-    # A requirement nothing can satisfy is not enforced. `auth_required = 1`
-    # with no password stored denies every request AND refuses every login,
-    # leaving no way in but hand-editing config.ini -- itself the documented
-    # recovery path, so the route most likely to be used wrong.
+    # FAIL CLOSED. An earlier version of this function served the app WITHOUT
+    # authentication here, reasoning that a requirement nothing can satisfy
+    # should not be enforced. That was wrong, and measurably so.
     #
-    # `Core.guardAuthRequired` stops the settings UI and the wizard writing
-    # this state. This is the second, independent layer: it covers a hand-edit,
-    # a restored backup and any future writer, so the lockout is unreachable by
-    # construction rather than by every write path remembering to ask.
+    # Driven against a real `create_app` with `auth_required=1` and no
+    # password, the fail-open version gave an unauthenticated caller:
     #
-    # Deliberately NOT silent: without the log an operator who ticked the box
-    # sees an unprotected server and no explanation.
+    #     GET /wanted/                          -> 200
+    #     the api_key, embedded in that page    -> present
+    #     movie.delete?delete_from=all          -> reachable
+    #
+    # So the trade was "a lockout the operator can fix" against "a remote
+    # stranger can read the api_key and delete the library". On a port-forwarded
+    # install that is not a close call, and it inverts this project's own
+    # precedence: irrecoverable data loss and security both outrank operability.
+    #
+    # The lockout is recoverable BY CONSTRUCTION. `Core.guardAuthRequired`
+    # blocks the settings UI and the wizard from creating this state, so the
+    # only remaining routes are a hand-edited config.ini or a restored backup --
+    # both of which require filesystem access, which is exactly what the remedy
+    # needs. The cost is a config edit; the cost of the alternative is the
+    # library.
+    #
+    # ERROR, not WARNING, and it names the remedy: this is the log line the
+    # locked-out operator will be reading.
     if not Env.setting('password'):
-        log.warning('"Require login" is on but no password is stored, so nothing '
-                    'could satisfy it. Serving WITHOUT authentication rather than '
-                    'locking you out. Set a password to turn it on properly.')
-        return False
+        log.error('"Require login" is ON but NO PASSWORD is stored, so no login '
+                  'can succeed and every request will be refused. Serving is '
+                  'CONTINUING with authentication enforced rather than falling '
+                  'open -- an unauthenticated instance would expose the api_key '
+                  'and allow the library to be deleted remotely. To recover: '
+                  'set "auth_required = 0" in the [core] section of config.ini '
+                  'and restart, then set a password from Settings.')
 
     return True
 

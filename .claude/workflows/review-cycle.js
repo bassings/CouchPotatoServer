@@ -11,9 +11,25 @@ export const meta = {
 
 // ---- repo-specific trigger globs (from AGENTS.md "Multi-lens harness" section) ----
 const UI_GLOBS = ['couchpotato/ui/**', 'couchpotato/templates/**', '**/*.html', 'couchpotato/static/**', 'tests/e2e/**']
+// Resolved from the running environment, never hardcoded. The previous
+// version embedded one contributor's macOS checkout and username, so the
+// path did not exist for anyone else -- reviewers could not run the pytest
+// or mutation checks the prompt asks for, and the gate lost its verification
+// evidence. It also sent a private filesystem path to every spawned agent.
+const MAIN_REPO = process.cwd()
+const MAIN_PYTHON = `${MAIN_REPO}/.venv/bin/python`
+
 const DATA_GLOBS = ['couchpotato/core/db/**', 'couchpotato/core/database.py', '**/schema.sql', 'couchpotato/core/plugins/renamer/**', 'couchpotato/core/plugins/scanner/**', 'couchpotato/core/plugins/release/**']
-const ARCH_FILES = ['couchpotato/core/event.py', 'couchpotato/core/loader.py', 'couchpotato/core/api.py', 'couchpotato/__init__.py']
-const OPS_GLOBS = ['Dockerfile', 'docker-*.yml', '.github/workflows/**', 'couchpotato/core/logger.py', 'scripts/**']
+const ARCH_FILES = ['couchpotato/core/event.py', 'couchpotato/core/loader.py', 'couchpotato/api.py'  // NOT core/api.py -- that path does not exist, so the API boundary never triggered lens-architecture, 'couchpotato/__init__.py']
+const OPS_GLOBS = ['Dockerfile', 'docker-*.yml', '.github/workflows/**', 'couchpotato/core/logger.py', 'scripts/**',
+  // Scheduled behaviour is an operability concern wherever it lives, and
+  // path globs alone missed it: the commit that added this line changed the
+  // scheduled full-library cleanup in plugins/manage.py, which matched none
+  // of the globs above, so the cycle skipped lens-operability for its own
+  // diff. These are the scheduler's own module and the plugins that register
+  // interval jobs.
+  'couchpotato/core/_base/scheduler.py', 'couchpotato/core/plugins/manage.py',
+  'couchpotato/core/plugins/renamer/main.py', 'couchpotato/core/plugins/automation.py']
 
 function globToRe(g) {
   let s = g.replace(/[.+^${}()|[\]\\]/g, '\\$&')
@@ -67,7 +83,10 @@ const addedOrModified = scope.files.filter(f => f.status !== 'D').map(f => f.pat
 // ---- deterministic lens triggering (AGENTS.md rules) ----
 let lenses = ['lens-security', 'lens-qa'] // always on at review
 const uiHit = matches(paths, UI_GLOBS)
-const dataHit = matches(addedOrModified, DATA_GLOBS)
+// `paths`, not `addedOrModified`: deleting a schema, adapter, renamer or
+// release file is at least as destructive as modifying one, and filtering
+// status 'D' skipped the highest-risk lens for exactly that case.
+const dataHit = matches(paths, DATA_GLOBS)
 const archHit = matches(paths, ARCH_FILES)
 const opsHit = matches(paths, OPS_GLOBS)
 const specHit = matches(paths, ['specs/**'])
@@ -76,9 +95,20 @@ if (uiHit.length) lenses.push('lens-design', 'lens-accessibility')
 if (dataHit.length) lenses.push('lens-data')
 if (archHit.length || scope.new_modules || scope.new_requirement_entries) lenses.push('lens-architecture')
 if (opsHit.length) lenses.push('lens-operability')
-if (specHit.length || uiHit.length) lenses.push('lens-product')
+// `specPath` too: a caller can supply an existing, UNCHANGED spec, and a
+// user-facing backend change (auth, settings behaviour) touches neither a
+// spec file nor a UI glob -- so both documented triggers could be satisfied
+// while the lens was skipped.
+if (specHit.length || uiHit.length || specPath) lenses.push('lens-product')
 
-if (Array.isArray(opts.lenses) && opts.lenses.length) lenses = opts.lenses.slice()
+// An override ADDS to the mandatory roster, it does not replace it.
+// `{lenses: ['lens-data']}` used to silently drop lens-security and lens-qa,
+// which AGENT-HARNESS.md makes always-on at review -- so the gate could
+// complete having run neither.
+const MANDATORY = ['lens-security', 'lens-qa']
+if (Array.isArray(opts.lenses) && opts.lenses.length) {
+  lenses = [...new Set([...MANDATORY, ...opts.lenses])]
+}
 if (opts.adversarial) lenses.push('reviewer-verification')
 
 const ALL = ['lens-security', 'lens-qa', 'lens-design', 'lens-accessibility', 'lens-data', 'lens-architecture', 'lens-operability', 'lens-product']
@@ -122,8 +152,8 @@ const lensPrompt = (lens) =>
   (lens === 'lens-qa' ? qaBudget : '') +
   `You are in an isolated git worktree: mutation experiments (break the guard, watch the test fail, restore) are safe here, ` +
   `but there is no .venv in this worktree. To run Python tests use the main repo's interpreter by absolute path: ` +
-  `/Volumes/Storage/home/scott.b/repos/CouchPotatoServer/.venv/bin/python -m pytest ... from this worktree's root. ` +
-  `Never modify anything under the main repo path or its .venv.\n\n` +
+  `${MAIN_PYTHON} -m pytest ... from this worktree's root. ` +
+  `Never modify anything under ${MAIN_REPO} or its .venv.\n\n` +
   `Your final structured output maps the AGENT-HARNESS.md output contract onto the schema fields: verdict, coverage ` +
   `(could_not_check is mandatory and must be honest, not "nothing"), ac_verdicts, findings (each with file:line in location). ` +
   `You are licensed to return CLEAN with empty findings. Australian English, no em dashes.`
@@ -140,7 +170,7 @@ let simpCheck = null
 if (specPath) {
   simpCheck = await agent(
     `Read ${specPath}. If it contains AC-SIMP-<n> acceptance criteria, check each one mechanically against ` +
-    `\`git diff ${base}...HEAD\` (they are constraints like "no new dependency", "no new setting", "no abstraction for a single call site"). ` +
+    `\`git diff ${base}...${scope.head_sha}\` (they are constraints like "no new dependency", "no new setting", "no abstraction for a single call site"). ` +
     `Return one verdict per AC-SIMP with the diff evidence. If the spec has none, say so. Raw data only.`,
     { label: 'ac-simp:mechanical', phase: 'Lenses', effort: 'low' }
   )

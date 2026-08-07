@@ -22,6 +22,7 @@
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
+import { lookup } from 'node:dns/promises';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -306,27 +307,45 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
     // readiness probe to verify identity -- e.g. against the api_key this
     // worker seeded -- which the fixture does not currently know. Recorded so
     // the remaining gap is visible rather than assumed closed.
-    await new Promise<void>((resolve, reject) => {
-      const probe = net.connect({ port, host: '127.0.0.1' });
-      const done = (err?: Error) => {
-        probe.destroy();
-        err ? reject(err) : resolve();
-      };
-      probe.setTimeout(2000);
-      probe.once('connect', () => done(new Error(
-        `worker ${idx}: port ${port} is ALREADY SERVING. Something else is `
-        + `listening there -- another Playwright run, a sibling git worktree, `
-        + `or an orphaned CouchPotato from an earlier run. Refusing to start: `
-        + `if that process answers like CouchPotato, this entire suite passes `
-        + `green against ITS database and never touches the code under test. `
-        + `Measured: 7 passed, exit 0, in 13.9s, while this worker's own `
-        + `server was killed mid-initialisation. Free the port `
-        + `(lsof -nP -iTCP:${port} -sTCP:LISTEN) and re-run.`,
-      )));
-      // Nothing listening -- ECONNREFUSED is the GOOD outcome.
-      probe.once('error', () => done());
-      probe.once('timeout', () => done());
-    });
+    // EVERY address `localhost` resolves to, not just 127.0.0.1.
+    //
+    // The browser is pointed at `http://localhost:${port}`, and on a dual-stack
+    // host `localhost` resolves to both ::1 and 127.0.0.1. A probe of 127.0.0.1
+    // alone reports the port free when a foreign server holds ::1 -- CouchPotato
+    // then binds the IPv4 wildcard successfully, both servers coexist, and the
+    // browser's requests can still land on the IPv6 one. The suite goes green
+    // against the wrong database, which is the whole failure this guard exists
+    // to stop, reachable by a different address family.
+    const addresses = await lookup(new URL(baseURL).hostname, { all: true })
+      .then((entries) => entries.map((e) => e.address))
+      // If resolution itself fails there is nothing useful to probe; let the
+      // spawn and readiness path report the real problem rather than turning a
+      // DNS quirk into a confusing collision error.
+      .catch(() => [] as string[]);
+
+    for (const address of addresses) {
+      await new Promise<void>((resolve, reject) => {
+        const probe = net.connect({ port, host: address });
+        const done = (err?: Error) => {
+          probe.destroy();
+          err ? reject(err) : resolve();
+        };
+        probe.setTimeout(2000);
+        probe.once('connect', () => done(new Error(
+          `worker ${idx}: port ${port} is ALREADY SERVING on ${address}. `
+          + `Something else is listening there -- another Playwright run, a `
+          + `sibling git worktree, or an orphaned CouchPotato from an earlier `
+          + `run. Refusing to start: if that process answers like CouchPotato, `
+          + `this entire suite passes green against ITS database and never `
+          + `touches the code under test. Measured: 7 passed, exit 0, in 13.9s, `
+          + `while this worker's own server was killed mid-initialisation. `
+          + `Free the port (lsof -nP -iTCP:${port} -sTCP:LISTEN) and re-run.`,
+        )));
+        // Nothing listening -- ECONNREFUSED is the GOOD outcome.
+        probe.once('error', () => done());
+        probe.once('timeout', () => done());
+      });
+    }
 
     let proc: ChildProcess | undefined;
     let output = '';

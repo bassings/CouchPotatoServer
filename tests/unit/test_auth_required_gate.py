@@ -112,31 +112,39 @@ class TestAuthRequiredOn:
         )
 
     @pytest.mark.parametrize('username', ['admin', ''])
-    def test_auth_required_with_no_password_is_not_enforced(self, settings, username):
-        """EXPECTATION CHANGED, deliberately -- this used to assert denial.
+    def test_auth_required_with_no_password_still_denies(self, settings, username):
+        """FAILS CLOSED, and the expectation has now moved twice -- recorded
+        because the second move reversed the first.
 
-        These two cases (`auth_required=1`, `password=''`) were folded into
-        `test_no_cookie_is_denied` above, so the suite asserted that the
-        LOCKOUT was correct behaviour: every request denied, and `login_post`
-        refusing every login because it requires a configured password. There
-        was no way back in but hand-editing config.ini.
+        Originally these two cases were folded into `test_no_cookie_is_denied`,
+        so the suite asserted the LOCKOUT was correct. I split them out and
+        made them assert the opposite: that a requirement nothing can satisfy
+        should not be enforced.
 
-        That is the third time on this branch a test has pinned a defect as
-        intended behaviour (the two `reindex()` tests did the same for a
-        guaranteed TypeError). Recorded rather than quietly re-parametrised,
-        because "an existing test failed after my change" is the moment to ask
-        which of the two is wrong -- and here it was the test.
+        That was wrong. Measured against a real `create_app`, serving without
+        authentication in this state gave an unauthenticated caller a 200 on
+        /wanted/, the api_key embedded in that page, and a reachable
+        `movie.delete?delete_from=all`. It traded a recoverable lockout for
+        remote deletion of the library -- inverting this project's own
+        precedence, where irrecoverable data loss and security both outrank
+        operability.
 
-        `auth_is_required()` now refuses to enforce a requirement nothing can
-        satisfy, and `Core.guardAuthRequired` stops the value being stored in
-        the first place. See tests/unit/test_auth_required_lockout_guard.py.
+        So the original expectation was right and my reasoning for changing it
+        was not. What HAS changed is everything around it: `Core
+        .guardAuthRequired` stops the UI and wizard creating the state,
+        `saveView` reports the value it actually stored so the checkbox cannot
+        lie, and the remedy is now logged at ERROR. The state is reachable only
+        by hand-editing config.ini or restoring a backup, both of which need
+        the filesystem access that fixing it also needs.
+
+        See tests/unit/test_auth_required_lockout_guard.py.
         """
         settings.update({'username': username, 'password': '', 'auth_required': 1})
 
-        assert _current_user(_request()) is True, (
-            'auth_required is ON with NO password stored: every request is '
-            'denied and every login refused, so the operator is locked out of '
-            'their own server (username=%r)' % (username,)
+        assert _current_user(_request()) is None, (
+            'auth_required is ON with no password and the request was SERVED. '
+            'An unauthenticated caller then reads the api_key out of the page '
+            'and can delete the library (username=%r)' % (username,)
         )
 
     def test_a_valid_cookie_is_accepted(self, settings):

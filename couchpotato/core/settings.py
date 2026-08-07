@@ -507,13 +507,33 @@ class Settings:
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
         # serialises as b'...' literals (Python 3 bug)
-        self.set(section, option, _resolve_saved_value(new_value, value))
+        stored = _resolve_saved_value(new_value, value)
+        self.set(section, option, stored)
         self.save()
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
         fireEvent('setting.save.%s.*.after' % section, single=True)
 
-        return {'success': True}
+        # Report what was ACTUALLY STORED, not merely that a write happened.
+        #
+        # A hook may rewrite the submitted value -- `Core.guardAuthRequired`
+        # turns a `1` into a `0` when no password is set, refusing to create an
+        # unrecoverable lockout. Returning a bare `{'success': True}` told the
+        # settings client the submitted value had been accepted, so it kept `1`
+        # in local state, cleared the dirty flag, left the checkbox ticked and
+        # announced "Saved" -- while the server remained public. The UI stated
+        # the opposite of the truth about whether authentication was on, which
+        # is the same defect class as the copy this branch already corrected on
+        # the username and password fields.
+        #
+        # `value` is echoed too so a client can tell "stored what I sent" from
+        # "stored something else" without re-deriving the comparison.
+        return {
+            'success': True,
+            'value': stored,
+            'submitted': value,
+            'changed': stored != value,
+        }
 
     # Meta option helpers
     def optionMetaSuffix(self):
