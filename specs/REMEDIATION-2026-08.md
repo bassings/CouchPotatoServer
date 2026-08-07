@@ -1875,24 +1875,30 @@ requirements.txt`, `npm ci`, `npx playwright install --with-deps chromium`, then
 runs `--project=accessibility`. The separate `docker` job takes ~1m20s
 consistently and the two are unrelated.
 
-What the last six runs actually show:
+What the last **twelve** completed runs actually show for `accessibility`
+(seconds, newest first):
 
-| run | `docker` | `accessibility` |
-|---|---|---|
-| latest | 1m20s | **11m37s** |
-| -1 | 1m27s | 1m39s |
-| -2 | 1m22s | 2m17s |
-| -3 | 1m24s | 2m10s |
-| -4 | 1m17s | 1m58s |
+    108  101  697  99  137  130  118  132  118  130  102  129
 
-So the job is normally about two minutes and spiked once. Two separate things
-are therefore in scope, and conflating them would fix neither:
+    n = 12    median = 129s (2.2 min)    runs over 5 min = 1
+
+**Corrected 2026-08-07 after review.** The first version of this section said
+"the last six runs" above a five-row table and then used "one run in six" as the
+evidence for calling the spike isolated. Both numbers were wrong, in a section
+whose entire point is not diagnosing by inference -- so it is restated here from
+a real twelve-run sample rather than quietly patched. The spike is 1 in 12, and
+the job's normal cost is tightly clustered around 2.2 minutes.
+
+The `docker` job over the same period is a steady ~1m20s and is unrelated.
+
+Two separate things are therefore in scope, and conflating them would fix
+neither:
 
 1. **Wall-clock to feedback.** `accessibility` is `needs: ui-e2e-tests`, which is
    itself `needs: [test, ui-unit-tests]` — third in a serial chain, so the
    elapsed time an operator experiences is the whole chain, not the job. That is
    the number the report is really about.
-2. **The 11m37s outlier.** One run in six. Until its cause is known, any
+2. **The 11m37s outlier.** One run in twelve. Until its cause is known, any
    "optimisation" is guessing, and the honest possibility is that it was a slow
    runner or an apt mirror and nothing in this repo caused it.
 
@@ -1904,8 +1910,10 @@ Get the per-step breakdown for both a normal and the slow run (`gh api
 time to steps, not to intuition. **No optimisation lands before this exists:**
 this repo has a recorded habit of diagnosing by inference and being wrong.
 
-Specifically answer: what did the 11m37s run spend its time on, and is
-`--fail-on-flaky-tests` retrying?
+Specifically answer: what did the 697s run spend its time on, and is
+`--fail-on-flaky-tests` retrying? At 1 in 12 with the other eleven inside a
+30-second band, a per-run cause (runner, apt mirror, a retry) is more likely
+than a workflow one -- but "more likely" is not a measurement.
 
 ### T9.2: Stop paying for the same install twice · S · risk: low
 
@@ -1924,17 +1932,37 @@ separable, which is a real cost on a gate whose job is to name what broke.
 ### T9.3: Reconsider the serial chain · S · risk: low
 
 `accessibility` waits for `ui-e2e-tests` for no stated reason: it starts and
-seeds its own server (see the comment at `:329-338`), so it has no data
-dependency on that job. If the `needs:` is only there to stage runner load, say
+seeds its own server (see the comment at `:342-350` -- an earlier version of
+this line cited `:329-338`, which is the Python/Node install steps), so it has
+no data dependency on that job. If the `needs:` is only there to stage runner load, say
 so at the line; if it is not needed, removing it moves accessibility from third
 in a chain to parallel, which addresses the reported wall-clock directly and
 without touching the tests.
 
-**Acceptance:** a measured before/after of BOTH numbers — job duration and
-wall-clock from workflow start to accessibility completion — over at least three
-runs each, because a single comparison cannot distinguish an improvement from
-runner variance. The suite must still run the same specs: a faster gate that
-covers less is not the deliverable.
+**Acceptance:**
+
+1. A measured before/after of BOTH numbers -- job duration and wall-clock from
+   workflow start to accessibility completion -- over at least three runs each,
+   because a single comparison cannot distinguish an improvement from runner
+   variance. The baseline above is the "before".
+2. The suite still runs the same specs. A faster gate that covers less is not
+   the deliverable.
+3. **The `accessibility` status context must survive.** It is a REQUIRED status
+   check on `master` (verified: `lint, test-summary, ui-unit-tests,
+   ui-e2e-tests, claude-review, Analyze (python), Analyze (javascript),
+   dependency-review, docker, accessibility, conformance, secrets`). T9.2's
+   "biggest win" -- folding the accessibility project into `ui-e2e-tests` --
+   would delete the job that reports that context, and branch protection would
+   then wait forever for a check nothing publishes, blocking this PR and every
+   one after it. Either keep a job named `accessibility` that reports the
+   result, or change branch protection in the same change. Not one without the
+   other.
+
+**AC-<LENS>-<n> criteria: NOT YET WRITTEN.** Per the M15 rule recorded in this
+same plan, `/plan-cycle` runs on this task before any implementation, and its
+lenses write numbered criteria here. Treating PR 7 as implementation-ready
+before that would repeat exactly the gap M15 was added to close -- and it was
+raised against this section, which is a fair hit.
 
 **Explicitly NOT in scope:** reducing what the accessibility suite tests. WCAG
 2.2 AA in both themes and at phone width is this project's stated floor, and
