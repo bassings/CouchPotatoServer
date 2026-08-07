@@ -640,6 +640,67 @@ converts a real signal into a permanently hidden one, and CI's
 `--fail-on-flaky-tests` would stop reporting it. If it recurs on an idle
 machine, hypothesis one is the place to look.
 
+## Review cycle outcome (2026-08-08)
+
+Nine lenses, eleven findings, no BLOCKED verdict. **Seven fixed, four recorded
+as deferred with reasons.** Each fix was mutation-proven and each hash restored
+byte-identical; the fixes are in commits `14c62aab`, `50f6f4b6`, `134fb11d`,
+`fff28c1c`, `881ad394` and `a11db927`.
+
+### Fixed
+
+| # | What it was | Why it mattered |
+|---|---|---|
+| H1 | AC-DESIGN-7 was reported DONE and was never implemented -- `grep -rn 'HX-Redirect'` matched only the vendored htmx bundle | An expired session swapped the whole login document into a content fragment; the embedded form posted to the page URL, got 405, and did nothing. Two `main` landmarks, unannounced focus move, empty live regions |
+| M2 | The pre-upgrade `path=/` cookie shadowed the new one on a `url_base` install | A **lockout**: the operator upgrades and cannot log in, while the page tells them their password still works. AC-SEC-44's drill missed it because that drill runs at root, where the paths coincide |
+| M5 | The rate-limit fallback raised `TypeError` inside the `except` meant to contain a render failure | Turned a 429 into a 500 with an unbounded traceback on an unauthenticated path -- exactly what the comment two lines above forbids, and L1 through a new door |
+| M7 | A throttled sign-out rendered the sign-in form and blamed the operator for sign-in attempts | Looked like a completed sign-out while every session stayed valid: the same lie the sign-out failure page already refuses |
+| M4 | The rejected-sign-in message was not associated with the field | Focus lands in the password box past a `role="alert"` that is announced inconsistently when present in the initial document. WCAG 3.3.1 met in text, not in navigation |
+| M8 | AC-OPS-47's log clause: only the auth-OFF direction logged | A restarted authenticated instance said nothing about its own posture, and nothing stated the derived `secure` value -- the two things a login loop needs comparing against |
+| M11 | `_enable_authentication`'s `.e2e*` guard had no test | It is the only thing between a test script and a bcrypt password written into a developer's live instance, whose settings are on the irreplaceable tier |
+
+### Deferred, with reasons
+
+- **M9 / AC-ARCH-4 -- the per-request property read.** Real: session
+  verification reads `Env.prop` on every authenticated request, taking the
+  adapter's process-wide `RLock`. It is precedence rank 6 (performance), it was
+  already recorded as knowingly open before the review, and the fix -- a
+  module-level cache invalidated in the single writer -- interacts with
+  AC-ARCH-5's no-stale-cache rule. Adding a cache to the authentication path at
+  the end of a five-tranche PR is the shape rule 11 warns about. **Its own
+  change, with its own review.**
+- **M6 -- a password change whose rotation fails reports success.** Real, and
+  the honest fix is not the obvious one. Re-raising aborts the settings save
+  *after* `auth_required = 1` has already been written, which is the
+  authentication-on-with-no-password lockout the rest of that file exists to
+  prevent. Rotating before the `auth_required` write would work, but that
+  reorders `Core.md5Password`, a path that has already produced one lockout on
+  this branch's history. Surfacing it in the UI needs a warning channel the
+  settings save does not have. **Deferred as its own task**, with the ERROR
+  already logged meanwhile.
+- **M3 -- rollback and snapshot-restore consequences are unwritten, and the
+  rollback was never executed.** AC-OPS-49 and AC-DATA-13's documentation half.
+  Both were listed as outstanding before the review; the review confirms it
+  rather than adding to it. Operator-procedure work, not code.
+- **M10 -- unit-suite `Env` leakage is positional.** Four pre-existing session
+  suites leak class state and pass only because they sort late; the next
+  early-named module rediscovers it. Already written up as whole-suite
+  fixture-hygiene debt. Patching it inside this PR would hide it.
+
+### What the review could not check
+
+Every lens reported it, and the pattern is worth keeping: no browser was driven
+by most lenses (worktrees have no `node_modules`), `make verify` was not run
+inside the lens worktrees, and no real assistive technology was used anywhere.
+So the accessibility findings are judgment against source, not measurement
+against AT. The orchestrator ran `make verify` separately and it is green.
+
+**One harness defect surfaced:** `lens-data` found `couchpotato/__init__.py`
+modified in the shared worktree while other lenses were mid-mutation, and
+initially diagnosed a real defect from another agent's mutant. The committed
+blob was correct. Concurrent mutation runs against one worktree produced one
+false diagnosis this cycle and should be fixed before the next.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
