@@ -53,6 +53,56 @@ Checks performed:
      hypothetical: ``.githooks/pre-push`` was mode 0644 in this tree, i.e. the
      pre-push gate had been inert.
 
+  5. **Orphaned test files.** A tracked file named ``test_*.py`` (pytest.ini's
+     own ``python_files`` convention) that no pytest invocation in
+     ``scripts/verify.sh`` or ``.github/workflows/ci.yml`` actually executes.
+     Not hypothetical either: ``tests/integration/`` sat exactly like this ,
+     "covered" by ``pytest.ini``'s ``testpaths = tests`` on paper, invoked by
+     no runner in practice: until the PR that added this rule also wired it
+     in. Deliberately keyed on the **runner invocations themselves**, not on
+     ``testpaths``: a rule anchored on ``testpaths`` would have passed against
+     that orphaned suite the whole time, which makes it vacuous. Enumerates
+     candidates via ``git ls-files`` (never a filesystem walk, so an untracked
+     local scratch file cannot trip it or be swept into scope), reports only
+     (never deletes, moves or modifies anything), and honours a small,
+     comment-required ``ORPHAN_ALLOWLIST`` for files that are deliberately
+     local-only by design (``tests/local/test_real_database.py``, gated on a
+     39 MB machine-local backup that will never exist in CI).
+
+  6. **Vacuous E2E guards.** ``expect(`` inside an
+     ``if (await x.isVisible()/count()) { ... }`` block under ``tests/e2e/**``
+     — that shape lets a Playwright test pass while asserting nothing, because
+     the guard can be false with nothing outside it to catch the gap (T1.4,
+     AGENTS.md's ``lens-qa`` note: "the pattern was removed once in
+     ``movie-detail.spec.ts`` and still exists elsewhere" — this rule retires
+     the need for a human to keep re-finding it). Opt out with a same-line
+     trailing comment, ``// vacuous-guard-ok: <reason>``, for a guard whose
+     precondition is genuinely outside the test's control (a fixture gap, an
+     environment-dependent provider state) rather than something the test
+     could make unconditional — see ``movie-detail.spec.ts``'s "Mark Failed &
+     Re-search requires confirmation when shown" for a real example. The
+     opt-out itself is checked: present with no text after the colon, it is
+     flagged too, so ``// vacuous-guard-ok:`` cannot become a silent universal
+     bypass.
+
+  7. **Unquoted `>`/`>=` on a `pip install` line.** ``pip install ruff>=0.9.0``
+     in a GitHub workflow ``run:`` block is not a version constraint: an
+     unquoted ``>`` is shell stdout redirection, so the shell actually runs
+     ``pip install ruff`` (floating latest) and writes stdout to a file
+     literally named ``=0.9.0``. Not hypothetical: this is exactly how
+     ``.github/workflows/ci.yml`` floated ruff in two jobs while looking
+     pinned (T1.5). Flagged when a line contains ``pip install``/``pip3
+     install`` AND an unquoted ``>`` (tracked with a small quote-aware scan,
+     so ``pip install 'pyyaml>=6.0'`` is correctly left alone — the ``>``
+     there is literal text inside the quotes). Scope is deliberately narrow:
+     only lines that already match ``pip install``/``pip3 install`` are
+     considered, so an unrelated ``echo x > file`` is never touched. That
+     narrowness has one accepted false positive: a deliberate
+     ``pip install -r requirements.txt > some.log`` redirect would also be
+     flagged. No such pattern exists in this codebase today, and quoting the
+     redirect target is not meaningfully worse than the status quo, so this is
+     a documented trade-off, not a bug to route around.
+
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
 
@@ -83,6 +133,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 import sys
 from pathlib import Path
 
@@ -95,10 +146,19 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULT_ROOTS = [
     REPO_ROOT / "tests" / "unit",
+    REPO_ROOT / "tests" / "e2e",
     REPO_ROOT / "scripts",
     REPO_ROOT / ".githooks",
     REPO_ROOT / ".github" / "workflows",
     REPO_ROOT / "Makefile",
+    # Repo-root shell scripts. Named individually rather than globbed,
+    # because a glob evaluated at import time silently covers nothing when a
+    # file is renamed -- and this list is exactly where that already went
+    # wrong: docker-entrypoint.sh is PID 1 in the shipped image, was the ONE
+    # file in the repo failing this script's own shell rule, and the rule
+    # could not see it. `test_default_roots_all_exist_and_are_covered` fails
+    # if any entry here stops existing.
+    REPO_ROOT / "docker-entrypoint.sh",
 ]
 
 # ── Rule 1: jsdom layout-zero properties ────────────────────────────────────
@@ -429,12 +489,71 @@ def check_shell_script(path: Path, text: str):
     # requirement is back without the false positives.
     if shebang.startswith("#!") and ("bash" in shebang or "/bin/sh" in shebang):
         missing = []
-        set_lines = " ".join(
-            strip_shell_comments(ln) for ln in lines if re.match(r"\s*set\s+-", ln)
-        )
-        if not re.search(r"set\s+-[a-zA-Z]*e", set_lines):
+        # blank_strings=True, like the pipefail check three rules up. Without
+        # it, `set -e; echo "run with set -u for stricter checking"` counted
+        # the `-u` INSIDE the string and the file came back clean -- the exact
+        # false-green class strip_shell_comments' own docstring records
+        # (`echo "hint: add set -o pipefail"` silenced rule 2 for a whole
+        # file), reintroduced two rules away by omitting one keyword.
+        #
+        # Kept per-line rather than joined, so a `--` on one `set` line cannot
+        # terminate option parsing for a later one.
+        set_lines_list = [
+            strip_shell_comments(ln, blank_strings=True)
+            for ln in lines if re.search(r"(?:^|[;&|])\s*set\s+-", ln)
+        ]
+        # Tokenised rather than pattern-matched against the whole line.
+        # Two false positives on correct scripts, both from a BLOCKING gate,
+        # and both because the old regexes anchored on `set -<cluster>`:
+        #
+        #   set -o errexit -o nounset   -> flagged "missing -e". `nounset` was
+        #                                  accepted as a long form and
+        #                                  `errexit` was not, so the checker
+        #                                  rejected the most explicit correct
+        #                                  spelling of what it demands.
+        #   set -e -u                   -> flagged "missing -u". Separate
+        #                                  clusters do not sit adjacent to the
+        #                                  word `set`, so only the first was
+        #                                  ever read.
+        #
+        # A false positive here is not a harmless nag: the reader "fixes" a
+        # correct script to satisfy the gate, or learns to bypass the gate.
+        enabled = set()
+        for set_line in set_lines_list:
+            # Split into COMMANDS first, and read only the arguments of the
+            # ones that are actually `set`. Tokenising the whole line counted
+            # flags belonging to the next command: measured,
+            # `set -e; sort -u /etc/hosts` came back CLEAN, because `sort`'s
+            # `-u` was read as `set -u`. A blocking gate passing a script that
+            # genuinely lacks `-u` -- and a REGRESSION, since the regex this
+            # tokeniser replaced flagged it correctly.
+            #
+            # Splitting also removes the trailing `;` that `set -o nounset;`
+            # used to carry, so no separate strip is needed, and it makes `--`
+            # end options for ITS OWN command rather than for the rest of the
+            # line (`set -- alpha; set -eu` was being reported as missing
+            # both).
+            for command in re.split(r"[;&|]+", set_line):
+                tokens = command.split()
+                if not tokens or tokens[0] != "set":
+                    continue
+                for token in tokens[1:]:
+                    if token == "--":
+                        # End of options: everything after it is a POSITIONAL
+                        # parameter, not a flag. `set -- -e -u` sets $1 and $2
+                        # and enables nothing; it was read as `set -eu`.
+                        break
+                    if token.startswith("-") and not token.startswith("--"):
+                        # A flag cluster: `-eu`, `-e`, `-euo`. `+e` DISABLES
+                        # and is deliberately not read as enabling.
+                        enabled.update(token[1:])
+                    elif token in ("errexit", "nounset"):
+                        # Long forms, as in `set -o errexit`.
+                        enabled.add({"errexit": "e", "nounset": "u"}[token])
+
+        if "e" not in enabled:
             missing.append("-e (exit on error)")
-        if not re.search(r"set\s+-[a-zA-Z]*u|nounset", set_lines):
+        if "u" not in enabled:
             missing.append("-u (error on unset variable)")
         if not is_posix_sh and not has_pipefail and _has_real_pipeline(lines) and not runner_pipes:
             missing.append("pipefail (a failing command in a pipeline is otherwise ignored)")
@@ -530,6 +649,44 @@ def _iter_run_steps(node, inherited_shell=None):
             yield from _iter_run_steps(item, inherited_shell)
 
 
+# ── Rule 7: unquoted `>`/`>=` on a `pip install` line ───────────────────────
+
+PIP_INSTALL_RE = re.compile(r"\bpip3?\s+install\b")
+
+PIP_INSTALL_REDIRECT_MESSAGE = (
+    "unquoted `>`/`>=` on a `pip install` line — the shell parses a bare `>` as "
+    "stdout redirection, not part of the argument, so e.g. "
+    "`pip install ruff>=0.9.0` actually runs `pip install ruff` (floating "
+    "latest) and writes stdout to a file literally named `=0.9.0`. Quote the "
+    "requirement so `>`/`>=` is passed to pip as literal text: "
+    "`pip install 'pkg==X.Y.Z'`."
+)
+
+
+def _has_unquoted_redirect(line: str) -> bool:
+    """True if `line` contains a `>` that sits outside single/double quotes.
+
+    A small quote-tracking scan, same shape as `strip_shell_comments`'s quote
+    handling: walk the line, flip in/out of a quoted region on `'`/`"`, and
+    only count a `>` seen while not inside one. `pip install 'pyyaml>=6.0'`
+    must NOT trip this — the `>` there is literal text the shell hands to pip
+    unchanged — while `pip install ruff>=0.9.0` must, because that `>` is
+    live shell syntax.
+    """
+    quote = None
+    for ch in line:
+        if quote:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in ("'", '"'):
+            quote = ch
+            continue
+        if ch == ">":
+            return True
+    return False
+
+
 def check_workflow(path: Path, text: str):
     """GitHub's DEFAULT shell is `bash -e` — pipefail is not set unless asked for."""
     if yaml is None:
@@ -556,8 +713,6 @@ def check_workflow(path: Path, text: str):
         if pipefail is None:
             continue  # not a shell whose pipeline status we police
         body = run_node.value
-        if pipefail or _has_pipefail(body):
-            continue
 
         # For a block scalar (`|`/`>`) the value starts on the line AFTER the
         # indicator; for an inline value it starts on the mark's own line.
@@ -565,6 +720,18 @@ def check_workflow(path: Path, text: str):
         first_content_line = run_node.start_mark.line + (1 if block else 0)
 
         lines = body.split("\n")
+
+        # Rule 7 runs unconditionally per shell run-step — an unquoted `>`/`>=`
+        # on a `pip install` line has nothing to do with pipefail, so it must
+        # not be hidden behind the pipefail early-exit below.
+        for local_no, logical in join_continuations(lines):
+            cleaned = strip_shell_comments(logical)
+            if PIP_INSTALL_RE.search(cleaned) and _has_unquoted_redirect(cleaned):
+                yield (first_content_line + local_no, PIP_INSTALL_REDIRECT_MESSAGE)
+
+        if pipefail or _has_pipefail(body):
+            continue
+
         for local_no, logical in join_continuations(lines):
             cleaned = strip_shell_comments(logical)
             if RUNNER_RE.search(cleaned) and FILTER_RE.search(cleaned):
@@ -590,6 +757,564 @@ def check_git_hook(path: Path):
         )
 
 
+# ── Rule 5: orphaned test files ─────────────────────────────────────────────
+
+VERIFY_SH = REPO_ROOT / "scripts" / "verify.sh"
+CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+
+# Files this rule must never flag, each with the reason it is deliberately
+# outside every runner invocation. Mirrors the .gitleaksignore-requires-a-
+# comment convention (tests/unit/test_gitleaks_config.py enforces the same
+# idea for secrets): an exemption without a reason on the line is not
+# acceptable, because a bare filename in a set gives the next reader nothing
+# to check it against.
+ORPHAN_ALLOWLIST = {
+    # Gated on /var/media/config_backup.zip, a ~39 MB machine-local backup
+    # that will never exist on a CI runner (pytest.ini's addopts also carries
+    # --ignore=tests/local for the same reason). See the file's own
+    # docstring for the full rationale: it must not be wired into CI, by a
+    # secret or otherwise: the real backup carries live credentials.
+    "tests/local/test_real_database.py",
+}
+
+# Matches the word `pytest` and captures the rest of its logical line, so the
+# path arguments that follow can be pulled out below.
+PYTEST_INVOCATION_RE = re.compile(r"\bpytest\b(.*)$", re.MULTILINE)
+
+
+def _tracked_test_files(repo_root: Path, require_git: bool = False) -> list[str]:
+    """Tracked test-shaped ``.py`` files, via ``git ls-files``: NOT a filesystem walk.
+
+    A filesystem walk would let an untracked local scratch file trip this
+    guard, or be silently swept into scope by a later "fix the finding" pass.
+    exactly the thing AC-DATA-21 rules out. ``git ls-files`` structurally
+    cannot see a file nobody has ``git add``-ed.
+
+    Both of pytest's default naming conventions count, ``test_*.py`` AND
+    ``*_test.py``, even though this repo's ``pytest.ini`` narrows
+    ``python_files`` to the first. Narrowing it is precisely what made the
+    suffix form dangerous: three ``*_test.py`` files sat tracked under
+    ``couchpotato/`` reading like a live suite while no runner and no
+    collector would ever touch them, and one of them was sitting on a
+    Python 3 port defect that 500'd the settings file browser. A rule that
+    only knows the prefix declares that tree clean.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files"],
+            cwd=repo_root, capture_output=True, text=True, check=True,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError) as exc:
+        # No git, or not a work tree. `scripts/test-local.sh` runs this suite
+        # inside python:3.14-alpine, which has no git, and an unhandled
+        # traceback there turned `make check-traps` into a crash and added
+        # seven red tests to the optional container run.
+        #
+        # This IS the silent-skip that the PyYAML branch 500 lines up refuses
+        # to do ("a check that quietly does nothing is the exact failure this
+        # script exists to prevent"), so the asymmetry needs a reason rather
+        # than a preference. The reason is that the two absences mean
+        # different things. PyYAML is in requirements-dev.txt and the workflow
+        # files are right there: its absence is a broken install, and a rule
+        # that COULD run does not. Git's absence removes the rule's input
+        # entirely -- "tracked" is not a property a tree has without it -- so
+        # there is nothing to check rather than something being left unchecked.
+        #
+        # That reasoning would still be an excuse if it let the real gate skip
+        # quietly, which is why `--require-git` exists and why scripts/verify.sh
+        # and ci.yml both pass it. The authoritative runs cannot take this
+        # branch at all; only the supplementary container run can, and it says
+        # so on stderr when it does.
+        if require_git:
+            raise SystemExit(
+                'test-trap check FAILED: --require-git was passed but git is '
+                'unavailable (%s: %s), so the orphaned-test rule cannot run. '
+                'This is the authoritative gate; it must not skip a rule '
+                'silently.' % (type(exc).__name__, exc)
+            )
+        print('note: orphan-test check skipped, git is unavailable (%s: %s). '
+              'Pass --require-git to make this an error.'
+              % (type(exc).__name__, exc), file=sys.stderr)
+        return []   # a LIST: the caller iterates this, and returning None
+                    # here traded a traceback in one place for a TypeError
+                    # in another.
+    files = []
+    for line in result.stdout.splitlines():
+        path = line.strip()
+        if not path or path.startswith("libs/"):
+            continue  # vendored, not ours to flag
+        name = Path(path).name
+        if name.startswith("test_") and name.endswith(".py"):
+            files.append(path)
+        elif name.endswith("_test.py"):
+            files.append(path)
+    return sorted(files)
+
+
+def _extract_pytest_path_args(text: str) -> tuple[set[str], set[str]]:
+    """Directory roots and exact file paths passed to ``pytest`` invocations.
+
+    Returns ``(dir_roots, file_args)``. A token is a directory root if it
+    ends in ``/`` (``tests/unit/``), an exact file argument if it ends in
+    ``.py``; anything else (flags, warning filters, shell control-flow words,
+    message text) is ignored. Backslash-continued invocations are joined
+    first, so a path on one physical line and its trailing ``|| fail ...`` on
+    the next are read as one logical command.
+    """
+    dir_roots: set[str] = set()
+    file_args: set[str] = set()
+    for _start, logical in join_continuations(text.split("\n")):
+        cleaned = strip_shell_comments(logical)
+        for match in PYTEST_INVOCATION_RE.finditer(cleaned):
+            for token in match.group(1).split():
+                if token.startswith("-"):
+                    continue
+                if token.endswith("/"):
+                    dir_roots.add(token)
+                elif token.endswith(".py"):
+                    file_args.add(token)
+    return dir_roots, file_args
+
+
+def _is_executed(path: str, dir_roots: set[str], file_args: set[str]) -> bool:
+    if path in file_args:
+        return True
+    return any(path.startswith(root) for root in dir_roots)
+
+
+def check_orphaned_test_files(
+    repo_root: Path = REPO_ROOT,
+    *,
+    tracked_files: list[str] | None = None,
+    runner_texts: list[str] | None = None,
+    require_git: bool = False,
+):
+    """Rule 5: a tracked ``test_*.py`` file no runner invocation executes.
+
+    Whole-repo by nature (needs the full ``git ls-files`` picture plus both
+    runner files), so unlike rules 1-4 it is not dispatched per path from
+    ``check_file``. ``tracked_files``/``runner_texts`` are injectable so
+    tests can pin the rule's behaviour against synthetic fixtures without a
+    real git repo or without depending on the state of this tree; production
+    use (``main()``) calls it with no arguments and it reads the real repo.
+
+    Yields ``(path, line_no, message)``: REPORTS ONLY. It never deletes,
+    moves or modifies the orphaned file (AC-DATA-21); ``line_no`` is always 1
+    since there is no meaningful line within the orphaned file itself to
+    point at, consistent with how ``check_git_hook`` reports a whole-file
+    property at line 1.
+
+    ``runner_texts`` holds ONE entry per configured runner FILE (verify.sh,
+    ci.yml: each of which may itself contain several pytest invocations). A
+    path must be executed according to EVERY entry, not merely at least one:
+    the local gate (verify.sh) and CI (ci.yml) are two independent gates, and
+    a suite present in one but silently dropped from the other is still a
+    real gap: the local gate no longer mirrors CI (hard rule 2), or CI is
+    carrying dead weight nobody runs locally. Union semantics here would have
+    let this exact mutation through: deleting the tests/integration/
+    invocation from verify.sh alone, while it stayed in ci.yml, must still be
+    caught.
+    """
+    if tracked_files is None:
+        tracked_files = _tracked_test_files(repo_root, require_git=require_git)
+    if runner_texts is None:
+        runner_texts = [
+            VERIFY_SH.read_text(encoding="utf-8"),
+            CI_WORKFLOW.read_text(encoding="utf-8"),
+        ]
+
+    per_runner = [_extract_pytest_path_args(text) for text in runner_texts]
+
+    for path in tracked_files:
+        if path in ORPHAN_ALLOWLIST:
+            continue
+        if all(_is_executed(path, d, f) for d, f in per_runner):
+            continue
+        yield (
+            path,
+            1,
+            f"`{path}` is named like a test (`test_*.py` or `*_test.py`) and "
+            "is tracked, but no pytest invocation in scripts/verify.sh or "
+            ".github/workflows/ci.yml executes it: it can rot indefinitely "
+            "with nothing ever noticing (tests/integration/ did exactly "
+            "this: 'covered' by pytest.ini's testpaths, run by no runner, "
+            "until this rule and its fix). If it is deliberately local-only, "
+            "add it to ORPHAN_ALLOWLIST in scripts/check_test_traps.py with "
+            "a comment explaining why; otherwise wire it into a runner.",
+        )
+
+
+# ── Rule 6: vacuous E2E guards ───────────────────────────────────────────────
+
+# AC-QA-42 scopes this to "under tests/e2e/**" — every `.ts`/`.js` file
+# there, not only `*.spec.ts`: `helpers.ts` is exactly the kind of file a
+# guard like this could land in via a shared helper, and a rule that only
+# looked at spec files would miss it.
+E2E_FILE_SUFFIXES = (".ts", ".js")
+
+# A guard line: `if (`, an `await`, a call to `.isVisible(` or `.count(`
+# somewhere in the condition, and the block opens on the SAME physical line
+# (the codebase's own uniform style — every real instance found while writing
+# this rule looked like `if (await x.isVisible()) {`). A condition split
+# across lines is a false negative, same trade-off Rule 1 makes for
+# same-file/same-property: catching the real, common shape beats chasing every
+# way JS could theoretically be formatted.
+GUARD_CONDITION_RE = re.compile(r"\bif\s*\(.*\bawait\b.*\.(?:isVisible|count)\s*\(")
+
+# The same guard, written with the await hoisted to a previous line:
+#
+#     const count = await cardLinks.count();
+#     ...
+#     if (count > 1) {            <- GUARD_CONDITION_RE cannot see this
+#
+# Moving one expression up a line defeated the rule entirely, and the first
+# new code written after the rule landed did exactly that
+# (interactions.e2e.spec.ts). A rule introduced to retire a human review step
+# has to survive the most obvious reformatting of the thing it looks for.
+#
+# Deliberately file-scoped rather than scope-aware: this is a regex-based
+# guard, not a JS parser, and a name bound to an awaited count anywhere in a
+# spec file is a name whose `if` is worth a written justification. The opt-out
+# below is the pressure valve.
+HOISTED_ASSIGNMENT_RE = re.compile(
+    r"\b(?:const|let|var)?\s*([A-Za-z_$][\w$]*)\s*=\s*\(?\s*await\b[^;]*?\.(?:isVisible|count)\s*\(",
+    re.DOTALL,
+)
+
+# WHAT THIS RULE STILL DOES NOT SEE, stated rather than left to silence.
+# AGENTS.md retired a human review step in favour of this rule, so the next
+# reviewer needs to know where the rule is a partial substitute. Measured by
+# review 2026-08-06 against 12 hand-built specs; the first four below were
+# closed in response, these remain open:
+#
+#   * a single-statement `if` with no braces and no `return`
+#         if (shown)
+#           await expect(...);
+#   * a ternary                      shown ? await expect(...) : null;
+#   * a logical-and short circuit    shown && await expect(...);
+#   * a destructured binding         const { count } = await probe();
+#   * `test.skip(total === 0, '...')` -- a skip, not an if
+#
+# None of THOSE is currently used in tests/e2e/**. But the list above is
+# `if`-shaped only, and that is not the whole class. Review found the rule
+# silent on ITERATION-COUNT guards, and one was live in the tree at the time:
+#
+#       for (let i = 0; i < Math.min(count, 5); i++) { ... expect(...) }
+#
+# runs zero times when `count` is 0, so every assertion inside it is skipped
+# on exactly the input the test exists to catch. `while`, `switch` and a
+# multi-line `if (` condition are silent for the same reason. Those instances
+# were fixed by hand; the rule still cannot see the shape.
+#
+# And for a guard with NO braces at all, the region is approximated by
+# indentation (see `_end_of_enclosing_block`), which is narrower than what
+# `return` really does. Measured as silent: a non-braced guard nested one
+# block deeper than the assertions it skips, and one whose body contains a
+# line at column 0 (a template literal handed to `page.setContent` or
+# `addInitScript`). Neither is live in tests/e2e/** today.
+#
+# Closing any of this properly needs a JS parser rather than more regexes,
+# which is the point at which this rule should become an ESLint plugin rather
+# than be extended again.
+
+# A trailing comment naming why this specific guard cannot be made
+# unconditional. Must be on the SAME line as the `if` (where every opt-out
+# written for T1.4 puts it) — a comment three lines away could belong to
+# anything, and "near the guard" is not a check the next edit can rely on.
+OPT_OUT_RE = re.compile(r"//\s*vacuous-guard-ok:\s*(.*)$")
+
+EXPECT_CALL_RE = re.compile(r"\bexpect\s*\(")
+
+
+def _is_e2e_spec(path: Path) -> bool:
+    if not path.name.endswith(E2E_FILE_SUFFIXES):
+        return False
+    return "e2e" in {part.lower() for part in path.parts}
+
+
+def _hoisted_guard_names(cleaned_lines: list[str]) -> set[str]:
+    """Names bound to an awaited `.isVisible()`/`.count()` anywhere in the file.
+
+    Scanned over the JOINED text, not line by line: Prettier wraps a long
+    assignment onto the next line (`const total =` / `  await x.count();`),
+    and a per-line scan missed that, so reformatting alone defeated the rule.
+    A bare reassignment (`total = await x.count();`) counts too.
+    """
+    return {
+        match.group(1)
+        for match in HOISTED_ASSIGNMENT_RE.finditer("\n".join(cleaned_lines))
+    }
+
+
+def _is_guard_if_line(line: str, hoisted_names: frozenset = frozenset()) -> bool:
+    """A comment-stripped line that opens an isVisible()/count() guard block.
+
+    Either written inline (`if (await x.count() > 1) {`) or with the await
+    hoisted to an earlier line and the resulting name used here.
+    """
+    stripped = line.rstrip()
+    if GUARD_CONDITION_RE.search(stripped) and stripped.endswith("{"):
+        return True
+    if not stripped.endswith("{"):
+        # A non-braced `if` and an early `return` are ordinary JS that
+        # Prettier will produce, and requiring a trailing `{` made both
+        # invisible. Two live examples already exist in this suite
+        # (`if (await delBtn.count() === 0) return;`), both in best-effort
+        # teardown helpers, so neither is vacuous today -- but the rule
+        # should see the shape.
+        if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
+            return False
+        return _condition_uses_a_guard_name(stripped, hoisted_names) or bool(
+            GUARD_CONDITION_RE.search(stripped)
+        )
+    if not re.match(r"^\}?\s*(?:else\s+)?if\s*\(", stripped.lstrip()):
+        return False
+    return _condition_uses_a_guard_name(stripped, hoisted_names)
+
+
+def _condition_uses_a_guard_name(line: str, hoisted_names) -> bool:
+    condition = line[line.index("if"):] if "if" in line else ""
+    return any(
+        re.search(r"\b%s\b" % re.escape(name), condition) for name in hoisted_names
+    )
+
+
+def _else_branch_asserts(cleaned_lines: list[str], close_idx: int,
+                         search_from: int = 0) -> bool:
+    """Does the `else` attached to the guard closing at `close_idx` assert?
+
+    If it does, the test cannot pass while asserting nothing, which is the
+    whole property this rule protects -- and "assert both branches" is what
+    the rule's own message recommends. Flagging it anyway meant live opt-outs
+    existed purely to silence the rule for complying with its own advice.
+
+    Two constraints, both learned by getting them wrong:
+
+    - The `else` must follow the guard's CLOSING brace (`search_from` is the
+      offset just past the guard's opening brace on a one-liner). Searching
+      the whole line matched a guard's own `} else if (...)` prefix and read
+      the guard's assertion as the else branch's.
+    - The body is sliced from the ELSE's brace, not the line's first. On a
+      one-liner the guard's own `{` comes first.
+
+    Approximate, like the rest of this rule. A false negative only leaves the
+    guard flagged, which the written opt-out already handles.
+    """
+    if close_idx >= len(cleaned_lines):
+        return False
+
+    segment = cleaned_lines[close_idx][search_from:]
+    match = re.search(r"\}\s*else\b", segment)
+    if match:
+        rest, base_idx = segment[match.end():], close_idx
+    else:
+        # `}` and `else` on separate lines.
+        if close_idx + 1 >= len(cleaned_lines):
+            return False
+        nxt = cleaned_lines[close_idx + 1]
+        head = re.match(r"^\s*else\b", nxt)
+        if not head:
+            return False
+        rest, base_idx = nxt[head.end():], close_idx + 1
+
+    if "{" not in rest:
+        return bool(EXPECT_CALL_RE.search(rest))
+
+    else_close = _find_matching_brace(cleaned_lines, base_idx)
+    body = rest[rest.index("{") + 1:] + "\n" + "\n".join(
+        cleaned_lines[base_idx + 1:else_close]
+    )
+    return bool(EXPECT_CALL_RE.search(body))
+
+
+def _end_of_enclosing_block(cleaned_lines: list[str], start_idx: int) -> int:
+    """First line STRICTLY LESS indented than `start_idx`: where its block ends.
+
+    Used only for guards with no `{` at all. Approximate by design -- this is a
+    regex checker, not a parser -- and knowingly narrower than what `return`
+    actually does, which is exit the whole function. Two consequences, both
+    measured and both recorded in the module's WHAT THIS RULE STILL DOES NOT
+    SEE list rather than left as silence:
+
+    - a guard nested one block deeper than the assertions it skips is missed,
+      because the region stops at the dedent;
+    - a body containing a line at column 0 (a template literal passed to
+      `page.setContent` or `addInitScript`) ends the region early.
+
+    The alternative, which this replaced, was the brace matcher scanning to end
+    of file: that flagged a teardown helper because an unrelated test lower in
+    the file happened to contain `expect(`, and the documented remedy for a
+    false positive is an opt-out comment, which is how a rule that replaced a
+    human review step trains people to silence it.
+    """
+    indent = len(cleaned_lines[start_idx]) - len(cleaned_lines[start_idx].lstrip())
+    for idx in range(start_idx + 1, len(cleaned_lines)):
+        line = cleaned_lines[idx]
+        if not line.strip():
+            continue
+        # STRICTLY less, not <=. An early return affects every statement that
+        # follows it at the SAME level, which is the whole point of the shape;
+        # stopping at the first sibling would find an empty body and flag
+        # nothing. Dedenting past the guard is where the enclosing block ends,
+        # and that is what keeps a sibling `test(...)` out of the body.
+        if len(line) - len(line.lstrip()) < indent:
+            return idx
+    return len(cleaned_lines)
+
+
+def _find_matching_brace(cleaned_lines: list[str], start_idx: int) -> int:
+    """Index of the line whose `}` closes the `{` ending ``cleaned_lines[start_idx]``.
+
+    Heuristic brace counting over comment-stripped source, same trade-off as
+    the rest of this file: it does not additionally blank out string-literal
+    contents, so a `{`/`}` character inside a JS string could in principle
+    miscount. Every real guard body in this suite is plain Playwright
+    calls and `expect(...)` assertions with no such string, so this is
+    accepted rather than building a full parser for it.
+    """
+    depth = 0
+    for idx in range(start_idx, len(cleaned_lines)):
+        line = cleaned_lines[idx]
+        segment = line if idx != start_idx else line[line.rfind("{"):]
+        for ch in segment:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    return idx
+    return len(cleaned_lines) - 1
+
+
+def check_e2e_spec_guards(path: Path, text: str):
+    """Rule 6: ``expect(`` inside an ``if (await x.isVisible()/count())`` guard.
+
+    That shape lets a Playwright test pass while asserting nothing: the guard
+    can resolve false with no assertion outside it to catch the gap. Scans
+    comment-stripped lines (``strip_js_comments``, shared with Rule 1) for a
+    guard line, finds its matching closing brace, and flags any ``expect(``
+    strictly between them — UNLESS the guard's own line carries a same-line
+    ``// vacuous-guard-ok: <reason>`` comment, checked against the RAW (not
+    comment-stripped) line, with a non-empty reason after the colon.
+
+    Deliberately does not flag a guard with NO ``expect(`` inside it at all
+    (a click-only conditional): that is a different, harder-to-detect shape
+    (it requires knowing whether the enclosing `test(...)` asserts anything
+    ANYWHERE, not just within this block) and is out of this rule's scope —
+    T1.4 fixed those by hand; this rule guards against the shape regressing,
+    which is the ``expect(`` case.
+    """
+    raw_lines = text.split("\n")
+    cleaned_lines = strip_js_comments(text)
+    hoisted_names = frozenset(_hoisted_guard_names(cleaned_lines))
+
+    for idx, line in enumerate(cleaned_lines):
+        if not _is_guard_if_line(line, hoisted_names):
+            continue
+
+        # Route on whether the line actually opens or contains a BLOCK, not on
+        # whether it contains any brace. `"{" in line` was too coarse: a
+        # non-braced guard whose CONDITION carries a balanced brace pair --
+        # `if (await page.locator(`#movie-${id}`).count() === 0) return;`, or a
+        # selector string containing `{}` -- went to the brace matcher, which
+        # balanced on the guard line itself, collapsed the region to nothing
+        # and reported clean. Measured across sixteen formatting shapes: that
+        # spelling was caught before the previous round and silent after it,
+        # while template literals already appear in two locator calls in this
+        # suite.
+        opens_block = line.count("{") > line.count("}")
+        # Blank STRING CONTENTS first, then take the FIRST `){`.
+        #
+        # Taking the last match was the previous attempt, and it traded a
+        # false positive for a false-negative class: a nested block opener
+        # after the assertion on the guard line (`if (...) { await expect(x);
+        # if (n > 1) { ... } }`) made the slice start past the `expect(`, so
+        # the rule went silent on a genuinely vacuous guard. Wrong direction
+        # for a false-green gate.
+        #
+        # The root cause of both is that `strip_js_comments` does not blank
+        # string contents -- its own docstring says so -- so a literal `){`
+        # inside a selector looked like a block opener. Blanking the contents
+        # removes that without inventing a new heuristic, and the first match
+        # is then genuinely the block opener. Length is preserved so the
+        # offsets still index the real line.
+        _blanked = re.sub(
+            r"'[^']*'|\"[^\"]*\"|`[^`]*`",
+            lambda m: m.group(0)[0] + "-" * (len(m.group(0)) - 2) + m.group(0)[-1],
+            line,
+        )
+        inline_block = re.search(r"\)\s*\{", _blanked)
+        if opens_block or inline_block:
+            close_idx = _find_matching_brace(cleaned_lines, idx)
+        else:
+            # A non-braced guard (`if (cond) return;`) has no block, so the
+            # brace matcher would scan to end of file and pick up an unrelated
+            # test's `expect(` -- flagging a teardown helper that asserts
+            # nothing, and teaching people to silence the rule with an opt-out.
+            # The affected region is the rest of the ENCLOSING block, which
+            # indentation approximates cheaply and without a JS parser.
+            close_idx = _end_of_enclosing_block(cleaned_lines, idx)
+        # For a one-line guard (`if (cond) { await expect(x).toBeVisible(); }`)
+        # the braces balance on that line, so close_idx lands on it and the
+        # joined slice below is empty -- the rule saw nothing in the most
+        # compact spelling of the very shape it exists to catch.
+        #
+        # Sliced from the first `){` on the string-blanked line, which is the
+        # block opener. NOT `index("{")`,
+        # which picks up the condition's own brace (a template literal), and
+        # NOT `rfind("{")`, which misses an `expect(` preceding a nested
+        # object literal.
+        # Slice whenever the line contains a block opener, INCLUDING when the
+        # block also stays open. Gating this on `not opens_block` silenced a
+        # braced guard whose `expect(` sits on the guard line while the block
+        # closes later -- and arbitrarily so: the identical shape written
+        # `} else if (...) {` was still flagged, because the leading `}`
+        # balanced the count and sent it down the other path.
+        inline_body = line[inline_block.end():] if inline_block else ""
+        body = inline_body + "\n" + "\n".join(cleaned_lines[idx + 1:close_idx])
+        if not EXPECT_CALL_RE.search(body):
+            continue
+
+        # If the ELSE branch also asserts, the test cannot pass while
+        # asserting nothing, which is the whole property this rule protects.
+        # The rule used to flag it anyway -- while its own message recommended
+        # exactly that remedy ("assert both branches if it is not"), so two of
+        # the suite's live opt-outs existed purely to silence the rule for
+        # complying with its own advice. Every opt-out spent on a compliant
+        # pattern devalues the ones spent on genuine exceptions.
+        if _else_branch_asserts(
+                cleaned_lines, close_idx,
+                search_from=inline_block.end() if (inline_block and close_idx == idx) else 0):
+            continue
+
+        line_no = idx + 1
+        raw_line = raw_lines[idx] if idx < len(raw_lines) else ""
+        opt_out = OPT_OUT_RE.search(raw_line)
+
+        if opt_out is None:
+            yield (
+                line_no,
+                "expect( inside an `if (...isVisible()/count())` guard -- "
+                "this can pass while asserting nothing, if the guard is ever "
+                "false. Make the precondition unconditional if it is actually "
+                "guaranteed, assert both branches if it is not, or opt out with "
+                "a same-line `// vacuous-guard-ok: <reason>` comment if the "
+                "guard is genuinely outside this test's control.",
+            )
+            continue
+
+        reason = opt_out.group(1).strip()
+        if not reason:
+            yield (
+                line_no,
+                "`// vacuous-guard-ok:` opt-out has no reason after the colon -- "
+                "a bare opt-out is indistinguishable from silencing the check, "
+                "which is the exact false-green this rule exists to prevent. "
+                "Say why the guard cannot be made unconditional or assert both "
+                "branches instead.",
+            )
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -603,6 +1328,8 @@ def check_file(path: Path):
 
     if _is_vitest_spec(path):
         yield from check_vitest_spec(path, text)
+    elif _is_e2e_spec(path):
+        yield from check_e2e_spec_guards(path, text)
     elif path.name == "Makefile" or path.name.endswith(".mk"):
         yield from check_makefile(path, text)
     elif path.name.endswith(WORKFLOW_SUFFIXES):
@@ -627,6 +1354,13 @@ def iter_files(roots: list[Path]) -> list[Path]:
 
 
 def main(argv: list[str]) -> int:
+    # --require-git turns "git is unavailable, so rule 5 cannot run" from a
+    # note on stderr into a hard failure. scripts/verify.sh and ci.yml pass
+    # it; the container run (scripts/test-local.sh, which has no git) does
+    # not. So the authoritative gates cannot skip a rule quietly, while the
+    # supplementary one still runs the other six rules instead of crashing.
+    require_git = "--require-git" in argv
+    argv = [a for a in argv if a != "--require-git"]
     roots = [Path(p) for p in argv] if argv else DEFAULT_ROOTS
     files = iter_files(roots)
 
@@ -635,6 +1369,13 @@ def main(argv: list[str]) -> int:
         for line_no, message in check_file(path):
             print(f"{path}:{line_no}: {message}")
             total += 1
+
+    # Rule 5 is whole-repo by nature (git ls-files + both runner files), not
+    # scoped by `roots`/argv the way rules 1-4 are, so it runs unconditionally
+    # rather than being folded into the per-path loop above.
+    for path, line_no, message in check_orphaned_test_files(require_git=require_git):
+        print(f"{path}:{line_no}: {message}")
+        total += 1
 
     if total:
         print(

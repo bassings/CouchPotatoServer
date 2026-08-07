@@ -5,15 +5,17 @@
   "private": true,
   "scripts": {
     "test": "npm run test:unit && npm run test:e2e",
-    "test:e2e": "npx playwright test",
-    "test:e2e:headed": "npx playwright test --headed",
-    "test:e2e:ui": "npx playwright test --ui",
+    "_comment:test:e2e": "Projects named explicitly. A bare `npx playwright test` also selects the `isolation` project, whose pair only demonstrates anything at >= 2 workers -- and playwright.config.ts pins workers: 1 globally, so isolation-b-assert failed EVERY run by construction. That made `npm test`, `npm run test:e2e` and `npm run test:all` red on a green tree. The isolation pair has its own script below, which pins --workers=2. Adding a project to playwright.config.ts means adding it here too; tests/unit/e2e_projects.test.ts fails if the two lists drift.",
+    "test:e2e": "npx playwright test --project=chromium --project=accessibility --project=mobile-chrome",
+    "test:e2e:headed": "npx playwright test --headed --project=chromium --project=accessibility --project=mobile-chrome",
+    "test:e2e:ui": "npx playwright test --ui --project=chromium --project=accessibility --project=mobile-chrome",
     "test:unit": "npx vitest run",
     "test:unit:watch": "npx vitest",
     "test:a11y": "npx playwright test --project=accessibility",
     "test:lighthouse": "npx lhci autorun",
     "test:mutation": "npx stryker run",
-    "test:all": "npm run test:unit && npm run test:e2e && npm run test:lighthouse"
+    "test:all": "npm run test:unit && npm run test:e2e && npm run test:lighthouse",
+    "test:isolation": "npx playwright test --project=isolation --workers=2"
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.12.1",

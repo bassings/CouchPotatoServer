@@ -2,6 +2,18 @@
 # Path to production: make setup → code → make verify (auto-enforced on push)
 #                     → PR → Claude review + remediate → merge → release.
 
+# Same resolution order scripts/verify.sh uses, so `make <target>` and the
+# gate run under the same interpreter and cannot disagree about which
+# dependencies are installed.
+#
+# Used by EVERY Python recipe below, not just one. When only check-traps used
+# it, this comment was a claim the file did not deliver: measured,
+# `make lint` ran ruff 0.15.0 from Homebrew python3 while the gate ran the
+# pinned 0.16.0 from the venv (requirements-dev.txt), so `make lint` green did
+# not mean the gate would be. `setup` deliberately still uses bare python3 --
+# it is the target that CREATES the environment.
+PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
+
 .PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
 
 help: ## Show this help
@@ -16,31 +28,31 @@ setup: ## One-time: install Python+JS deps and git hooks so the local gate runs 
 	npx playwright install chromium
 	@echo "✅ Setup complete. 'git push' now runs the full gate (scripts/verify.sh)."
 
-verify: ## Full local gate — mirrors CI (lint + py unit + ui unit + e2e)
+verify: ## Full local gate — mirrors CI (lint + py unit + py integration + ui unit + e2e)
 	./scripts/verify.sh
 
 verify-fast: ## Quick gate — lint + unit only, skips E2E
 	./scripts/verify.sh --no-e2e
 
 lint: ## ruff lint only
-	python3 -m ruff check .
+	$(PYTHON) -m ruff check .
 
 security-lint: ## Static security lint (ruff bandit "S" rules — informational)
-	python3 -m ruff check --select S couchpotato/ CouchPotato.py
+	$(PYTHON) -m ruff check --select S couchpotato/ CouchPotato.py
 
 test-py: ## Python unit tests only
-	PYTHONPATH=libs python3 -m pytest tests/unit/ -q --tb=short
+	PYTHONPATH=libs $(PYTHON) -m pytest tests/unit/ -q --tb=short
 
 test-ui: ## UI unit tests (vitest) only
 	npm run test:unit
 
 test-e2e: ## E2E tests (Playwright, auto-starts server) only
-	npm run test:e2e -- --project=chromium
+	npx playwright test --project=chromium
 
 mutation: mutation-py mutation-js ## Run all mutation testing (slow)
 
 mutation-py: ## Python mutation testing (mutmut)
-	PYTHONPATH=libs python3 -m mutmut run
+	PYTHONPATH=libs $(PYTHON) -m mutmut run
 
 mutation-js: ## JS mutation testing (Stryker)
 	npm run test:mutation
@@ -50,10 +62,27 @@ mutation-js: ## JS mutation testing (Stryker)
 BASE ?= master
 
 mutation-changed: ## Mutation testing on changed files only (fast enough per-change)
-	python3 scripts/mutation_changed.py --base $(BASE)
+	$(PYTHON) scripts/mutation_changed.py --base $(BASE)
 
 check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, weak shell gates)
-	python3 scripts/check_test_traps.py
+	@# The venv, not the system interpreter. This checker needs PyYAML to read
+	@# the workflow files, and it fails LOUDLY when it is missing rather than
+	@# skipping -- correct behaviour, but bare `python3` on a developer's Mac
+	@# has no PyYAML, so `make check-traps` (the command CLAUDE.md names) went
+	@# red with 7 findings on a clean tree while scripts/verify.sh, which uses
+	@# $$PYTHON, went green on the same tree. A gate that cries wolf from the
+	@# documented entry point trains the reader to ignore it, which is the
+	@# opposite of what a false-green guard is for. Overridable, and still
+	@# falls back to python3 so a clone with no venv gets the loud failure.
+	@# --require-git, like scripts/verify.sh and ci.yml. Without it a
+	@# `git ls-files` failure is caught, noted on stderr and the run exits 0
+	@# with rule 5 (orphaned test files) never having executed -- and this is
+	@# the entry point CLAUDE.md's command table names, so it is the one most
+	@# likely to be run somewhere odd. The earlier justification for leaving it
+	@# bare was that the git-less Alpine container needs it: measured, nothing
+	@# git-less invokes this target at all (scripts/test-local.sh only mentions
+	@# the checker in a comment), so that reasoning was simply wrong.
+	$(PYTHON) scripts/check_test_traps.py --require-git
 
 # Pinned version: an unpinned :latest changes the ruleset under you, so a clean
 # scan today can fail tomorrow with no code change. Bump deliberately.

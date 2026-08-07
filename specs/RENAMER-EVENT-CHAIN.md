@@ -28,7 +28,7 @@ not just a status-tracking stub:
   via `NamerMixin.doReplace`, creates the destination directory
   (`main.py:200-209`), and **actually moves each file** via
   `self.moveFile(src, dst, use_default=True)` (`main.py:221`, implemented in
-  `mover.py:16` — does `shutil.move`/hardlink/symlink per `file_action` config).
+  `MoverMixin.moveFile` — does `shutil.move`/hardlink/symlink per `file_action` config).
   It then deletes the emptied source folder if `cleanup` is configured
   (`main.py:227-230`, `cleanup.py:108` `deleteFolder`).
 - `checkSnatched()` (`scanner.py:17-176`) polls download clients via

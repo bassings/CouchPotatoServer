@@ -32,7 +32,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install ruff
-      run: pip install ruff>=0.9.0
+      run: pip install 'ruff==0.16.0'
 
     - name: Run ruff
       run: ruff check .
@@ -50,7 +50,7 @@ jobs:
     # rather than paying for another runner.
     # See scripts/check_test_traps.py and CLAUDE.md rules 9-11.
     - name: Run test-trap check
-      run: python scripts/check_test_traps.py
+      run: python scripts/check_test_traps.py --require-git
 
   # Fast static guardrail for the modern UI (couchpotato/ui/templates/**):
   # off-spec toggle sizing, legacy icon-font classes, raw hex colors. Pure
@@ -131,7 +131,7 @@ jobs:
         python-version: '3.12'
 
     - name: Install ruff
-      run: pip install ruff>=0.15.16
+      run: pip install 'ruff==0.16.0'
 
     - name: ruff security lint (bandit S rules)
       continue-on-error: true
@@ -144,7 +144,7 @@ jobs:
       actions: write
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
       fail-fast: false
 
     steps:
@@ -172,6 +172,12 @@ jobs:
         PYTHONPATH: ${{ github.workspace }}/libs
       run: |
         python -m pytest tests/unit/ -v --tb=short -W ignore::SyntaxWarning
+
+    - name: Run integration tests
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        python -m pytest tests/integration/ -v --tb=short -W ignore::SyntaxWarning
 
     - name: Check core modules import
       env:
@@ -235,68 +241,71 @@ jobs:
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
 
-    # FEAT-007 Part B: seeds a deterministic movie + releases so
-    # tests/e2e/release_controls.spec.ts (and the movie-detail case in
-    # accessibility.a11y.spec.ts) actually run instead of test.skip()-ing on
-    # an empty library. Must run BEFORE the server starts: the app's own
-    # SQLiteAdapter.open() will then pick up the seeded rows on its first
-    # (and only) connection, rather than racing a long-lived server
-    # connection with a second writer process. See scripts/seed_e2e_data.py
-    # for the full rationale. Tolerant of failure -- the worst case must be
-    # the pre-existing behaviour (those tests skip), never a red build from
-    # the seed step itself.
-    - name: Seed E2E test data
-      env:
-        PYTHONPATH: ${{ github.workspace }}/libs
-      run: |
-        python scripts/seed_e2e_data.py --data_dir=.config || echo "::warning::seed_e2e_data.py failed -- release-control/a11y tests will skip instead of running"
-      continue-on-error: true
-
-    - name: Start CouchPotato server
-      env:
-        PYTHONPATH: ${{ github.workspace }}/libs
-      run: |
-        python CouchPotato.py --data_dir=.config &
-        sleep 10
-        curl -sf http://localhost:5050/ || exit 1
-
+    # T1.7: tests/e2e/fixtures.ts starts its own CouchPotato server per
+    # Playwright worker -- own port, own data dir, seeded before that
+    # worker's server starts -- identically to a local run. No more
+    # hand-started server, and no more seed step whose failure only earned
+    # a `::warning::` (AC-OPS-16): a failed seed now fails the run, same as
+    # locally.
+    #
+    # --fail-on-flaky-tests (AC-A11Y-4/QA-56): this job keeps `retries: 2`
+    # (playwright.config.ts), so without this flag a test that fails once
+    # and passes on retry would report green here -- exactly the shape that
+    # let a 1-in-5 shared-state race pass as "the suite is green" for a
+    # long time.
     - name: Run E2E tests
-      run: npm run test:e2e -- --project=chromium
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: |
+        npx playwright test --project=chromium --fail-on-flaky-tests
+        # AC-QA-50 isolation proof, pinned to 2 workers (see playwright.config.ts)
+        npx playwright test --project=isolation --workers=2 --fail-on-flaky-tests
 
     # Small-screen coverage. AGENTS.md treats a mobile layout regression that
     # blocks a core flow as high-priority, and the mobile-chrome project sat
     # configured-but-unrun for a long time -- the first review to exercise it
     # found the restore picker overflowing at 441px on a 393px device. Scoped
-    # by testMatch to *.mobile.spec.ts, so this is seconds, not minutes.
-    #
-    # The server is restarted against its OWN data dir. CP_E2E_DATA_DIR alone
-    # does nothing here: playwright.config.ts disables its `webServer` block
-    # whenever CI is set, so the config never starts anything -- this job starts
-    # the server by hand. An earlier version passed that variable and claimed
-    # isolation it did not have; the mobile run simply talked to the same
-    # .config instance the desktop suite had already mutated.
-    - name: Restart server on an isolated database for mobile
+    # by testMatch to *.mobile.spec.ts, so this is seconds, not minutes. Its
+    # own worker(s), own server(s) -- no restart-by-hand step needed any more.
+    - name: Run mobile E2E tests
       env:
         PYTHONPATH: ${{ github.workspace }}/libs
-      run: |
-        pkill -f "CouchPotato.py --data_dir=.config" || true
-        sleep 2
-        rm -rf .config-mobile
-        python scripts/seed_e2e_data.py --data_dir=.config-mobile \
-          || echo "::warning::seed failed -- mobile tests will fail loudly"
-        python CouchPotato.py --data_dir=.config-mobile &
-        sleep 10
-        curl -sf http://localhost:5050/ || exit 1
+      run: npx playwright test --project=mobile-chrome --fail-on-flaky-tests
 
-    - name: Run mobile E2E tests
-      run: npm run test:e2e -- --project=mobile-chrome
-    
     - name: Upload test artifacts
       uses: actions/upload-artifact@v7
       if: failure()
       with:
         name: playwright-report
-        path: playwright-report/
+        # test-results/ carries the per-worker application logs that
+        # tests/e2e/fixtures.ts writes (server-p<N>-w<M>.log). The HTML
+        # reporter only copies Playwright ATTACHMENTS into
+        # playwright-report/, so a file the fixture writes directly was not
+        # carried across, and the one artefact that can explain a mid-run
+        # server death died with the runner.
+        #
+        # Checked before adding it, and THIS IS THE WHOLE OF WHAT IS CHECKED.
+        # PrivacyFilter (couchpotato/core/logger.py) is attached to the console
+        # and file HANDLERS, so it only rewrites records that pass through
+        # them: raw stderr (an interpreter traceback, a bare print) does not.
+        # It replaces the configured api_key wherever it appears, and the
+        # values of api/apikey/api_key/password/username/h/uid/key/passkey when
+        # they appear as `?name=` or `&name=` query parameters. Nothing else.
+        # Request paths, which embed the api_key, never reach the log at all:
+        # runner.py passes access_log=False. Verified against a real captured
+        # log: no 32-char hex token, every `api_key=` reads `xxx`, no request
+        # lines.
+        #
+        # NOT covered: filesystem paths (on a runner those are
+        # /home/runner/work/..., not anyone's home directory), credentials in
+        # URL userinfo, and any secret in a URL path segment other than the
+        # api_key. The reason this is safe is that the E2E instance holds
+        # seeded fixture data and no third-party credentials, NOT that the
+        # filter is comprehensive. If that ever stops being true, this upload
+        # is the thing to revisit first.
+        path: |
+          playwright-report/
+          test-results/
         retention-days: 7
 
   accessibility:
@@ -330,34 +339,40 @@ jobs:
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
 
-    # See the matching step in the ui-e2e-tests job above: this job also
-    # starts its own server against its own empty .config, so it needs the
-    # same seed to exercise the movie-detail (filtered release list) a11y
-    # case in accessibility.a11y.spec.ts instead of skipping it. Same
-    # before-server-start ordering and same failure tolerance.
-    - name: Seed E2E test data
-      env:
-        PYTHONPATH: ${{ github.workspace }}/libs
-      run: |
-        python scripts/seed_e2e_data.py --data_dir=.config || echo "::warning::seed_e2e_data.py failed -- the movie-detail a11y case will skip instead of running"
-      continue-on-error: true
-
-    - name: Start CouchPotato server
-      env:
-        PYTHONPATH: ${{ github.workspace }}/libs
-      run: |
-        python CouchPotato.py --data_dir=.config &
-        sleep 10
-
+    # T1.7/AC-A11Y-5: this job used to start its own server BY HAND against
+    # its own empty .config and never read CP_E2E_DATA_DIR --
+    # playwright.config.ts disabled its webServer block whenever CI was
+    # set, so isolation implemented only there would have left this job
+    # running the OLD shared-state suite while local ran the isolated one:
+    # both green, testing different things. tests/e2e/fixtures.ts is not
+    # gated on CI at all, so this job now starts (and seeds, and tears
+    # down) its own server exactly the same way ui-e2e-tests and a local
+    # run do.
     - name: Run accessibility tests
-      run: npm run test:a11y
-    
+      env:
+        PYTHONPATH: ${{ github.workspace }}/libs
+      run: npx playwright test --project=accessibility --fail-on-flaky-tests
+
     - name: Upload accessibility report
       uses: actions/upload-artifact@v7
       if: always()
       with:
         name: accessibility-report
         path: playwright-report/
+        retention-days: 7
+
+    # test-results/ (which carries the application log) only on failure, NOT
+    # on always(). A green run's server log has no diagnostic value, artefacts
+    # on a public repo are downloadable by anyone who can see the run, and
+    # always() fires on cancellation too. The axe HTML report keeps its
+    # always() upload above; see the ui-e2e-tests job for the full scope of
+    # what is and is not redacted.
+    - name: Upload accessibility server logs
+      uses: actions/upload-artifact@v7
+      if: failure()
+      with:
+        name: accessibility-server-logs
+        path: test-results/
         retention-days: 7
 
   # Summary job for branch protection — requires all test matrix jobs to pass
@@ -388,15 +403,40 @@ jobs:
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v4
 
+    # This job SCANS THE IMAGE, so the image it builds must be a function of
+    # the repo and nothing else. It is built without the layer cache on
+    # purpose; the ~2 extra minutes buy a deterministic security verdict.
+    #
+    # Measured on PR #225, and the reason this is not merely tidy-up. CI
+    # reported two fixable HIGHs -- setuptools 70.3.0 (CVE-2025-47273) and
+    # msgpack 1.1.2 (GHSA-6v7p-g79w-8964). Neither package is in
+    # requirements.txt. A `--no-cache --pull` local build of the same commit,
+    # for the same platform (linux/amd64), from the SAME base digest CI
+    # resolved (python:3.14-alpine@sha256:a1321512...88f8), contains NEITHER:
+    # `ls site-packages` reports neither, pip's own "Successfully installed"
+    # line names neither, and the container starts healthy without them.
+    # Nothing in the tree imports them.
+    #
+    # Adding `pull: true` alone did NOT fix it -- the build still reported
+    # `#9 COPY requirements.txt CACHED` and `#10 RUN pip install CACHED`,
+    # because the base digest was unchanged so the whole chain still matched.
+    # The cache holds layers that a clean build of the same inputs does not
+    # reproduce, and I could not account for that difference. That is precisely
+    # why the cache does not belong in front of a security scan: the verdict
+    # was not derivable from the repo.
+    #
+    # The direction it failed in was harmless -- a false positive on packages
+    # the image does not contain. The other direction ships: a stale-but-clean
+    # cache reports CLEAN while the live base carries a new CVE.
     - name: Build Docker image
       uses: docker/build-push-action@v7
       with:
         context: .
         load: true
         push: false
+        pull: true
+        no-cache: true
         tags: couchpotato:test
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
 
     - name: Test container starts
       run: |

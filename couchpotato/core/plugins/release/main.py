@@ -751,7 +751,7 @@ class Release(Plugin):
         status = list(status if isinstance(status, (list, tuple)) else [status])
 
         for s in status:
-            for ms in db.get_many('release_status', s):
+            for ms in db.get_many('release_status', s, with_doc = with_doc):
                 if with_doc:
                     try:
                         doc = db.get('id', ms['_id'])

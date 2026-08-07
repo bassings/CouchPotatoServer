@@ -416,6 +416,75 @@ class TestTemplateRendering:
         assert captured_kwargs.get('has_releases') is True
         assert 'release_status' not in captured_kwargs
 
+    def test_partial_movies_without_with_releases_does_not_filter_at_all(self, client):
+        """Omitting with_releases must query EVERY active movie, not the no-release set.
+
+        wanted.html fetches this partial once with no `with_releases`, and the
+        All/Wanted/Available chips then filter client-side on each card's
+        data-has-releases attribute. So the initial fetch has to carry both
+        kinds or a chip has nothing to reveal.
+
+        This parameter defaulted to False, which asked for the no-release set
+        only. That was invisible while has_releases was inert; once T1.9 fixed
+        the filter (release/main.py:754) the Available chip showed zero movies
+        permanently. Verified against a live server at the time: the default
+        returned 1 card while with_releases=true returned 2.
+
+        Asserting has_releases is ABSENT, not that it equals some value: the
+        defect was passing the key at all.
+        """
+        captured_kwargs = {}
+
+        def capture_handler(**kwargs):
+            captured_kwargs.update(kwargs)
+            return {'movies': []}
+
+        old_handler = api.get('media.list')
+        api['media.list'] = capture_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=active')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert captured_kwargs.get('status') == 'active'
+        assert 'has_releases' not in captured_kwargs, (
+            'the page-level fetch must not constrain has_releases, or the '
+            'Available chip has no movies to reveal'
+        )
+
+    def test_partial_movies_with_releases_false_still_filters_to_wanted(self, client):
+        """The explicit false case must keep working: only movies with no release.
+
+        Pins the other direction of the fix above, so making the omitted case
+        unfiltered cannot silently make the explicit case unfiltered too.
+        """
+        captured_kwargs = {}
+
+        def capture_handler(**kwargs):
+            captured_kwargs.update(kwargs)
+            return {'movies': []}
+
+        old_handler = api.get('media.list')
+        api['media.list'] = capture_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=active&with_releases=false')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert captured_kwargs.get('has_releases') is False
+
     def test_available_route_redirects_to_wanted_filter(self, client):
         """Available route should redirect to wanted page with available filter for bookmark compatibility."""
         resp = client.get('/available', follow_redirects=False)

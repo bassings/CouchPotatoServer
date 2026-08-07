@@ -251,9 +251,17 @@ practice it only happened nightly, which meant survivors went unreviewed and the
 - `make verify` runs them with an auto-started server, or run directly against
   a booted app:
   `.venv/bin/python CouchPotato.py --data_dir=.e2e-data --console_log` then
-  `CP_TEST_URL=http://localhost:5050 npx playwright test tests/e2e/<spec> --project=chromium --workers=1`.
+  `npx playwright test tests/e2e/<spec> --project=chromium`.
+  (No `CP_TEST_URL`, and no hand-started server: since T1.7 the worker
+  fixture starts and seeds its own instance per worker, and `CP_TEST_URL` is
+  read by nothing in the repo. Following the old line started a server on
+  5050 that the suite then ignored.)
 - CI also runs the full suite. (See also AGENTS.md's local-verification step,
-  which runs the whole suite via `npm run test:e2e`.)
+  which runs the chromium and accessibility projects via
+  `npx playwright test --project=...`. Not the whole suite: the isolation
+  pair needs two workers and has its own script, and `npm run test:e2e --
+  --project=X` does NOT scope a run -- Playwright unions --project flags, so
+  composing on top of a script that already names projects widens it.)
 - For any UI change, check and update:
   - `tests/e2e/filters.spec.ts`
   - `tests/e2e/navigation.spec.ts`
@@ -503,7 +511,7 @@ exist to prevent, so they do not get to be the untested part of the suite.
   `adapter.create(str(tmp_path / 'name'))`.
 - `test_api_auth.py`, `test_fastapi_web.py`, `test_security.py` run locally too —
   `httpx` is installed in `.venv`, so run them via `.venv/bin/python -m pytest`.
-- CI matrix: Python 3.10, 3.11, 3.12, 3.13.
+- CI matrix: Python 3.10, 3.11, 3.12, 3.13, 3.14.
 - Note: a bare `pytest tests/unit/ -q` may hit import errors for tests touching
   vendored `libs/` — `make test-py` sets `PYTHONPATH=libs`. Prefer `make verify`
   / `make test-py`, or add the prefix if invoking pytest directly.

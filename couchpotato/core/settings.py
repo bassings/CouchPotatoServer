@@ -301,6 +301,28 @@ class Settings:
             'values': self.getValues()
         }
 
+    def _parse_directories(self, value, soft_chroot):
+        """Normalise a `directories` setting value and map it into the chroot.
+
+        Extracted from saveView unchanged, so the chroot refusal below has one
+        `try` around both directory branches instead of a copy in each.
+        """
+        import json
+
+        # Accept either a JSON array or a plain "::" delimited string
+        if isinstance(value, str) and value.strip().startswith('['):
+            try:
+                value = json.loads(value)
+            except (json.JSONDecodeError, ValueError):
+                value = []
+        elif isinstance(value, str):
+            # Plain string — split on :: delimiter or treat as single path
+            value = [v.strip() for v in value.split(self.directories_delimiter) if v.strip()]
+        if not (value and isinstance(value, list)):
+            value = []
+
+        return self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
+
     def saveView(self, **kwargs):
         section = kwargs.get('section')
         option = kwargs.get('name')
@@ -313,23 +335,23 @@ class Settings:
         from couchpotato.environment import Env
         soft_chroot = Env.get('softchroot')
 
-        if self.getType(section, option) == 'directory':
-            value = soft_chroot.chroot2abs(value)
+        # chroot2abs now refuses a value that resolves outside the soft
+        # chroot instead of concatenating it through. That closes a second
+        # bypass -- a chrooted user could previously save a directory of
+        # `../../mnt` and have it written verbatim, after which the renamer
+        # and the scanner operated outside the chroot entirely -- but it
+        # means these two calls can raise, so they are handled here rather
+        # than surfacing as a 500 with the path in a logged traceback.
+        try:
+            if self.getType(section, option) == 'directory':
+                value = soft_chroot.chroot2abs(value)
 
-        if self.getType(section, option) == 'directories':
-            import json
-            # Accept either a JSON array or a plain "::" delimited string
-            if isinstance(value, str) and value.strip().startswith('['):
-                try:
-                    value = json.loads(value)
-                except (json.JSONDecodeError, ValueError):
-                    value = []
-            elif isinstance(value, str):
-                # Plain string — split on :: delimiter or treat as single path
-                value = [v.strip() for v in value.split(self.directories_delimiter) if v.strip()]
-            if not (value and isinstance(value, list)):
-                value = []
-            value = self.directories_delimiter.join(map(soft_chroot.chroot2abs, value))
+            if self.getType(section, option) == 'directories':
+                value = self._parse_directories(value, soft_chroot)
+        except ValueError:
+            self.log.warning('Refused "%s.%s": the path resolves outside the '
+                             'configured soft chroot', section, option)
+            return {'success': False}
 
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser

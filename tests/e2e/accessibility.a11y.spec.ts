@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import AxeBuilder from '@axe-core/playwright';
 import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 
@@ -10,7 +10,10 @@ import { mockSuggestionsCharts, waitForSuggestionsReady } from './helpers';
 // Helper to check a11y violations
 async function checkA11y(page: any, pageName: string) {
   const accessibilityScanResults = await new AxeBuilder({ page })
-    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])
+    // wcag22aa added (T1.4b/AC-A11Y-9): the project standard is WCAG 2.2 AA,
+    // and without this tag 2.5.8 (target-size) and 2.4.11
+    // (focus-not-obscured) were never evaluated at all.
+    .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
     // Exclude known exceptions documented below
     .exclude('#loading') // Loading indicators are transient
     .analyze();
@@ -33,15 +36,22 @@ async function checkA11y(page: any, pageName: string) {
     });
   }
 
-  // Fail on critical or serious violations
-  const criticalViolations = accessibilityScanResults.violations.filter(
-    v => v.impact === 'critical' || v.impact === 'serious'
-  );
+  // Fail on ANY WCAG-tagged violation, not just critical/serious.
+  //
+  // T1.4b/AC-A11Y-8: this used to filter to `impact === 'critical' ||
+  // 'serious'` before asserting, which meant a `moderate`-impact violation
+  // (e.g. many WCAG 2.2 `target-size` findings, or `color-contrast` at
+  // certain ratios) could never fail this function -- and it backs 5 of the
+  // 18 tests in this file (Wanted, Available, Add Movie, Movie Detail, Setup
+  // Wizard directly, plus Suggestions and Settings). The identical bug, one
+  // notch tighter (`impact === 'critical'` alone), lived in the standalone
+  // "Color contrast should be sufficient" test further down -- already fixed.
+  const violations = accessibilityScanResults.violations;
 
   expect(
-    criticalViolations.length,
-    `Found ${criticalViolations.length} critical/serious a11y violations on ${pageName}: ${
-      criticalViolations.map(v => v.id).join(', ')
+    violations.length,
+    `Found ${violations.length} a11y violations on ${pageName}: ${
+      violations.map(v => v.id).join(', ')
     }`
   ).toBe(0);
 
@@ -114,6 +124,47 @@ test.describe('Accessibility', () => {
     await checkA11y(page, 'Settings');
   });
 
+  /*
+   * T1.4b/AC-A11Y-10: every page-level checkA11y sweep above runs in the
+   * LIGHT theme. With no localStorage seeded, base.html's own init leaves
+   * `document.documentElement` without the `light` class removed --
+   * measured: `classList.contains('light')` is true by default -- so dark
+   * mode has never been scanned page-wide. The toast contrast test below is
+   * the only place dark theme gets exercised at all, and that is exactly the
+   * blind spot that let the dark success toast ship at 3.30:1 (see the
+   * comment above that test). Cover one plain content page (Wanted) and one
+   * form-bearing page (Settings) in dark, following the same
+   * addInitScript-before-goto pattern the toast test uses.
+   */
+  test('Wanted and Settings pages should be accessible in the dark theme', async ({ page }) => {
+    await page.addInitScript((t) => {
+      localStorage.setItem('cp-theme', t);
+    }, 'dark');
+
+    await page.goto('/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(1000); // Wait for htmx to load content
+
+    // Pin that dark theme really took effect -- load-bearing, not decorative:
+    // a broken theme pipeline must red this test loudly rather than silently
+    // scanning the light theme under a "dark theme" test name.
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+      .toBe(false);
+
+    await checkA11y(page, 'Wanted (dark theme)');
+
+    await page.goto('/settings/');
+    await page.waitForLoadState('networkidle');
+    await page.waitForTimeout(2000); // Settings takes longer to load
+
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+      .toBe(false);
+
+    await checkA11y(page, 'Settings (dark theme)');
+  });
+
   // FEAT-007 Part B: the release list's filter/sort controls (B12). Follows
   // movie-detail.spec.ts's own pattern for reaching the detail page.
   // scripts/seed_e2e_data.py seeds a movie with releases (wired into
@@ -144,10 +195,21 @@ test.describe('Accessibility', () => {
       .then(() => true)
       .catch(() => false);
 
-    test.skip(!releasesLoaded,
+    /*
+     * FAIL, don't skip (AC-A11Y-1, same pattern as movie-detail.spec.ts:55).
+     *
+     * This used to be test.skip(!releasesLoaded, ...). A skip here reads as
+     * "the a11y suite is clean" while the one case in this file that
+     * actually scans a filtered, data-bearing release table never ran at
+     * all -- a broken seed silently deleted coverage rather than failing
+     * the run that lost it.
+     */
+    expect(
+      releasesLoaded,
       'no seeded movie with releases at /movie/e2e-seed-movie-001 -- either ' +
       'the seed did not run (scripts/seed_e2e_data.py --data_dir=<dir> before ' +
-      'starting the server), or the detail partial took over 15s to load');
+      'starting the server), or the detail partial took over 15s to load',
+    ).toBe(true);
 
     const releases = page.locator('#movie-releases');
 
@@ -269,40 +331,186 @@ test.describe('Accessibility', () => {
     await expect(main).toBeVisible();
   });
 
+/**
+   * Is there a focus indicator a sighted keyboard user can actually see?
+   *
+   * ONE definition, used by both the tab-sweep and the named-control tests.
+   * They were written separately and each ended up with the hole the other had
+   * closed, which review demonstrated by driving both against Chromium-shaped
+   * values:
+   *
+   *   focus:ring-transparent   named-control PASSED, sweep failed
+   *   focus:ring-0 (coloured)  named-control PASSED, sweep failed
+   *   permanent shadow-md      named-control failed, sweep PASSED
+   *
+   * Both properties are needed, so both are required here:
+   *
+   *  - VISIBLE: an outline or shadow with a colour whose alpha is not 0 and
+   *    geometry that is not all zeros. Tailwind's `outline-none` compiles to
+   *    `outline: 2px solid transparent`, and `ring-0`/`ring-transparent` are
+   *    the shadow-side spellings of the same nothing.
+   *  - CHANGED ON FOCUS: Tailwind composes every ring/shadow utility as a
+   *    permanent, non-'none' box-shadow, so an element carrying `shadow-md`
+   *    reports a real shadow with real geometry whether it is focused or not.
+   *    An indicator that does not appear on focus is decoration.
+   *
+   * Runs inside page.evaluate, so it is stringified: keep it dependency-free.
+   */
+  const FOCUS_INDICATOR_PROBE = (el: Element) => {
+    const read = () => {
+      const s = window.getComputedStyle(el);
+      return {
+        outlineStyle: s.outlineStyle,
+        outlineWidth: s.outlineWidth,
+        outlineColor: s.outlineColor,
+        boxShadow: s.boxShadow,
+      };
+    };
+    const invisible = (colour: string) =>
+      !colour ||
+      colour === 'transparent' ||
+      /rgba\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*,\s*0\s*\)/.test(colour);
+    const shadowHasSubstance = (shadow: string) =>
+      shadow !== 'none' &&
+      shadow !== '' &&
+      // Split on commas that are not inside rgb()/rgba().
+      shadow.split(/,(?![^(]*\))/).some((layer) => {
+        const colour = (layer.trim().match(/^(rgba?\([^)]*\)|#[0-9a-f]+|[a-z]+)/i) || [''])[0];
+        const lengths = (layer.match(/-?[\d.]+px/g) || []).map(parseFloat);
+        return !invisible(colour) && lengths.some((n) => n !== 0);
+      });
+  
+    const hadFocus = document.activeElement === el;
+    (el as HTMLElement).blur();
+    const blurred = read();
+    (el as HTMLElement).focus();
+    const focused = read();
+    if (!hadFocus) (el as HTMLElement).blur();
+  
+    const outlineVisible =
+      focused.outlineStyle !== 'none' &&
+      parseFloat(focused.outlineWidth || '0') > 0 &&
+      !invisible(focused.outlineColor);
+    const shadowVisible =
+      shadowHasSubstance(focused.boxShadow) && focused.boxShadow !== blurred.boxShadow;
+    const changedOnFocus =
+      focused.outlineStyle !== blurred.outlineStyle ||
+      focused.outlineWidth !== blurred.outlineWidth ||
+      focused.outlineColor !== blurred.outlineColor ||
+      focused.boxShadow !== blurred.boxShadow;
+  
+    return {
+      ...focused,
+      blurredBoxShadow: blurred.boxShadow,
+      changedOnFocus,
+      visible: (outlineVisible || shadowVisible) && changedOnFocus,
+    };
+  };
+
+  /**
+   * Named controls that must show a focus ring, checked directly rather than
+   * hoped for by tabbing.
+   *
+   * The test below presses Tab exactly once from a fresh `/`, which lands
+   * deterministically on the skip link and nothing else -- so it guarded
+   * base.html's global `:focus-visible` rule and not one control in the app.
+   * Every per-component override, which is where the defects are, was outside
+   * its reach: both of these carried `focus:outline-none`, i.e.
+   * `outline: 2px solid TRANSPARENT`, and had no visible keyboard focus at all.
+   */
+  //
+  // SCOPE, stated rather than left to be discovered: text inputs only, and
+  // two of them out of ~100 `focus:outline-none` sites across 17 templates.
+  // The probe focuses PROGRAMMATICALLY with no prior keyboard event, and
+  // base.html has `:focus:not(:focus-visible) { outline: none }`, so these
+  // pass only because Chromium always matches `:focus-visible` on a text
+  // field. Adding a button or a link here -- movie_releases.html has several
+  // -- would report "no visible focus indicator" for a compliant control.
+  // Tab to such a control instead of calling focus().
+  //
+  // Known remaining limits of the probe itself, none reachable in these
+  // templates today: `visible` ANDs across properties, so a permanently
+  // visible outline plus any shadow change on focus passes; alpha is only
+  // detected in legacy `rgba()`, not `oklab()`/`color()`; `outline-offset` is
+  // never read, so a ring pushed off-screen passes; and sub-pixel widths or
+  // near-zero alphas count as visible.
+  const FOCUSABLE_CONTROLS = [
+    { path: '/', selector: '#filter-movies', what: 'the Wanted filter input' },
+    { path: '/add/', selector: 'input[placeholder*="search" i]', what: 'the Add-movie search input' },
+  ];
+
+  for (const { path, selector, what } of FOCUSABLE_CONTROLS) {
+    test(`${what} has a visible focus indicator`, async ({ page }) => {
+      await page.goto(path);
+      const control = page.locator(selector).first();
+      await expect(control, `${what} did not render at ${path}`).toBeVisible();
+      const indicator = await control.evaluate(FOCUS_INDICATOR_PROBE);
+
+      expect(
+        indicator.visible,
+        `${what} has no visible focus indicator (WCAG 2.2 AA 2.4.7). Computed ` +
+        `focused: outline ${indicator.outlineStyle} ${indicator.outlineWidth} ` +
+        `${indicator.outlineColor}, box-shadow ${indicator.boxShadow}; ` +
+        `unfocused box-shadow ${indicator.blurredBoxShadow}; ` +
+        `changedOnFocus=${indicator.changedOnFocus}. Note that Tailwind's ` +
+        `\`outline-none\`, \`ring-0\` and \`ring-transparent\` all compile to ` +
+        `something that is present but invisible, and a permanent ` +
+        `\`shadow-*\` is decoration rather than a focus indicator.`,
+      ).toBe(true);
+    });
+  }
+
   test('Interactive elements should be keyboard accessible', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
-    
+
     // Tab through the page
     await page.keyboard.press('Tab');
-    
+
     // Something should be focused
     const focusedElement = page.locator(':focus');
     await expect(focusedElement.first()).toBeVisible();
-    
-    // Focused element should have visible focus indicator (not disabled in CSS)
-    const outline = await focusedElement.first().evaluate(el => {
-      const styles = window.getComputedStyle(el);
-      return styles.outline !== 'none' || styles.boxShadow !== 'none';
-    });
-    // Note: This might need adjustment based on the focus styling approach used
+
+    // Focused element must have a visible focus indicator (WCAG 2.4.7).
+    // Same single definition as the named-control tests above: previously
+    // these two predicates were written separately and each accepted what
+    // the other rejected.
+    const sweep = await focusedElement.first().evaluate(FOCUS_INDICATOR_PROBE);
+    const hasVisibleFocusIndicator = sweep.visible;
+
+    expect(
+      hasVisibleFocusIndicator,
+      `the first Tab-focused element has no visible focus indicator ` +
+      `(WCAG 2.4.7). Computed focused: outline ${sweep.outlineStyle} ` +
+      `${sweep.outlineWidth} ${sweep.outlineColor}, box-shadow ` +
+      `${sweep.boxShadow}; unfocused box-shadow ${sweep.blurredBoxShadow}; ` +
+      `changedOnFocus=${sweep.changedOnFocus}.`,
+    ).toBe(true);
   });
 
   test('Images should have alt text', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
-    
+
     // Get all images
     const images = page.locator('img');
     const count = await images.count();
-    
+    // Verified: `expect(null).toBeDefined()` PASSES, and `getAttribute`
+    // returns `null` for a missing attribute -- so the old
+    // `expect(await img.getAttribute('alt')).toBeDefined()` could not fail
+    // even for an <img> with no `alt` at all. It also silently asserted
+    // nothing whenever `count` was 0. Both fixed: a real image count first,
+    // then a real type check on the attribute (a string, including '' for
+    // decorative images, not null).
+    expect(count, 'expected at least one <img> on the page to check alt text on').toBeGreaterThan(0);
+
     for (let i = 0; i < Math.min(count, 10); i++) {
       const img = images.nth(i);
       const alt = await img.getAttribute('alt');
-      // All images should have alt attribute (even if empty for decorative)
-      expect(await img.getAttribute('alt')).toBeDefined();
+      // All images should have an alt attribute (even if empty for decorative)
+      expect(typeof alt, `image ${i} (src="${await img.getAttribute('src')}") has no alt attribute`).toBe('string');
     }
   });
 
@@ -533,7 +741,7 @@ test.describe('Accessibility', () => {
     await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 20000 });
 
     const trigger = page.locator('[data-testid="restore-to-wanted"]');
-    if ((await trigger.count()) === 0) {
+    if ((await trigger.count()) === 0) { // vacuous-guard-ok: primes the shared FEAT-008 fixture into 'done' status if an earlier spec has not already -- suite ordering, not something this test controls; the block's own assertions (Mark as Done becomes visible, then the restore trigger) are real either way.
       const markDone = page.getByRole('button', { name: 'Mark as Done', exact: true });
       await expect(markDone).toBeVisible({ timeout: 5000 });
       await markDone.click();

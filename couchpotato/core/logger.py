@@ -79,8 +79,47 @@ class PrivacyFilter(logging.Filter):
             msg = re.sub(r'(\?%s=)[^\&]+' % replace, r'?%s=xxx' % replace, msg)
             msg = re.sub(r'(&%s=)[^\&]+' % replace, r'&%s=xxx' % replace, msg)
 
-        # Replace api key
-        if self._api_key is None:
+        # Replace api key.
+        #
+        # Re-read while it is FALSY, not just while it is None. The old
+        # `is None` guard cached an empty string permanently, so a single log
+        # record reaching a handler before the key was generated disabled this
+        # redaction for the life of the process. Measured: a filter whose first
+        # record arrives pre-key then emits the key verbatim, while one whose
+        # first record arrives after it redacts correctly.
+        #
+        # The window is real, not hypothetical: `runner.py` calls
+        # setup_logging and then `log.debug('Started with options %s', options)`
+        # unconditionally, BEFORE the api_key is generated. (An earlier version
+        # of this comment claimed the only calls in between were error paths
+        # that return immediately. That was wrong, and it was the premise the
+        # whole justification rested on.) The
+        # E2E harness now attaches a console handler and CI uploads that stream
+        # as an artefact, so this redaction is load-bearing in a way it was not
+        # when the caching was written. One dict lookup per record is a fair
+        # price for removing the failure mode entirely.
+        if not self._api_key:
+            # NO re-entrancy guard here, deliberately, and the reasoning is
+            # recorded because a previous round got it wrong in both
+            # directions.
+            #
+            # A guard was added on the belief that this lookup re-enters the
+            # filter: `Env.setting` -> `Settings.get`, and something logs when
+            # the property is absent. It does not. `Settings.get`'s only log
+            # is its META-option warning, which `api_key` is not; the absent
+            # path raises out of `self.p.get` into `except Exception: return
+            # default` and logs nothing. The DEBUG line that does exist,
+            # 'Property "%s" not yet stored', is in `getProperty`, reached by
+            # `Env.prop` and not by this call. The "124 nested lookups" that
+            # justified the guard were measured against a test fake written to
+            # log -- the recursion was manufactured by the fixture that then
+            # found it.
+            #
+            # And the guard was not free: a single shared flag meant that while
+            # one thread was inside the lookup, another skipped redaction
+            # entirely and emitted the api_key VERBATIM. Demonstrated. If a
+            # future change ever does make this path log, the fix is a
+            # thread-local flag, never a shared one.
             try:
                 from couchpotato.environment import Env
                 self._api_key = Env.setting('api_key') or ''

@@ -38,6 +38,9 @@ CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_test_traps  # noqa: E402
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from rule6_guard_corpus import SHAPES as RULE6_SHAPES  # noqa: E402
+
 
 def run_checker(*args):
     """Run the checker as a subprocess, the way CI and verify.sh invoke it."""
@@ -292,6 +295,114 @@ def test_accepts_set_euo_pipefail_in_any_order(tmp_path):
         script = tmp_path / "s.sh"
         script.write_text(body)
         assert findings_for(script) == [], body
+
+
+# ── Rule 7: unquoted `>`/`>=` on a `pip install` line ───────────────────────
+#
+# T1.5's actual bug: `.github/workflows/ci.yml` had `run: pip install
+# ruff>=0.9.0` — an unquoted `>` is shell stdout redirection, not a version
+# constraint, so the shell parses it as `pip install ruff` (floating latest)
+# with stdout written to a file literally named `=0.9.0`. This rule is what
+# would have caught that automatically instead of three lenses finding it by
+# hand during planning.
+
+
+def test_flags_unquoted_pip_install_version_redirect(tmp_path):
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.9.0\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 1, findings
+    line_no, message = findings[0]
+    assert line_no == 5
+    assert "redirect" in message.lower() or ">=" in message
+
+
+def test_does_not_flag_a_correctly_quoted_pip_install_requirement(tmp_path):
+    """`'pyyaml>=6.0'` is quoted, so the `>` is literal text passed to pip."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install pyyaml\n"
+        "      run: pip install 'pyyaml>=6.0'\n"
+    )
+
+    assert findings_for(workflow) == []
+
+
+def test_does_not_flag_a_legitimate_redirect_that_is_not_a_pip_install(tmp_path):
+    """A real `>` redirect on a non-pip-install line is not this rule's business."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  build:\n"
+        "    steps:\n"
+        "    - name: Log output\n"
+        "      run: echo x > file\n"
+    )
+
+    assert findings_for(workflow) == []
+
+
+def test_flags_both_real_broken_lines_from_ci_yml(tmp_path):
+    """Regression pin for the actual T1.5 bug: both floating installs, in one
+    synthetic workflow shaped like the real ci.yml, are caught — two findings,
+    not one, and not silently deduped or short-circuited after the first.
+    """
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.9.0\n"
+        "  security-lint:\n"
+        "    steps:\n"
+        "    - name: Install ruff\n"
+        "      run: pip install ruff>=0.15.16\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 2, findings
+    line_nos = {line_no for line_no, _msg in findings}
+    assert line_nos == {5, 9}, findings
+
+
+def test_pip3_install_is_also_covered(tmp_path):
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - run: pip3 install ruff>=0.9.0\n"
+    )
+
+    assert len(findings_for(workflow)) == 1
+
+
+def test_unquoted_pip_install_redirect_is_flagged_even_when_pipefail_is_set(tmp_path):
+    """Rule 7 has nothing to do with pipefail — it must not be hidden behind
+    rule 2/3's `if pipefail: continue` early exit."""
+    workflow = tmp_path / "ci.yml"
+    workflow.write_text(
+        "jobs:\n"
+        "  lint:\n"
+        "    steps:\n"
+        "    - run: |\n"
+        "        set -o pipefail\n"
+        "        pip install ruff>=0.9.0\n"
+    )
+
+    findings = findings_for(workflow)
+    assert len(findings) == 1, findings
 
 
 # ── Regressions: bugs found in review of this very guard ────────────────────
@@ -561,6 +672,267 @@ def test_the_repos_own_hooks_are_executable():
         )
 
 
+# ── Rule 5: orphaned test files ─────────────────────────────────────────────
+#
+# This rule exists because tests/integration/ sat orphaned in exactly this
+# tree: pytest.ini's `testpaths = tests` technically "covered" it, but no
+# runner invocation in scripts/verify.sh or .github/workflows/ci.yml ever
+# passed it to pytest, so 31 tests never ran anywhere. A rule anchored on
+# `testpaths` would have passed against that orphaned suite and is therefore
+# vacuous: the tests below key on the runner invocations instead.
+
+
+def test_flags_a_tracked_test_file_no_runner_executes():
+    """A file under `tests/` (so testpaths 'covers' it) but under no runner
+    root must still be flagged: this is the exact orphaning bug, reproduced.
+
+    `runner_texts` mirrors the real shape: one entry PER RUNNER FILE
+    (verify.sh, ci.yml), each of which invokes both roots: see
+    `test_does_not_flag_a_file_under_an_executed_root` and the module
+    docstring on `check_orphaned_test_files` for why this is per-file
+    intersection, not a flat union of every invocation seen anywhere.
+    """
+    verify_sh_like = "pytest tests/unit/ -q\npytest tests/integration/ -v\n"
+    ci_yml_like = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/orphaned_suite/test_thing.py"],
+            runner_texts=[verify_sh_like, ci_yml_like],
+        )
+    )
+    assert len(findings) == 1, findings
+    path, line_no, message = findings[0]
+    assert path == "tests/orphaned_suite/test_thing.py"
+    assert line_no == 1
+    assert "not executed" in message.lower() or "orphan" in message.lower()
+
+
+def test_tracked_test_files_sees_both_pytest_naming_conventions(tmp_path):
+    """`*_test.py` counts as a test file, not just `test_*.py`.
+
+    Every other test in this section injects `tracked_files`, so none of
+    them exercises the naming predicate that decides what lands in that
+    list. The predicate is where this rule actually missed: three
+    `*_test.py` files sat tracked under `couchpotato/`, outside `testpaths`
+    and outside `pytest.ini`'s narrowed `python_files = test_*.py`, so
+    nothing collected them and nothing flagged them. One had been failing
+    since the Python 3 port and was hiding a live defect in the settings
+    file browser. A rule that only knows the prefix calls that tree clean.
+
+    Asserting the exact list, not membership, so it also pins what must NOT
+    be swept in: a helper module and a conftest are not tests.
+    """
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    (tmp_path / "pkg").mkdir()
+    for name in ("test_prefix.py", "suffix_test.py", "helpers.py", "conftest.py"):
+        (tmp_path / "pkg" / name).write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+
+    assert check_test_traps._tracked_test_files(tmp_path) == [
+        "pkg/suffix_test.py",
+        "pkg/test_prefix.py",
+    ]
+
+
+def test_does_not_flag_a_file_under_an_executed_root():
+    verify_sh_like = "pytest tests/unit/ -q\npytest tests/integration/ -v\n"
+    ci_yml_like = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/integration/test_duplicate_detection.py"],
+            runner_texts=[verify_sh_like, ci_yml_like],
+        )
+    )
+    assert findings == []
+
+
+def test_flags_a_file_dropped_from_one_runner_file_but_not_the_other():
+    """Per-file intersection, not union: a suite still invoked by ci.yml but
+    dropped from verify.sh (or vice versa) is still a real gap: the local
+    gate would no longer mirror CI. This is exactly the mutation the guard
+    must catch: deleting the tests/integration/ invocation from verify.sh
+    alone, while ci.yml keeps it, must still be flagged.
+    """
+    verify_sh_like_after_mutation = "pytest tests/unit/ -q\n"  # integration line deleted
+    ci_yml_like_unchanged = "pytest tests/unit/ -v\npytest tests/integration/ -v\n"
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/integration/test_duplicate_detection.py"],
+            runner_texts=[verify_sh_like_after_mutation, ci_yml_like_unchanged],
+        )
+    )
+    assert len(findings) == 1, findings
+    assert findings[0][0] == "tests/integration/test_duplicate_detection.py"
+
+
+def test_does_not_flag_an_exact_file_argument_match():
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=["tests/local/test_one_off.py"],
+            runner_texts=["pytest tests/local/test_one_off.py -q"],
+        )
+    )
+    assert findings == []
+
+
+def test_allowlist_exempts_only_the_named_file_not_its_whole_directory():
+    """The exemption must be exact, not a directory shadow.
+
+    A sibling file in the same directory as an allowlisted entry, but not
+    itself allowlisted, must still be flagged if it is genuinely orphaned:
+    otherwise the allowlist silently exempts a whole directory instead of the
+    one file it names.
+    """
+    assert check_test_traps.ORPHAN_ALLOWLIST, "allowlist must not be empty for this test"
+    allowlisted_path = sorted(check_test_traps.ORPHAN_ALLOWLIST)[0]
+    sibling = str(Path(allowlisted_path).parent / "test_definitely_not_allowlisted.py")
+
+    findings = list(
+        check_test_traps.check_orphaned_test_files(
+            tracked_files=[allowlisted_path, sibling],
+            runner_texts=["pytest tests/unit/ -q"],
+        )
+    )
+    flagged = {f[0] for f in findings}
+    assert allowlisted_path not in flagged, "the allowlisted file itself must never be flagged"
+    assert sibling in flagged, (
+        "a non-allowlisted sibling in the same directory must still be flagged: "
+        "the allowlist must not accidentally exempt the whole directory"
+    )
+
+
+def test_orphan_allowlist_entries_are_commented(tmp_path):
+    """Mirrors the .gitleaksignore-requires-a-comment convention
+    (tests/unit/test_gitleaks_config.py): every exemption in the source file
+    must carry its justification on the line, not just live in a set literal.
+    """
+    source = (REPO_ROOT / "scripts" / "check_test_traps.py").read_text(encoding="utf-8")
+    match = re.search(r"ORPHAN_ALLOWLIST\s*=\s*\{(.*?)\n\}", source, re.DOTALL)
+    assert match, "ORPHAN_ALLOWLIST set literal not found"
+    body = match.group(1)
+    # Walk the literal IN ORDER and require each entry to be immediately
+    # preceded by a comment line.
+    #
+    # This compared totals (`len(comment_lines) >= len(entry_lines)`), which
+    # cannot fail while any existing entry carries a multi-line justification:
+    # the single current entry has a six-line block, so five more entries could
+    # be added with no reason at all before the counts crossed. Measured: adding
+    # an uncommented entry left the suite at 80 passed, exit 0.
+    #
+    # That matters because this allowlist is Rule 5's only escape hatch. An
+    # agent told "the orphan check is failing" could silence it with no
+    # justification, which is exactly the .gitleaksignore failure this test was
+    # modelled on preventing.
+    previous_was_comment = False
+    unjustified = []
+    for line in body.split("\n"):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            previous_was_comment = True
+            continue
+        if not previous_was_comment:
+            unjustified.append(stripped)
+        previous_was_comment = False
+
+    assert not unjustified, (
+        "every ORPHAN_ALLOWLIST entry must be immediately preceded by a comment "
+        "justifying why that file is exempt from Rule 5. Unjustified: %s"
+        % unjustified
+    )
+
+
+def test_tracked_test_files_uses_git_ls_files_not_a_filesystem_walk(tmp_path):
+    """AC-DATA-21: an untracked local scratch file must be structurally
+    invisible to this rule, not merely filtered out by convention.
+    """
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+
+    tracked = repo / "test_tracked.py"
+    tracked.write_text("def test_x():\n    pass\n")
+    subprocess.run(["git", "add", "test_tracked.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    # Untracked scratch file, same test_*.py naming pattern, sitting right
+    # next to the tracked one on disk.
+    (repo / "test_scratch.py").write_text("def test_y():\n    pass\n")
+
+    files = check_test_traps._tracked_test_files(repo)
+    assert files == ["test_tracked.py"], (
+        f"an untracked scratch file leaked into scope: {files}"
+    )
+
+
+def test_tracked_test_files_excludes_libs(tmp_path):
+    """Vendored code under libs/ is not ours to flag."""
+    repo = tmp_path
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+
+    (repo / "libs").mkdir()
+    (repo / "libs" / "test_vendored.py").write_text("def test_x():\n    pass\n")
+    (repo / "test_ours.py").write_text("def test_y():\n    pass\n")
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+
+    files = check_test_traps._tracked_test_files(repo)
+    assert files == ["test_ours.py"], files
+
+
+def test_extract_pytest_path_args_finds_directory_and_file_targets():
+    dir_roots, file_args = check_test_traps._extract_pytest_path_args(
+        "python -m pytest tests/unit/ -v --tb=short -W ignore::SyntaxWarning\n"
+        "pytest tests/local/test_real_database.py -q\n"
+    )
+    assert dir_roots == {"tests/unit/"}
+    assert file_args == {"tests/local/test_real_database.py"}
+
+
+def test_extract_pytest_path_args_ignores_flags_and_trailing_message_text():
+    """A pytest invocation followed by shell control flow and a message
+    string must not leak spurious path-shaped tokens.
+    """
+    dir_roots, file_args = check_test_traps._extract_pytest_path_args(
+        '"$PYTHON" -m pytest tests/integration/ -q --tb=short \\\n'
+        '  || fail "Python integration tests failed"\n'
+    )
+    assert dir_roots == {"tests/integration/"}
+    assert file_args == set()
+
+
+def test_real_verify_and_ci_invoke_both_unit_and_integration_roots():
+    """Anchors the extracted values, not just 'zero findings' on the real
+    tree: a regex that silently stopped matching would make the whole-tree
+    check pass for the wrong reason (nothing to compare against) rather than
+    fail loudly.
+    """
+    dir_roots: set[str] = set()
+    file_args: set[str] = set()
+    for text in (
+        (REPO_ROOT / "scripts" / "verify.sh").read_text(encoding="utf-8"),
+        (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8"),
+    ):
+        d, f = check_test_traps._extract_pytest_path_args(text)
+        dir_roots |= d
+        file_args |= f
+    assert "tests/unit/" in dir_roots, dir_roots
+    assert "tests/integration/" in dir_roots, dir_roots
+
+
+def test_checker_is_clean_on_the_real_tree_under_rule_5():
+    """The real tree, with the real verify.sh/ci.yml/tracked files, must have
+    zero orphaned test_*.py files: meaning Part 2's wiring genuinely closed
+    the gap rule 5 exists to catch.
+    """
+    findings = list(check_test_traps.check_orphaned_test_files())
+    assert findings == [], findings
+
+
 def test_strip_shell_comments_respects_quotes():
     """Quote-awareness is claimed in the docstring but was never asserted."""
     strip = check_test_traps.strip_shell_comments
@@ -636,6 +1008,622 @@ def test_posix_sh_runner_pipe_is_not_advised_to_use_bash_only_features(tmp_path)
     assert "bash-only" in messages[0], "should say why pipefail isn't the remedy here"
 
 
+# ── Rule 6: vacuous E2E guards ───────────────────────────────────────────────
+#
+# `tests/e2e/**`'s own defect class (T1.4): a Playwright test whose only
+# assertion lives inside `if (await x.isVisible()/count())`, so the test
+# passes whether or not the guard is ever true. AGENTS.md used to ask
+# `lens-qa` to keep re-finding this by hand ("the pattern was removed once in
+# movie-detail.spec.ts and still exists elsewhere") — this rule is what
+# retires that.
+
+
+def _e2e_spec(tmp_path, name="feature.spec.ts"):
+    """A `tests/e2e/<name>` file under tmp_path — `_is_e2e_spec` requires an
+    actual `e2e` path segment, so every test in this section needs one."""
+    e2e_dir = tmp_path / "tests" / "e2e"
+    e2e_dir.mkdir(parents=True, exist_ok=True)
+    return e2e_dir / name
+
+
+def test_flags_expect_inside_an_isvisible_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows a thing', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    line_no, message = findings[0]
+    assert line_no == 3, "should point at the `if` line, not the expect() line"
+    assert "expect(" in message
+    assert "isVisible" in message or "count" in message
+
+
+def test_flags_a_guard_whose_await_was_hoisted_to_a_previous_line(tmp_path):
+    """Moving one expression up a line must not defeat the rule.
+
+    This is not hypothetical: the FIRST new code written after Rule 6 landed
+    did exactly this (`const count = await cardLinks.count();` then
+    `if (count > 1) {`), and the rule was silent on it. A guard introduced to
+    retire a human review step has to survive the most obvious reformatting
+    of the thing it looks for.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "\n"
+        "  if (total > 1) {\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 5, "should point at the `if` line"
+
+
+def test_flags_a_hoisted_isvisible_guard_too(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows a thing', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  const shown = await btn.isVisible();\n"
+        "  if (shown) {\n"
+        "    await expect(btn).toHaveText('Go');\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_an_early_return_guard_with_no_block(tmp_path):
+    """`if (cond) return;` skips everything after it, braces or not.
+
+    `stripped.endswith("{")` made the whole non-braced family invisible, and
+    both forms are ordinary JS that Prettier produces. Two live instances
+    already existed in this suite when the rule was widened.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() === 0) return;\n"
+        "  await expect(cards.first()).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_hoisted_guard_whose_await_was_wrapped_to_the_next_line(tmp_path):
+    """Prettier wraps a long assignment. The rule must not be defeated by
+    formatting alone, which a per-line scan was."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const someVeryLongLocatorName = page.locator('.card');\n"
+        "  const total =\n"
+        "    await someVeryLongLocatorName.count();\n"
+        "  if (total > 1) {\n"
+        "    await expect(someVeryLongLocatorName.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_parenthesised_await_assignment(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('shows', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  const shown = (await btn.isVisible());\n"
+        "  if (shown) {\n"
+        "    await expect(btn).toHaveText('Go');\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_flags_a_reassigned_guard_name(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  let total = 0;\n"
+        "  total = await cards.count();\n"
+        "  if (total > 1) {\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_non_braced_guards_region_stops_at_the_enclosing_block(tmp_path):
+    """A teardown helper must not be flagged because of an unrelated test.
+
+    Review measured that this whole narrowing was uncovered: reverting it left
+    all 90 trap tests green. The pre-fix code ran the brace matcher for a line
+    with no `{`, so `line[line.rfind("{"):]` was the last character, depth
+    never balanced, and the "body" ran to end of file -- picking up a sibling
+    `test(...)`'s `expect(` and flagging a helper that asserts nothing.
+    The documented remedy for a false positive is an opt-out comment, so this
+    trained people to silence the rule.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "async function teardown(page) {\n"
+        "  const btn = page.locator('.del');\n"
+        "  if (await btn.count() === 0) return;\n"
+        "  await btn.click();\n"
+        "}\n"
+        "\n"
+        "test('unrelated', async ({ page }) => {\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_a_one_line_braced_guard_uses_the_brace_matcher(tmp_path):
+    """`if (cond) { ... }` all on one line has a real block.
+
+    Keying the branch on `endswith("{")` sent this down the indentation path,
+    which then ran to the end of the enclosing block and pulled in every
+    following sibling -- a false positive on correct code, reintroducing
+    through a different door the exact outcome the narrowing was written to
+    remove. `{` anywhere on the line is the right test.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks then asserts', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await cards.first().click(); }\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    # The guard's own block contains no expect(, and the assertion that
+    # follows it is unconditional, so there is nothing to flag.
+    assert findings_for(spec) == []
+
+
+def test_a_one_line_braced_guard_with_its_own_expect_is_still_flagged(tmp_path):
+    """The other direction, so the fix above cannot become a blanket exemption."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts only sometimes', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await expect(cards.first()).toBeVisible(); }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_non_braced_guard_with_a_template_literal_condition_is_still_flagged(tmp_path):
+    """A balanced brace pair in the CONDITION is not a block.
+
+    `if (await page.locator(`#movie-${id}`).count() === 0) return;` was caught
+    before the routing was widened to "any brace on the line" and silent
+    after: the matcher balanced on the `${...}` inside the guard's own
+    condition, so the region collapsed to nothing. Template literals already
+    appear in two locator calls in this suite, so this is one ordinary edit
+    away, and it is the shape the rule most needs to survive -- the module's
+    own comment says it "has to survive the most obvious reformatting of the
+    thing it looks for".
+    """
+    spec = _e2e_spec(tmp_path)
+    # The template literal must be IN the guard condition. Hoisting it to the
+    # previous line is a different, already-handled shape -- the first draft
+    # of this test did exactly that and passed under the routing it was
+    # written to catch.
+    spec.write_text(
+        "test('has a card', async ({ page }) => {\n"
+        "  const id = 'abc';\n"
+        "  if (await page.locator(`#movie-${id}`).count() === 0) return;\n"
+        "  await expect(page.locator(`#movie-${id}`)).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_non_braced_guard_with_braces_in_a_selector_string_is_still_flagged(tmp_path):
+    """Same shape, the other common spelling."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has a card', async ({ page }) => {\n"
+        "  if (await page.locator('[data-json=\"{}\"]').count() === 0) return;\n"
+        "  await expect(page.locator('h1')).toBeVisible();\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_one_line_guard_with_a_nested_object_literal_is_still_flagged(tmp_path):
+    """The `expect(` precedes the nested `{`, so slicing from the LAST brace
+    would miss it and slicing from the first would pick up the condition's."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) { await expect(cards).toHaveCount(1, { timeout: 5 }); }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_a_braced_guard_with_its_expect_on_the_guard_line_is_flagged(tmp_path):
+    """The block opens here and closes later, with the assertion up top.
+
+    Slicing the guard line's tail only when the braces balanced silenced this
+    shape, and arbitrarily: written `} else if (...) {` it was still flagged,
+    because the leading `}` balanced the count and routed it differently. Two
+    spellings of one shape must not disagree.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const c = page.locator('.card');\n"
+        "  if (await c.count() > 0) { await expect(c).toBeVisible();\n"
+        "    await c.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_the_else_if_spelling_of_that_shape_agrees(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('asserts sometimes', async ({ page }) => {\n"
+        "  const c = page.locator('.card');\n"
+        "  if (false) {\n"
+        "  } else if (await c.count() > 0) { await expect(c).toBeVisible();\n"
+        "    await c.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert len(findings_for(spec)) == 1
+
+
+def test_the_guard_lines_condition_is_not_treated_as_body(tmp_path):
+    """Slice from the BLOCK opener, not from the first brace on the line.
+
+    `line.index("{")` picks up a brace inside the CONDITION -- a template
+    literal, or a selector containing braces -- so everything from there
+    onwards, including the rest of the condition, is scanned as if it were the
+    guard's body. A condition that merely mentions `expect(` then produces a
+    finding against a guard whose block asserts nothing, which is a false
+    positive on correct code, and the documented remedy for a false positive
+    is an opt-out comment.
+    """
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks a labelled control', async ({ page }) => {\n"
+        # The `expect(` must sit AFTER the condition's own brace, or slicing
+        # from that brace never reaches it and the fixture proves nothing --
+        # which is what the first draft of this test did.
+        "  if (await page.getByText('{0} expect(x)').count() > 0) { await page.click('.go'); }\n"
+        "  await page.waitForTimeout(1);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+@pytest.mark.parametrize(
+    'name,source,expected',
+    [(n, src, exp) for n, src, exp in RULE6_SHAPES],
+    ids=[n.split()[0] for n, _s, _e in RULE6_SHAPES],
+)
+def test_rule6_guard_spelling_corpus(tmp_path, name, source, expected):
+    """Every guard spelling, scored in one place (spec gap 23).
+
+    The individual tests above each pin the shape whose round found it. This
+    scores the whole table on every edit, which is the difference between
+    "the last bug does not recur" and "the rule is right". Shape 23 -- a false
+    positive from a `){` inside a condition string -- is only visible here.
+    """
+    spec = _e2e_spec(tmp_path, name='corpus.spec.ts')
+    spec.write_text(source)
+
+    findings = findings_for(spec)
+    assert len(findings) == expected, (
+        '%s: expected %d finding(s), got %d\n%s'
+        % (name, expected, len(findings), findings)
+    )
+
+
+def test_an_early_return_guard_can_be_opted_out_of(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "async function teardown(page) {\n"
+        "  const btn = page.locator('.del');\n"
+        "  if (await btn.count() === 0) return; // vacuous-guard-ok: idempotent teardown.\n"
+        "  await expect(btn).toBeVisible();\n"
+        "}\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_does_not_flag_an_if_on_an_unrelated_name(tmp_path):
+    """The other direction. Only names bound to an awaited
+    isVisible()/count() count; an ordinary conditional must stay silent, or
+    the rule becomes noise everyone opts out of."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('branches on config', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "  const isCi = process.env.CI === '1';\n"
+        "  if (isCi) {\n"
+        "    await expect(cards).toHaveCount(total);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_a_hoisted_guard_can_be_opted_out_of_on_the_if_line(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  const total = await cards.count();\n"
+        "  if (total > 1) { // vacuous-guard-ok: the provider decides how many render.\n"
+        "    await expect(cards.nth(1)).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_flags_expect_inside_a_count_guard(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('has cards', async ({ page }) => {\n"
+        "  const cards = page.locator('.card');\n"
+        "  if (await cards.count() > 0) {\n"
+        "    expect(await cards.count()).toBeGreaterThan(0);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 3
+
+
+def test_does_not_flag_an_assertion_outside_the_guard(tmp_path):
+    """The real defect this rule targets is the assertion living INSIDE the
+    guard with nothing outside it — checkNoErrors-style patterns (an
+    assertion that always runs, with an unrelated action inside the guard)
+    are exactly what T1.4 decided were NOT vacuous."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks if present', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "  expect(errors).toHaveLength(0);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_does_not_flag_a_guard_with_no_expect_at_all(tmp_path):
+    """A click-only guard with zero assertions anywhere is a real defect too
+    (T1.4 fixed several by hand), but it is a DIFFERENT shape than this rule
+    covers -- catching it needs knowing whether the whole enclosing test()
+    asserts anything anywhere, not just this block. Out of scope by design,
+    documented in check_e2e_spec_guards' own docstring."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('clicks if present', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await btn.click();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_opt_out_with_a_reason_is_not_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok: only rendered for a fixture this suite cannot produce.\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_opt_out_with_no_reason_is_itself_flagged(tmp_path):
+    """A bare `vacuous-guard-ok:` with nothing after the colon is
+    indistinguishable from silencing the check -- exactly the false-green
+    this rule exists to prevent, so it must be flagged too."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok:\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "no reason" in findings[0][1]
+
+
+def test_opt_out_with_only_whitespace_after_the_colon_is_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) { // vacuous-guard-ok:    \n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "no reason" in findings[0][1]
+
+
+def test_opt_out_must_be_on_the_guards_own_line(tmp_path):
+    """A comment elsewhere (even the line above) does not count -- "near the
+    guard" is not something the next edit can reliably preserve."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('rare state', async ({ page }) => {\n"
+        "  // vacuous-guard-ok: this comment is one line too early\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert "vacuous-guard-ok" in findings[0][1]
+
+
+def test_finds_the_matching_close_brace_across_nested_braces(tmp_path):
+    """The guard body contains its own nested braces (an object literal, an
+    arrow function) before the expect() -- the close-brace scan must not
+    stop at the first `}` it sees."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('nested', async ({ page }) => {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    await page.route('**/x', route => route.fulfill({ status: 200 }));\n"
+        "    const opts = { a: 1, b: { c: 2 } };\n"
+        "    await expect(btn).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 3
+
+
+def test_expect_after_the_guard_closes_is_not_pulled_in(tmp_path):
+    """A close-brace scan that overshoots would treat a LATER, unrelated
+    expect() as belonging to this guard and wrongly excuse it, or double
+    count it against the wrong guard."""
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('two guards', async ({ page }) => {\n"
+        "  const a = page.locator('a');\n"
+        "  if (await a.isVisible()) {\n"
+        "    await a.click();\n"
+        "  }\n"
+        "  const b = page.locator('b');\n"
+        "  if (await b.count() > 0) {\n"
+        "    await expect(b).toBeVisible();\n"
+        "  }\n"
+        "});\n"
+    )
+
+    findings = findings_for(spec)
+    assert len(findings) == 1, findings
+    assert findings[0][0] == 7, "should point at the second guard (b), not the first (a)"
+
+
+def test_a_commented_out_guard_is_not_flagged(tmp_path):
+    spec = _e2e_spec(tmp_path)
+    spec.write_text(
+        "test('x', async ({ page }) => {\n"
+        "  // if (await btn.isVisible()) { expect(btn).toBeVisible(); }\n"
+        "  expect(1).toBe(1);\n"
+        "});\n"
+    )
+
+    assert findings_for(spec) == []
+
+
+def test_helpers_ts_is_in_scope_not_only_spec_files(tmp_path):
+    """AC-QA-42 scopes this to every file under tests/e2e/**, not only
+    *.spec.ts -- a guard like this could land in a shared helper just as
+    easily as in a spec (e.g. tests/e2e/helpers.ts)."""
+    helper = _e2e_spec(tmp_path, name="helpers.ts")
+    helper.write_text(
+        "export async function maybeClick(page) {\n"
+        "  const btn = page.locator('button');\n"
+        "  if (await btn.isVisible()) {\n"
+        "    expect(await btn.isEnabled()).toBe(true);\n"
+        "  }\n"
+        "}\n"
+    )
+
+    findings = findings_for(helper)
+    assert len(findings) == 1, findings
+
+
+def test_a_ts_file_outside_tests_e2e_is_not_scanned_by_this_rule(tmp_path):
+    """Scope check: the identical pattern in a non-e2e file is not this
+    rule's concern (jsdom geometry aside, Rule 1 already covers vitest specs
+    on their own terms)."""
+    other = tmp_path / "tests" / "unit" / "ui" / "widget.spec.ts"
+    other.parent.mkdir(parents=True)
+    other.write_text(
+        "it('x', () => {\n"
+        "  if (someCondition()) {\n"
+        "    expect(1).toBe(1);\n"
+        "  }\n"
+        "});\n"
+    )
+
+    assert findings_for(other) == []
+
+
+def test_checker_is_clean_on_tests_e2e_under_rule_6():
+    result = run_checker(REPO_ROOT / "tests" / "e2e")
+    assert result.returncode == 0, (
+        f"check_test_traps.py rule 6 is not clean on tests/e2e:\n"
+        f"{result.stdout}\n{result.stderr}"
+    )
+
+
 # ── Whole-tree behaviour ────────────────────────────────────────────────────
 
 
@@ -681,6 +1669,7 @@ def test_default_roots_all_exist_and_are_covered():
     for expected in (
         REPO_ROOT / "tests" / "unit" / "test_check_test_traps.py",
         REPO_ROOT / "tests" / "unit" / "ui" / "movie-filter.spec.ts",  # nested
+        REPO_ROOT / "tests" / "e2e" / "interactions.e2e.spec.ts",  # rule 6's target set
         REPO_ROOT / "scripts" / "verify.sh",
         REPO_ROOT / "scripts" / "release" / "next_beta_version.py",  # nested
         REPO_ROOT / ".githooks" / "pre-push",
@@ -713,3 +1702,273 @@ def test_reports_a_summary_when_clean(tmp_path):
     result = run_checker(spec)
     assert result.returncode == 0
     assert "passed" in result.stdout.lower()
+
+
+class TestRule5WithoutGit:
+    """Rule 5's input is `git ls-files`. What happens when git is not there.
+
+    `./scripts/test-local.sh` runs this suite inside `python:3.14-alpine`,
+    which ships no git. An unhandled `FileNotFoundError` there turned
+    `make check-traps` into a crash and took the container run from 34 red
+    to 40 red, all of them `FileNotFoundError: 'git'` and none of them a real
+    finding.
+
+    Catching it creates the opposite hazard, and it is the one this whole
+    script exists to prevent: a rule that silently does nothing while the
+    command still exits 0. That is why `--require-git` exists, and why these
+    tests pin BOTH directions. Without the second one, "we handled it" would
+    rest entirely on a comment.
+    """
+
+    @staticmethod
+    def _path_without_git(tmp_path):
+        """A PATH with no `git` on it, so the lookup raises FileNotFoundError."""
+        empty_bin = tmp_path / 'empty-bin'
+        empty_bin.mkdir()
+        return str(empty_bin)
+
+    def test_a_missing_git_skips_the_rule_rather_than_crashing(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, str(CHECKER)],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+            env={**os.environ, 'PATH': self._path_without_git(tmp_path)},
+        )
+
+        assert result.returncode == 0, (
+            'the checker crashed instead of skipping rule 5:\n%s' % result.stderr
+        )
+        assert 'Traceback' not in result.stderr, result.stderr
+        # The skip must be visible. A silent one is the failure mode.
+        assert 'orphan-test check skipped' in result.stderr, result.stderr
+        # The other six rules must still have run.
+        assert 'passed' in result.stdout.lower(), result.stdout
+
+    def test_require_git_turns_the_skip_into_a_failure(self, tmp_path):
+        result = subprocess.run(
+            [sys.executable, str(CHECKER), '--require-git'],
+            capture_output=True, text=True, cwd=REPO_ROOT,
+            env={**os.environ, 'PATH': self._path_without_git(tmp_path)},
+        )
+
+        assert result.returncode != 0, (
+            '--require-git let the run pass with rule 5 skipped; stdout:\n%s'
+            % result.stdout
+        )
+        assert 'must not skip a rule silently' in result.stderr, result.stderr
+
+    def test_the_authoritative_gates_both_pass_require_git(self):
+        """The flag is worth nothing if the gates do not use it.
+
+        verify.sh is the local gate and ci.yml is its mirror (hard rule 2:
+        `make verify` must pass locally before every push, don't rely on CI).
+        Both must opt in, or the skip branch is reachable from the run whose
+        green means something.
+
+        `make check-traps` passes it too, since 2026-08-06. It was left bare on
+        the theory that the git-less Alpine container needs the lenient path --
+        measured, nothing git-less invokes that target at all
+        (`scripts/test-local.sh` only mentions the checker in a comment), so
+        the theory was wrong and the command CLAUDE.md's table names could
+        silently skip a rule.
+        """
+        for relative in ('scripts/verify.sh', '.github/workflows/ci.yml', 'Makefile'):
+            text = (REPO_ROOT / relative).read_text(encoding='utf-8')
+            invocations = [
+                line for line in text.splitlines()
+                if 'check_test_traps.py' in line and not line.strip().startswith('#')
+            ]
+            assert invocations, 'no check_test_traps.py invocation found in %s' % relative
+            for line in invocations:
+                assert '--require-git' in line, (
+                    '%s invokes the checker without --require-git, so a missing '
+                    'git would silently skip rule 5 in an authoritative gate: %s'
+                    % (relative, line.strip())
+                )
+
+    def test_git_present_but_failing_is_handled_the_same_way(self, tmp_path):
+        """`git ls-files` outside a work tree exits non-zero, not not-found.
+
+        A different exception class, the same consequence, and it is the one
+        that would bite a `pip install`-ed copy of this repo rather than a
+        container. Driven directly because the CLI always runs at REPO_ROOT.
+        """
+        assert check_test_traps._tracked_test_files(tmp_path) == []
+
+        with pytest.raises(SystemExit) as excinfo:
+            check_test_traps._tracked_test_files(tmp_path, require_git=True)
+        assert 'must not skip a rule silently' in str(excinfo.value)
+
+
+class TestRule3ShellOptionsAreBothPinned:
+    """Rule 3 asks for `-e` AND `-u`. Only the `-u` half could fail.
+
+    Measured: replacing the `-e` condition with `if False:` left all 131 tests
+    green. Every negative fixture in this file also omitted `-u`, so
+    `len(findings) == 1` held whether the `-e` check ran or not -- the
+    incidentally-passing shape, which reads as specific and is not.
+    """
+
+    def test_a_script_with_u_but_no_e_is_flagged(self, tmp_path):
+        # The one fixture the suite lacked: -u present, -e absent, so the
+        # finding can ONLY come from the -e half.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -u\necho hi\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-e (exit on error)' in findings[0][1], findings
+
+    def test_a_script_with_e_but_no_u_is_flagged(self, tmp_path):
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -e\necho hi\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    @pytest.mark.parametrize('set_line', [
+        'set -eu',
+        'set -e -u',
+        'set -o errexit -o nounset',
+        'set -e -o nounset',        # cluster and long form together
+        'set -o errexit -u',
+    ])
+    def test_the_long_forms_are_accepted(self, tmp_path, set_line):
+        """`set -o errexit -o nounset -o pipefail` is the canonical spelling.
+
+        It was FLAGGED as missing -e: `nounset` was accepted as a long form
+        and `errexit` was not, so a blocking gate rejected the most explicit
+        correct way to write the thing it demands. Whoever hit it would have
+        "fixed" a correct script to satisfy the checker.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\n%s\necho hi\n' % set_line)
+
+        assert findings_for(script) == []
+
+
+class TestRule3ParsingEdgeCases:
+    """Three spellings the tokenised parser got wrong, found by review.
+
+    Two false greens and one false positive, all measured by driving the real
+    checker. Kept as a separate class because they are about the PARSER, not
+    about which flags the rule demands.
+    """
+
+    def test_a_flag_mentioned_inside_a_string_does_not_count(self, tmp_path):
+        # `strip_shell_comments(ln)` without blank_strings=True read the `-u`
+        # inside the echo. That is the same false-green the pipefail rule
+        # already learned ("echo \"hint: add set -o pipefail\" silenced rule 2
+        # for a whole file"), reintroduced two rules away by dropping one
+        # keyword argument.
+        script = tmp_path / 'gate.sh'
+        script.write_text(
+            '#!/bin/bash\n'
+            'set -e; echo "run with set -u for stricter checking"\n'
+        )
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    def test_set_dash_dash_sets_positional_parameters_not_flags(self, tmp_path):
+        # `set -- -e -u` assigns $1 and $2. It enables nothing, and was being
+        # read as `set -eu` because the tokeniser skipped `--` and carried on.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- -e -u\necho "$1"\n')
+
+        messages = [m for _line, m in findings_for(script)]
+
+        assert len(messages) == 1, messages
+        assert '-e (exit on error)' in messages[0], messages
+        assert '-u (error on unset variable)' in messages[0], messages
+
+    def test_flags_belonging_to_another_command_on_the_line_are_not_counted(self, tmp_path):
+        """`sort -u` is not `set -u`.
+
+        The tokeniser walked every token on the line, so `set -e; sort -u
+        /etc/hosts` came back CLEAN -- a blocking gate passing a script that
+        genuinely lacks `-u`. Measured against the regex this parser replaced
+        (`git show f7f57b62`), which flagged it correctly: a regression
+        introduced by the rewrite that was meant to remove false results.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -e; sort -u /etc/hosts\n')
+
+        findings = findings_for(script)
+
+        assert len(findings) == 1, findings
+        assert '-u (error on unset variable)' in findings[0][1], findings
+
+    def test_dash_dash_ends_options_for_its_own_command_only(self, tmp_path):
+        """`set -- alpha; set -eu` enables both. Breaking on `--` for the rest
+        of the physical line reported it as missing both -- a false positive on
+        a correct script, which the rule's own comment argues is not a harmless
+        nag."""
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- alpha; set -eu\necho "$1"\n')
+
+        assert findings_for(script) == []
+
+    def test_a_set_after_another_command_on_the_same_line_still_counts(self, tmp_path):
+        """`echo hi; set -eu` genuinely enables both.
+
+        The line filter required `set` to be the first thing on the line, so
+        this was reported as missing both -- a false positive that predates
+        the tokeniser and is closed by the same change.
+        """
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\necho hi; set -eu\necho done\n')
+
+        assert findings_for(script) == []
+
+    def test_a_trailing_semicolon_does_not_hide_a_long_form(self, tmp_path):
+        # `set -o errexit; set -o nounset;` tokenises as `errexit;`/`nounset;`.
+        # The equality test missed both and the file was reported as missing
+        # BOTH flags -- a blocking gate rejecting a correct script, and a
+        # REGRESSION against the substring regex this parser replaced.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -o errexit; set -o nounset;\necho hi\n')
+
+        assert findings_for(script) == []
+
+    def test_a_later_set_line_is_not_terminated_by_an_earlier_dash_dash(self, tmp_path):
+        # Parsing is per-line, so `--` ends options for ITS line only.
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -- alpha beta\nset -eu\necho "$1"\n')
+
+        assert findings_for(script) == []
+
+
+class TestRule2FilterAlternatives:
+    """Rule 2's filter list must be more than `tail`.
+
+    Measured: narrowing `FILTER_RE` to `tail` alone left all 131 tests green
+    -- only `tail` was ever exercised in a runner-pipe position, so twelve of
+    the thirteen alternatives were unguarded. `scripts/verify.sh` contains a
+    live `ruff --version | awk` pipeline that depends on one of them.
+    """
+
+    @pytest.mark.parametrize('filter_cmd', [
+        'tail -1', 'head -5', 'grep -c FAIL', 'tee out.log', "awk '{print $1}'",
+        "sed -n '1p'", 'sort', 'uniq', 'wc -l', 'cat', 'less', 'more', 'jq .',
+    ])
+    def test_every_filter_in_the_list_is_detected_after_a_runner(self, tmp_path, filter_cmd):
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -eu\npytest tests/ | %s\n' % filter_cmd)
+
+        findings = findings_for(script)
+
+        assert findings, 'pytest | %s was not flagged' % filter_cmd
+        assert any('exit' in message.lower() for _, message in findings), findings
+
+    def test_a_pipeline_with_pipefail_is_left_alone(self, tmp_path):
+        """The rule must not fire on a pipeline whose exit code is preserved,
+        or the remedy it prints would not clear the finding."""
+        script = tmp_path / 'gate.sh'
+        script.write_text('#!/bin/bash\nset -euo pipefail\npytest tests/ | tail -1\n')
+
+        assert findings_for(script) == []

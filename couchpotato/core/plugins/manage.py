@@ -108,6 +108,26 @@ class Manage(Plugin):
             directories.sort()
             added_identifiers = []
 
+            # Did this scan actually SEE the whole library?
+            #
+            # The cleanup pass below deletes every terminal movie that is not in
+            # `added_identifiers`, with delete_from='all' -- media document,
+            # every release document, library entry, watch state, tags, profile
+            # and review state. It infers "this movie is gone" from "this scan
+            # did not find it", and that inference is only sound if the scan
+            # could see everywhere the movie might be.
+            #
+            # A directory that fails os.path.isdir below is logged and skipped,
+            # and nothing recorded that. So an unmounted NAS at scan time made
+            # `added_identifiers` empty and the cleanup purged the library. Not
+            # hypothetical on the hardware this runs on: the library sits on an
+            # NFS mount known to stall and drop, and full scans are scheduled,
+            # so the two coincide unattended and nobody is watching.
+            #
+            # Starts False for an EMPTY directory list: no configured library
+            # means nothing to compare against, so every movie looks missing.
+            library_fully_scanned = bool(directories)
+
             # Add some progress
             for directory in directories:
                 self.in_progress[os.path.normpath(directory)] = {
@@ -122,6 +142,8 @@ class Manage(Plugin):
                 self.in_progress[os.path.normpath(directory)]['started'] = tryInt(time.time())
 
                 if not os.path.isdir(folder):
+                    # NOT just a skip: this is what disarms the cleanup below.
+                    library_fully_scanned = False
                     if len(directory) > 0:
                         log.error('Directory doesn\'t exist: %s', folder)
                     continue
@@ -137,20 +159,42 @@ class Manage(Plugin):
                     break
 
             # If cleanup option is enabled, remove offline files from database
-            if self.conf('cleanup') and full and not self.shuttingDown():
+            if self.conf('cleanup') and full and not self.shuttingDown() and library_fully_scanned:
 
                 # Get movies with done status
                 total_movies, done_movies = fireEvent('media.list', types = 'movie', status = 'done', release_status = 'done', status_or = True, single = True)
 
                 deleted_releases = []
                 for done_movie in done_movies:
-                    # A 'downloaded' movie (workflow phase 2 review gate) can land
-                    # here via the status_or union above: its *release* is 'done'
-                    # even though the *movie* is still awaiting manual review.
-                    # Exempt it from the cleanup scan entirely -- it's mid-review,
-                    # not offline/missing, and must never be silently purged by a
-                    # normal full library scan.
-                    if done_movie.get('status') == 'downloaded':
+                    # Only a movie whose MEDIA status is genuinely terminal is
+                    # this scan's to delete.
+                    #
+                    # The query above is a status_or union: status='done' OR
+                    # release_status='done'. The second half admits movies whose
+                    # media status is something else entirely:
+                    #
+                    #   'downloaded' -- the workflow phase 2 review gate, still
+                    #                   awaiting manual review.
+                    #   'active'     -- the ordinary upgrade-hunt state. A movie
+                    #                   holding a finished release that does not
+                    #                   satisfy quality.isFinish (grabbed the
+                    #                   720p, still hunting the 1080p) stays
+                    #                   'active' indefinitely.
+                    #
+                    # Neither is offline or missing. This exempted only
+                    # 'downloaded', which was survivable purely because the
+                    # release_status half of the union returned NOTHING:
+                    # Release.withStatus dropped with_doc, so media_id was always
+                    # None and the filter set was {None}. T1.9 fixed that lookup,
+                    # made this half live for the first time, and turned the
+                    # missing 'active' exemption into a real delete.
+                    #
+                    # media.delete(delete_from='all') removes every release
+                    # document and the media document: library entry, watch
+                    # state, tags, profile and review state. Unrecoverable
+                    # without a backup, and nobody takes one before a scheduled
+                    # library scan.
+                    if done_movie.get('status') != 'done':
                         continue
 
                     if getIdentifier(done_movie) not in added_identifiers:

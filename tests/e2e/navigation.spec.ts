@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 /**
  * Navigation tests for CouchPotato new UI.
@@ -74,16 +74,25 @@ test.describe('Navigation', () => {
 
   test('sidebar should collapse and expand', async ({ page }) => {
     await page.goto('/');
-    // Wait for sidebar to be visible (desktop only)
+    // The `chromium` project runs Desktop Chrome and playwright.config.ts's
+    // `testIgnore` excludes `*.mobile.spec.ts` from it, so this viewport is
+    // never the narrow one the sidebar hides on -- the guard this used to
+    // have (`if (await sidebar.isVisible())`) could never be false here and
+    // protected nothing while hiding a possible zero-assertion run.
     const sidebar = page.locator('aside');
-    if (await sidebar.isVisible()) {
-      // Click collapse button (last button in sidebar)
-      await page.click('aside button[aria-label*="Collapse" i], aside button[aria-label*="Expand" i]');
-      // Check that sidebar is collapsed (narrower width)
-      await expect(sidebar).toHaveClass(/w-16/);
-      // Click again to expand
-      await page.click('aside button:last-child');
-      await expect(sidebar).toHaveClass(/w-56/);
-    }
+    await expect(sidebar).toBeVisible();
+
+    // The collapse control's accessible name -- the suite's only assertion of
+    // it (the near-duplicate in interactions.e2e.spec.ts asserted nothing).
+    const collapseBtn = page.locator('aside button[aria-label*="Collapse" i], aside button[aria-label*="Expand" i]');
+    await expect(collapseBtn).toBeVisible();
+
+    // Click collapse button (last button in sidebar)
+    await collapseBtn.click();
+    // Check that sidebar is collapsed (narrower width)
+    await expect(sidebar).toHaveClass(/w-16/);
+    // Click again to expand
+    await page.click('aside button:last-child');
+    await expect(sidebar).toHaveClass(/w-56/);
   });
 });

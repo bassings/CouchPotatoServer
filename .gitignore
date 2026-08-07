@@ -4,6 +4,11 @@ __pycache__/
 .venv/
 /data/
 /_env/
+# Local dev compose-file selector (COMPOSE_FILE=docker-compose.local.yml).
+# Untracked deliberately (T1.6): a `git pull` must never silently overwrite a
+# developer's local override. Restore with:
+#   echo COMPOSE_FILE=docker-compose.local.yml > .env
+.env
 /_source/
 .project
 .pydevproject
@@ -32,9 +37,6 @@ test-results/
 test_data/
 test_startup_local.py
 
-# Playwright local E2E throwaway data dir
-.e2e-data
-
 # Stryker mutation testing scratch
 .stryker-tmp
 reports/mutation
@@ -53,8 +55,21 @@ mutants/
 /TOOLS.md
 /USER.md
 
-# E2E test data dirs (any suffix) - never commit test data
-.e2e-*data/
+# E2E data dirs: never commit test data. Every one holds a generated api_key.
+#
+# NOT "and seeded provider credentials": scripts/seed_e2e_data.py writes an
+# api_key and no password (see its own docstring). ci.yml rests the safety of
+# uploading test-results/ on that same fact, so the two statements have to
+# agree -- and the direction of the error mattered, because the version that
+# over-claimed was the one a reader would have used to argue the artefact
+# upload was unsafe.
+#
+# Matches ANY .e2e-* name, not `.e2e-*data/`. That narrower glob required the
+# name to END in "data", which is why `.e2e-data-mobile` and `.e2e-data-a11y`
+# needed hand-written entries, and why `make check-secrets` was red on master
+# until T1.7. Removing those two entries in favour of the narrow glob (as an
+# earlier commit on this branch did) un-ignored two directories that still
+# exist on any machine which ran the suite before T1.7, each holding a live
+# key. A pattern that covers the class cannot regress that way.
+.e2e-*
 .claude/worktrees/
-.e2e-data-mobile
-.e2e-data-a11y

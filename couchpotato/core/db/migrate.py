@@ -7,6 +7,7 @@ Usage:
 import argparse
 import json
 import os
+import sqlite3
 import sys
 import time
 from collections import Counter
@@ -127,13 +128,150 @@ def migrate(source_path: str, dest_path: str, verbose: bool = False) -> tuple[in
         print(f"Writing to SQLite: {dest_path}")
 
     # Bulk insert
-    count = adapter.insert_bulk(cleaned)
+    try:
+        count = adapter.insert_bulk(cleaned)
+    except sqlite3.IntegrityError as exc:
+        # Almost always the UNIQUE (provider, identifier) index on
+        # media_identifiers: two media documents in the source claiming the
+        # same imdb id. That is not hypothetical here -- REG-004 exists
+        # because this project shipped duplicate media rows -- and a source
+        # written before that backstop can easily hold a pair.
+        #
+        # SQLite's own message names the constraint and nothing else, which
+        # leaves the operator with a migration that stops dead, an empty
+        # destination, and no idea which film to fix. Name the collision.
+        adapter.close()
+        # THREE states, and a structured return rather than sniffing the
+        # message text. Only advise touching the SOURCE when the clash is
+        # actually in it: if the other claimant is a row already in the
+        # destination -- a re-run where a document's _id changed but its imdb
+        # id did not -- then "delete one of the two documents" points the
+        # operator at the CodernityDB source, which is their only rollback
+        # copy. And when the diagnostic itself failed we know nothing, so
+        # asserting either premise would be inventing one.
+        #
+        # Keyed on a bool, not on `collision.startswith('Duplicate')`:
+        # measured, renaming the describer's heading -- an ordinary copy edit
+        # -- silently routed a genuine source-side duplicate to the
+        # destination-side advice, with all 43 migration tests still green.
+        found_in_source, collision = _describe_identifier_collision(cleaned)
+
+        # The duplicate-identifier remedies below are only sound if the
+        # constraint that failed IS the duplicate-identifier one. Measured
+        # against a real adapter, it is not the only reachable IntegrityError:
+        #
+        #   _t is None   -> NOT NULL constraint failed: documents._t
+        #   _rev is None -> NOT NULL constraint failed: documents._rev
+        #
+        # `clean_doc_for_sqlite` strips `_rev`, so the first survives a real
+        # migrate() on a corrupt source. A comment here previously claimed the
+        # UNIQUE index was "effectively the only" one; that was wrong, and it
+        # mattered because the describer then finds no clash, returns False,
+        # and the operator is walked through deleting rows from the
+        # destination to fix a problem in the source. The `None` branch exists
+        # for "cannot tell" and could not be reached, because the diagnostic
+        # did not fail -- it succeeded and correctly found nothing.
+        #
+        # Sniffing the message is acceptable HERE, unlike the branch choice
+        # below: this is SQLite's own text, not our heading, and it degrades
+        # to the cautious remedy rather than to a destructive one.
+        if 'media_identifiers' not in str(exc):
+            # `collision` too, NOT just the remedy. The describer has already
+            # returned its False text -- "no duplicate media identifier in the
+            # source, so the other claimant is a row already in the
+            # destination" -- and that string is printed ABOVE the remedy. A
+            # first version of this fix keyed only the remedy, so the operator
+            # read a confident claim that their source was clean and the
+            # destination was at fault, two lines above a remedy admitting we
+            # could not tell. The confident half is the one people act on.
+            found_in_source = None
+            collision = '  (the failure is not a duplicate media identifier; ' \
+                        'see the constraint named above)'
+
+        if found_in_source is True:
+            remedy = ('COPY THE SOURCE DIRECTORY FIRST -- this is the only '
+                      'branch that asks you to edit your only rollback copy, '
+                      'and the sentence above about the source being untouched '
+                      'stops being true the moment you do. Then resolve the '
+                      'duplicate in the source (or delete one of the two '
+                      'documents) and run the migration again.')
+        elif found_in_source is False:
+            remedy = ('The source holds no duplicate, so the other claimant is '
+                      'already in the destination -- most likely a previous '
+                      'run whose document _id changed while its identifier did '
+                      'not. Point --dest at a fresh path, or remove BOTH the '
+                      'stale `documents` row and its `media_identifiers` row '
+                      'from the DESTINATION: the sqlite3 CLI has '
+                      '`PRAGMA foreign_keys` OFF by default, so deleting the '
+                      'document alone leaves the identifier claim behind and '
+                      'the next run fails identically. Do NOT edit the source: '
+                      'it is your only rollback copy.')
+        else:
+            remedy = ('The diagnostic could not determine which identifiers '
+                      'collided, so do not act on a guess: inspect both the '
+                      'source and the destination for the constraint named '
+                      'above before deleting anything. Do NOT edit the source '
+                      'until you know: it is your only rollback copy.')
+        raise RuntimeError(
+            'Migration aborted: %s\n%s\n\n'
+            'No documents were written to %s. The file itself was created, and '
+            'anything already in it is unchanged -- do NOT delete it without '
+            'looking first. The CodernityDB source is untouched, so nothing is '
+            'lost. %s' % (exc, collision, dest_path, remedy)
+        ) from exc
 
     if verbose:
         print(f"  Migrated {count} documents")
 
     adapter.close()
     return count, type_counts
+
+
+def _describe_identifier_collision(docs: list) -> tuple:
+    """Find the (provider, identifier) pairs claimed by more than one doc.
+
+    Returns ``(found_in_source, text)``. ``found_in_source`` is True, False, or
+    None when the diagnostic itself failed -- three states, because the caller
+    issues a DESTRUCTIVE instruction based on it and "could not tell" must not
+    collapse into "no duplicate".
+
+    Best-effort and never raises: it runs while an exception is already being
+    handled, and a failure to produce a nicer message must not replace the
+    real one.
+    """
+    try:
+        owners: dict[tuple[str, str], list[str]] = {}
+        for doc in docs:
+            if doc.get('_t') != 'media':
+                continue
+            identifiers = dict(doc.get('identifiers') or {})
+            if doc.get('identifier') and 'imdb' not in identifiers:
+                identifiers['imdb'] = doc['identifier']
+            for provider, ident in identifiers.items():
+                if not ident:
+                    continue
+                owners.setdefault((provider, str(ident)), []).append(doc.get('_id', '?'))
+
+        clashes = [
+            '  %s=%s is claimed by %s' % (provider, ident, ', '.join(ids))
+            for (provider, ident), ids in sorted(owners.items())
+            if len(ids) > 1
+        ]
+        if not clashes:
+            # Reached only when the caller has already confirmed the failed
+            # constraint was the media_identifiers UNIQUE index (it keys off
+            # SQLite's own message before consulting this result), so "no
+            # duplicate in the source" really does mean the other claimant is
+            # in the destination. An earlier version of this comment asserted
+            # that index was the only reachable IntegrityError, which is false
+            # -- a NULL `_t` also violates NOT NULL and survives cleaning --
+            # and that wrong premise is what let a source-side corruption be
+            # answered with destination-side deletion advice.
+            return (False, '  (no duplicate media identifier in the source, so the other\n'
+                           '   claimant is a row already in the destination)')
+        return (True, 'Duplicate media identifiers in the source:\n' + '\n'.join(clashes))
+    except Exception:  # noqa: BLE001 - diagnostics must never mask the real error
+        return (None, '  (could not determine which identifiers collided)')
 
 
 def verify(source_path: str, dest_path: str, verbose: bool = False) -> bool:

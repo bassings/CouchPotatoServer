@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { Page } from '@playwright/test';
 
 /**
  * E2E tests for the Suggestions loading redesign (the ~60s cold-load fix).

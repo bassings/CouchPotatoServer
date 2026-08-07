@@ -171,3 +171,62 @@ class OptionMetaSuite(TestCase):
         # by default all options are writable and readable
         self.assertFalse(s.isOptionWritable(section, option))
         self.assertTrue(s.isOptionReadable(section, option))
+
+
+class SettingsChrootRefusal(TestCase):
+    """A directory setting that escapes the soft chroot is refused, not saved.
+
+    Before `chroot2abs` normalised, a chrooted user could save a directory of
+    `../../mnt` and have it written verbatim: the chroot confined the file
+    BROWSER while the settings API walked straight out of it, after which the
+    renamer and the scanner operated outside the chroot entirely. Normalising
+    closed that, and this pins the handling, because an unhandled ValueError
+    here would be a 500 whose traceback carries the operator's real path into
+    the log (PrivacyFilter redacts api keys and query parameters, not paths).
+    """
+
+    def _settings(self, option_type):
+        s = Settings()
+        s.isOptionWritable = Mock(return_value=True)
+        s.getType = Mock(return_value=option_type)
+        s.set = Mock(return_value=None)
+        s.save = Mock()
+        s.log = Mock()
+        return s
+
+    def _chroot(self, tmp):
+        from couchpotato.core.softchroot import SoftChroot
+
+        sc = SoftChroot()
+        sc.initialize(tmp)
+        return sc
+
+    def test_an_escaping_directory_is_refused_and_never_written(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._settings('directory')
+            with patch('couchpotato.environment.Env') as env:
+                env.get.return_value = self._chroot(tmp)
+                result = s.saveView(section='core', name='data_dir', value='/../../etc')
+
+        self.assertFalse(result['success'])
+        # The load-bearing half: refusing must also mean not persisting.
+        s.set.assert_not_called()
+        s.save.assert_not_called()
+
+    def test_a_directory_inside_the_chroot_is_still_saved(self):
+        """Both directions. A guard that refused everything would pass the
+        test above while breaking every legitimate settings save."""
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = os.path.realpath(tmp)
+            s = self._settings('directory')
+            with patch('couchpotato.environment.Env') as env:
+                env.get.return_value = self._chroot(tmp)
+                result = s.saveView(section='core', name='data_dir', value='/movies')
+
+        self.assertTrue(result['success'])
+        s.set.assert_called_with('core', 'data_dir', os.path.join(tmp, 'movies'))

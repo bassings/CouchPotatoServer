@@ -385,7 +385,17 @@ def removePyc(folder, only_excess = True, show_logs = True):
 
         for dir_name in dirs:
             full_path = os.path.join(root, dir_name)
-            if len(os.listdir(full_path)) == 0:
+            try:
+                is_empty = len(os.listdir(full_path)) == 0
+            except FileNotFoundError:
+                # T1.7: multiple CouchPotato.py processes (one per E2E
+                # worker) can walk and clean this exact tree concurrently.
+                # A directory os.walk() already yielded can be removed by
+                # ANOTHER process's os.rmdir() (below) between that yield
+                # and this listdir() -- not a real error, just this
+                # process losing the race to empty the same directory.
+                continue
+            if is_empty:
                 try:
                     os.rmdir(full_path)
                 except Exception:

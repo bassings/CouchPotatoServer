@@ -1,4 +1,5 @@
-import { test, expect, Page, Locator } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { Page, Locator } from '@playwright/test';
 
 /**
  * E2E tests for Category management (Settings → Categories tab).
@@ -71,7 +72,7 @@ async function addCategoryNamed(page: Page, panel: Locator, name: string) {
 /** Delete a single category by exact name via the UI (best-effort, idempotent). */
 async function deleteCategoryNamed(page: Page, panel: Locator, name: string) {
   const delBtn = panel.getByRole('button', { name: 'Delete category: ' + name });
-  if (await delBtn.count() === 0) return;
+  if (await delBtn.count() === 0) return; // vacuous-guard-ok: idempotent teardown helper -- callers invoke it for names that may not exist, and the assertions below belong to the deletion, not to any test.
   await delBtn.first().click();
   const confirmDialog = page.getByTestId('category-delete-dialog');
   await expect(confirmDialog).toBeVisible();
@@ -99,18 +100,6 @@ async function deleteTestCategory(page: Page) {
     // best-effort cleanup; never fail the suite on teardown
   }
 }
-
-// These tests mutate GLOBAL, singleton server state (the category/profile list
-// is app-wide config, not per-test data) using fixed fixture names, and several
-// assert on list ORDER. Under `fullyParallel` Playwright spreads a file's tests
-// across workers, so they clobber each other's fixtures — 14 of them failed that
-// way. Serial mode keeps this file in one worker while OTHER files still run in
-// parallel, which is what makes the suite ~3x faster than a global `workers: 1`.
-//
-// Tradeoff, deliberately accepted: in serial mode a failure skips the remaining
-// tests in the block, so one break hides the others. The alternative is a server
-// per worker; that is the real fix and is noted in docs/technical-debt.md.
-test.describe.configure({ mode: 'serial' });
 
 test.describe('Category management', () => {
   test.afterEach(async ({ page }) => {

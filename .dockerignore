@@ -10,6 +10,11 @@ docker-compose.yml
 .env
 .env.*
 .config/
+# T1.7/AC-SEC-10: per-worker E2E data dirs (.e2e-w<N>-data/) hold a live
+# config.ini with a real api_key, same as .config/ above. Without this,
+# `docker build` (the normal docker-compose.dev.yml path) bakes it into a
+# layer -- Dockerfile:72 (COPY . ${APP_DIR}) copies the whole context.
+.e2e-*
 .openclaw/
 .design-sync/
 ds-bundle/
@@ -76,3 +81,17 @@ node_modules/
 npm-debug.log*
 playwright-report/
 test-results/
+
+# Local-only trees that must never enter a build context. Measured on a local
+# `docker build` from a working tree: test_data/ contributed 71 MB containing
+# 6,455 real library paths (the owner's film index, which AGENTS.md names as
+# the personal data on this project), and .claude/ contributed 473 MB of agent
+# worktrees, taking the image from 243 MB to 936 MB.
+#
+# CI checks out neither, so published images were never affected: this closes
+# the local-build path only, for the same reason .e2e-* above is excluded.
+test_data/
+.claude/
+# Untracked root-level dev scripts (gitignored, so invisible to git but not to
+# Docker).
+test_*.py

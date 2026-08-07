@@ -289,14 +289,27 @@ def create_router(require_auth) -> APIRouter:
     # --- htmx partials ---
 
     @router.get('/partial/movies')
-    async def partial_movies(request: Request, status: str = 'active', with_releases: bool = False, user=Depends(require_auth)):
+    async def partial_movies(request: Request, status: str = 'active', with_releases: bool = None, user=Depends(require_auth)):
         """Return movie card grid as HTML partial for htmx."""
         from couchpotato.api import callApiHandler
         try:
             params = {'type': 'movie', 'status': status}
-            # with_releases=True  → Available page: active movies that have any release
-            # with_releases=False → Wanted page: active movies with no releases yet
-            params['has_releases'] = with_releases
+            # with_releases=True:  only movies that have a release (Available)
+            # with_releases=False: only movies with no release yet (Wanted)
+            # omitted:             every active movie, which is what the page
+            #   itself needs. wanted.html fetches this partial once with no
+            #   `with_releases`, and the All/Wanted/Available chips then filter
+            #   client-side on each card's data-has-releases attribute
+            #   (movie-filter.js), so the initial fetch must carry BOTH kinds
+            #   or a chip has nothing to reveal.
+            #
+            # This parameter defaulted to False, which only ever asked for the
+            # no-release set. That was invisible while has_releases was inert;
+            # once T1.9 fixed the filter (release/main.py:754) the Available
+            # chip showed zero movies permanently. Verified against a live
+            # server: the default returned 1 card, with_releases=true returned 2.
+            if with_releases is not None:
+                params['has_releases'] = with_releases
 
             result = await run_in_threadpool(callApiHandler, 'media.list', **params)
             if isinstance(result, dict):

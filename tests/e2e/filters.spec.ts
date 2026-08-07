@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
 /**
@@ -31,28 +32,41 @@ test.describe('Filters', () => {
 
   test('should filter movies by text search', async ({ page }) => {
     const movieCards = page.locator('#movie-grid .poster-card');
+    // Unconditional. This used to be `if (initialCount > 0) { ... }`, so on an
+    // empty grid it asserted nothing and reported green -- and an empty grid
+    // is precisely the failure the readiness probe in fixtures.ts exists to
+    // prevent, so the one condition that would have caught it was the one the
+    // guard suppressed. scripts/seed_e2e_data.py seeds five active movies, so
+    // a zero here is the seed or the app being broken.
     const initialCount = await movieCards.count();
-    
-    if (initialCount > 0) {
-      // Get the title of the first movie
-      const firstTitle = await movieCards.first().getAttribute('data-title');
-      
-      // Type in the filter
-      const searchInput = page.locator('input[placeholder*="filter" i]');
-      await searchInput.fill(firstTitle || '');
-      
-      // Wait for filter to apply
-      await page.waitForTimeout(300);
-      
-      // The first movie should still be visible
-      const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-      const filteredCount = await visibleCards.count();
-      
-      // Filtered count should be less than or equal to initial
-      expect(filteredCount).toBeLessThanOrEqual(initialCount);
-      // And at least one card should be visible (the one we searched for)
-      expect(filteredCount).toBeGreaterThan(0);
-    }
+    expect(initialCount, 'no movie cards in the grid -- did the seed run?').toBeGreaterThan(0);
+
+    // Get the title of the first movie
+    const firstTitle = await movieCards.first().getAttribute('data-title');
+    expect(firstTitle, 'a poster card must carry data-title for the filter to match on').toBeTruthy();
+
+    // Type in the filter
+    const searchInput = page.locator('input[placeholder*="filter" i]');
+    await searchInput.fill(firstTitle || '');
+
+    // Assert the DIRECTION and the IDENTITY, both of which are false for a
+    // no-op filter. The first repair of this test used
+    // `toBeLessThanOrEqual(initialCount)` and `toBeGreaterThan(0)`, and
+    // neither changes value between "the filter worked" and "the filter did
+    // nothing": with five seeded movies, `5 <= 5` is true on the poll's first
+    // evaluation, so it also returned before the filter had run at all. The
+    // only regression it could catch was a filter that hid everything -- in
+    // the file this round repaired for exactly that class of defect.
+    //
+    // The seeded titles are mutually non-substring (E2E Seed Movie, E2E
+    // Destructive Seed Movie, E2E No-Release Movie, E2E Second/Third
+    // No-Release Movie), so filtering on a full title must leave exactly one.
+    const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeLessThan(initialCount);
+    await expect(visibleCards).toHaveCount(1);
+    await expect(visibleCards.first()).toHaveAttribute('data-title', firstTitle || '');
   });
 
   test('clicking Wanted filter should filter movies', async ({ page }) => {
@@ -65,16 +79,31 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have status "active" (wanted)
+    // Assert on `data-has-releases`, NOT `data-status`.
+    //
+    // The first repair of this test checked that every visible card was
+    // 'active' -- which the Wanted chip cannot change and never could.
+    // `wanted.html` fetches `partial/movies?status=active`, so every card in
+    // the grid is already active, and `movie-filter.js`'s wanted branch is
+    // `matchStatus = !card.hasReleases` and does not read `card.status` at
+    // all. Measured over the real `matchesFilter` and the seeded grid: the
+    // data-status set is {"active"} with the chip, without it, and with the
+    // OPPOSITE chip. Deleting the click above left the test green.
+    //
+    // So the regression it is named for -- the Wanted chip failing to hide
+    // movies that have releases, which has shipped on this codebase once
+    // already -- had no assertion behind it. The population poll (the earlier
+    // repair) is kept: it closes the zero-iteration hole.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-    const count = await visibleCards.count();
-    
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const status = await visibleCards.nth(i).getAttribute('data-status');
-      if (status) {
-        expect(status).toBe('active');
-      }
-    }
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeGreaterThan(0);
+
+    const flags = await visibleCards.evaluateAll((cards) =>
+      cards.map((c) => c.getAttribute('data-has-releases')),
+    );
+    expect(flags).not.toContain(null);
+    expect(new Set(flags)).toEqual(new Set(['false']));
   });
 
   test('clicking Available filter should filter movies', async ({ page }) => {
@@ -87,16 +116,25 @@ test.describe('Filters', () => {
     // Wait for filter to apply
     await page.waitForTimeout(300);
     
-    // All visible cards should have data-has-releases="true" (has releases or downloading)
+    // Same shape, same fix as the Wanted case above.
+    //
+    // Available is non-empty because MOVIE_ID and DESTRUCTIVE_MOVIE_ID carry
+    // RELEASES -- NOT because of DONE_RELEASE_MOVIE_ID, which an earlier
+    // version of this comment named. That movie is seeded with media status
+    // 'done' deliberately, so `partial/movies?status=active` never returns it
+    // and it is not in this grid at all. Naming the wrong guarantee is how
+    // someone trimming the seed removes the wrong document.
     const visibleCards = page.locator('#movie-grid .poster-card:not([style*="display: none"])');
-    const count = await visibleCards.count();
-    
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const hasReleases = await visibleCards.nth(i).getAttribute('data-has-releases');
-      if (hasReleases !== null) {
-        expect(hasReleases).toBe('true');
-      }
-    }
+    await expect
+      .poll(() => visibleCards.count(), { timeout: 5000 })
+      .toBeGreaterThan(0);
+
+    const flags = await visibleCards.evaluateAll((cards) =>
+      cards.map((c) => c.getAttribute('data-has-releases')),
+    );
+    expect(flags.length).toBeGreaterThan(0);
+    expect(flags).not.toContain(null);
+    expect(new Set(flags)).toEqual(new Set(['true']));
   });
 
   test('clicking All should show all movies', async ({ page }) => {

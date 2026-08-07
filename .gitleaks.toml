@@ -48,13 +48,27 @@ paths = [
 
   # LOCAL RUNTIME DATA — these hold genuine secrets (a real config.ini with API
   # keys, generated media.key/tetchy.key private keys, logs). All four are
-  # gitignored (`git check-ignore -v` reports .gitignore lines 5, 26, 32 and 57
-  # respectively) and verified untracked, so they cannot reach the remote;
+  # gitignored and verified untracked, so they cannot reach the remote.
+  # Confirm with `git check-ignore -v <path>`, which names the .gitignore rule
+  # that matched. NO line numbers here on purpose: they were wrong twice on
+  # this branch alone (the `.e2e-*` rule moved from 62 to 68 when the pattern
+  # was widened), in a comment that already told the reader not to trust
+  # them. A citation nobody can rely on is worse than no citation, because
+  # the next reader spends time reconciling it;
   # excluding them keeps a local `make check-secrets` usable instead of drowning
   # in 40+ hits from your own dev instance.
   # If you ever see one of these paths reported as TRACKED, that is a real leak.
   '''^\.config/''',
   '''^data/config/''',
-  '''^\.e2e-[^/]*data/''',
+  # `^\.e2e-[^/]*/`, NOT `^\.e2e-[^/]*data/`. The narrow form required the
+  # first path segment to END in "data", so `.e2e-data-mobile/` and
+  # `.e2e-data-a11y/` -- the two dirs .gitignore's comment names as the reason
+  # it was widened to `.e2e-*` -- were NOT excluded, and `make check-secrets`
+  # (a filesystem scan, --no-git) reported the generated api_key inside them.
+  # The two patterns have to agree: .gitignore decides what can be committed,
+  # this decides what the local scan complains about, and a dir that is
+  # ignored-but-not-allowlisted makes the scan noisy exactly where a developer
+  # is most likely to stop reading it.
+  '''^\.e2e-[^/]*/''',
   '''^test_data/''',
 ]

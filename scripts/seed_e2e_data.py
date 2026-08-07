@@ -35,7 +35,15 @@ import time
 # runnable standalone (CI step, or a developer running it directly) without
 # relying on the caller having put the repo root / libs/ on sys.path already.
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-_REPO_ROOT = os.path.dirname(_SCRIPT_DIR)
+# realpath, matching e2e_worker_data.py:78. _is_safe_seed_target resolves the
+# candidate path with realpath and then compares it against this root, so an
+# abspath-only root makes the two halves of one comparison disagree wherever
+# the checkout is reached through a symlink (a CI cache link, a checkout under
+# /tmp on macOS). It fails closed -- a legitimate .e2e-* target is refused
+# with a misleading message -- but "fails closed" is not the same as correct,
+# and every test monkeypatched this to an already-resolved value, so the
+# mismatch was invisible.
+_REPO_ROOT = os.path.realpath(os.path.dirname(_SCRIPT_DIR))
 _LIBS_DIR = os.path.join(_REPO_ROOT, 'libs')
 for _path in (_REPO_ROOT, _LIBS_DIR):
     if _path not in sys.path:
@@ -65,17 +73,94 @@ IMDB_ID = 'tt9999901'
 DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-002'
 DESTRUCTIVE_IMDB_ID = 'tt9999902'
 
+#: A THIRD movie, carrying only the already-'done' release below.
+#:
+#: T1.7a (2026-08-05). MOVIE_ID and DESTRUCTIVE_MOVIE_ID used to both carry
+#: an identical already-'done' release (it lived in RELEASES, as release #4,
+#: see DONE_RELEASE's own comment for why 'done' rather than some other
+#: status). That backfired: the app's own `app.load` -> `searchAll` restatus
+#: pass (`couchpotato/core/media/_base/media/main.py::restatus`) promotes
+#: any 'active' movie holding a finished 'done' release straight to media
+#: status 'done' the moment it notices it -- which drops that movie out of
+#: the Wanted page's server-side `status=active` query. With both movies
+#: carrying the release, a single run could promote both at once: measured
+#: during T1.4 at roughly 1 run in 2, which is exactly what made
+#: `tests/e2e/interactions.e2e.spec.ts`'s Wanted-grid tests fail with "no
+#: movie card in the Wanted grid".
+#:
+#: Moving the release onto a dedicated movie that nothing else refers to by
+#: id removes the promotion mechanism from MOVIE_ID and DESTRUCTIVE_MOVIE_ID
+#: entirely -- neither can self-promote via restatus any more, so at least
+#: one of them is always 'active'.
+#:
+#: This movie itself is seeded ALREADY 'done' (see seed() below), not
+#: 'active' and left for restatus to promote later. Measured: seeding it
+#: 'active' leaves it 'active' -- and therefore a THIRD card in the Wanted
+#: grid -- for as long as it takes the restatus pass to notice and promote
+#: it, which is not deterministic within one test run. That broke two
+#: unrelated assertions in interactions.e2e.spec.ts that assume exactly two
+#: Wanted-page cards.
+DONE_RELEASE_MOVIE_ID = 'e2e-seed-movie-003'
+DONE_RELEASE_IMDB_ID = 'tt9999903'
+
+#: A FOURTH movie, carrying no releases at all.
+#:
+#: T1.9 (2026-08-05). `Release.withStatus(status, with_doc=False)` used to
+#: drop the `with_doc` flag when calling `db.get_many('release_status',
+#: s)`, so `SQLiteAdapter.get_many`'s own default (with_doc=True) always
+#: won regardless of what the caller asked for -- every row came back
+#: wrapped as `{'doc': {...}, '_id': ...}`. media/main.py's `has_releases`
+#: filter reads `r.get('media_id')` straight off those rows, which was
+#: always None, so the filter never filtered: has_releases=False (the
+#: Wanted page) matched every active movie, and has_releases=True (the
+#: Available page) matched none.
+#:
+#: MOVIE_ID and DESTRUCTIVE_MOVIE_ID both carry releases (RELEASES,
+#: below), so with the filter genuinely working neither belongs on the
+#: Wanted page any more -- they belong on Available instead. Every E2E
+#: spec that navigated to '/' or '/wanted/' and grabbed "the first movie
+#: card", assuming it would land on one of those two, was unknowingly
+#: depending on the has_releases bug to get there.
+#:
+#: This movie is the fixture's only genuine Wanted-page candidate: 'active'
+#: status, zero releases, nothing else referring to it by id.
+WANTED_MOVIE_ID = 'e2e-seed-movie-004'
+WANTED_MOVIE_IMDB_ID = 'tt9999904'
+
+#: Two more no-release movies, so the Wanted grid does not depend on a single
+#: document surviving all 135 specs.
+#:
+#: T1.9 made the has_releases filter actually filter, which means the Wanted
+#: page shows ONLY movies with no releases. That left exactly one qualifying
+#: movie (WANTED_MOVIE_ID), so any spec that gave it a release, deleted it or
+#: marked it done emptied the grid for every spec that ran afterwards.
+#: Measured 2026-08-05: 1 failure in 6 full chromium runs, always
+#: "no movie card in the Wanted grid", on a different spec each time.
+#:
+#: Titles must not contain "Wanted" or "Available": those words collide with
+#: filters.spec.ts's accessible-name locators against each card's own buttons
+#: and trip Playwright strict mode (measured, see the comment below).
+WANTED_MOVIE_IDS = (
+    (WANTED_MOVIE_ID, WANTED_MOVIE_IMDB_ID, 'E2E No-Release Movie'),
+    ('e2e-seed-movie-005', 'tt9999905', 'E2E Second No-Release Movie'),
+    ('e2e-seed-movie-006', 'tt9999906', 'E2E Third No-Release Movie'),
+)
+
 #: Two distinct qualities, both present in the seeded profile's `qualities`
 #: list -- otherwise the profile-matching filter in
 #: `couchpotato/ui/__init__.py::_releases_ctx` would hide them (`r.get(
 #: 'quality') in profile_qualities`).
 PROFILE_QUALITIES = ['2160p', '1080p', '720p']
 
-#: Six releases spanning: protocol (nzb / torrent / torrent_magnet), quality
-#: (1080p / 720p), and status (available / ignored / downloaded / snatched).
-#: `size`, `score`, `age`, `info.name` are unique across every release (so
-#: sort-order assertions are unambiguous); `seeders` is present only on the
-#: non-nzb releases and is also unique among those.
+#: Five releases, seeded onto MOVIE_ID and DESTRUCTIVE_MOVIE_ID, spanning:
+#: protocol (nzb / torrent / torrent_magnet), quality (1080p / 720p), and
+#: status (available / ignored / snatched). `size`, `score`, `age`,
+#: `info.name` are unique across every release (so sort-order assertions are
+#: unambiguous); `seeders` is present only on the non-nzb releases and is
+#: also unique among those.
+#:
+#: Deliberately excludes an already-'done' release: see DONE_RELEASE_MOVIE_ID
+#: above for why that lives elsewhere now (T1.7a).
 RELEASES = [
     {
         'suffix': '1',
@@ -110,23 +195,6 @@ RELEASES = [
         'age': 1,
         'name': 'E2E.Seed.Movie.2024.1080p.BluRay-GRP3',
     },
-    # Deliberately NOT 'downloaded': that status puts the movie in the
-    # manual-review gate, which renders a per-release "Mark failed" button and
-    # breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
-    # for a non-downloaded movie" -- the seeded movie must stay a plain
-    # non-downloaded movie. 'done' gives the status filter the same variety
-    # without changing what the movie IS.
-    {
-        'suffix': '4',
-        'protocol': 'torrent',
-        'quality': '720p',
-        'status': 'done',
-        'size': 6400,
-        'seeders': 3,
-        'score': 40.0,
-        'age': 45,
-        'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
-    },
     {
         'suffix': '5',
         'protocol': 'nzb',
@@ -150,6 +218,29 @@ RELEASES = [
         'name': 'E2E.Seed.Movie.2024.720p.DVDRip-GRP6',
     },
 ]
+
+#: The already-'done' release, seeded only onto DONE_RELEASE_MOVIE_ID (T1.7a
+#: -- see that constant's comment for why it no longer lives in RELEASES
+#: above). Suffix kept as '4' rather than renumbered, so this release's id
+#: and name are unchanged from before the split.
+#:
+#: Deliberately NOT 'downloaded': that status puts the movie in the
+#: manual-review gate, which renders a per-release "Mark failed" button and
+#: breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
+#: for a non-downloaded movie" -- a movie carrying this release must stay a
+#: plain non-downloaded movie. 'done' gives the status filter variety without
+#: changing what the movie IS.
+DONE_RELEASE = {
+    'suffix': '4',
+    'protocol': 'torrent',
+    'quality': '720p',
+    'status': 'done',
+    'size': 6400,
+    'seeders': 3,
+    'score': 40.0,
+    'age': 45,
+    'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
+}
 
 
 def _sqlite_db_dir(data_dir):
@@ -195,8 +286,116 @@ def _upsert(db, doc_id, doc):
     return True
 
 
+
+def verify(data_dir):
+    """Read back what seed() wrote and fail loudly if it is not there.
+
+    T1.7a follow-up (2026-08-05). playwright.config.ts used to chain the seed
+    with `|| true`, so a seed that failed or half-completed still started the
+    server, against an empty database. Every downstream spec then failed with
+    "no movie card in the Wanted grid", which names the symptom and hides the
+    cause. The `|| true` is gone; this function makes the exit code mean
+    something by checking the end state rather than trusting that no exception
+    was raised.
+
+    Checks the invariant T1.7a established: both Wanted-page movies are
+    'active' (so restatus cannot have promoted them out) and the dedicated
+    done-release movie is 'done'. T1.9 adds WANTED_MOVIE_ID: 'active', the
+    fixture's only genuine has_releases=False candidate.
+    """
+    db = _open_adapter(data_dir)
+    try:
+        problems = []
+        # Every no-release movie is checked, not just the first. They exist so
+        # the Wanted grid does not depend on one document surviving all 135
+        # specs, and a verify() that only covered WANTED_MOVIE_ID would let two
+        # thirds of that redundancy go missing without saying so.
+        for movie_id, expected in (
+            [
+                (MOVIE_ID, 'active'),
+                (DESTRUCTIVE_MOVIE_ID, 'active'),
+                (DONE_RELEASE_MOVIE_ID, 'done'),
+            ]
+            + [(mid, 'active') for mid, _imdb, _title in WANTED_MOVIE_IDS]
+        ):
+            try:
+                doc = db.get('id', movie_id)
+            except Exception as exc:
+                # Keep the exception: a corrupt database and a genuinely absent
+                # document are different problems, and this runs immediately
+                # before every E2E worker's server starts, so it is the first
+                # diagnostic anyone sees when seeding goes wrong.
+                problems.append('%s could not be read: %s: %s' % (
+                    movie_id, type(exc).__name__, exc))
+                continue
+            status = doc.get('status')
+            if status != expected:
+                problems.append(
+                    '%s has status %r, expected %r' % (movie_id, status, expected)
+                )
+        return problems
+    finally:
+        db.close()
+
+
+
+def _bind_to_loopback(data_dir):
+    """Pin this data dir's server to 127.0.0.1 before it ever starts.
+
+    `runner.py:286` reads `Env.setting('host', default='0.0.0.0')` and there is
+    no `host` entry in the settings list and no CLI flag for it, so a freshly
+    seeded data dir always resolves to 0.0.0.0. Under T1.7 that is no longer
+    one listener: a `--workers=4` run opens four unauthenticated CouchPotato
+    instances on 5150-5153, each with its own generated api_key and no password
+    (`get_current_user` returns True when neither is set), all reachable from
+    the LAN.
+
+    Writing the setting here keeps the fix test-only. Adding a `--host` CLI
+    argument would be new production surface, and AC-SEC-16 exists to stop
+    `--port` widening exposure: solving this by widening the CLI would defeat
+    the criterion it is meant to satisfy.
+
+    Idempotent, and never clobbers an existing value.
+
+    Scoped to `.e2e*` data dirs. `_is_safe_seed_target` deliberately accepts a
+    developer's own populated `.config` (see its docstring's residual-risk
+    paragraph), and its residual risk was about seeding fixture ROWS: writing
+    a settings value into a real local instance is a different and larger
+    thing, and settings sit on the irreplaceable tier. A developer who ran
+    this against their live dev instance would find it stopped answering on
+    the LAN after the next restart, with nothing printed to say why. So this
+    declines outside the disposable naming convention, and says so either way.
+    """
+    import configparser
+
+    basename = os.path.basename(os.path.realpath(os.path.abspath(data_dir)).rstrip(os.sep))
+    if not basename.startswith('.e2e'):
+        print('  host: NOT pinned -- %r is not a .e2e* data dir, so its '
+              'settings are left alone (the server will use its configured '
+              'host)' % data_dir)
+        return False
+
+    config_file = os.path.join(data_dir, 'config.ini')
+    parser = configparser.RawConfigParser()
+    if os.path.exists(config_file):
+        parser.read(config_file, encoding='utf-8')
+    if not parser.has_section('core'):
+        parser.add_section('core')
+    if parser.has_option('core', 'host'):
+        print('  host: already set to %r, left unchanged' % parser.get('core', 'host'))
+        return False
+    parser.set('core', 'host', '127.0.0.1')
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = config_file + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+    os.replace(tmp, config_file)
+    return True
+
+
 def seed(data_dir):
     """Seed the profile, movie, and releases. Returns a summary dict."""
+    _bind_to_loopback(data_dir)
     db = _open_adapter(data_dir)
     try:
         now = time.time()
@@ -214,13 +413,33 @@ def seed(data_dir):
             'manual_confirmation': False,
         })
 
-        for movie_id, imdb_id, movie_title in (
-              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie'),
-              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie'),
+        for movie_id, imdb_id, movie_title, movie_status, releases in (
+              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie', 'active', RELEASES),
+              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie', 'active', RELEASES),
+              # T1.7a: isolated on its own movie, deliberately unreferenced by
+              # any spec -- see DONE_RELEASE_MOVIE_ID's comment above. Seeded
+              # already 'done' (not 'active') so it never depends on the
+              # restatus pass and never appears in the Wanted grid at all.
+              (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', [DONE_RELEASE]),
+              # T1.9: zero releases, so this is the fixture's only movie the
+              # fixed has_releases=False filter actually puts on the Wanted
+              # page -- see WANTED_MOVIE_ID's comment above.
+              #
+              # Title deliberately avoids the substrings "wanted"/"available"/
+              # "all": filters.spec.ts locates the Wanted/Available/All filter
+              # buttons by accessible-name regex (/wanted/i etc.), and this
+              # movie's own per-card "Refresh metadata for <title>" button is
+              # in the same accessibility tree -- a title containing "Wanted"
+              # made that locator resolve to two elements (the filter button
+              # AND this card's refresh button) and fail Playwright's strict
+              # mode. Measured: e2e-seed-movie-004 titled "E2E Wanted Only
+              # Movie" broke filters.spec.ts's "should have filter buttons",
+              # "clicking Wanted filter", and "clicking All" tests this way.
+              *[(mid, imdb, title, 'active', []) for mid, imdb, title in WANTED_MOVIE_IDS],
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',
-              'status': 'active',
+              'status': movie_status,
               'title': movie_title,
               'type': 'movie',
               'profile_id': PROFILE_ID,
@@ -252,7 +471,7 @@ def seed(data_dir):
               'last_edit': now,
             }))
 
-            for r in RELEASES:
+            for r in releases:
               release_id = 'e2e-seed-release-%s-%s' % (movie_id[-3:], r['suffix'])
               info = {
                   'name': r['name'],
@@ -314,7 +533,11 @@ def _is_safe_seed_target(data_dir):
     mistake; it cannot detect "this populated, correctly-named directory
     happens to hold real data" without asking the user.
     """
-    path = os.path.abspath(data_dir)
+    # realpath, not abspath: e2e_worker_data.validate_worker_data_dir
+    # resolves symlinks, and a symlinked .e2e-* name pointing at a real
+    # library directory passed this weaker guard while the delete guard
+    # refused it. Both sit either side of the same computed path.
+    path = os.path.realpath(os.path.abspath(data_dir))
 
     if not os.path.exists(path):
         return True
@@ -356,6 +579,13 @@ def main(argv=None):
         result = seed(args.data_dir)
     except Exception as exc:  # noqa: BLE001 -- report and exit non-zero, don't traceback-spam CI
         print('ERROR: failed to seed E2E data: %s' % exc, file=sys.stderr)
+        return 1
+
+    problems = verify(args.data_dir)
+    if problems:
+        print('ERROR: the seed did not produce the expected state:', file=sys.stderr)
+        for problem in problems:
+            print('  - %s' % problem, file=sys.stderr)
         return 1
 
     print('Seeded E2E data at %s:' % args.data_dir)

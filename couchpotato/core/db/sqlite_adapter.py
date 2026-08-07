@@ -1,4 +1,5 @@
 """SQLite adapter implementing DatabaseInterface."""
+import functools
 import json
 import os
 import sqlite3
@@ -47,6 +48,49 @@ def _generate_rev():
     return uuid.uuid4().hex[:8]
 
 
+def _synchronised(method):
+    """Serialise one method's use of the shared sqlite3 connection.
+
+    `open()`/`create()` build a SINGLE `sqlite3.Connection` with
+    `check_same_thread=False`, and FastAPI runs sync route handlers in a
+    threadpool. That flag disables sqlite3's own thread check; it does NOT
+    make the connection safe to use from two threads at once. The caller is
+    required to serialise, and until now only WRITES were serialised
+    (`_write_lock`), so any two concurrent reads -- or a read racing a write
+    -- interleaved on the same connection.
+
+    Measured, not theorised: 8 threads calling `get()` on one adapter produce
+    127 errors in a few seconds, and the live per-worker server log for a
+    failing E2E run carries ten `sqlite3.InterfaceError: bad parameter or
+    other API misuse` driving `Failed doing api request "media.list"` and
+    `"profile.list"`. Some interleavings surface instead as
+    `KeyError('Document not found')` for a document that is present, or
+    `TypeError: the JSON object must be str, bytes or bytearray, not
+    NoneType` -- which is precisely the "empty grid" the E2E suite kept
+    reporting and `docs/technical-debt.md` blamed on host contention.
+
+    A single reentrant lock rather than per-thread connections: it strictly
+    REDUCES concurrency, so it cannot introduce an interleaving that did not
+    exist, and it leaves `transaction()`'s semantics and the `_rev`
+    compare-and-swap exactly as they were. Per-thread connections would be
+    faster and are the right long-term shape, but they move transaction state
+    and are new work on this repo's highest-risk file.
+
+    Decorating only non-generator methods is deliberate: a decorator around a
+    generator function would release the lock the moment the generator was
+    created and hold nothing during iteration, which looks correct and is
+    not. `query()`/`all()` stay undecorated and are safe because every
+    connection touch they make goes through `_query_index` (returns a list)
+    or `get()`, each of which takes the lock itself.
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        with self._conn_lock:
+            return method(self, *args, **kwargs)
+
+    return wrapper
+
+
 class SQLiteAdapter(DatabaseInterface):
     """SQLite backend implementing the DatabaseInterface.
 
@@ -58,7 +102,9 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn: sqlite3.Connection | None = None
         self._path: str | None = None
         self._indexes: dict = {}  # name -> index config (for compat)
-        self._write_lock = threading.RLock()
+        # One lock for the whole connection, not just writes: see
+        # `_synchronised` above for why reads need it too.
+        self._conn_lock = threading.RLock()
         self._transaction_depth = 0
 
     @property
@@ -114,6 +160,7 @@ class SQLiteAdapter(DatabaseInterface):
             )
             self._conn.executescript(safe_sql)
 
+    @_synchronised
     def _has_unique_identifier_index(self) -> bool:
         """Return True if a UNIQUE index on media_identifiers(provider,
         identifier) already exists (fresh installs get one from schema.sql)."""
@@ -129,6 +176,7 @@ class SQLiteAdapter(DatabaseInterface):
                 return True
         return False
 
+    @_synchronised
     def _ensure_unique_media_identifier_index(self) -> None:
         """Idempotently upgrade an existing install to the UNIQUE
         media_identifiers(provider, identifier) index (REG-004).
@@ -152,7 +200,7 @@ class SQLiteAdapter(DatabaseInterface):
 
             dropped = False
             try:
-                with self._write_lock:
+                with self._conn_lock:
                     conn.execute("DROP INDEX IF EXISTS idx_media_identifiers_lookup")
                     dropped = True
                     conn.execute(
@@ -174,7 +222,7 @@ class SQLiteAdapter(DatabaseInterface):
                     pass
                 if dropped:
                     try:
-                        with self._write_lock:
+                        with self._conn_lock:
                             conn.execute(
                                 "CREATE INDEX IF NOT EXISTS idx_media_identifiers_lookup "
                                 "ON media_identifiers(provider, identifier)"
@@ -205,6 +253,19 @@ class SQLiteAdapter(DatabaseInterface):
             log.warning('Failed ensuring the unique media identifier index; '
                         'continuing without the DB-level backstop (REG-004).')
 
+    # @_synchronised on open()/create() too: these were the last two methods
+    # touching self._conn outside the lock, and the ONLY two that REASSIGN it.
+    #
+    # close() is decorated, so open() briefly took the lock and gave it back,
+    # then connected, set PRAGMAs and rebound self._conn entirely unlocked. A
+    # read on another thread landing in that window sees either the old,
+    # just-closed connection or a half-configured new one -- a
+    # ProgrammingError on a closed database, or a query running before the
+    # PRAGMAs are applied.
+    #
+    # Reentrant by design: open() calls close(), which takes the same RLock on
+    # the same thread. That is why _conn_lock is an RLock and not a Lock.
+    @_synchronised
     def open(self, path: str) -> None:
         if self._conn is not None:
             self.close()
@@ -218,6 +279,7 @@ class SQLiteAdapter(DatabaseInterface):
         # _init_schema), so self-upgrade the duplicate-media backstop here.
         self._ensure_unique_media_identifier_index()
 
+    @_synchronised
     def create(self, path: str) -> None:
         if self._conn is not None:
             self.close()
@@ -228,6 +290,7 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
+    @_synchronised
     def close(self) -> None:
         if self._conn is not None:
             self._conn.close()
@@ -242,7 +305,7 @@ class SQLiteAdapter(DatabaseInterface):
         to defer those commits until the whole operation succeeds.
         """
         conn = self._get_conn()
-        with self._write_lock:
+        with self._conn_lock:
             depth = self._transaction_depth
             savepoint = f"cp_tx_{depth}"
 
@@ -269,6 +332,7 @@ class SQLiteAdapter(DatabaseInterface):
                 else:
                     conn.execute(f"RELEASE SAVEPOINT {savepoint}")
 
+    @_synchronised
     def _commit_if_not_transaction(self) -> None:
         if self._transaction_depth == 0:
             self._get_conn().commit()
@@ -296,6 +360,7 @@ class SQLiteAdapter(DatabaseInterface):
         d = {k: v for k, v in data.items() if k not in ('_id', '_rev')}
         return json.dumps(d, default=str)
 
+    @_synchronised
     def get(self, index_name: str, key: Any, with_doc: bool = False) -> dict:
         """Get document(s) by index lookup.
 
@@ -325,8 +390,9 @@ class SQLiteAdapter(DatabaseInterface):
             return {'doc': doc, '_id': doc['_id']}
         return result
 
+    @_synchronised
     def insert(self, data: dict) -> dict:
-        with self._write_lock:
+        with self._conn_lock:
             conn = self._get_conn()
             doc_id = data.get('_id', _generate_id())
             doc_rev = _generate_rev()
@@ -359,6 +425,7 @@ class SQLiteAdapter(DatabaseInterface):
 
             return {'_id': doc_id, '_rev': doc_rev}
 
+    @_synchronised
     def update(self, data: dict) -> dict:
         """Update an existing document.
 
@@ -384,7 +451,7 @@ class SQLiteAdapter(DatabaseInterface):
         opportunistic follow-up work, not a requirement of this CAS
         contract.
         """
-        with self._write_lock:
+        with self._conn_lock:
             conn = self._get_conn()
             doc_id = data.get('_id')
             if not doc_id:
@@ -411,14 +478,14 @@ class SQLiteAdapter(DatabaseInterface):
                         #
                         # This classification (the follow-up SELECT below)
                         # is race-safe only because the entire update() body
-                        # runs under `self._write_lock`, and this adapter is
+                        # runs under `self._conn_lock`, and this adapter is
                         # used from a single process over a single
                         # connection -- no other writer can slip a change in
                         # between the failed CAS UPDATE above and this
                         # SELECT. If this ever changes (multiprocessing,
                         # multiple DB connections/processes writing to the
                         # same file, or this classification logic moving
-                        # outside `self._write_lock`), this SELECT-based
+                        # outside `self._conn_lock`), this SELECT-based
                         # missing-vs-conflict distinction must be revisited,
                         # since another writer could then delete/insert the
                         # row between the two statements.
@@ -517,8 +584,9 @@ class SQLiteAdapter(DatabaseInterface):
                 continue
         raise last_error
 
+    @_synchronised
     def delete(self, data: dict) -> bool:
-        with self._write_lock:
+        with self._conn_lock:
             conn = self._get_conn()
             doc_id = data.get('_id')
             if not doc_id:
@@ -553,6 +621,7 @@ class SQLiteAdapter(DatabaseInterface):
             else:
                 yield row
 
+    @_synchronised
     def _query_index(self, index_name: str, key: Any = None,
                      start: Any = None, end: Any = None,
                      limit: int = -1, offset: int = 0) -> list[dict]:
@@ -789,6 +858,7 @@ class SQLiteAdapter(DatabaseInterface):
         rows = conn.execute(sql, params).fetchall()
         return [self._doc_from_row(row) for row in rows]
 
+    @_synchronised
     def _update_denormalized(self, doc_id: str, data: dict):
         """Update denormalized lookup tables."""
         conn = self._get_conn()
@@ -849,6 +919,7 @@ class SQLiteAdapter(DatabaseInterface):
         results = func(*args, **kwargs)
         return sum(1 for _ in results)
 
+    @_synchronised
     def compact(self) -> None:
         """Run VACUUM on the database."""
         conn = self._get_conn()
@@ -862,6 +933,7 @@ class SQLiteAdapter(DatabaseInterface):
         """
         return self.query(index_name, key=key, limit=limit, offset=offset, with_doc=with_doc)
 
+    @_synchronised
     def get_by_identifier(self, provider: str, identifier: str) -> dict:
         """Get a media document by provider and identifier.
 
@@ -878,6 +950,7 @@ class SQLiteAdapter(DatabaseInterface):
             raise KeyError(f"No media found for {provider}={identifier}")
         return self._doc_from_row(row)
 
+    @_synchronised
     def insert_bulk(self, documents: list[dict]) -> int:
         """Insert multiple documents efficiently.
 

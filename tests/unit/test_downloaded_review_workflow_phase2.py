@@ -14,6 +14,9 @@ still runs *before* this branch, so an already-'downloaded' movie never
 reaches this logic at all.
 """
 import threading
+import shutil
+import tempfile
+
 from unittest.mock import patch
 
 from couchpotato.core.media._base.media.main import MediaPlugin
@@ -353,16 +356,34 @@ class TestManageCleanupExemptsDownloadedMovies:
                 return True
             if event == 'notify.frontend':
                 return None
+            if event == 'scanner.scan':
+                # Reached only now that the harness supplies a REAL directory
+                # (see below). Returning nothing found is the point: it is what
+                # leaves `added_identifiers` empty so the cleanup has something
+                # to consider deleting.
+                return None
             raise AssertionError('Unexpected fireEvent call: %r' % (event,))
 
         class FakeDB:
             def reindex(self):
                 pass
 
+        # A real, EXISTING directory, not `[]`.
+        #
+        # updateLibrary now refuses to run its cleanup when any configured
+        # library directory is unreachable -- an unmounted NAS at scan time
+        # otherwise makes `added_identifiers` empty and purges every terminal
+        # movie. `[]` (no library configured at all) is one of the cases that
+        # refusal covers, so leaving it here would make every assertion in this
+        # class vacuous: nothing would be deleted regardless of the exemption
+        # being tested.
+        library = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, library, True) if hasattr(self, 'addCleanup') else None
+
         with (
             patch.object(Manage, 'conf', return_value=True),
             patch.object(Manage, 'isDisabled', return_value=False),
-            patch.object(Manage, 'directories', return_value=[]),
+            patch.object(Manage, 'directories', return_value=[library]),
             patch.object(Manage, 'shuttingDown', return_value=False),
             patch('couchpotato.core.plugins.manage.fireEvent', side_effect=fake_fire_event),
             patch('couchpotato.core.plugins.manage.get_db', return_value=FakeDB()),
