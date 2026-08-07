@@ -125,9 +125,22 @@ def login_header(app, web_base='/', base_url='http://testserver'):
     response = client.post('%slogin/' % web_base,
                            data={'username': '', 'password': PASSWORD})
     assert response.status_code == 302, response.text
-    header = response.headers.get('set-cookie')
-    assert header, 'a successful login emitted no Set-Cookie header'
-    return header
+
+    # A sub-path install emits TWO Set-Cookie headers: the session at
+    # `web_base`, and an expiry for the pre-upgrade `path=/` cookie that would
+    # otherwise shadow it (see TestTheLegacyRootCookieIsCleared). `headers.get`
+    # returns whichever comes first, so asking for "the" header silently
+    # measured the DELETION -- two tests here started asserting attributes of a
+    # cookie being destroyed. Pick the one that actually carries a value.
+    headers = response.headers.get_list('set-cookie')
+    assert headers, 'a successful login emitted no Set-Cookie header'
+
+    setting = [h for h in headers if attributes(h).value]
+    assert len(setting) == 1, (
+        'expected exactly one value-carrying Set-Cookie, got %d:\n  %s'
+        % (len(setting), '\n  '.join(headers))
+    )
+    return setting[0]
 
 
 def attributes(header):
@@ -354,3 +367,72 @@ class TestTheDeletionCannotMismatchTheCookieItDeletes:
                 )
 
         assert callable(session_cookie_attributes)
+
+
+class TestTheLegacyRootCookieIsCleared:
+    """An upgrade on a `url_base` install must not lock the operator out.
+
+    Before this PR the cookie was written at `path=/` and its value WAS the
+    `api_key` (`085160eb:couchpotato/__init__.py:488`), with a 30-day max-age
+    under "remember me" -- so it survives a browser restart. This PR writes at
+    `path=<web_base>`. On an install served at `/couchpotato/` the browser then
+    holds BOTH, and RFC 6265 5.4.2 sends the longer path first, so the legacy
+    `/` cookie arrives LAST. Starlette's parser keeps the last duplicate, so
+    the dead value wins every request.
+
+    Measured on the tip before this fix, `web_base='/couchpotato/'`, auth on::
+
+        legacy cookie sent LAST (real browser order) -> 302 /couchpotato/login/?reason=session_ended
+        legacy cookie sent FIRST                     -> 200
+
+    The operator upgrades, cannot log in, and the login page tells them their
+    password still works -- true, and useless. That is the lockout shape the
+    spec's "failure this must not repeat" section forbids, and it cannot occur
+    at `web_base='/'` where the two paths coincide, which is why AC-SEC-44's
+    upgrade drill missed it.
+    """
+
+    def test_login_expires_the_legacy_root_cookie_on_a_sub_path_install(self, tmp_path):
+        _, _, _, app = build(tmp_path, web_base='/couchpotato/')
+        try:
+            client = TestClient(app, follow_redirects=False)
+            response = client.post('/couchpotato/login/',
+                                   data={'username': '', 'password': PASSWORD})
+            assert response.status_code == 302, response.text
+
+            headers = response.headers.get_list('set-cookie')
+            cleared = [h for h in headers
+                       if attributes(h).get('path') == '/'
+                       and (attributes(h).get('max-age') in ('0', '-1')
+                            or 'expires' in attributes(h))]
+
+            assert cleared, (
+                'login did not expire the legacy path=/ cookie. Set-Cookie '
+                'headers were:\n  %s\nWithout this the pre-upgrade cookie '
+                'shadows the new one on every request and the operator cannot '
+                'log in.' % '\n  '.join(headers)
+            )
+        finally:
+            Env.set('web_base', '/')
+
+    def test_a_root_install_does_not_clear_the_cookie_it_just_set(self, tmp_path):
+        """The counterweight, and the reason this cannot be unconditional.
+
+        At `web_base='/'` the legacy path and the live path are the SAME, so
+        clearing `/` would expire the cookie the same response just issued and
+        nobody could ever log in. That is a worse lockout than the one being
+        fixed, on the far more common install.
+        """
+        _, _, _, app = build(tmp_path)
+
+        client = TestClient(app, follow_redirects=False)
+        response = client.post('/login/', data={'username': '', 'password': PASSWORD})
+        assert response.status_code == 302, response.text
+
+        headers = response.headers.get_list('set-cookie')
+        expiring = [h for h in headers
+                    if attributes(h).get('max-age') in ('0', '-1')]
+
+        assert not expiring, (
+            'a root install expired a cookie during login: %s' % expiring
+        )

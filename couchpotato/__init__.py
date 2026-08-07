@@ -680,6 +680,41 @@ def _server_terminates_tls() -> bool:
     return bool(Env.setting('ssl_cert') and Env.setting('ssl_key'))
 
 
+def _expire_legacy_root_cookie(response) -> None:
+    """Clear the pre-upgrade `path=/` cookie, but only where it is not ours.
+
+    Before this PR the session cookie was written at `path=/` and its value
+    WAS the `api_key`, with a 30-day max-age under "remember me" -- so it
+    survives a browser restart. This PR writes at `path=<web_base>`.
+
+    On an install served at a sub-path the browser then holds BOTH. RFC 6265
+    5.4.2 sends the longer path first, so the dead `/` cookie arrives LAST, and
+    Starlette keeps the last duplicate -- so the stale value wins every
+    request and the operator cannot log in at all. Measured at
+    `web_base='/couchpotato/'` with authentication on:
+
+        legacy cookie sent LAST (real browser order) -> 302 to /login/
+        legacy cookie sent FIRST                     -> 200
+
+    The login page then tells them their existing password still works, which
+    is true and useless. That is the lockout shape this change exists to avoid,
+    arriving on upgrade.
+
+    **Conditional, and the condition is the whole point.** At `web_base='/'`
+    the legacy path and the live path are the SAME, so clearing it here would
+    expire the cookie this very response just issued and nobody could ever log
+    in -- a worse lockout, on the far more common install. `web_base` is always
+    stored with a trailing slash, so `'/'` is the exact root test.
+    """
+    if Env.get('web_base') == '/':
+        return
+
+    response.delete_cookie(
+        SESSION_COOKIE_NAME,
+        **{**session_cookie_attributes(), 'path': '/'},
+    )
+
+
 def session_cookie_attributes() -> dict:
     """The ONE source of the session cookie's attributes, set and delete alike.
 
@@ -1254,6 +1289,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 max_age=lifetime if remember_me else None,
                 **session_cookie_attributes(),
             )
+            _expire_legacy_root_cookie(response)
 
         return response
 
