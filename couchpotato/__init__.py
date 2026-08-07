@@ -243,6 +243,36 @@ SESSION_LIFETIME_REMEMBERED = 30 * 24 * 3600
 # is the whole story.
 _SESSION_SECRET_WRITE_LOCK = threading.Lock()
 
+#: Has this process ever held a session secret?
+#:
+#: The ONLY way to tell a first-ever bootstrap from a regeneration. A secret
+#: deleted out from under a running process leaves the property store in
+#: exactly the state a fresh install is in -- no row -- so nothing about the
+#: database distinguishes "this install is new" from "this install lost its
+#: signing key". The difference matters to the operator: the first is expected
+#: and the second silently signed every device out, so one is INFO and the
+#: other is a WARNING that names the trigger (AC-QA-19).
+#:
+#: Process-wide, and therefore reset between tests by `tests/unit/conftest.py`.
+#: The last global this branch added leaked into six other tests with a failure
+#: that read like "the code stopped logging" (spec gap 15).
+_session_secret_seen = False
+_SESSION_SECRET_SEEN_LOCK = threading.Lock()
+
+
+def _remember_a_secret_exists():
+    global _session_secret_seen
+    with _SESSION_SECRET_SEEN_LOCK:
+        _session_secret_seen = True
+
+
+def reset_session_secret_state():
+    """Forget that this process has seen a secret. For tests only."""
+    global _session_secret_seen
+    with _SESSION_SECRET_SEEN_LOCK:
+        _session_secret_seen = False
+
+
 _SESSION_SECRET_MISSING = (
     'The session signing secret could not be read, so NO login can succeed and '
     'every browser session is refused. The api_key and the /api/ routes are '
@@ -325,6 +355,131 @@ def verify_session_token(token, secret, now=None) -> bool:
     return current < expires_at
 
 
+# --- Why a session was refused (AC-OPS-44) ---
+#
+# Four things can be wrong with a session cookie and the operator's response to
+# each is different: no cookie at all is a first visit or a sign-out, a
+# malformed one is something other than this server writing it, a bad signature
+# is a rotation (a sign-out, a password change or the upgrade D5 describes) or a
+# forgery, an expired one is a tab left open. One "authentication failed" line
+# collapses all four into the diagnosis the operator already had.
+#
+# Every one of these is reachable by an UNAUTHENTICATED caller once per request,
+# so all of them go through `log_suppressed` and each keeps its OWN key. An
+# unbounded record per refused cookie is L1 back again with a friendlier
+# message: measured before that fix, 1,000 credential-free requests wrote
+# 533,043 bytes, so roughly 10,300 of them empty the whole 5.5 MB ring.
+#
+# INFO rather than ERROR or DEBUG. A refused cookie is the normal outcome of a
+# first visit, so it is not an error; but AC-OPS-44 requires each reason to
+# reach a root level of INFO, and a reason emitted only at DEBUG is invisible on
+# a production install, which is where the question gets asked.
+#
+# The token is a fixed literal per class so `grep session-rejected:` answers
+# "why is this browser being sent to the login page" in one command. Neither
+# the cookie value nor the secret appears in any of them.
+SESSION_REJECTIONS = {
+    'no_cookie': (
+        'session-rejected:no-cookie',
+        'Session refused (session-rejected:no-cookie): the request carried no '
+        'session cookie, so it was sent to the login page. Expected on a first '
+        'visit, after a sign-out, and from anything that does not keep '
+        'cookies.',
+    ),
+    'malformed': (
+        'session-rejected:malformed', 'Session refused '
+        '(session-rejected:malformed): the session cookie is not shaped like '
+        'one this server issues. Clear the cookies for this site and sign in '
+        'again; if it comes back, something other than CouchPotato is setting '
+        'a "user" cookie on this address.',
+    ),
+    'bad_signature': (
+        'session-rejected:bad-signature', 'Session refused '
+        '(session-rejected:bad-signature): the session cookie is well formed '
+        'but this server did not sign it. Either the signing key was replaced '
+        '-- a sign-out, a password change or an upgrade ends every session on '
+        'every device -- or the cookie was forged. Signing in again issues a '
+        'valid one.',
+    ),
+    'expired': (
+        'session-rejected:expired',
+        'Session refused (session-rejected:expired): this server signed the '
+        'session cookie, but its lifetime has run out. Sign in again, and tick '
+        '"Remember me" for a session that lasts 30 days instead of 24 hours.',
+    ),
+}
+
+#: Longer than any cookie this server issues, and short enough that nothing
+#: quadratic can be provoked by sending a big one.
+#:
+#: A minted token is about 54 characters (a 10-digit expiry, a dot, a
+#: 43-character base64 signature). Two things follow from the cap, and it is
+#: worth being exact about which: it stops the server computing HMAC-SHA256
+#: over a stranger's 100 KB twice on every request, and it classifies an
+#: over-long value as MALFORMED rather than as a forged signature, which is
+#: what it is. It is NOT what stands between us and a quadratic `int()` parse:
+#: `int(payload)` is only reached once `compare_digest` has already accepted
+#: the signature, so nobody without the secret can steer a large value into it.
+MAX_SESSION_TOKEN_LENGTH = 256
+
+#: A clock before any expiry this server could have written, used to ask "would
+#: this token be valid if time were not the problem?". Not zero: an absurd but
+#: correctly signed payload could be zero or negative, and the answer would then
+#: be "bad signature" for a token whose signature is fine.
+_BEFORE_ANY_EXPIRY = -(2 ** 62)
+
+
+def session_suppression_key(reason: str) -> str:
+    """The `log_suppressed` key for one rejection class.
+
+    One key per class, never one shared key. Sharing bounds the log just as
+    well and loses half the diagnosis, and it is invisible to a behavioural
+    test whenever the two conditions cannot co-occur -- which is true of all
+    four of these, since a request has one cookie. That exact shape survived
+    every behavioural test on this branch once already.
+    """
+    return 'session_rejected_%s' % reason
+
+
+def session_rejection_reason(token, secret, now=None):
+    """Which class of refusal `token` falls into, or None if it is acceptable.
+
+    `verify_session_token` is asked FIRST and is the only thing that can return
+    "acceptable". Classifying before verifying would be two functions deciding
+    whether a session is good, and the one that drifts is always the permissive
+    one: `int('1_2')` is 12 while `'1_2'.isdigit()` is False, so a
+    structure-first version disagrees with the verifier about a token it would
+    otherwise accept.
+    """
+    if not token or not isinstance(token, str):
+        return 'no_cookie' if not token else 'malformed'
+
+    if len(token) > MAX_SESSION_TOKEN_LENGTH:
+        return 'malformed'
+
+    if verify_session_token(token, secret, now=now):
+        return None
+
+    payload, separator, signature = token.partition('.')
+    if not separator or not signature or not signature.isascii():
+        return 'malformed'
+    if not payload.isdigit():
+        return 'malformed'
+
+    # Same token, same secret, no clock. Accepted here means the signature was
+    # ours and only the expiry refused it.
+    if verify_session_token(token, secret, now=_BEFORE_ANY_EXPIRY):
+        return 'expired'
+
+    return 'bad_signature'
+
+
+def _log_session_rejection(reason: str):
+    """Say why, once per class per suppression window, naming nothing secret."""
+    token, message = SESSION_REJECTIONS[reason]
+    log_suppressed(log.info, session_suppression_key(reason), message)
+
+
 def _session_secret_row(db):
     """The stored secret's property document, or None.
 
@@ -385,21 +540,51 @@ def ensure_session_secret(db=None) -> str:
     """Read the signing secret, creating it once if this install has none.
 
     Called from `runner.py` at startup, BEFORE the first request is served, so
-    the request path only ever reads (D2). Verification never reaches here.
+    the ordinary request path only ever reads (D2). Verification never reaches
+    here.
+
+    The one exception is `login_post`, and only AFTER the submitted password has
+    been verified (D14). Without it, a property row that is deleted or lost
+    means locked out until somebody restarts the container -- on a box whose
+    owner may have no shell -- and D2's two stated reasons do not apply to a
+    verified login: the write goes through the same compare-and-swap writer
+    that makes concurrent creates safe, and a login is a rare ceremony that has
+    already spent ~166 ms in bcrypt.
     """
     db = get_db() if db is None else db
 
     with _SESSION_SECRET_WRITE_LOCK:
         existing = _session_secret_row(db)
         if existing is not None and existing.get('value'):
+            _remember_a_secret_exists()
             return existing['value']
+
+        # Read BEFORE the create marks it seen.
+        regenerating = _session_secret_seen
 
         secret = generate_session_secret()
         _write_session_secret(secret, db=db)
-        log.info('Created a session signing secret. Browser logins are now '
-                 'signed sessions rather than the api_key, so any existing '
-                 'login is invalidated and must sign in again. The api_key '
-                 'itself is unchanged and every script keeps working.')
+        _remember_a_secret_exists()
+
+        if regenerating:
+            # WARNING, not INFO. This process held a secret and now the row is
+            # gone: nothing about the database distinguishes that from a fresh
+            # install, but the consequences are opposite. Every browser on
+            # every device was just signed out, and the operator did not ask
+            # for it -- so the log has to say what happened rather than
+            # repeating the first-boot line.
+            log.warning('The session signing secret is NO LONGER IN THE '
+                        'DATABASE, so a replacement has been created. Every '
+                        'browser session on every device has been signed out '
+                        'and must log in again. Something removed the stored '
+                        'property row -- a restored backup, a manual delete, '
+                        'or database corruption. The api_key is unchanged, so '
+                        'scripts and downloaders are unaffected.')
+        else:
+            log.info('Created a session signing secret. Browser logins are now '
+                     'signed sessions rather than the api_key, so any existing '
+                     'login is invalidated and must sign in again. The api_key '
+                     'itself is unchanged and every script keeps working.')
         return secret
 
 
@@ -431,11 +616,35 @@ def rotate_session_secret(db=None) -> str:
     with _SESSION_SECRET_WRITE_LOCK:
         secret = generate_session_secret()
         _write_session_secret(secret, db=db)
+        # A deliberate rotation is not a disappearance: this must not make the
+        # NEXT `ensure_session_secret` on this process look like a first boot.
+        _remember_a_secret_exists()
         log.info('Rotated the session signing secret: every browser session, '
                  'on every device, has been signed out and must log in again. '
                  'The api_key is unchanged, so scripts, the userscript and '
                  'every downloader keep working.')
         return secret
+
+
+def session_secret_store_is_readable() -> bool:
+    """Can we tell "this install has no secret" from "we cannot see"?
+
+    The two are indistinguishable from `get_session_secret`, which answers None
+    to both -- and D14's login bootstrap must act on only ONE of them. A row
+    that is absent should be created; a store that RAISED must be left alone,
+    because writing a fresh secret over a row we cannot read would invalidate
+    every live session on the strength of a transient fault, and AC-SEC-33 and
+    AC-ARCH-6 both say a raising store means fail closed rather than fix it.
+
+    Uses the same read path `get_session_secret` uses, deliberately: a probe
+    down a different path would answer a different question, which is exactly
+    how the first version of this got it wrong.
+    """
+    try:
+        Env.prop(SESSION_SECRET_PROPERTY)
+    except Exception:
+        return False
+    return True
 
 
 def get_session_secret():
@@ -456,6 +665,9 @@ def get_session_secret():
         log_suppressed(log.error, 'session_secret_missing', _SESSION_SECRET_MISSING)
         return None
 
+    # Reading one counts as having seen one: an install whose runner bootstrap
+    # was skipped still knows a secret existed before it vanished.
+    _remember_a_secret_exists()
     return secret
 
 
@@ -525,6 +737,11 @@ def get_current_user(request: Request):
 
     token = request.cookies.get(SESSION_COOKIE_NAME)
     if not token:
+        # Before the secret is read, deliberately. A caller with no cookie at
+        # all must not be able to provoke the property-store lookup, and this
+        # is by far the most common refusal: every first visit, every crawler,
+        # every request after a sign-out.
+        _log_session_rejection('no_cookie')
         return None
 
     # No legacy branch. The cookie used to be compared against
@@ -534,11 +751,15 @@ def get_current_user(request: Request):
     # signature, so it is refused here like any other forgery.
     secret = get_session_secret()
     if not secret:
+        # Already logged, under its own suppression key and at ERROR: an
+        # unreadable secret is a broken install, not a refused visitor.
         return None
 
-    if verify_session_token(token, secret):
+    reason = session_rejection_reason(token, secret)
+    if reason is None:
         return True
 
+    _log_session_rejection(reason)
     return None
 
 
@@ -965,6 +1186,54 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # all, because signing with '' or a constant would hand every reader
         # of this source a valid session on every install.
         secret = get_session_secret()
+
+        if not secret and session_secret_store_is_readable():
+            # D14. THE ONLY REQUEST PATH THAT MAY CREATE A SECRET, and it is
+            # reached only here: after `check_password` has accepted the
+            # submitted password, and only when the store is READABLE and
+            # simply has no secret in it.
+            #
+            # That second condition is not belt-and-braces. `get_session_secret`
+            # answers None both to "this install has never had a secret" and to
+            # "the property store just raised", and those need opposite
+            # responses: create in the first, fail closed in the second.
+            # Creating on a raising store would write a fresh secret over a row
+            # nobody could read, signing every live session out on the strength
+            # of a transient fault -- and AC-SEC-33 says a raising store issues
+            # no cookie. Conflating them is what the first version of this did.
+            #
+            # D2 said "never on a request path" for two measured reasons, and
+            # neither survives the move: `Settings.setProperty`'s unguarded
+            # get-then-act race is not what runs (the write goes through the
+            # one compare-and-swap writer), and the per-request property read
+            # that would take the adapter's process-wide RLock is not what this
+            # is -- a login is a ceremony that has just spent ~166 ms in bcrypt.
+            # D2's wording is amended to "never on an unauthenticated request
+            # path, and never before a credential has been verified".
+            #
+            # What it buys: a property row that is deleted, lost or restored
+            # away no longer means locked out until somebody restarts the
+            # container. That is the same lockout shape this whole change
+            # exists to avoid, arriving through a different door.
+            #
+            # AC-QA-21 is untouched. With authentication off there is no stored
+            # password, so `check_password` above cannot succeed, so this is
+            # unreachable and an install that never enabled authentication
+            # never grows the row.
+            try:
+                secret = ensure_session_secret()
+            except Exception:
+                # Fail closed, and say so. Redirecting with no cookie sends the
+                # operator back to the login page, which is honest: they are
+                # not signed in. Signing with '' or a constant to avoid the
+                # loop would hand a valid session to every reader of this file.
+                log.error('A correct password was accepted but the session '
+                          'signing secret could not be created, so no session '
+                          'was issued and the login cannot complete. Check '
+                          'that the database is writable. %s',
+                          traceback.format_exc())
+                secret = None
+
         if secret:
             remember_me = tryInt(form.get('remember_me', 0)) > 0
             lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME

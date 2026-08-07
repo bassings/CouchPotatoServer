@@ -51,9 +51,20 @@ PUBLIC_ROUTES = {
     '/robots.txt': 'crawler directive, carries no data',
     '/api/{route:path}': 'authenticated by api_key inside callApiHandler, not by session. '
                          'A session dependency here would break every script and the userscript.',
-    '/getkey': 'PRE-EXISTING, and slated for deletion later in this PR (AC-SEC-5). Listed so '
-               'the inventory is honest about what ships today rather than passing by '
-               'omission; this entry goes when the route does.',
+    # CORRECTED (AC-SEC-47). This entry used to read "slated for deletion later
+    # in this PR (AC-SEC-5)", which was wrong on both counts by the time anyone
+    # read it: AC-SEC-5 belongs to a different spec, and no criterion in
+    # specs/PR2B-SESSION-COOKIE.md deletes this route. It stays, and it is not
+    # a leftover -- the userscript's add-via-URL flow trades a username and
+    # password for the api_key here, so removing it breaks a live integration.
+    # A comment promising a deletion that is not scheduled is worse than no
+    # comment: the next reader treats the route as already handled.
+    '/getkey': 'PRE-EXISTING and STAYING: it exchanges a username and password for the '
+               'api_key, which the userscript needs. Public because a caller who has no '
+               'key cannot authenticate with one. It is a credential-guessing target with '
+               'a better prize than the login form, so D14 added it to '
+               '_ALWAYS_LIMITED_ROUTES (AC-SEC-42), and the key it returns is enumerated '
+               'in tests/unit/test_api_key_exposure_inventory.py (AC-SEC-47).',
     '/getkey/': 'trailing-slash variant of the above',
     '/old': 'legacy UI redirect; retirement tracked in specs/UI-MIGRATION.md',
     '/old/': 'trailing-slash variant of the above',

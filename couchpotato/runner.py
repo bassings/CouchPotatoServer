@@ -21,6 +21,90 @@ from urllib3 import disable_warnings
 from couchpotato.core.softchroot import SoftChrootInitError
 
 
+def resolve_auth_required_setting():
+    """Decide `auth_required` once, at startup, and write the answer down.
+
+    Returns the value it wrote, or None if it wrote nothing.
+
+    ABSENT means "this `config.ini` predates the setting", which is every
+    upgraded install. Deriving from `bool(password)` is what keeps an install
+    that had bothered to set one protected instead of falling open on upgrade.
+    Writing the resolved value back means that from the second boot onward it is
+    an explicit 0 or 1 the operator can find with `grep` -- and that matters
+    because grepping `config.ini` is the documented lockout recovery: a setting
+    that exists only as an inference cannot be recovered from.
+
+    An EXPLICIT value is never touched, in either direction. An operator who
+    turned authentication off on a box that still has a password stored made a
+    decision, and a boot is not the place to reverse it.
+
+    Extracted from `runner()` for AC-ARCH-10 so it can be driven against a
+    settings double with no server, no database and no loader. **Its CALL SITE
+    must stay above `loader.run()`** -- `registerDefaults` materialises the
+    registered default of 0 into the config, after which "absent" is never true
+    again and every upgraded install with a password quietly becomes public.
+    An executed test cannot see that, so the source-order guard in
+    `tests/unit/test_auth_required_gate.py` stays as well.
+    """
+    # Function-local. `runner.py` has no module-level `Env` -- `runCouchPotato`
+    # takes it as a PARAMETER (`CouchPotato.py:99` passes the same class this
+    # imports), and `log` is built after `setup_logging`. Importing here keeps
+    # this callable on its own, which is the whole point of extracting it.
+    from couchpotato.core.logger import CPLog
+    from couchpotato.environment import Env
+
+    log = CPLog(__name__)
+
+    configured = Env.setting('auth_required', default=None)
+    if configured not in (None, ''):
+        return None
+
+    resolved = 1 if Env.setting('password') else 0
+
+    try:
+        Env.setting('auth_required', value=resolved)
+    except Exception:
+        # LEAVE IT ABSENT. `Settings.save()` writes a sibling temp file and
+        # renames it, so a failure here means `config.ini` is untouched and
+        # still holds the api_key, the password and every downloader
+        # credential (AC-DATA-12). The in-memory value has to go with it: a
+        # process enforcing something `config.ini` does not say is the worst of
+        # both, because the operator greps the file and finds nothing while the
+        # server behaves as though the setting were there. Absent means the
+        # next boot re-derives the same answer.
+        _forget_auth_required()
+        log.error('Could not write the resolved auth_required value to the '
+                  'settings file, so it has been left unset and the next '
+                  'start will work it out again. Authentication for THIS run '
+                  'is derived from whether a password is stored. Check that '
+                  'the config directory is writable. %s', traceback.format_exc())
+        return None
+
+    log.info('auth_required was not set; resolved to %s from the stored '
+             'password and written to the settings file', resolved)
+    return resolved
+
+
+def _forget_auth_required():
+    """Undo the in-memory half of a write-back whose save failed.
+
+    Removal, not "set it back to what it was": it was ABSENT, and absent is the
+    only state that makes the next boot re-derive rather than trust a value
+    that never reached disk.
+    """
+    from couchpotato.environment import Env
+
+    try:
+        parser = getattr(Env.get('settings'), 'p', None)
+        if parser is not None and parser.has_option('core', 'auth_required'):
+            parser.remove_option('core', 'auth_required')
+    except Exception:
+        # Best effort, and deliberately silent: the ERROR the caller is about
+        # to log is the one the operator needs, and a second exception here
+        # would replace it with a less useful one.
+        pass
+
+
 def _port_argument(value):
     """argparse `type=` for `--port`: an int in the valid TCP port range.
 
@@ -269,21 +353,19 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.warning('%s %s %s line:%s', category.__name__, message, filename, lineno)
     warnings.showwarning = customwarn
 
-    # Resolve `auth_required` ONCE, at startup, and write it back.
+    # Resolve `auth_required` ONCE, at startup, and write it back. The body
+    # lives in `resolve_auth_required_setting` above so it can be executed by a
+    # test rather than only string-searched (M2, AC-ARCH-10).
     #
-    # Absent means "config.ini predates this setting". Deriving from
-    # `bool(password)` keeps installs that had bothered to set a password
-    # protected instead of falling open on upgrade. Writing the resolved value
-    # back means that after the first boot it is an explicit 0 or 1 the
-    # operator can find with `grep` -- which matters because grepping
-    # config.ini is the documented lock-out recovery path, and a setting that
-    # only exists as an inference cannot be recovered from.
+    # THIS CALL'S POSITION IS PART OF THE BEHAVIOUR. It must stay above
+    # `loader.run()`: `registerDefaults` materialises the registered default of
+    # 0 into the config, after which the "absent" check never fires again and
+    # every upgraded install that had a password set comes up PUBLIC -- with no
+    # failing test, no log line, and a diff that looks like tidying. An
+    # executed unit test cannot pin an ordering, so
+    # `tests/unit/test_auth_required_gate.py` guards it by source order.
     from couchpotato import auth_is_required
-    if Env.setting('auth_required', default=None) in (None, ''):
-        resolved = 1 if Env.setting('password') else 0
-        Env.setting('auth_required', value=resolved)
-        log.info('auth_required was not set; resolved to %s from the stored '
-                 'password and written to the settings file', resolved)
+    resolve_auth_required_setting()
 
     if not auth_is_required():
         # WARNING, not INFO: an unauthenticated instance is a decision, and the

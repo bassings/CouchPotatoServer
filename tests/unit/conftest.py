@@ -32,3 +32,21 @@ def _isolate_log_suppression():
     reset_log_suppression()
     yield
     reset_log_suppression()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_session_secret_state():
+    """AC-QA-19's "have we ever held a secret?" flag is process-wide too.
+
+    It is the only thing that can tell a first-ever bootstrap from a
+    regeneration, because a deleted property row leaves the database in exactly
+    the state a fresh install is in. Being process-wide, the first test to
+    bootstrap a secret would otherwise turn every later test's INFO into a
+    WARNING -- which is spec gap 15 happening a second time, so it gets the
+    same automatic reset rather than a note asking people to remember.
+    """
+    from couchpotato import reset_session_secret_state
+
+    reset_session_secret_state()
+    yield
+    reset_session_secret_state()

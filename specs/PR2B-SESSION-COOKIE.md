@@ -10,16 +10,21 @@
 > remediation programme. The parent plan's M15 rule binds: no implementation
 > before the lenses write the `AC-<LENS>-<n>` criteria below.
 
-**Status:** in progress — criteria written, tranches A, B, C and D implemented
+**Status:** in progress — criteria written, tranches A, B, C, D and E implemented
 **Lenses run:** all nine at planning (security, qa, simplicity, product, design,
 accessibility, data, architecture, operability) · **Skipped:** none
 
 **The two blockers this PR created are now closed.** The sign-out control (D8,
 tranche C) and the rate-limit, log-ring and unauthenticated-write fixes
 (tranche D) have landed, so the branch no longer carries a defect of its own
-making into a `master` push, which auto-publishes a beta. What remains open is
-listed under D14 and in the gap list: AC-OPS-44 and AC-QA-19 are unimplemented,
-not deferred by decision.
+making into a `master` push, which auto-publishes a beta.
+
+**Tranche E closes the last of them.** AC-OPS-44 and AC-QA-19 are implemented
+(D14, D15), M2's startup migration is executed rather than string-searched, the
+upgrade path and the hostile-cookie set are driven end to end, and the residual
+`api_key` exposure is enumerated. What is left outstanding on the whole PR is
+listed under "Still open after tranche E" below; none of it is a defect this
+branch introduced.
 
 ## Problem
 
@@ -497,6 +502,87 @@ Without this, a deleted or corrupted property row means locked out until
 restart, on a box whose owner may not have shell access to restart it. That is
 the lockout shape this spec exists to prevent, arriving by a different door.
 
+## D15 — tranche E: AC-OPS-44, AC-QA-19, M2, the upgrade path and the api_key residue
+
+- **An UNREADABLE property store is not an ABSENT secret, and D14 has to say
+  which one it means.** `get_session_secret` answers `None` to both, and the two
+  need opposite responses: create in the first, fail closed in the second.
+  Conflating them turned `test_login_issues_no_cookie_when_the_secret_cannot_be_read`
+  (AC-SEC-33) red on the first attempt — correctly, because creating a fresh
+  secret over a row nobody can read signs every device out on the strength of a
+  transient fault, and AC-ARCH-6 forbids the store's failure being "fixed" by
+  writing. The boundary is `session_secret_store_is_readable()`, which probes
+  down the SAME path `get_session_secret` uses; a probe down a different path
+  answers a different question.
+
+- **The rejection reasons are logged at INFO, not ERROR, and each carries its
+  own suppression key.** INFO because a refused cookie is the ordinary outcome
+  of a first visit rather than a fault, and AC-OPS-44 requires the reason to
+  reach a root level of INFO — DEBUG is invisible on a production install, which
+  is where the question gets asked. All four go through `log_suppressed`
+  (AC-OPS-45), and the derived keys (`session_rejected_<reason>`) are asserted
+  distinct from each other and from the module's three literal keys, because two
+  call sites sharing a key is undetectable behaviourally whenever the conditions
+  cannot co-occur — and no two of these can, since a request has one cookie.
+  **Re-measured after adding them: 1,000 unauthenticated requests now produce 4
+  application records at INFO or above, 1,124 bytes on disk** (tranche D
+  measured 2 records / 704 bytes before this logging existed; the pre-L1-fix
+  baseline was 1,000 records / 533,043 bytes).
+
+- **`MAX_SESSION_TOKEN_LENGTH` exists for a narrower reason than it looks.**
+  `int(payload)` — the quadratic parse — is only reached once `compare_digest`
+  has already accepted the signature, so nobody without the secret can steer a
+  large value into it. What the cap buys is that the server does not HMAC a
+  stranger's 100 KB twice per request, and that an over-long value is classified
+  as MALFORMED rather than as a forgery. It is in the tree only because two
+  assertions kill it.
+
+- **M2's extraction made the existing source-order guard vacuous, twice over,
+  and the guard was strengthened rather than kept as-is.** Moving the block into
+  a module-level function moved the `Env.setting('auth_required', value=`
+  literal to the top of the file, where it precedes everything and the ordering
+  assertion holds no matter where the function is CALLED; and the new docstring
+  contains the words `loader.run()`, so `str.find` matched prose. The guard now
+  pins the CALL by line number, excludes comment lines, and asserts each pattern
+  matches **exactly once**. Both halves are proven by moving the call below
+  `loader.run()` and watching it fail.
+
+- **A failed write-back removes the value from memory as well as leaving the
+  file untouched.** `Settings.save()` is already atomic, so `config.ini` is
+  byte-identical on failure (AC-DATA-12) — but a process enforcing a value the
+  file does not contain is the worst of both, because the operator greps the
+  file, finds nothing, and the server behaves as though the setting were there.
+  Absent is the only state that makes the next boot re-derive.
+
+- **The `/getkey` entry in `PUBLIC_ROUTES` was wrong, not merely stale.** It
+  promised deletion "later in this PR (AC-SEC-5)"; AC-SEC-5 belongs to a
+  different spec and nothing here deletes the route. A comment promising a
+  deletion that is not scheduled is worse than none: the next reader treats the
+  route as handled.
+
+### Still open after tranche E
+
+Recorded because "the tranche is done" and "the PR is done" are different
+claims.
+
+- **AC-ARCH-4 (zero database reads after the first per process) is NOT
+  implemented.** `get_session_secret` reads `Env.prop` on every authenticated
+  request, which takes the adapter's process-wide `RLock` at a measured 11.5
+  us/call. Nothing on this branch caches it and no test asserts the counting
+  spy the criterion names. It is a performance criterion (precedence rank 6),
+  not a correctness one, and adding a cache interacts with AC-ARCH-5's
+  no-stale-cache requirement — so it wants its own change rather than a
+  late addition here.
+- **AC-OPS-49 (run the previous release against a directory this version
+  wrote) is an operator procedure, not a test**, and has not been executed.
+- **AC-DATA-13's documentation half** — the restore-a-pre-rotation-snapshot
+  consequence, written into the operator docs beside the deploy procedure —
+  is not written.
+- **AC-SEC-47's PR-body sentence** is owed by whoever raises the PR. The
+  enumeration and its test exist
+  (`tests/unit/test_api_key_exposure_inventory.py`); the one sentence stating
+  the residue does not.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
@@ -676,3 +762,56 @@ against the repo, not taken from the report.**
     test asserting the keys are distinct, plus a behavioural test on the pair
     that CAN co-occur. **A criterion that asks only for behaviour cannot cover
     this class**; AC-ARCH-2's grep shape can.
+
+**From tranche E, 2026-08-07.**
+
+19. **AC-SEC-33 and D14 contradict each other for one input, and no lens
+    owned both.** AC-SEC-33 says "if the property read **or write** raises,
+    login issues no cookie"; D14 says a verified login may create a missing
+    secret. Those are the same input — `get_session_secret()` returning
+    `None` — with opposite required outcomes, and the criterion that fires
+    depends on WHY it returned None, which neither criterion mentions. Caught
+    only because an existing tranche-A test went red. This is the same shape
+    as gaps 3 and 4: two criteria that cannot both hold, each written by a
+    lens that owned one of them.
+
+20. **Extracting a block into a function can make a source-order guard
+    vacuous without touching the guard.** The guard searched for a literal
+    that the extraction moved to the top of the file, so it began asserting
+    that the *definition* precedes `loader.run()` rather than the *call* —
+    permanently true, and exactly the "incidentally passing" shape. The same
+    edit put `loader.run()` inside a docstring, so the second half of the
+    guard matched prose. **No rule covers this**: the project rules say to
+    prove the mutation landed, and this is the inverse — the guard stopped
+    measuring the thing while the code was still correct, so nothing failed.
+    A pattern-based guard needs to assert its pattern matches EXACTLY ONCE,
+    and to exclude comments, or it silently re-targets itself.
+
+21. **Gap 9 (`Env` contamination) recurred purely through alphabetical
+    position.** Three new test modules sort before
+    `test_releases_partial_route.py`, whose fixture sets no `settings` of its
+    own; they inherited an install with `auth_required = 1` and a password,
+    and 34 of its tests were served the login page, failing with messages
+    about missing release names. Nothing about the new modules was wrong that
+    was not equally wrong in the four existing session suites — those simply
+    sort later. Fixed for the new ones with `tests/unit/env_helper.py`, but
+    **the existing suites still leak**, and the next module whose name sorts
+    early will find it again. No criterion covers test isolation.
+
+22. **AC-QA-10's `é` cannot be sent as a `str` at all.** `httpx` encodes
+    header values as ascii and raises in the CLIENT, so the naive spelling of
+    that criterion produces a harness error rather than a server refusal — and
+    the literal typed into the file was `e` + U+0301, which no single-byte
+    encoding can carry either. Headers are bytes; the value has to be sent as
+    latin-1 (or UTF-8) bytes, and both wire forms are now covered. A criterion
+    that names a character should say which encoding it means.
+
+23. **One E2E test flaked once and was not investigated further.**
+    `tests/e2e/suggestions.spec.ts:99` failed a `toBeFocused` assertion on the
+    first full `make verify`, then passed in isolation, passed in a full E2E
+    run on the untouched tip, and passed in the full `make verify` after the
+    change. Nothing in this tranche touches suggestions or focus, and the E2E
+    instances run with authentication off, so the session code does not
+    execute there. Recorded rather than fixed: per the project's own rules a
+    flaky test is worse than an absent one, because it teaches everyone to
+    re-run until green.

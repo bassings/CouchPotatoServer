@@ -421,7 +421,32 @@ class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
     So the ordering is pinned. A source-order assertion is a blunt instrument,
     but the alternative is a comment, and this repo has already learned what
     comments are worth when the code stops matching them.
+
+    **What it pins is the CALL SITE**, and that changed under it once already.
+    The block became a module-level function (M2, AC-ARCH-10), which moved the
+    `Env.setting('auth_required', value=` literal to the top of the file --
+    where it precedes everything and the ordering assertion is satisfied no
+    matter where the function is actually CALLED. The same edit put the words
+    "loader.run()" inside that function's docstring, so `str.find` matched the
+    prose rather than the statement. Both halves of the guard were measuring
+    text that has nothing to do with the ordering.
+
+    Hence: lines, not character offsets; the CALL, not the definition; and each
+    pattern asserted to match exactly once, because a pattern that matches
+    twice silently measures whichever came first.
     """
+
+    @staticmethod
+    def _statement_lines(source, prefix):
+        """Line numbers of real statements starting with `prefix`.
+
+        Comment lines are excluded, so a prohibition written in prose next to
+        the code cannot be mistaken for the code.
+        """
+        return [
+            number for number, line in enumerate(source.splitlines(), start=1)
+            if line.strip().startswith(prefix) and not line.strip().startswith('#')
+        ]
 
     def test_the_migration_precedes_loader_run(self):
         from pathlib import Path
@@ -429,19 +454,41 @@ class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
         source = (Path(__file__).resolve().parents[2] /
                   'couchpotato' / 'runner.py').read_text(encoding='utf-8')
 
-        migration = source.find("Env.setting('auth_required', value=")
-        loader_run = source.find('loader.run()')
+        calls = self._statement_lines(source, 'resolve_auth_required_setting()')
+        loader_runs = self._statement_lines(source, 'loader.run()')
 
-        assert migration != -1, (
-            'the auth_required startup migration is gone from runner.py; if '
-            'that was deliberate, this guard needs to go with it'
+        assert len(calls) == 1, (
+            'expected exactly one call to resolve_auth_required_setting(), '
+            'found %d at lines %s. Zero means the startup migration is gone; '
+            'more than one means this assertion is measuring whichever comes '
+            'first.' % (len(calls), calls)
         )
-        assert loader_run != -1, 'loader.run() not found in runner.py'
-        assert migration < loader_run, (
-            'the auth_required migration now runs AFTER loader.run(). '
-            'registerDefaults will have written auth_required = 0 by then, so '
-            'the "absent" check skips and every upgraded install that had a '
-            'password set becomes PUBLIC.'
+        assert len(loader_runs) == 1, (
+            'expected exactly one loader.run() statement, found %d at lines %s'
+            % (len(loader_runs), loader_runs)
+        )
+        assert calls[0] < loader_runs[0], (
+            'the auth_required migration now runs AFTER loader.run() (line %d '
+            'vs %d). registerDefaults will have written auth_required = 0 by '
+            'then, so the "absent" check skips and every upgraded install that '
+            'had a password set becomes PUBLIC.' % (calls[0], loader_runs[0])
+        )
+
+    def test_the_migration_still_writes_the_setting_back(self):
+        """The other half. An ordering assertion is satisfied perfectly by a
+        migration that no longer writes anything."""
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] /
+                  'couchpotato' / 'runner.py').read_text(encoding='utf-8')
+
+        writes = self._statement_lines(source, "Env.setting('auth_required', value=")
+
+        assert len(writes) == 1, (
+            'expected exactly one write-back of auth_required in runner.py, '
+            'found %d at lines %s. Zero means an install that predates the '
+            'setting never gets an explicit value written down, and grepping '
+            'config.ini is the documented lockout recovery.' % (len(writes), writes)
         )
 
 
