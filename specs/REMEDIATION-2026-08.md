@@ -94,12 +94,13 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
-- [ ] T3: PR 3 — M1b data correctness at the SQLite seam — state: in-review #227
+- [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
+- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
@@ -145,6 +146,30 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 7** — **#227 MERGED** (master `cd358c20`), verified with `gh pr view`,
+  not from memory: CI 19/19, 0 unresolved threads, mergeStateStatus CLEAN.
+  Branch deleted. T3 ticked. T4, T5 and T8 are now unblocked and may run in
+  parallel.
+
+  Added **T9 / PR 7** at the owner's request: make the accessibility gate fast.
+  Measured before scoping, and the framing needed correcting -- the job builds
+  no Docker container. It is normally ~2 minutes (1m39s, 2m17s, 2m10s, 1m58s
+  across four runs) with ONE 11m37s outlier, while the unrelated `docker` job
+  is a steady ~1m20s. The real complaint is wall-clock: `accessibility` is
+  `needs: ui-e2e-tests`, itself `needs: [test, ui-unit-tests]`, so it is third
+  in a serial chain. Scoped as measure-first (T9.1), then the duplicated
+  uncached `playwright install --with-deps` paid twice (T9.2), then the
+  unexplained `needs:` edge (T9.3). Reducing what the suite covers is
+  explicitly out of scope.
+
+- **Tick 6** — push of ce4a0894 landed, local gate green, local == remote.
+  Armed: CI watcher on #227. Next wake expects CI settled; if green and threads
+  clear, merge #227 -> T3 `merged`, which unblocks T4, T5 and T8 to run in
+  parallel. Per review M15, PR 4 (T5) runs /plan-cycle FIRST so its lenses write
+  numbered AC-<LENS>-<n> into this spec before any code is written: a review
+  with no acceptance criteria can only report what it happens to notice, which
+  is exactly what this cycle's own coverage statements showed.
 
 - **Tick 5** — review cycle wf_3eafdf36-b0b returned: 7 lenses, all FINDINGS,
   none BLOCKED. 3 High, 15 Medium, 9 Low.
@@ -1834,6 +1859,86 @@ before restoring. A type gate nobody has watched fail is decoration (§11).
 
 **Explicitly not in scope:** widening beyond `core/db/`. Each additional package
 is its own decision with its own annotation cost.
+
+---
+
+## PR 7: Make the accessibility gate fast
+
+**Raised by the owner, 2026-08-07:** the accessibility check feels like it takes
+over ten minutes, which is too slow for a gate that runs on every push.
+
+**Measured before scoping, and the framing needs correcting.** The report was
+"more than 10 mins just to build the docker container for the accessibility
+test". There is no container build in that job. `.github/workflows/ci.yml`'s
+`accessibility` job checks out, sets up Node and Python, `pip install -r
+requirements.txt`, `npm ci`, `npx playwright install --with-deps chromium`, then
+runs `--project=accessibility`. The separate `docker` job takes ~1m20s
+consistently and the two are unrelated.
+
+What the last six runs actually show:
+
+| run | `docker` | `accessibility` |
+|---|---|---|
+| latest | 1m20s | **11m37s** |
+| -1 | 1m27s | 1m39s |
+| -2 | 1m22s | 2m17s |
+| -3 | 1m24s | 2m10s |
+| -4 | 1m17s | 1m58s |
+
+So the job is normally about two minutes and spiked once. Two separate things
+are therefore in scope, and conflating them would fix neither:
+
+1. **Wall-clock to feedback.** `accessibility` is `needs: ui-e2e-tests`, which is
+   itself `needs: [test, ui-unit-tests]` — third in a serial chain, so the
+   elapsed time an operator experiences is the whole chain, not the job. That is
+   the number the report is really about.
+2. **The 11m37s outlier.** One run in six. Until its cause is known, any
+   "optimisation" is guessing, and the honest possibility is that it was a slow
+   runner or an apt mirror and nothing in this repo caused it.
+
+### T9.1: Measure before changing anything · S
+
+Get the per-step breakdown for both a normal and the slow run (`gh api
+.../actions/runs/<id>/jobs`; the step timings did not come back cleanly through
+`gh run view --json`, so this may need the raw API or the logs). Attribute the
+time to steps, not to intuition. **No optimisation lands before this exists:**
+this repo has a recorded habit of diagnosing by inference and being wrong.
+
+Specifically answer: what did the 11m37s run spend its time on, and is
+`--fail-on-flaky-tests` retrying?
+
+### T9.2: Stop paying for the same install twice · S · risk: low
+
+`npx playwright install --with-deps chromium` runs in BOTH `ui-e2e-tests`
+(`:242`) and `accessibility` (`:340`), uncached. npm is cached (`cache: 'npm'`)
+but the Playwright browser download and its apt `--with-deps` are not, and
+`pip install -r requirements.txt` has no pip cache either.
+
+Options, in increasing order of change: cache `~/.cache/ms-playwright` keyed on
+the Playwright version from `package-lock.json`; add `cache: 'pip'` to
+`setup-python`; or run the accessibility project inside the existing
+`ui-e2e-tests` job so the install is paid once. The last is the biggest win and
+the biggest change — it merges two gates, so their failures stop being
+separable, which is a real cost on a gate whose job is to name what broke.
+
+### T9.3: Reconsider the serial chain · S · risk: low
+
+`accessibility` waits for `ui-e2e-tests` for no stated reason: it starts and
+seeds its own server (see the comment at `:329-338`), so it has no data
+dependency on that job. If the `needs:` is only there to stage runner load, say
+so at the line; if it is not needed, removing it moves accessibility from third
+in a chain to parallel, which addresses the reported wall-clock directly and
+without touching the tests.
+
+**Acceptance:** a measured before/after of BOTH numbers — job duration and
+wall-clock from workflow start to accessibility completion — over at least three
+runs each, because a single comparison cannot distinguish an improvement from
+runner variance. The suite must still run the same specs: a faster gate that
+covers less is not the deliverable.
+
+**Explicitly NOT in scope:** reducing what the accessibility suite tests. WCAG
+2.2 AA in both themes and at phone width is this project's stated floor, and
+speeding the gate by lowering it would be the wrong trade.
 
 ---
 
