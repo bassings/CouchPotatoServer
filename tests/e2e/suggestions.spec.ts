@@ -127,6 +127,46 @@ test.describe('Suggestions loading redesign', () => {
     expect(calls).toBeGreaterThanOrEqual(2);
   });
 
+  test('Try again moves focus into the loading panel (retry() path)', async ({ page }) => {
+    // `retry()` moves focus to the loading panel so it does not drop to
+    // <body> when the Try again button it was on disappears (WCAG 2.4.3).
+    // That focus move went through the SAME display race as fail()'s and was
+    // fixed alongside it -- but nothing asserted it landed, so a regression in
+    // `_focusWhenShown`, or in this call site, would have been invisible.
+    //
+    // The second charts response is DELAYED deliberately. With an immediate
+    // 200 the panel is shown and hidden again within a frame or two, so the
+    // assertion would race the content arriving and pass or fail on timing
+    // rather than on the behaviour.
+    let calls = 0;
+    await page.route('**/partial/charts', async (route) => {
+      calls += 1;
+      if (calls === 1) {
+        await route.fulfill({ status: 500, contentType: 'text/html', body: 'boom' });
+        return;
+      }
+      await new Promise((r) => setTimeout(r, 1500));
+      await route.fulfill({ status: 200, contentType: 'text/html', body: CHARTS_HTML });
+    });
+    await page.route('**/partial/suggestions', (route) =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: SUGGESTIONS_HTML }),
+    );
+
+    await page.goto('/suggestions');
+
+    const chartsGrid = page.locator('#charts-grid');
+    await expect(chartsGrid.locator('[role="alert"]')).toBeVisible();
+
+    await chartsGrid.getByRole('button', { name: /try again/i }).click();
+
+    const loadingPanel = chartsGrid.locator('[x-ref="loadingPanel"]');
+    await expect(loadingPanel).toBeVisible();
+    await expect(loadingPanel).toBeFocused();
+
+    // …and the retry still completes, so this is not asserting a stuck state.
+    await expect(page.getByTestId('charts-content')).toBeVisible();
+  });
+
   test('For You error path shows tab-specific copy and retries', async ({ page }) => {
     let calls = 0;
     await page.route('**/partial/charts', (route) =>
@@ -182,6 +222,13 @@ test.describe('Suggestions loading redesign', () => {
     await keepWaiting.click();
     await expect(status).not.toContainText('Still working');
     await expect(keepWaiting).toBeHidden();
+    // The button that had focus was just hidden, so focus must be moved or it
+    // drops to <body> (WCAG 2.4.3). This is the third `_focusWhenShown` call
+    // site: the panel is already visible here, so it is NOT the display race
+    // the other two hit -- but all three share one helper now, and a refactor
+    // that broke this case would otherwise reach production unnoticed.
+    await expect(status.locator('xpath=ancestor-or-self::*[@x-ref="loadingPanel"]'))
+      .toBeFocused();
     // Closed loop: panel returns to normal staged copy (elapsed=61 → stage at=54).
     await expect(status).toContainText('Almost ready');
 
