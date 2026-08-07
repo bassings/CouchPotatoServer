@@ -95,12 +95,12 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
-- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
+- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: building · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs written by /plan-cycle (M15 satisfied)
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
-- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued
+- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued · the PLAN merged as #228; `ci.yml` is untouched, so the gate is still slow and the deliverable is outstanding. Needs /plan-cycle for its ACs before implementation
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
@@ -146,6 +146,28 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 10** — #228 merged (`085160eb`, verified from `gh pr view`, 19/19
+  green). **T9 stays unticked:** what merged is the PR 7 *plan*;
+  `git diff cd358c20..origin/master -- .github/workflows/ci.yml` is empty, so
+  the gate is exactly as slow as it was. A merged plan is not a merged fix.
+
+  T4 started, and per M15 it started with `/plan-cycle`, not code. Spec split
+  out to `specs/PR2B-SESSION-COOKIE.md` so the lenses had a one-PR surface;
+  nine ran, none skipped, 85 ACs and eight settled decisions. Four executed
+  claims re-verified against source rather than relayed: the `text/html`
+  rate-limit exemption (so `POST /login/` is unlimited), `listDocuments`
+  iterating `db.all('id')` (so an `api_key` holder can read a property row),
+  `setProperty`'s bare `except Exception:` turning a lost CAS into a duplicate
+  insert, and zero logout controls in the UI. Re-measuring the binary
+  round-trip *strengthened* a criterion: the corruption is length-variable
+  (lens saw 31 chars, I saw 29), so a naive length assertion would be flaky.
+
+  Open concern recorded rather than acted on: at 85 ACs over eight source
+  files this is a big PR, and the one genuinely separable piece is the
+  rate-limit fix (AC-SEC-42) — it is a real finding but independent of the
+  cookie. Left in scope because nine lenses just agreed it; split it if the
+  diff proves unreviewable. Armed: nothing external — T4 implementation is next.
 
 - **Tick 9** — #228 is 19/19 green; BLOCKED was two more unresolved review
   threads, not a check. Both were arithmetic in tick 8's own correction, and
