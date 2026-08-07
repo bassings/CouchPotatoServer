@@ -352,3 +352,53 @@ class TestNoNewColourAndNoNewMotion:
             r'@media\s*\(prefers-reduced-motion:\s*reduce\)\s*\{(.*?\n  \})', css, re.S)
         assert block, '%s has no prefers-reduced-motion block' % template.name
         assert 'transition-duration: 0.01ms !important' in block.group(1), block.group(1)
+
+
+class TestTheErrorMessageIsAssociatedWithTheField:
+    """WCAG 3.3.1. Finding M4.
+
+    A rejected sign-in moves focus INTO the password field, past a message
+    region that sits before the form. The region carries `role="alert"`, but a
+    `role=alert` that is part of the INITIAL document rather than inserted
+    afterwards is announced inconsistently across screen readers -- and nothing
+    else points at it. So a screen reader user can land in the password field
+    with no indication of why they are back on this page.
+
+    The text is present, which is why this passes an automated check; the
+    association a user actually navigates by is not.
+    """
+
+    def _rejected(self, client):
+        return client.post('/login/', data={'username': '', 'password': 'wrong'}).text
+
+    def test_the_message_region_has_an_id_to_point_at(self, client):
+        html = self._rejected(client)
+
+        # NOT a substring check: `data-testid="login-message"` CONTAINS
+        # `id="login-message"`, so the obvious assertion passes against a
+        # region that has no id at all. It did, on the first run of this test.
+        import re
+        assert re.search(r'(?<![-\w])id="login-message"', html), (
+            'the message region has no id of its own (data-testid does not '
+            'count), so aria-describedby has nothing to reference')
+
+    def test_the_password_field_points_at_the_message(self, client):
+        html = self._rejected(client)
+        field = html[html.index('id="password"'):]
+        field = field[:field.index('>')]
+
+        assert 'aria-describedby="login-message"' in field, (
+            'the password field does not reference the error message, so a '
+            'screen reader user lands in it with no stated reason: %s' % field)
+        assert 'aria-invalid="true"' in field, (
+            'the field is not marked invalid after a rejected attempt')
+
+    def test_a_first_visit_marks_nothing_invalid(self, client):
+        """Counterweight. A field that is always aria-invalid says nothing,
+        and announces an error to someone who has not made one."""
+        html = client.get('/login/').text
+        field = html[html.index('id="password"'):]
+        field = field[:field.index('>')]
+
+        assert 'aria-invalid' not in field, field
+        assert 'aria-describedby' not in field, field

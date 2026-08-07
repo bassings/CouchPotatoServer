@@ -140,6 +140,7 @@ tailwind.config = {
           The tint also means the two tones differ by more than colour: the
           wording differs, so nothing here is conveyed by colour alone. -#}
       <div
+        id="login-message"
         data-testid="login-message"
         role="{{ message_role }}"
         {% if focus_field == 'message' %}tabindex="-1" autofocus{% endif %}
@@ -194,6 +195,16 @@ tailwind.config = {
             autocapitalize="off"
             spellcheck="false"
             {% if focus_field == 'password' %}autofocus{% endif %}
+            {#- WCAG 3.3.1. Focus lands HERE after a rejected attempt, past a
+                message region that sits before the form. `role="alert"` on a
+                region present in the INITIAL document is announced
+                inconsistently across screen readers, so without this the user
+                arrives in the field with no stated reason.
+
+                Only on the error tone: a field that is permanently
+                `aria-invalid` announces a mistake to someone who has not made
+                one, and says nothing when they have. -#}
+            {% if message_tone == 'error' %}aria-describedby="login-message" aria-invalid="true"{% endif %}
             class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
           >
         </div>

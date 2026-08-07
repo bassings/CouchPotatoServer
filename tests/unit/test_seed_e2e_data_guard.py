@@ -15,6 +15,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(REPO_ROOT / "libs"))
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
@@ -429,4 +431,68 @@ class TestWantedOnlyMovieHasNoReleases:
         assert any(seed_e2e_data.WANTED_MOVIE_ID in p for p in problems), (
             'verify() did not notice WANTED_MOVIE_ID was left in the wrong '
             'status: %r' % (problems,)
+        )
+
+
+class TestEnablingAuthenticationRefusesARealDataDirectory:
+    """`_enable_authentication` writes a PASSWORD, so its guard matters more.
+
+    `_is_safe_seed_target` deliberately accepts a developer's own `.config`,
+    because that is what CI passes. Writing fixture rows there is recoverable.
+    Writing `password = $2b$12$...` and `auth_required = 1` there is not the
+    same thing at all: it locks the developer out of their own library behind a
+    password chosen by a test script, and this project's own risk ranking puts
+    settings on the irreplaceable tier.
+
+    So `_enable_authentication` carries a STRICTER `.e2e*` check of its own.
+    That check had no test. Driven by hand it behaves correctly today, and
+    nothing in the suite would have noticed if it stopped -- which is precisely
+    the "a guard nobody has watched fail is not done" case (rule 10).
+    """
+
+    def _config(self, data_dir):
+        return os.path.join(str(data_dir), 'config.ini')
+
+    def test_a_real_looking_data_dir_is_refused_and_nothing_is_written(self, tmp_path):
+        import hashlib
+
+        data_dir = tmp_path / '.config'
+        data_dir.mkdir()
+        original = '[core]\napi_key = realkey\npassword = mine\n'
+        Path(self._config(data_dir)).write_text(original, encoding='utf-8')
+        before = hashlib.sha256(original.encode()).hexdigest()
+
+        with pytest.raises(ValueError):
+            seed_e2e_data._enable_authentication(str(data_dir), 'hunter2')
+
+        after = hashlib.sha256(
+            Path(self._config(data_dir)).read_bytes()).hexdigest()
+        assert after == before, (
+            'refusing to enable authentication still modified config.ini. The '
+            'whole point is that a real instance is left untouched.'
+        )
+
+    def test_an_e2e_data_dir_gets_a_password_the_login_path_accepts(self, tmp_path):
+        """The positive half. Without it the guard could refuse everything and
+        still pass the test above."""
+        import configparser
+
+        from couchpotato.core.helpers.variable import check_password, md5
+
+        data_dir = tmp_path / '.e2e-worker0'
+        data_dir.mkdir()
+        Path(self._config(data_dir)).write_text('[core]\napi_key = k\n', encoding='utf-8')
+
+        seed_e2e_data._enable_authentication(str(data_dir), 'hunter2')
+
+        parser = configparser.RawConfigParser()
+        parser.read(self._config(data_dir))
+
+        assert parser.get('core', 'auth_required') == '1'
+        stored = parser.get('core', 'password')
+        assert stored and stored != 'hunter2', 'the plaintext was stored'
+        assert check_password(md5('hunter2'), stored), (
+            'the stored password is not the form login_post compares against '
+            '(bcrypt over md5 of the plaintext), so the seeded instance would '
+            'refuse the very password the test types'
         )
