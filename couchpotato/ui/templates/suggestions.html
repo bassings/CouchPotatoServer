@@ -214,7 +214,20 @@ function cpSuggestionLoader(variant = 'personal') {
         void el.offsetHeight;  // force the pending style/layout flush
         el.focus();
         if (document.activeElement !== el) {
-          requestAnimationFrame(() => el.focus());
+          requestAnimationFrame(() => {
+            el.focus();
+            // If BOTH the synchronous flush and the retry fail, say so.
+            // Otherwise this returns to being exactly what it is fixing: a
+            // focus that silently does not happen, which no user can report
+            // because nothing told them anything went wrong. The E2E
+            // assertion covers CI; this covers a browser quirk or a device
+            // slower than any we test on.
+            if (document.activeElement !== el) {
+              console.warn('[suggestions] focus did not reach ' + ref +
+                           ' after a style flush and a frame; the failure ' +
+                           'announcement may not have been read out.');
+            }
+          });
         }
       });
     },
