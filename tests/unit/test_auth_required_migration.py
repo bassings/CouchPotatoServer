@@ -280,13 +280,23 @@ class TestEverythingElseInTheFileSurvives:
         assert added == {('core', 'auth_required')}, added
 
 
-class TestAFailedWriteBackLeavesTheSettingAbsent:
+class TestAFailedWriteBackKeepsTheDerivedValue:
     """AC-OPS-50's second half and AC-DATA-12.
 
-    Absent, not half-written: the next boot re-derives and gets the same answer,
-    whereas a value that reached memory but not disk means this process is
-    enforcing something `config.ini` does not say -- and `config.ini` is where
-    the locked-out operator looks.
+    This class used to assert the OPPOSITE -- that the setting was left absent
+    so the next boot would re-derive. Review of #229 traced that end to end and
+    it was a security hole, not a safeguard: `loader.run()` calls
+    `registerDefaults` afterwards, `Settings.setDefault` materialises any
+    ABSENT option to the registered default of 0, and the trailing
+    `settings.save` persists it. A transient unwritable config directory
+    therefore turned authentication off permanently, while startup logged
+    "ENABLED".
+
+    So the contract is now: the DERIVED value stays in memory and enforces this
+    run, `config.ini` on disk is untouched, and a later successful save
+    persists the correct answer. The original worry -- a process enforcing
+    something the file does not say -- is real but strictly smaller than
+    silently serving an unauthenticated instance.
     """
 
     @pytest.fixture
@@ -300,13 +310,14 @@ class TestAFailedWriteBackLeavesTheSettingAbsent:
     def test_it_returns_without_claiming_success(self, failing):
         assert resolve_auth_required_setting() is None
 
-    def test_the_setting_is_absent_afterwards(self, failing, config_file):
+    def test_the_file_is_untouched_but_memory_keeps_the_answer(self, failing, config_file):
         resolve_auth_required_setting()
 
         assert stored_auth_required(config_file) is None, 'it reached the file'
-        assert failing.get('auth_required', default=None) in (None, ''), (
-            'the value is still in memory, so this process enforces something '
-            'config.ini does not say and the operator cannot grep for it'
+        assert failing.p.get('core', 'auth_required') in ('1', 1), (
+            'the derived value was dropped from memory, so registerDefaults '
+            'will materialise 0 and this run serves every request '
+            'unauthenticated'
         )
 
     def test_one_error_names_the_failure(self, failing, caplog):
@@ -317,7 +328,7 @@ class TestAFailedWriteBackLeavesTheSettingAbsent:
         assert len(errors) == 1, [r.getMessage() for r in errors]
         assert 'auth_required' in errors[0].getMessage()
 
-    def test_the_next_boot_re_derives(self, settings, config_file, monkeypatch):
+    def test_the_next_boot_keeps_the_safe_value(self, settings, config_file, monkeypatch):
         def explode(self):
             raise OSError('read-only file system')
 
@@ -325,7 +336,12 @@ class TestAFailedWriteBackLeavesTheSettingAbsent:
         resolve_auth_required_setting()
         monkeypatch.undo()
 
-        assert resolve_auth_required_setting() == 1
+        # The second call now finds an explicit value and correctly declines to
+        # re-derive (returning None). What matters is that the value it finds
+        # is the SAFE one -- and that a later save can still persist it.
+        assert resolve_auth_required_setting() is None
+        assert settings.p.get('core', 'auth_required') in ('1', 1)
+        settings.save()
         assert stored_auth_required(config_file) == '1'
 
     def test_config_ini_is_byte_identical(self, failing, config_file):
@@ -392,3 +408,67 @@ class TestAReadOnlyDirectoryIsTheSameStory:
         would pass against a successful write."""
         with pytest.raises(OSError):
             (locked.parent / 'canary').write_text('x')
+
+
+class TestAFailedWriteDoesNotDisableAuthentication:
+    """Blocker from review of #229, reproduced end to end before fixing.
+
+    The old failure path removed `auth_required` from the in-memory parser so
+    "the next boot re-derives". But `loader.run()` runs AFTER this and calls
+    `registerDefaults` for the `core` section, and `Settings.setDefault` sets
+    any option `has_option()` reports absent -- which it now is -- to the
+    registered default of **0**. `loader.run()` then fires `settings.save`,
+    persisting `auth_required = 0`.
+
+    So on a box with a password set and a temporarily unwritable config
+    directory (an ordinary bind-mounted Docker volume), authentication turned
+    itself OFF, the startup line said "authentication ENABLED", and once the
+    fault cleared the 0 was written to disk and the install stayed public
+    forever after.
+
+    Measured on the tree before the fix:
+
+        auth_required present at start : False
+        after a FAILED write, present  : False
+        after registerDefaults, value  : 0        <- auth OFF
+
+    The old comment argued for removal to avoid "a process enforcing something
+    config.ini does not say". That risk was `1` enforced while the file says
+    nothing. What actually shipped was worse: `0` enforced -- authentication
+    off -- while the log claimed it was on.
+    """
+
+    def test_the_resolved_value_survives_a_failed_write(self, settings, monkeypatch):
+        from couchpotato.core.settings import Settings
+        import couchpotato.runner as runner
+
+        settings.p.set('core', 'password', '$2b$12$abcdefghijklmnopqrstuv')
+        monkeypatch.setattr(Settings, 'save',
+                            lambda self: (_ for _ in ()).throw(OSError('read-only')))
+
+        runner.resolve_auth_required_setting()
+
+        assert settings.p.has_option('core', 'auth_required'), (
+            'the resolved value was dropped from the parser, so registerDefaults '
+            'will materialise the registered default of 0 and turn authentication '
+            'OFF for this run -- then persist it'
+        )
+        assert settings.p.get('core', 'auth_required') in ('1', 1), (
+            'the surviving value is not the derived one')
+
+    def test_register_defaults_cannot_overwrite_it(self, settings, monkeypatch):
+        """The step that actually caused the harm, driven directly."""
+        from couchpotato.core.settings import Settings
+        import couchpotato.runner as runner
+
+        settings.p.set('core', 'password', '$2b$12$abcdefghijklmnopqrstuv')
+        monkeypatch.setattr(Settings, 'save',
+                            lambda self: (_ for _ in ()).throw(OSError('read-only')))
+        runner.resolve_auth_required_setting()
+
+        settings.setDefault('core', 'auth_required', 0)
+
+        assert settings.p.get('core', 'auth_required') in ('1', 1), (
+            'registerDefaults overwrote the derived value with 0, so this run '
+            'serves every request unauthenticated'
+        )

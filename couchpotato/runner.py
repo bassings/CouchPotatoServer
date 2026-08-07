@@ -109,45 +109,43 @@ def resolve_auth_required_setting():
     try:
         Env.setting('auth_required', value=resolved)
     except Exception:
-        # LEAVE IT ABSENT. `Settings.save()` writes a sibling temp file and
-        # renames it, so a failure here means `config.ini` is untouched and
-        # still holds the api_key, the password and every downloader
-        # credential (AC-DATA-12). The in-memory value has to go with it: a
-        # process enforcing something `config.ini` does not say is the worst of
-        # both, because the operator greps the file and finds nothing while the
-        # server behaves as though the setting were there. Absent means the
-        # next boot re-derives the same answer.
-        _forget_auth_required()
+        # KEEP THE RESOLVED VALUE IN MEMORY. `Env.setting(value=)` sets the
+        # parser BEFORE it saves, so the correct answer is already there when
+        # the save raises -- and it must stay.
+        #
+        # An earlier version removed it, reasoning that absent means the next
+        # boot re-derives. Traced end to end in review, that was a security
+        # hole: `loader.run()` runs after this and calls `registerDefaults` for
+        # the `core` section, and `Settings.setDefault` sets any option
+        # `has_option()` reports absent -- which it now was -- to the
+        # registered default of **0**. `loader.run()` then fires
+        # `settings.save`, persisting `auth_required = 0`.
+        #
+        # So on a box with a password and a temporarily unwritable config
+        # directory (an ordinary bind-mounted Docker volume) authentication
+        # turned itself OFF, `log_authentication_posture()` had already logged
+        # "ENABLED", and once the fault cleared the 0 reached disk and the
+        # install stayed public. Measured before the fix:
+        #
+        #     after a FAILED write, present : False
+        #     after registerDefaults, value : 0      <- auth OFF
+        #
+        # Keeping the value makes `setDefault` a no-op, enforces the DERIVED
+        # answer for this run, and lets the trailing save persist the correct
+        # value if the fault clears. `config.ini` itself is untouched either
+        # way -- `Settings.save()` writes a sibling temp file and renames it
+        # (AC-DATA-12) -- so nothing is lost by keeping it.
         log.error('Could not write the resolved auth_required value to the '
-                  'settings file, so it has been left unset and the next '
-                  'start will work it out again. Authentication for THIS run '
-                  'is derived from whether a password is stored. Check that '
-                  'the config directory is writable. %s', traceback.format_exc())
+                  'settings file. Authentication for THIS run is enforced '
+                  'from the value derived above (%s), which is kept in memory '
+                  'so a failed write cannot turn authentication off. Check '
+                  'that the config directory is writable. %s',
+                  resolved, traceback.format_exc())
         return None
 
     log.info('auth_required was not set; resolved to %s from the stored '
              'password and written to the settings file', resolved)
     return resolved
-
-
-def _forget_auth_required():
-    """Undo the in-memory half of a write-back whose save failed.
-
-    Removal, not "set it back to what it was": it was ABSENT, and absent is the
-    only state that makes the next boot re-derive rather than trust a value
-    that never reached disk.
-    """
-    from couchpotato.environment import Env
-
-    try:
-        parser = getattr(Env.get('settings'), 'p', None)
-        if parser is not None and parser.has_option('core', 'auth_required'):
-            parser.remove_option('core', 'auth_required')
-    except Exception:
-        # Best effort, and deliberately silent: the ERROR the caller is about
-        # to log is the one the operator needs, and a second exception here
-        # would replace it with a less useful one.
-        pass
 
 
 def _port_argument(value):
