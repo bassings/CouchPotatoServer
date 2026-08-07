@@ -222,6 +222,13 @@ test.describe('Suggestions loading redesign', () => {
     await keepWaiting.click();
     await expect(status).not.toContainText('Still working');
     await expect(keepWaiting).toBeHidden();
+    // The button that had focus was just hidden, so focus must be moved or it
+    // drops to <body> (WCAG 2.4.3). This is the third `_focusWhenShown` call
+    // site: the panel is already visible here, so it is NOT the display race
+    // the other two hit -- but all three share one helper now, and a refactor
+    // that broke this case would otherwise reach production unnoticed.
+    await expect(status.locator('xpath=ancestor-or-self::*[@x-ref="loadingPanel"]'))
+      .toBeFocused();
     // Closed loop: panel returns to normal staged copy (elapsed=61 → stage at=54).
     await expect(status).toContainText('Almost ready');
 
