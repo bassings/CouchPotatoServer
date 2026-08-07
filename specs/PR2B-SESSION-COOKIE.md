@@ -463,6 +463,40 @@ leaves for a follow-up PR.
   rejected cookie is the same defect with a different message.
 - **AC-QA-19 remains open** (gap 4), untouched by this tranche.
 
+## D14 — AC-QA-19 and D2 are reconciled: the login ceremony may bootstrap
+
+Open since tranche A (spec gap 4) and settled here rather than left for an
+implementer to resolve by picking a side silently.
+
+**The contradiction.** AC-QA-19 requires that after the secret is deleted out
+from under a running process, "a fresh login recovers a working session without
+a restart". D2 forbids the request path from ever creating a secret. Both cannot
+hold: with no secret and no bootstrap, a correct password buys nothing until
+someone restarts the container.
+
+**Resolution: `login_post` MAY create a missing secret, and only after the
+submitted password has been verified.** Everything else keeps D2 unchanged.
+
+Why this does not reopen what D2 closed:
+
+- D2's stated reasons were the unguarded get-then-act race and a per-request
+  property read taking the adapter's process-wide `RLock`. Neither applies here:
+  the write goes through the same single-writer compare-and-swap function
+  (AC-ARCH-3, AC-DATA-3), which is what makes concurrent creates safe, and a
+  login is a rare ceremony that already runs bcrypt at ~166 ms.
+- A verified password is not "an arbitrary request path". It is the one point in
+  the system where the operator has proven who they are.
+- **AC-QA-21 is untouched and still binds:** with `auth_required` off, nothing
+  writes, because the password check cannot succeed on an install that has no
+  password. D12's fix already proved that boundary is real.
+
+**D2's wording is amended** from "never on a request path" to "never on an
+unauthenticated request path, and never before a credential has been verified".
+
+Without this, a deleted or corrupted property row means locked out until
+restart, on a box whose owner may not have shell access to restart it. That is
+the lockout shape this spec exists to prevent, arriving by a different door.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
