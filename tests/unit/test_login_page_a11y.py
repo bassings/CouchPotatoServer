@@ -341,8 +341,13 @@ class TestNoNewColourAndNoNewMotion:
         # A false FAILURE here rather than a hole, but `py/bad-tag-filter`
         # flags the shape either way, and it flagged this twice: once for case
         # and once for whitespace, because the first fix only addressed case.
-        markup = re.sub(r'<style\b.*?</style\s*>', '', html, flags=re.S | re.I)
-        markup = re.sub(r'<script\b.*?</script\s*>', '', markup, flags=re.S | re.I)
+        # `</style\b[^>]*>`, not `</style\s*>`: an HTML end tag may carry
+        # whitespace AND ignored junk before the `>` (`</script\t\n bar>` is a
+        # valid end tag). CodeQL flagged this three times -- once for case,
+        # once for whitespace, once for the junk -- because each fix addressed
+        # only the shape named in the previous report.
+        markup = re.sub(r'<style\b.*?</style\b[^>]*>', '', html, flags=re.S | re.I)
+        markup = re.sub(r'<script\b.*?</script\b[^>]*>', '', markup, flags=re.S | re.I)
         markup = re.sub(r'<meta[^>]*>', '', markup, flags=re.I)
 
         assert not re.search(r'#[0-9a-fA-F]{3,8}\b', markup), (

@@ -274,7 +274,15 @@ def reset_session_secret_state():
         _session_secret_seen = False
 
 
-_SESSION_SECRET_MISSING = (
+#: Operator ADVICE, not a secret. The name matters twice over: it used to be
+#: named for the missing secret itself -- reading as a VALUE -- when what it
+#: holds is a sentence telling the operator how to recover. CodeQL's
+#: `py/clear-text-logging-sensitive-data` keys on names like that and reported
+#: a HIGH "logs sensitive data (secret) as clear text" every time this constant
+#: reached a log call. Verified before renaming that no secret VALUE is passed
+#: as a log argument anywhere in this module, so the alert was name-driven --
+#: but the name was wrong on its own terms regardless.
+_SIGNING_STORE_UNREADABLE_ADVICE = (
     'The session signing secret could not be read, so NO login can succeed and '
     'every browser session is refused. The api_key and the /api/ routes are '
     'unaffected. To recover: set "auth_required = 0" in the [core] section of '
@@ -663,7 +671,8 @@ def get_session_secret():
     if not secret:
         # Bounded (AC-OPS-45): reached once per REQUEST once the property store
         # cannot be read, which needs no credential to provoke.
-        log_suppressed(log.error, 'session_secret_missing', _SESSION_SECRET_MISSING)
+        log_suppressed(log.error, 'session_secret_missing',
+                       _SIGNING_STORE_UNREADABLE_ADVICE)
         return None
 
     # Reading one counts as having seen one: an install whose runner bootstrap
