@@ -122,6 +122,34 @@ def _message_region(html: str):
     return (role.group(1) if role else None), ' '.join(text.split())
 
 
+
+def _session_not_created_page(client, settings):
+    """A correct password against a store that cannot produce a secret.
+
+    Driven through the real login route with the real renderer, not by calling
+    `render_login_page` directly: the point of this guard is that some real
+    path produces the message, and a direct call would prove only that the
+    constant exists.
+    """
+    import couchpotato
+    from couchpotato.core.helpers.variable import md5
+
+    settings['password'] = md5(PASSWORD)
+
+    original_get = couchpotato.get_session_secret
+    original_readable = couchpotato.session_secret_store_is_readable
+    couchpotato.get_session_secret = lambda: None
+    couchpotato.session_secret_store_is_readable = lambda: False
+    try:
+        response = client.post('/login/', data={'username': '', 'password': PASSWORD})
+    finally:
+        couchpotato.get_session_secret = original_get
+        couchpotato.session_secret_store_is_readable = original_readable
+
+    assert response.status_code == 503, response.status_code
+    return response
+
+
 def _rate_limited_signout_page(settings):
     """A real 429 on the SIGN-OUT route, from the real middleware.
 
@@ -335,6 +363,8 @@ class TestTheCopyNeverLeaksTheMechanism:
             TestTheSignOutFailurePage()._failing_logout(client).text)[1])
         rendered.add(_message_region(_rate_limited_page(settings).text)[1])
         rendered.add(_message_region(_rate_limited_signout_page(settings).text)[1])
+        rendered.add(_message_region(
+            _session_not_created_page(client, settings).text)[1])
 
         for key, (_tone, text) in LOGIN_MESSAGES.items():
             # A message with a placeholder is rendered with it filled in, so
@@ -601,3 +631,57 @@ class TestAnExpiredSessionDoesNotSwapTheLoginPageIntoAFragment:
         assert response.status_code == 302, (
             'a normal page load must still redirect, not 204')
         assert response.headers['location'].endswith('login/?reason=session_ended')
+
+
+class TestACorrectPasswordThatCannotStartASessionSaysSo:
+    """P2 review finding: the silent login loop, one branch further along.
+
+    A correct password with an unwritable or unreadable secret store left
+    `secret` as None and STILL returned the 302 to the app root with no
+    cookie. Following it lands on an unadorned login form -- the user typed
+    the right password, was sent away, and came back to a page that tells them
+    nothing. That is precisely the unexplained loop the rejected-credentials
+    branch was changed to remove; it survived one branch further down.
+
+    The code comment called redirecting "honest: they are not signed in". It
+    is honest about the outcome and silent about the cause, which is the half
+    that matters to somebody trying to get in.
+    """
+
+    def _login_with_a_broken_store(self, client, monkeypatch, settings):
+        from couchpotato.core.helpers.variable import md5
+        settings['password'] = md5(PASSWORD)
+
+        import couchpotato
+        monkeypatch.setattr(couchpotato, 'get_session_secret', lambda: None)
+        monkeypatch.setattr(couchpotato, 'session_secret_store_is_readable',
+                            lambda: False)
+
+        return client.post('/login/', data={'username': '', 'password': PASSWORD})
+
+    def test_it_renders_the_page_rather_than_redirecting(self, client, monkeypatch, settings):
+        response = self._login_with_a_broken_store(client, monkeypatch, settings)
+
+        # 503, not 200: the password was fine and the SERVER could not do its
+        # part, so the status should say so rather than claim success. What
+        # matters for the defect is that it is not a redirect.
+        assert response.status_code == 503, (
+            'a correct password with no session issued returned %d. A redirect '
+            'sends the user back to a blank form with no reason.'
+            % response.status_code)
+        assert 'name="password"' in response.text, (
+            'the response is not the login page, so there is nothing for the '
+            'user to read or retry from')
+
+    def test_it_does_not_pretend_the_password_was_wrong(self, client, monkeypatch, settings):
+        """The password WAS right. Saying otherwise sends them to change it."""
+        response = self._login_with_a_broken_store(client, monkeypatch, settings)
+
+        body = response.text.lower()
+        assert 'incorrect' not in body and 'not recognised' not in body, body[:400]
+
+    def test_it_sets_no_cookie(self, client, monkeypatch, settings):
+        """Fail closed is unchanged: no secret, no session."""
+        response = self._login_with_a_broken_store(client, monkeypatch, settings)
+
+        assert 'set-cookie' not in {k.lower() for k in response.headers}

@@ -465,7 +465,19 @@ class TestAFailedRecoveryDoesNotPretendToSucceed:
         session = TestClient(env.app, follow_redirects=False)
         response = session.post('/login/', data={'username': '', 'password': PASSWORD})
 
-        assert response.status_code == 302
+        # 503 and a rendered page, NOT the 302 this used to assert. The
+        # redirect was the defect: it sent a user who had typed the right
+        # password to the app root with no cookie, which bounced them back to
+        # a blank login form explaining nothing -- the same unexplained loop
+        # the rejected-credentials branch was changed to remove. Raised as a
+        # P2 in review of #229.
+        assert response.status_code == 503, response.status_code
+        assert 'name="password"' in response.text, (
+            'the user has no form to read or retry from')
+
+        # The part that always mattered, unchanged: fail CLOSED. Signing with
+        # '' or a constant would hand a valid session to anyone who can read
+        # this source.
         assert SESSION_COOKIE_NAME not in response.cookies
         assert 'set-cookie' not in {k.lower() for k in response.headers}
         assert 'could not' in log_text(env).lower()

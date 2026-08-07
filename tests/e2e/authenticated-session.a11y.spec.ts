@@ -291,3 +291,39 @@ test.describe('An authenticated session, end to end', () => {
     });
   }
 });
+
+test.describe('The mobile menu on a short viewport', () => {
+  // A landscape phone: wide enough for the mobile breakpoint, short enough
+  // that seven menu rows plus the panel's own padding exceed what is left
+  // below `top-12`.
+  test.use({ viewport: { width: 740, height: 320 } });
+
+  test('the sign-out control is reachable, not clipped below the fold', async ({ page }) => {
+    // `#mobile-menu` is `fixed top-12` with no maximum height and no
+    // overflow, so every row added to it grows the panel downward with no
+    // way to scroll -- the panel is fixed, so the PAGE cannot scroll it into
+    // view either. Adding sign-out as a seventh row put it past the bottom
+    // edge on short viewports, where it could not be reached at all.
+    await signIn(page);
+
+    await page.getByRole('button', { name: /menu/i }).first().click();
+    const menu = page.locator('#mobile-menu');
+    await expect(menu).toBeVisible();
+
+    const control = menu.getByRole('menuitem', { name: /sign out/i });
+    await expect(control).toHaveCount(1);
+
+    // Scroll it into view WITHIN the panel -- which only works if the panel
+    // can scroll. Then assert it is actually on screen.
+    await control.scrollIntoViewIfNeeded();
+    const box = await control.boundingBox();
+    const height = page.viewportSize()!.height;
+
+    expect(box, 'the sign-out control has no box, so it is not rendered').toBeTruthy();
+    expect(
+      box!.y + box!.height,
+      `the sign-out control ends at ${box!.y + box!.height}px on a ${height}px ` +
+        'viewport, so it is clipped below the fold and cannot be reached',
+    ).toBeLessThanOrEqual(height);
+  });
+});

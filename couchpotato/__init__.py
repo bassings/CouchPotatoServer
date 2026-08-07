@@ -897,6 +897,16 @@ LOGIN_MESSAGES = {
     # did not do -- and it renders on the sign-in page, so the result looks
     # exactly like a completed sign-out while every session is still valid.
     # Leads with the fact they need: it did not happen.
+    # A correct password that could not start a session. Distinct from
+    # `rejected` on purpose: telling somebody their password was wrong when it
+    # was right sends them off to reset a password that works, and they will
+    # hit exactly the same wall afterwards.
+    'session_not_created': (
+        'error',
+        'Your password was correct, but the server could not start a session, '
+        'so you are not signed in. This is a server problem, not your '
+        'password. Check that the database is writable, then try again.',
+    ),
     'rate_limited_signout': (
         'error',
         'Sign-out was not carried out, so every session is still signed in on '
@@ -1307,6 +1317,15 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                           'that the database is writable. %s',
                           traceback.format_exc())
                 secret = None
+
+        if not secret:
+            # Render, do not redirect. Falling through to the 302 sent the user
+            # to the app root with no cookie, which bounced them straight back
+            # to a blank login form: they typed the right password and the page
+            # told them nothing. That is the unexplained loop the rejected
+            # branch above was changed to remove, surviving one branch further
+            # down. Failing closed is unchanged -- still no cookie.
+            return render_login_page(reason='session_not_created', status_code=503)
 
         if secret:
             remember_me = tryInt(form.get('remember_me', 0)) > 0
