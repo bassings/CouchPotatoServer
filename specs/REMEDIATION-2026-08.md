@@ -100,28 +100,61 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
-- [ ] T10: `tests/e2e/suggestions.spec.ts:99` fails only inside a FULL local run — state: queued (no deps)
+- [x] T10: `tests/e2e/suggestions.spec.ts:99` failed only inside a FULL run — state: merged #230
 
-      Measured 2026-08-08, not inferred: 13/13 pass running the spec alone,
-      19/19 running it with `settings.spec.ts` (its immediate predecessor),
-      and **3/3 fail inside a full `make verify`**, on `expect(alert)
-      .toBeFocused()`. CI has passed it across 30+ runs WITH
-      `--fail-on-flaky-tests`, which means it has never even transiently
-      failed there.
-
-      NOT caused by the PR 2b branch: the spec is untouched by it, the rate
-      limiter returns early for localhost before any limiting, and both
+      **Root cause, and I had it wrong first.** I recorded that this was not
+      caused by the PR 2b branch, on three structural grounds: the spec is
+      untouched by it, the rate limiter returns early for localhost, and both
       sign-out controls sit inside `{% if auth_required %}` while E2E seeds no
-      password, so the app shell renders byte-identically. `fail()` already
-      defers the focus with `$nextTick`, so the naive "focus a hidden element"
-      race is not it either.
+      password. Every one of those is true. The conclusion was still wrong,
+      because the mechanism was TIMING, not logic:
 
-      The remaining hypothesis is that the focus move is unreliable after ~128
-      preceding tests. If so it is an APP defect, not a test defect: a focus
-      that lands only on a fast machine is a real WCAG 2.4.3 problem for a
-      user on a slow one. **Do not close this by adding a retry or loosening
-      the assertion** — CI's `--fail-on-flaky-tests` would then stop reporting
-      it, and the signal is lost permanently.
+          full chromium project on master       136/136 pass
+          full chromium project on the branch   136 + 1 failed
+
+      PR 2b adds an `auth_is_required()` call to the common template context,
+      so every partial render does slightly more work. That was enough to lose
+      a latent race.
+
+      **The race was real and in the app.** `fail()` deferred focus with
+      `$nextTick`, which flushes Alpine's queue rather than the browser's style
+      pass — so `x-show` had not necessarily applied `display`, and `focus()`
+      on a `display:none` element is a SILENT no-op. A focus move that only
+      lands on a fast machine is a WCAG 2.4.3 failure for anyone on a slow one.
+
+      Fixed with a synchronous style flush (`void el.offsetHeight`), which is
+      deterministic rather than probabilistic, in one shared helper across all
+      three call sites, each now asserted. Not fixed by retrying the test:
+      CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
+      made CI stop reporting it.
+
+- [ ] T11: a focus move that fails entirely tells only the developer console — state: queued (no deps)
+
+      Raised in review of #230 and accepted as a follow-up rather than built
+      there. `_focusWhenShown` warns to `console.warn` if both the flush and
+      the retry fail. That reaches somebody with devtools open; it reaches
+      nobody who is actually affected, and the person affected is exactly who
+      WCAG 2.4.3 exists to protect.
+
+      A user-visible fallback is the right shape: a toast, or
+      `document.body.focus()` plus a visible status-line update.
+
+      The path should never execute — but "should never" is what the original
+      bug said too.
+
+- [ ] T12: JS inside a Jinja template gets no lint pass — state: queued (no deps)
+
+      Found by breaking it: a missing `+` in a multi-line string inside
+      `suggestions.html`'s `<script>` block made the whole Alpine component
+      fail to parse, and four E2E tests went red. Ruff does not see template
+      JS, ESLint does not, and vitest only covers `couchpotato/ui/static`.
+
+      A syntax error in any template's inline script is invisible until a
+      browser test happens to exercise that page — and pages with no E2E
+      coverage would ship dead. A `check-traps` rule that extracts `<script>`
+      blocks from templates and parses them would close the class for a few
+      lines, per the standing preference for enforced checks over remembered
+      ones.
 
 - [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued · the PLAN merged as #228; `ci.yml` is untouched, so the gate is still slow and the deliverable is outstanding. Needs /plan-cycle for its ACs before implementation
 
