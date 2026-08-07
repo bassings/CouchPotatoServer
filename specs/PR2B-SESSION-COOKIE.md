@@ -10,8 +10,15 @@
 > remediation programme. The parent plan's M15 rule binds: no implementation
 > before the lenses write the `AC-<LENS>-<n>` criteria below.
 
-**Status:** draft — acceptance criteria NOT YET WRITTEN
-**Lenses run:** none yet · **Skipped:** none yet
+**Status:** in progress — criteria written, tranches A and B implemented
+**Lenses run:** all nine at planning (security, qa, simplicity, product, design,
+accessibility, data, architecture, operability) · **Skipped:** none
+
+**Not shippable yet.** Two things this PR itself created must land before the
+branch reaches `master`, which auto-publishes a beta: the sign-out control (D8,
+because logout is now POST-only and unreachable from a browser — D11) and the
+rate-limit and log-ring fixes. See "Orchestrator decisions during
+implementation" below.
 
 ## Problem
 
@@ -318,6 +325,36 @@ is rejected with a pointer to this list, per the harness exit condition.
 
 ---
 
+## Orchestrator decisions during implementation
+
+- **D9 — the core-to-web import edge in `_core.py` is ACCEPTED.** AC-SEC-38
+  forces `_core.py` to trigger the rotation, and the implementer flagged that
+  this collides with the AC-ARCH-9 veto against a core-to-web edge. Checked
+  rather than argued: `couchpotato/core/_base/_core.py:9` already does
+  `from couchpotato.api import addApiView` at MODULE level, so the boundary that
+  veto would protect is already crossed by this very file, and the new import is
+  merely function-local. The veto was against a *gratuitous* edge introduced to
+  share an `auth_required` constant with no behavioural need (L8); this one is
+  forced by a security criterion, and security outranks architecture in the
+  harness precedence order. L8 stays deferred, unchanged.
+
+- **D10 — clearing the password does NOT rotate; only setting one does.**
+  AC-SEC-38 says "changing the password" without settling the clear case. The
+  implementer chose, tested both directions, and flagged it. Confirmed correct:
+  clearing turns `auth_required` off, so every request is already served without
+  a session and there is nothing to revoke, and rotating anyway would write a
+  secret row onto installs that never enabled authentication, which AC-QA-21 and
+  AC-SEC-46 both forbid.
+
+- **D11 — tranche B leaves the branch with NO way to sign out from a browser,
+  and that is a regression this PR created.** Verified by driving the app:
+  `GET /logout/` now returns **405** (it is POST-only under AC-SEC-37) while
+  `GET /login/` still returns 200 and an unauthenticated `POST /logout/` returns
+  303 without revoking. Before this PR a user could sign out by typing the URL;
+  now they cannot sign out at all until D8's control lands. **This branch must
+  not reach `master` without D8**, for the same reason as AC-SEC-40: a push to
+  `master` auto-publishes a beta.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
@@ -379,3 +416,27 @@ against the repo, not taken from the report.**
    `core.hooksPath = .githooks`, which holds an executable `pre-push`. Harmless
    here because the gate was run by hand, but a sub-agent concluding "there is
    no gate" is one step from concluding "so I need not run one".
+
+**From tranche B, 2026-08-07.**
+
+7. **D1's FAILURE path has no criterion and no copy.** A rotation that fails
+   currently returns 500 plain text and does not clear the cookie. That is the
+   defensible choice (clearing it would look like a successful sign-out while
+   nothing was revoked) but nothing in the plan covers it, and there is no
+   design or accessibility copy for a 500 on the sign-out path. `lens-design`
+   will want that replaced with a real page. **Carry into tranche C.**
+
+8. **Three mutations survived first, and the tests were wrong, not the code.**
+   Worth recording because it is the harness working as intended: the update
+   guard checking only the payload and not the stored row was untested (every
+   test happened to send a payload claiming the identifier); the guard failing
+   OPEN on an unreadable store was untested entirely; and one mutation was
+   silently SKIPPED because its pattern matched twice. That last one is the
+   "sed matched nothing" false green the project rules name, caught only because
+   the driver asserted the hash changed.
+
+9. **`Env` contamination across the unit suite.** `tests/unit/test_fastapi_web.py`
+   held a bare string in `Env.get('db')`, inherited from another module, which
+   only surfaced once logout began writing. Fixed locally with a fixture, but
+   the pattern exists elsewhere and no AC covers test isolation. I hit the same
+   trap myself while verifying, so it is not hypothetical.
