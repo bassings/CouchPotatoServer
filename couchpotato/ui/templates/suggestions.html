@@ -183,6 +183,32 @@ function cpSuggestionLoader(variant = 'personal') {
     // a failure (retry that lands) must clear the error panel, and a failure after
     // a stale success must clear the grid — otherwise both panels could show.
     done()  { this.loaded = true;  this.failed = false; this.stalled = false; this._stop(); },
+    // Move focus to an `x-show` panel once the browser has actually shown it.
+    //
+    // `$nextTick` flushes ALPINE's queue, not the browser's style pass, so the
+    // element can still be laid out as `display:none` when the callback runs
+    // -- and `focus()` on a `display:none` element is a SILENT no-op. No
+    // error, no focus, no announcement, and nothing anywhere reports it.
+    //
+    // Measured on `tests/e2e/suggestions.spec.ts:99`: 0% failure in isolation,
+    // ~50% (4 of 7) in a full run on a branch that made every partial render
+    // slightly slower. Load decides whether it fires, which is the signature
+    // of a latent race rather than broken logic.
+    //
+    // ONE helper rather than three copies, deliberately. The first fix patched
+    // `fail()` alone; review found `retry()` carrying the identical shape one
+    // function down, and `keepWaiting()` had it too. Fixing the instance and
+    // leaving the class is how this comes back.
+    _focusWhenShown(ref) {
+      this.$nextTick(() => {
+        const el = this.$refs[ref];
+        if (!el) return;
+        el.focus();
+        if (document.activeElement !== el) {
+          requestAnimationFrame(() => el.focus());
+        }
+      });
+    },
     fail()  {
       this.failed = true; this.loaded = false; this.stalled = false; this._stop();
       // Move focus into the (now visible) assertive alert: reliably announces the
@@ -198,21 +224,14 @@ function cpSuggestionLoader(variant = 'personal') {
       // 0% in isolation. A focus move that lands only when the machine is fast
       // is a real WCAG 2.4.3 defect for anyone on a slow one -- the assertion
       // was right and the app was wrong.
-      this.$nextTick(() => {
-        const panel = this.$refs.errorPanel;
-        if (!panel) return;
-        panel.focus();
-        if (document.activeElement !== panel) {
-          requestAnimationFrame(() => panel.focus());
-        }
-      });
+      this._focusWhenShown('errorPanel');
     },
     // Returning focus to the loading panel keeps the user oriented after the
     // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
     keepWaiting() {
       this.stalled = false;
       this._stallAt = this.elapsed + CP.ui.SUGGESTION_KEEP_WAITING_EXTENSION;
-      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
+      this._focusWhenShown('loadingPanel');
     },
 
     // Re-run the fetch from the error state via this component's $refs.fetchTarget
@@ -236,7 +255,7 @@ function cpSuggestionLoader(variant = 'personal') {
       this._stallAt = CP.ui.SUGGESTION_STALL_AFTER;
       // The Try again button is now hidden (failed=false); move focus to the
       // loading panel so it doesn't drop to <body> (WCAG 2.4.3).
-      this.$nextTick(() => this.$refs.loadingPanel && this.$refs.loadingPanel.focus());
+      this._focusWhenShown('loadingPanel');
     },
 
     // view helpers — pure math delegated to CP.ui
