@@ -187,7 +187,25 @@ function cpSuggestionLoader(variant = 'personal') {
       this.failed = true; this.loaded = false; this.stalled = false; this._stop();
       // Move focus into the (now visible) assertive alert: reliably announces the
       // failure to AT and lands the user on the Try again action (WCAG 2.4.3).
-      this.$nextTick(() => this.$refs.errorPanel && this.$refs.errorPanel.focus());
+      // `focus()` on an element the browser still lays out as `display:none`
+      // is a SILENT no-op, and `x-show` has not necessarily applied by the
+      // time `$nextTick` runs -- Alpine flushes its own queue, not the
+      // browser's style pass. So the focus is confirmed and retried on the
+      // next frame if it did not take.
+      //
+      // Measured: `tests/e2e/suggestions.spec.ts:99` failed ~50% of full local
+      // runs on a branch that made every partial render slightly slower, and
+      // 0% in isolation. A focus move that lands only when the machine is fast
+      // is a real WCAG 2.4.3 defect for anyone on a slow one -- the assertion
+      // was right and the app was wrong.
+      this.$nextTick(() => {
+        const panel = this.$refs.errorPanel;
+        if (!panel) return;
+        panel.focus();
+        if (document.activeElement !== panel) {
+          requestAnimationFrame(() => panel.focus());
+        }
+      });
     },
     // Returning focus to the loading panel keeps the user oriented after the
     // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
