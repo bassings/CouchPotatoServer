@@ -891,6 +891,18 @@ LOGIN_MESSAGES = {
         'device. The server could not write the change to its database. Check '
         'the server log, then try again.',
     ),
+    # Being throttled while signing OUT is not a failed sign-in, and saying so
+    # is not a wording nicety. `rate_limited` reads "too many sign-in
+    # attempts", which is false here and blames the operator for something they
+    # did not do -- and it renders on the sign-in page, so the result looks
+    # exactly like a completed sign-out while every session is still valid.
+    # Leads with the fact they need: it did not happen.
+    'rate_limited_signout': (
+        'error',
+        'Sign-out was not carried out, so every session is still signed in on '
+        'every device. Too many requests came from this address. Wait {wait} '
+        'and try again.',
+    ),
 }
 
 #: The only two reasons a URL may ask for. Everything else is produced by the

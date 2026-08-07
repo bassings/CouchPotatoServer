@@ -113,8 +113,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             try:
                 from couchpotato import render_login_page
 
+                # A throttled SIGN-OUT is not a failed sign-in. Rendering the
+                # sign-in page with "too many sign-in attempts" shows the
+                # operator a form they did not ask for, blames them for
+                # attempts they did not make, and -- because it looks like the
+                # login page -- reads as a completed sign-out while every
+                # session on every device is still valid. `signout_failed` is
+                # the mode the sign-out 500 path already uses for exactly this.
+                signing_out = path.rstrip('/').rsplit('/', 1)[-1] == 'logout'
+
                 response = render_login_page(
-                    reason='rate_limited', status_code=429,
+                    reason='rate_limited_signout' if signing_out else 'rate_limited',
+                    status_code=429,
+                    mode='signout_failed' if signing_out else 'signin',
                     message_values={'wait': _wait_phrase(retry_after)})
                 response.headers['Retry-After'] = str(retry_after)
                 return response

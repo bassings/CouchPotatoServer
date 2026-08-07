@@ -122,6 +122,30 @@ def _message_region(html: str):
     return (role.group(1) if role else None), ' '.join(text.split())
 
 
+def _rate_limited_signout_page(settings):
+    """A real 429 on the SIGN-OUT route, from the real middleware.
+
+    Distinct copy from `_rate_limited_page`, because being throttled while
+    signing out is not a failed sign-in: the operator is told the sign-out did
+    not happen and every session is still valid, on a page with no sign-in form
+    (finding M7).
+    """
+    from couchpotato import create_app
+
+    settings['rate_limit_max'] = 1
+    settings['rate_limit_window'] = 60
+    try:
+        limited = TestClient(create_app(API_KEY, '/'), follow_redirects=False)
+        headers = {'accept': 'text/html'}
+        limited.post('/login/', data={'password': 'wrong'}, headers=headers)
+        response = limited.post('/logout/', headers=headers)
+    finally:
+        settings['rate_limit_max'] = 0
+
+    assert response.status_code == 429, response.status_code
+    return response
+
+
 def _rate_limited_page(settings):
     """A real 429, from the real middleware, on a second app.
 
@@ -310,6 +334,7 @@ class TestTheCopyNeverLeaksTheMechanism:
         rendered.add(_message_region(
             TestTheSignOutFailurePage()._failing_logout(client).text)[1])
         rendered.add(_message_region(_rate_limited_page(settings).text)[1])
+        rendered.add(_message_region(_rate_limited_signout_page(settings).text)[1])
 
         for key, (_tone, text) in LOGIN_MESSAGES.items():
             # A message with a placeholder is rendered with it filled in, so

@@ -356,3 +356,64 @@ class TestTheRefusalSurvivesAFailureToRenderIt:
             'the 429 lost its Retry-After, so the caller cannot tell when to '
             'come back'
         )
+
+
+class TestARateLimitedSignOutDoesNotShowTheSignInForm:
+    """Finding M7. Being throttled while signing OUT is not a failed sign-in.
+
+    `/logout` is in `_ALWAYS_LIMITED_ROUTES` (correctly: under D1 it rotates
+    the shared secret, so it is a state-changing route worth throttling). But
+    the refusal rendered `reason='rate_limited'`, whose copy reads "Too many
+    sign-in attempts from this address", on the standard sign-in page.
+
+    So an operator who clicks Sign out is shown a SIGN-IN FORM and told they
+    made too many sign-in attempts, which they did not. The page looks exactly
+    like a completed sign-out while every session on every device is still
+    valid. That is the same lie
+    `test_the_failure_page_does_not_show_a_sign_in_form` refuses on the
+    sign-out 500 path, arriving through the limiter instead.
+
+    The `signout_failed` mode already exists for that path; this reuses it.
+    """
+
+    def _limited_logout(self, client):
+        for i in range(MAX):
+            client.post('/login/', data={'password': 'w%d' % i},
+                        headers={'accept': 'text/html'})
+        return client.post('/logout/', headers={'accept': 'text/html'})
+
+    def test_it_is_still_refused(self, client):
+        assert self._limited_logout(client).status_code == 429
+
+    def test_it_does_not_render_a_sign_in_form(self, client):
+        response = self._limited_logout(client)
+
+        assert 'name="password"' not in response.text, (
+            'a throttled sign-out rendered the sign-in form, which looks like '
+            'a completed sign-out while every session is still valid')
+
+    def test_it_does_not_blame_the_operator_for_sign_in_attempts(self, client):
+        response = self._limited_logout(client)
+
+        assert 'sign-in attempts' not in response.text.lower(), (
+            'the throttled sign-out told the operator they had made too many '
+            'SIGN-IN attempts; they were signing out')
+
+    def test_it_says_the_sessions_are_still_signed_in(self, client):
+        """The operator's actual question is "am I signed out?" -- no."""
+        response = self._limited_logout(client)
+
+        assert 'still signed in' in response.text.lower(), (
+            'the page never says the sign-out did not happen, which is the '
+            'one fact the operator needs')
+
+    def test_a_throttled_login_still_gets_the_sign_in_copy(self, client):
+        """Counterweight: the /login copy must not change."""
+        for i in range(MAX):
+            client.post('/login/', data={'password': 'w%d' % i},
+                        headers={'accept': 'text/html'})
+        response = client.post('/login/', data={'password': 'x'},
+                               headers={'accept': 'text/html'})
+
+        assert response.status_code == 429
+        assert 'sign-in attempts' in response.text.lower(), response.text[:400]
