@@ -41,6 +41,24 @@ from couchpotato.core.helpers.variable import hash_password, md5
 from couchpotato.core.settings import Settings
 from couchpotato.environment import Env
 
+
+#: A stand-in for a secret in the canary tests below: same shape as a real
+#: session secret (64 hex characters) and obviously not one.
+#:
+#: The canaries used to log `env.secret` itself, and CodeQL was right to flag
+#: that as `py/clear-text-logging-sensitive-data` -- a real secret genuinely
+#: reached a real logger, and a taint rule cannot tell "proving the filter
+#: works" from "leaking".
+#:
+#: Nothing is weakened by the swap. `PrivacyFilter` matches on the KEY NAME
+#: (`session_secret=`, `secret=`), not on the value, so what these tests prove
+#: is that a line of that SHAPE has its value redacted rather than dropped.
+#: The sentinel keeps the real character set and length, so a regex that
+#: choked on hex would still be caught. The assertion that the real secret
+#: never reaches the file is made by the tests above, which drive real login,
+#: logout and page loads and never log anything themselves.
+CANARY = 'deadbeef' * 8
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 #: 32 characters, the real key's LENGTH, because a short one produces a false
@@ -283,20 +301,20 @@ class TestThePrivacyFilterEntryIsLoadBearing:
 
     def test_a_secret_written_in_a_log_line_is_redacted(self, env):
         logging.getLogger('leaky').error('loaded session_secret=%s from the store',
-                                         env.secret)
+                                         CANARY)
 
         text = log_text(env)
-        assert env.secret not in text, (
+        assert CANARY not in text, (
             'a log line containing `session_secret=<value>` reached the file '
             'unredacted; PrivacyFilter has no name that matches it'
         )
         assert 'session_secret=xxx' in text, text
 
     def test_a_bare_secret_assignment_is_redacted(self, env):
-        logging.getLogger('leaky').error('secret=%s', env.secret)
+        logging.getLogger('leaky').error('secret=%s', CANARY)
 
         text = log_text(env)
-        assert env.secret not in text
+        assert CANARY not in text
         assert 'secret=xxx' in text, text
 
     def test_the_rest_of_the_message_survives_the_redaction(self, env):
@@ -306,7 +324,7 @@ class TestThePrivacyFilterEntryIsLoadBearing:
         nobody noticed.
         """
         logging.getLogger('leaky').error('secret=%s and the response was 404',
-                                         env.secret)
+                                         CANARY)
 
         text = log_text(env)
         assert '404' in text

@@ -332,9 +332,12 @@ class TestNoNewColourAndNoNewMotion:
     def test_the_markup_introduces_no_raw_hex(self, request, page):
         """Only the token definitions may name a colour."""
         html = request.getfixturevalue(page)
-        markup = re.sub(r'<style\b.*?</style>', '', html, flags=re.S)
-        markup = re.sub(r'<script\b.*?</script>', '', markup, flags=re.S)
-        markup = re.sub(r'<meta[^>]*>', '', markup)
+        # `re.I` as well as `re.S`: without it `<STYLE>` is not stripped, and
+        # the hex inside it is then reported as a raw colour in the markup --
+        # a false failure, and the shape CodeQL flags as `py/bad-tag-filter`.
+        markup = re.sub(r'<style\b.*?</style>', '', html, flags=re.S | re.I)
+        markup = re.sub(r'<script\b.*?</script>', '', markup, flags=re.S | re.I)
+        markup = re.sub(r'<meta[^>]*>', '', markup, flags=re.I)
 
         assert not re.search(r'#[0-9a-fA-F]{3,8}\b', markup), (
             'a raw hex colour appears outside the token blocks: %s'

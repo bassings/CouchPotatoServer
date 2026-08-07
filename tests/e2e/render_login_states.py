@@ -30,7 +30,6 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(REPO_ROOT / 'libs'))
 
-from fastapi.testclient import TestClient  # noqa: E402
 
 from couchpotato.core.helpers.variable import hash_password, md5  # noqa: E402
 from couchpotato.environment import Env  # noqa: E402
@@ -38,13 +37,32 @@ from couchpotato.environment import Env  # noqa: E402
 API_KEY = 'e2erenderkey' + '0' * 20
 PASSWORD = 'hunter2'
 
-#: name -> (method, path, form data or None)
+#: name -> kwargs for `render_login_page`, the ONE renderer every login route
+#: uses. Called directly rather than through the routes over HTTP.
+#:
+#: The routes used to be driven with `fastapi.testclient.TestClient`, and that
+#: made this script unrunnable in the job that runs it. `TestClient` needs
+#: `httpx`, which lives in `requirements-dev.txt`; the `test` job installs that
+#: file but the `accessibility` and `ui-e2e-tests` jobs install only
+#: `requirements.txt`. So CI failed with
+#:
+#:     RuntimeError: The starlette.testclient module requires the httpx2 package
+#:
+#: while a local run only warned, because a developer venv happens to have
+#: httpx. Adding the dev requirements to the accessibility job would fix it and
+#: make the slowest gate slower, which is the opposite of what PR 7 is for.
+#:
+#: Nothing is lost by calling the renderer directly: that the ROUTES produce
+#: these reasons is already proven by
+#: `tests/unit/test_login_page_messages.py`, which drives every real route and
+#: fails if any defined message is unreachable. This script exists to render
+#: the markup for axe, not to re-prove routing.
 STATES = {
-    'first_visit': ('GET', '/login/', None),
-    'signed_out': ('GET', '/login/?reason=signed_out', None),
-    'session_ended': ('GET', '/login/?reason=session_ended', None),
-    'rejected': ('POST', '/login/', {'username': 'admin', 'password': 'wrong'}),
-    'empty_password': ('POST', '/login/', {'username': 'admin', 'password': ''}),
+    'first_visit': {},
+    'signed_out': {'reason': 'signed_out'},
+    'session_ended': {'reason': 'session_ended'},
+    'rejected': {'reason': 'rejected', 'username': 'admin'},
+    'empty_password': {'reason': 'empty_password', 'username': 'admin'},
 }
 
 
@@ -77,20 +95,18 @@ def main(out_dir: str) -> int:
     Env.set('dev', False)
     Env.setting = staticmethod(setting)
 
-    from couchpotato import create_app
-    client = TestClient(create_app(API_KEY, '/'), follow_redirects=False)
+    from couchpotato import render_login_page
 
     written = {}
-    for name, (method, path, data) in STATES.items():
-        response = client.request(method, path, data=data)
-        if response.status_code != 200:
+    for name, kwargs in STATES.items():
+        html = render_login_page(**kwargs).body.decode('utf-8')
+        if 'name="password"' not in html:
             raise SystemExit(
-                '%s %s returned %d, not the login page. The states this spec '
-                'checks are produced by the real routes, so a redirect here '
-                'means the route changed and the spec is measuring nothing.'
-                % (method, path, response.status_code))
+                'the %s state rendered no password field, so it is not the '
+                'login page and the spec would be scanning something else'
+                % name)
         target = out / ('%s.html' % name)
-        target.write_text(response.text, encoding='utf-8')
+        target.write_text(html, encoding='utf-8')
         written[name] = str(target)
 
     print(json.dumps(written))
