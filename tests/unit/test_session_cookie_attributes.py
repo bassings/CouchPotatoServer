@@ -335,7 +335,14 @@ class TestTheDeletionCannotMismatchTheCookieItDeletes:
                  if isinstance(node, ast.Call)
                  and getattr(node.func, 'attr', None) in ('set_cookie', 'delete_cookie')]
 
-        assert len(calls) == 2, 'expected one set_cookie and one delete_cookie'
+        # One `set_cookie` (login) and two `delete_cookie` (the revoking
+        # logout, and the auth-OFF logout of D12 which revokes nothing but
+        # still drops a stale cookie). Kept EXACT rather than `>=`: the point
+        # is that no cookie is written anywhere this test has not looked at.
+        assert len(calls) == 3, (
+            'expected one set_cookie and two delete_cookie, found %d: %r'
+            % (len(calls), [ast.unparse(c) for c in calls])
+        )
         for call in calls:
             unparsed = ast.unparse(call)
             assert 'session_cookie_attributes()' in unparsed, unparsed

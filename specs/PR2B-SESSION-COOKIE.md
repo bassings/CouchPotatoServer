@@ -10,15 +10,16 @@
 > remediation programme. The parent plan's M15 rule binds: no implementation
 > before the lenses write the `AC-<LENS>-<n>` criteria below.
 
-**Status:** in progress — criteria written, tranches A, B and C implemented
+**Status:** in progress — criteria written, tranches A, B, C and D implemented
 **Lenses run:** all nine at planning (security, qa, simplicity, product, design,
 accessibility, data, architecture, operability) · **Skipped:** none
 
-**Not shippable yet.** Two things this PR itself created must land before the
-branch reaches `master`, which auto-publishes a beta: the sign-out control (D8,
-because logout is now POST-only and unreachable from a browser — D11) and the
-rate-limit and log-ring fixes. See "Orchestrator decisions during
-implementation" below.
+**The two blockers this PR created are now closed.** The sign-out control (D8,
+tranche C) and the rate-limit, log-ring and unauthenticated-write fixes
+(tranche D) have landed, so the branch no longer carries a defect of its own
+making into a `master` push, which auto-publishes a beta. What remains open is
+listed under D14 and in the gap list: AC-OPS-44 and AC-QA-19 are unimplemented,
+not deferred by decision.
 
 ## Problem
 
@@ -399,6 +400,69 @@ off. A Jinja global would touch the same file. This is AC-SIMP-3's second
 amendment; per the amendment rule it is the last one, and any further file
 leaves for a follow-up PR.
 
+## D14 — tranche D: what was decided while closing D12, AC-SEC-42, L1, AC-SEC-41 and AC-QA-27
+
+- **D12's guard lives at the logout CALL SITE, not inside
+  `rotate_session_secret`.** The tidier-looking place is the rotation function,
+  and it is the wrong one: that function is also D6's, and `Core.md5Password`
+  sets `auth_required = 1` immediately *before* rotating. A guard inside the
+  rotation would make the password-change revocation silently depend on that
+  ordering — and this branch has already reordered those two lines once
+  (`904654d2`). Both directions are pinned: an auth-off logout writes nothing,
+  an auth-on logout still revokes, in the same test class.
+- **An auth-off logout redirects to the app root, not to
+  `/login/?reason=signed_out`.** That message reads "You have been signed out on
+  every device", which on an install with authentication off is false in both
+  halves. The cookie is still dropped, because clearing a stale one costs
+  nothing and clears an `api_key`-valued leftover from before this PR.
+- **AC-SEC-42 is satisfied by re-keying the existing exemption, which STAYS.**
+  Deleting it would throttle ordinary browsing (partials, `logs.html`'s
+  ten-second poll) and lock the operator out of their own LAN server, which
+  outranks the limit. `_ALWAYS_LIMITED_ROUTES = ('/login', '/logout',
+  '/getkey')` — `/getkey/` included because it returns the `api_key` for a
+  username and password, so it is the same guessing attack with a better prize.
+- **The route match is on the LAST PATH SEGMENT, not `startswith`.** Every
+  route is served under `web_base`, so a prefix test would miss
+  `/couchpotato/login/` and leave exactly the route the criterion protects
+  unthrottled. Pinned by a test that builds a second app at `/couchpotato/`.
+- **Spec gap 13 is closed in the middleware, as the gap said it had to be.**
+  The 429 renders the real login page through `render_login_page` with a new
+  `rate_limited` message when the caller accepts HTML and the path is an auth
+  route; JSON callers are unchanged. The copy states the remaining wait
+  (computed from the window, not a constant) and deliberately does not
+  distinguish a wrong username from a wrong password — the limit counts
+  attempts, and distinguishing them would confirm a username to whoever tripped
+  it.
+- **L1's bound is two records per call site per five minutes, not one.** The
+  second is a notice that suppression has started, because a silent limiter
+  makes "this happened once" and "this is happening on every request" read
+  identically, and the count is not known until the window ends. Measured, 1,000
+  unauthenticated requests against an install with `auth_required = 1` and no
+  password:
+
+      before: 1,000 application records at INFO+, 533,043 bytes, one rotation,
+              whole 11-file ring evicted by roughly 10,300 requests
+      after :     2 application records,              704 bytes, no rotation,
+              a line written before the burst still present
+
+  (The pre-change figure of 2,001 records included 1,001 emitted by the test
+  client's own `httpx` logger, which production does not have.)
+- **Each call site keeps its OWN suppression key**, enforced structurally as
+  well as behaviourally. A key collision bounds the log just as well and loses
+  half the diagnosis; it is invisible to a behavioural test whenever the two
+  conditions cannot hold at once, which is how the first version of that guard
+  let the mutation through.
+
+### Not done in tranche D, and why it matters
+
+- **AC-OPS-44 (a distinct greppable reason token per rejection class) is still
+  open.** That makes AC-OPS-45's phrase "and every new cookie-rejection path"
+  currently vacuous: no such logging exists, so there was nothing to bound.
+  **Whoever implements AC-OPS-44 must route those calls through
+  `log_suppressed`**, or L1 comes straight back — one unbounded ERROR per
+  rejected cookie is the same defect with a different message.
+- **AC-QA-19 remains open** (gap 4), untouched by this tranche.
+
 ## Spec gaps found at review
 
 Findings with no acceptance criterion behind them. Recorded because that list is
@@ -536,3 +600,45 @@ against the repo, not taken from the report.**
     action. Recorded because the shape — filter a list by the thing you are
     about to assert, then take `[0]` — is not covered by any AC and reads as
     thorough.
+
+**From tranche D, 2026-08-07.**
+
+15. **Bounding a log introduces process-wide state, and no AC covers isolating
+    it in tests.** The suppression window is deliberately global, so the first
+    test to provoke a bounded ERROR emitted it and every later test in the same
+    process saw the suppression notice instead of the message it asserted on.
+    Six existing tests went red immediately (five parametrised cases in
+    `test_auth_required_lockout_guard.py`, one in `test_session_secret_store.py`)
+    with a failure that reads like "the code stopped logging". Fixed with an
+    autouse reset in `tests/unit/conftest.py`. This is the same shape as gap 9
+    (`Env` contamination) and still has no criterion behind it: **any future
+    global the app keeps needs a reset fixture, or the failure lands on
+    somebody else's test.**
+
+16. **The E2E cannot prove the `Secure` half of AC-SEC-39/AC-OPS-52, and the
+    harness cannot be made to.** Chrome treats `http://localhost` as a SECURE
+    CONTEXT, so it accepts `Secure` cookies there. Measured: hardcoding
+    `secure=True` leaves all five tests in
+    `tests/e2e/authenticated-session.a11y.spec.ts` green, while
+    `tests/unit/test_session_cookie_attributes.py` kills it (6 failures). The
+    criteria are met, by the unit tests; what is worth recording is that a
+    plain-HTTP browser test over localhost cannot discriminate this, so a future
+    reviewer must not read a green E2E as covering it.
+
+17. **"Non-zero exit" is not proof that a mutation was killed.** A mutation run
+    here reported the guard load-bearing when in fact pytest had collected ZERO
+    tests: zsh does not word-split unquoted variables, so a file list passed as
+    `$T` arrived as one nonexistent path and pytest exited 4 (usage error),
+    which is non-zero. The project rules require proving the mutation LANDED
+    (hash) but say nothing about proving the test run was VALID. Both are
+    needed; the driver now fails loudly on `collected 0 items`.
+
+18. **Two log call sites sharing a suppression key can be behaviourally
+    undetectable.** Pointing the `auth_required` typo message at the
+    no-password key survived every behavioural test, because
+    `auth_is_required()` returns before it can reach the second condition — so
+    those two messages provably cannot co-occur. It is still wrong, and the
+    next change to that function makes it a live defect. Killed by a structural
+    test asserting the keys are distinct, plus a behavioural test on the pair
+    that CAN co-occur. **A criterion that asks only for behaviour cannot cover
+    this class**; AC-ARCH-2's grep shape can.

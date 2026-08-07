@@ -17,7 +17,7 @@ import traceback
 from couchpotato.api import api_nonblock, callApiHandler
 from couchpotato.core.helpers.encoding import toUnicode
 from couchpotato.core.helpers.variable import check_password, hash_password, is_legacy_md5_hash, md5, tryInt
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.environment import Env
 
 from fastapi import FastAPI, Request, Response, Depends, HTTPException
@@ -109,9 +109,14 @@ def auth_is_required() -> bool:
         # value as "off" would silently make the server public; reading it as
         # "on" would lock out an install with no password. Fall back to the
         # same derivation used when the key is absent, which does neither.
-        log.error('Unrecognised auth_required value %r in config.ini; expected '
-                  '0 or 1. Falling back to "required only if a password is '
-                  'set". Fix the value to remove this warning.', configured)
+        # Bounded (AC-OPS-45). Reached on EVERY request while config.ini holds
+        # a typo -- and hand-editing config.ini is the documented lockout
+        # recovery, so this fires exactly while somebody is mid-recovery.
+        log_suppressed(
+            log.error, 'auth_required_unrecognised',
+            'Unrecognised auth_required value %r in config.ini; expected '
+            '0 or 1. Falling back to "required only if a password is '
+            'set". Fix the value to remove this warning.', configured)
         return _auth_required_from_password()
 
     if not wants_auth:
@@ -143,13 +148,20 @@ def auth_is_required() -> bool:
     # ERROR, not WARNING, and it names the remedy: this is the log line the
     # locked-out operator will be reading.
     if not Env.setting('password'):
-        log.error('"Require login" is ON but NO PASSWORD is stored, so no login '
-                  'can succeed and every request will be refused. Serving is '
-                  'CONTINUING with authentication enforced rather than falling '
-                  'open -- an unauthenticated instance would expose the api_key '
-                  'and allow the library to be deleted remotely. To recover: '
-                  'set "auth_required = 0" in the [core] section of config.ini '
-                  'and restart, then set a password from Settings.')
+        # Bounded (AC-OPS-45), and the bound changes nothing about what the
+        # locked-out operator reads: the FIRST record in each window is this
+        # message in full, remedy included. What it stops is a stranger
+        # emptying the 5.5 MB ring -- the only diagnostic a self-hosted install
+        # has -- with about 10,300 credential-free requests, measured.
+        log_suppressed(
+            log.error, 'auth_required_without_password',
+            '"Require login" is ON but NO PASSWORD is stored, so no login '
+            'can succeed and every request will be refused. Serving is '
+            'CONTINUING with authentication enforced rather than falling '
+            'open -- an unauthenticated instance would expose the api_key '
+            'and allow the library to be deleted remotely. To recover: '
+            'set "auth_required = 0" in the [core] section of config.ini '
+            'and restart, then set a password from Settings.')
 
     return True
 
@@ -439,7 +451,9 @@ def get_session_secret():
         secret = None
 
     if not secret:
-        log.error(_SESSION_SECRET_MISSING)
+        # Bounded (AC-OPS-45): reached once per REQUEST once the property store
+        # cannot be read, which needs no credential to provoke.
+        log_suppressed(log.error, 'session_secret_missing', _SESSION_SECRET_MISSING)
         return None
 
     return secret
@@ -575,6 +589,19 @@ LOGIN_MESSAGES = {
         'error',
         'Enter your password to sign in.',
     ),
+    # Produced by `RateLimitMiddleware`, which answers BEFORE the route runs,
+    # so this is the one message the login route itself never renders. `{wait}`
+    # is filled by the middleware from the actual remaining window.
+    #
+    # It must not distinguish a wrong username from a wrong password: the limit
+    # counts attempts, and saying which half was wrong would confirm a username
+    # to exactly the caller who tripped it.
+    'rate_limited': (
+        'error',
+        'Too many sign-in attempts from this address. Wait {wait} and try '
+        'again. The limit counts every attempt, right or wrong, so it says '
+        'nothing about what you entered.',
+    ),
     'sign_out_failed': (
         'error',
         'Sign-out did not work, so every session is still signed in on every '
@@ -596,17 +623,25 @@ MAX_REFLECTED_USERNAME = 100
 
 
 def render_login_page(reason=None, username='', status_code: int = 200,
-                      mode: str = 'signin'):
+                      mode: str = 'signin', message_values=None):
     """The ONE renderer of `login.html`, for every state it has.
 
-    `login_get`, a rejected `login_post` and a failed sign-out all land here,
-    so the status region, the focus target and the escaping are decided once.
-    Three separate call sites would drift, and the one that drifted would be
-    the one nobody looks at -- the failure path.
+    `login_get`, a rejected `login_post`, a failed sign-out and the rate-limit
+    middleware all land here, so the status region, the focus target and the
+    escaping are decided once. Four separate call sites would drift, and the
+    one that drifted would be the one nobody looks at -- the failure path.
+
+    `message_values` fills the placeholders in a message that has them (only
+    `rate_limited` does, with the actual remaining wait). Applied to the
+    server's own copy and never to anything the caller sent: the untrusted
+    values on this page are `username`, which the template escapes, and
+    `reason`, which is an allowlisted key rather than text.
     """
     tone = text = None
     if reason:
         tone, text = LOGIN_MESSAGES[reason]
+        if message_values:
+            text = text.format(**message_values)
 
     if mode == 'signout_failed':
         # The person is still signed in, so there is nothing to type. Focus
@@ -977,6 +1012,43 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.post(web_base + 'logout/')
     @app.post(web_base + 'logout')
     async def logout(request: Request, user=Depends(require_auth)):
+        # NOTHING TO REVOKE, SO NOTHING IS WRITTEN.
+        #
+        # With authentication off, `get_current_user` returns True for
+        # everyone, so `require_auth` above passes everyone, so this handler
+        # was reachable by a caller who presented no credentials at all -- and
+        # it rotated, which means an unauthenticated stranger caused a write to
+        # the operator's database. Measured against the real app::
+        #
+        #     auth_is_required(): False      rows before: 0
+        #     POST /logout/     : 303        rows after : 1  (session_secret)
+        #
+        # No access was granted -- such an install serves every request to
+        # everyone anyway -- and it was bounded to one row. It still
+        # contradicts AC-QA-21 and AC-SEC-46, which both promise that an
+        # install that never enabled authentication never grows a secret row.
+        #
+        # The condition is `auth_is_required()` and not "did the caller present
+        # a cookie": with authentication off there is no session, so there is
+        # nothing a cookie could mean.
+        #
+        # The guard lives HERE and not inside `rotate_session_secret`, which
+        # would be the tidier-looking place. That function is also D6's
+        # (`Core.md5Password` rotates when a password is set), and D6 sets
+        # `auth_required = 1` immediately BEFORE rotating. A guard inside the
+        # rotation would make the password-change revocation silently depend on
+        # that ordering, and reordering those two lines -- which this branch has
+        # already done once -- would turn D6 off with nothing failing.
+        if not auth_is_required():
+            # Straight to the app, carrying no `?reason=signed_out`: that
+            # renders "You have been signed out on every device", which would
+            # be false in both halves. The cookie is dropped because a stale
+            # one costs nothing to clear and an api_key-valued leftover from
+            # before this PR is worth clearing.
+            response = RedirectResponse(url=web_base, status_code=303)
+            response.delete_cookie(SESSION_COOKIE_NAME, **session_cookie_attributes())
+            return response
+
         try:
             rotate_session_secret()
         except Exception:

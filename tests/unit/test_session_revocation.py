@@ -82,8 +82,7 @@ class FakeSettings(Settings):
         pass
 
 
-@pytest.fixture
-def env(tmp_path):
+def _build_env(tmp_path, settings_overrides=None, bootstrap_secret=True):
     """A real adapter, a real `Core` plugin on the real event bus, a real app.
 
     `Core()` is instantiated for real rather than through `Core.__new__`, so
@@ -91,6 +90,13 @@ def env(tmp_path):
     and not something this file arranged. Two globals it touches are saved and
     restored: the signal handlers (skipped by pretending to be the desktop
     build) and the process-wide default socket timeout.
+
+    `settings_overrides` and `bootstrap_secret` exist for the auth-OFF install
+    of D12, which must be built the same way as the protected one in every
+    respect except the two that define it: no password, `auth_required = 0`,
+    and no secret ever created. Building that install by hand in a second
+    fixture would let the two drift, and the interesting assertion is precisely
+    that the same POST behaves differently.
     """
     old_api = dict(api)
     old_locks = dict(api_locks)
@@ -103,7 +109,7 @@ def env(tmp_path):
     db = SQLiteAdapter()
     db.create(str(tmp_path / 'db'))
 
-    settings = FakeSettings({
+    values = {
         'username': '',
         'password': STORED_PASSWORD,
         'api_key': API_KEY,
@@ -112,7 +118,9 @@ def env(tmp_path):
         'cors_origins': '',
         'ssl_cert': '',
         'ssl_key': '',
-    })
+    }
+    values.update(settings_overrides or {})
+    settings = FakeSettings(values)
 
     Env.set('db', db)
     Env.set('settings', settings)
@@ -129,7 +137,7 @@ def env(tmp_path):
     from couchpotato.core._base._core import Core
     Core()
 
-    secret = ensure_session_secret(db)
+    secret = ensure_session_secret(db) if bootstrap_secret else None
 
     from couchpotato import create_app
     app = create_app(API_KEY, '/')
@@ -154,6 +162,29 @@ def env(tmp_path):
     api_docs_missing.extend(old_missing)
     event_module.events.clear()
     event_module.events.update(old_events)
+
+
+@pytest.fixture
+def env(tmp_path):
+    """The protected install: `auth_required = 1`, a password, a secret."""
+    yield from _build_env(tmp_path)
+
+
+@pytest.fixture
+def open_env(tmp_path):
+    """The install that never enabled authentication (D12).
+
+    No password and an explicit `auth_required = 0`, which is what
+    `runner.py`'s startup migration writes back on a default install -- so this
+    is the MOST COMMON configuration this project ships, not an edge case. No
+    secret is bootstrapped, because `runner.py` only bootstraps one when
+    `auth_is_required()`.
+    """
+    yield from _build_env(
+        tmp_path,
+        settings_overrides={'password': '', 'auth_required': 0},
+        bootstrap_secret=False,
+    )
 
 
 def client(env):
@@ -404,6 +435,115 @@ class TestRevocationIsNotReachableWithoutASession:
                 '%s answers %r; a revocation that any GET can trigger is a '
                 'cross-site request forgery' % (route.path, route.methods)
             )
+
+
+def _every_document(db):
+    """A comparable snapshot of the whole store.
+
+    Compared as sorted JSON rather than by hashing the SQLite file: the file
+    changes for reasons that are not writes (page cache, journal), so a hash
+    would be flaky in the direction that costs the most -- a failure nobody
+    trusts gets re-run until it is green.
+    """
+    import json as _json
+    return sorted(_json.dumps(doc, sort_keys=True, default=str) for doc in db.all('id'))
+
+
+class TestLogoutWritesNothingWhenAuthenticationIsOff:
+    """D12: the unauthenticated database write this PR introduced.
+
+    With `auth_required` off, `get_current_user` returns True for everyone, so
+    `require_auth` passes everyone, so ANY caller -- with no credentials at all
+    -- reached the rotation path and caused a write. Measured against the real
+    app before the fix::
+
+        auth_is_required(): False
+        rows before        : 0
+        POST /logout/      : 303
+        rows after         : 1      _t=property identifier=session_secret
+
+    It grants no access, because such an install serves everything to everyone
+    anyway, and it is bounded to one row. It is still an unauthenticated write
+    to the operator's database, and it contradicts AC-QA-21 ("the property
+    store is never written") and AC-SEC-46 ("the change persists exactly one new
+    document") -- both of which promise that an install which never enabled
+    authentication never grows a secret row.
+
+    The fix is one condition, and it lives at the logout CALL SITE rather than
+    inside `rotate_session_secret`: the rotation function is also D6's
+    (`setting.save.core.password`), whose ordering already sets
+    `auth_required = 1` before rotating. A guard inside the rotation would make
+    D6 depend on that ordering silently, and a later edit to the order would
+    turn the password-change revocation off with nothing failing.
+    """
+
+    def test_an_unauthenticated_logout_writes_no_document_at_all(self, open_env):
+        before = _every_document(open_env.db)
+
+        response = client(open_env).post('/logout/')
+
+        assert response.status_code in (302, 303), response.status_code
+        assert _every_document(open_env.db) == before, (
+            'POST /logout/ from a caller who presented no credentials wrote to '
+            'the database of an install that never enabled authentication'
+        )
+
+    def test_it_never_creates_a_session_secret(self, open_env):
+        """Named separately from the snapshot above so the failure says which.
+
+        The snapshot catches any write; this says what the write WAS, which is
+        the sentence the operator would otherwise have to reconstruct from a
+        JSON diff.
+        """
+        client(open_env).post('/logout/')
+
+        rows = [row for row in open_env.db._query_index('property', key=SESSION_SECRET_PROPERTY)
+                if row.get('identifier') == SESSION_SECRET_PROPERTY]
+        assert rows == [], (
+            'an install with no password grew a session_secret row: %r' % rows
+        )
+
+    def test_fifty_of_them_still_write_nothing(self, open_env):
+        """A guard against "writes once, then finds the row and no-ops".
+
+        That shape would pass the two tests above only by accident of ordering,
+        and it is still an unauthenticated write.
+        """
+        before = _every_document(open_env.db)
+
+        stranger = client(open_env)
+        for _ in range(50):
+            assert stranger.post('/logout/').status_code in (302, 303)
+
+        assert _every_document(open_env.db) == before
+
+    def test_it_does_not_tell_the_operator_that_sessions_were_ended(self, open_env):
+        """Copy has to match what happened, which is nothing.
+
+        `?reason=signed_out` renders "You have been signed out on every device",
+        and on an install with authentication off that is false in both halves:
+        nobody was signed in and nothing was revoked.
+        """
+        response = client(open_env).post('/logout/')
+
+        assert 'reason=signed_out' not in response.headers.get('location', ''), (
+            'an install with authentication off claims to have signed every '
+            'device out, having revoked nothing'
+        )
+
+    def test_the_protected_install_still_revokes(self, env):
+        """The paired positive, so the fix cannot be "logout does nothing".
+
+        The narrow guard and its inverse in one place: same route, same POST,
+        opposite outcome, decided only by whether authentication is on.
+        """
+        owner, token = log_in(env)
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+
+        assert owner.post('/logout/').status_code in (302, 303)
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before
+        assert not is_signed_in(replay(env, token))
 
 
 class TestChangingThePasswordEndsEverySession:

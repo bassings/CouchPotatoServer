@@ -122,6 +122,30 @@ def _message_region(html: str):
     return (role.group(1) if role else None), ' '.join(text.split())
 
 
+def _rate_limited_page(settings):
+    """A real 429, from the real middleware, on a second app.
+
+    The `rate_limited` message is the only one no login ROUTE can produce: the
+    middleware answers before the route runs (spec gap 13). Driving it here
+    keeps it inside the same "every message is really rendered" guard as the
+    other five, which is what stops copy nobody has looked at from shipping.
+    """
+    from couchpotato import create_app
+
+    settings['rate_limit_max'] = 1
+    settings['rate_limit_window'] = 60
+    try:
+        limited = TestClient(create_app(API_KEY, '/'), follow_redirects=False)
+        headers = {'accept': 'text/html'}
+        limited.post('/login/', data={'password': 'wrong'}, headers=headers)
+        response = limited.post('/login/', data={'password': 'wrong'}, headers=headers)
+    finally:
+        settings['rate_limit_max'] = 0
+
+    assert response.status_code == 429, response.status_code
+    return response
+
+
 class TestNoMessageWhenThereIsNothingToSay:
     """AC-A11Y-5's negative half, which is what stops this becoming noise."""
 
@@ -138,7 +162,8 @@ class TestNoMessageWhenThereIsNothingToSay:
 
         assert _message_region(response.text) is None
 
-    @pytest.mark.parametrize('reason', ['rejected', 'empty_password', 'sign_out_failed'])
+    @pytest.mark.parametrize('reason', ['rejected', 'empty_password', 'sign_out_failed',
+                                        'rate_limited'])
     def test_a_server_owned_reason_cannot_be_requested_by_url(self, client, reason):
         """Only `signed_out` and `session_ended` are navigational.
 
@@ -271,7 +296,7 @@ class TestTheCopyNeverLeaksTheMechanism:
                     '%s message names %r, which tells the operator nothing '
                     'they can act on: %r' % (key, banned, text))
 
-    def test_every_defined_message_is_rendered_by_some_real_path(self, client):
+    def test_every_defined_message_is_rendered_by_some_real_path(self, client, settings):
         """A constant nothing renders is copy that cannot be reviewed."""
         from couchpotato import LOGIN_MESSAGES
 
@@ -284,9 +309,14 @@ class TestTheCopyNeverLeaksTheMechanism:
             client.post('/login/', data={'username': '', 'password': ''}).text)[1])
         rendered.add(_message_region(
             TestTheSignOutFailurePage()._failing_logout(client).text)[1])
+        rendered.add(_message_region(_rate_limited_page(settings).text)[1])
 
         for key, (_tone, text) in LOGIN_MESSAGES.items():
-            assert text in rendered, 'the %r message is never rendered' % key
+            # A message with a placeholder is rendered with it filled in, so
+            # match on the fixed part in front of it.
+            fixed = text.split('{', 1)[0].strip()
+            assert any(fixed in seen for seen in rendered), (
+                'the %r message is never rendered' % key)
 
 
 class TestAFailedSignInReturnsToTheForm:
