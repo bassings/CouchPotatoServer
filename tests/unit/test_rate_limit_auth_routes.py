@@ -300,3 +300,59 @@ class TestTheRateLimitedResponseIsUsable:
 
         assert response.status_code == 429
         assert 'rate limit' in response.json()['error'].lower()
+
+
+class TestTheRefusalSurvivesAFailureToRenderIt:
+    """A degraded install must still get a 429, not a 500.
+
+    The fallback exists because the comment above it says so: "raising here
+    would turn a refusal into a 500 with a traceback, on the one path an
+    attacker controls". The fallback ITSELF raised.
+
+    `log_suppressed`'s signature is `(log_method, key, message, *args,
+    window=..., now=None)` -- it has no `exc_info`, because it forwards `*args`
+    to the logger so `PrivacyFilter` can scrub them. Passing `exc_info=True`
+    raised `TypeError` inside the `except` that was supposed to contain the
+    failure, so a render error became exactly the 500-with-traceback the
+    comment forbids, on an unauthenticated path, with nothing in the
+    application log. The uvicorn traceback that does appear is unbounded, which
+    is L1 arriving through a different door.
+
+    Executed before the fix::
+
+        log_suppressed(log.error, 'k', 'msg', exc_info=True)
+        -> TypeError: log_suppressed() got an unexpected keyword argument 'exc_info'
+    """
+
+    def test_a_render_failure_still_returns_429_with_retry_after(self, client, monkeypatch):
+        import couchpotato
+
+        def explode(*args, **kwargs):
+            raise RuntimeError('login.html is missing from the image')
+
+        # Patch `couchpotato`, NOT `couchpotato.core.rate_limit`. The call site
+        # is a FUNCTION-LOCAL `from couchpotato import render_login_page`, so
+        # the name is resolved from the source module at call time and a patch
+        # on the rate_limit namespace never participates. The first version of
+        # this test did exactly that and passed while touching nothing.
+        # Warm up to the limit FIRST, with rendering still working: the login
+        # route renders the same page on a rejected attempt, so patching before
+        # this loop breaks the warm-up rather than the refusal, and the test
+        # fails for the wrong reason.
+        for i in range(MAX):
+            client.post('/login/', data={'password': 'w%d' % i},
+                        headers={'accept': 'text/html'})
+
+        monkeypatch.setattr(couchpotato, 'render_login_page', explode)
+
+        response = client.post('/login/', data={'password': 'final'},
+                               headers={'accept': 'text/html'})
+
+        assert response.status_code == 429, (
+            'a failure to RENDER the refusal turned the refusal itself into %d. '
+            'The fallback exists precisely to stop that.' % response.status_code
+        )
+        assert response.headers.get('retry-after'), (
+            'the 429 lost its Retry-After, so the caller cannot tell when to '
+            'come back'
+        )

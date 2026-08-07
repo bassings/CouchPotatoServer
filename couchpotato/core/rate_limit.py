@@ -6,6 +6,7 @@ Default: 60 requests/minute.
 import math
 import time
 import threading
+import traceback
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -122,10 +123,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 # a 429; raising here would turn a refusal into a 500 with a
                 # traceback, on the one path an attacker controls. Bounded,
                 # because this is reachable without credentials.
+                # `traceback.format_exc()` as an ARG, not `exc_info=True`:
+                # `log_suppressed` is `(log_method, key, message, *args,
+                # window=..., now=None)` and forwards `*args` to the logger so
+                # `PrivacyFilter` can scrub them. It has no `exc_info`, so
+                # passing one raised `TypeError` INSIDE the except that exists
+                # to contain the failure -- turning a render error into exactly
+                # the 500-with-unbounded-traceback the comment above forbids,
+                # on the one path an unauthenticated caller controls, with
+                # nothing in the application log.
                 log_suppressed(log.error, 'rate_limit_page_render_failed',
                                'Could not render the rate-limited page; sending '
-                               'JSON instead. The refusal itself is unaffected.',
-                               exc_info=True)
+                               'JSON instead. The refusal itself is unaffected. %s',
+                               traceback.format_exc())
 
         return JSONResponse(
             content={'success': False, 'error': 'Rate limit exceeded'},
