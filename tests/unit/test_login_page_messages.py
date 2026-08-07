@@ -517,3 +517,62 @@ class TestTheSignOutFailurePage:
         assert 'set-cookie' not in response.headers, (
             'the browser was signed out while the token in somebody else\'s '
             'hands stayed valid')
+
+
+class TestAnExpiredSessionDoesNotSwapTheLoginPageIntoAFragment:
+    """AC-DESIGN-7. Reported implemented by tranche C; it was not.
+
+    `grep -rn 'HX-Redirect'` across `couchpotato/` and `tests/` matched only the
+    vendored htmx bundle. Every authenticated partial answers a bare 302, and
+    htmx 2.0.4's default `responseHandling` swaps any 2xx -- so the followed
+    redirect returns the whole login document and htmx drops it inside the
+    fragment target.
+
+    What the operator sees: a login card inside their movie list, on a page
+    that still looks signed in, with the URL unchanged. They type their
+    password into it and the form posts to the page URL, which answers 405,
+    which htmx does not swap. So nothing happens, twice, with no feedback.
+
+    This PR is what makes that state routine rather than rare: D3 now expires
+    sessions server-side at 24h/30d and D1 rotates on every sign-out and
+    password change.
+
+    It is the same lie `test_the_failure_page_does_not_show_a_sign_in_form`
+    above refuses on the sign-out path.
+    """
+
+    def _expired_fragment(self, client):
+        return client.get('/partial/movies',
+                          headers={'HX-Request': 'true'},
+                          cookies={SESSION_COOKIE_NAME: 'stale.signature'})
+
+    def test_it_answers_with_hx_redirect_rather_than_a_swappable_redirect(self, client):
+        response = self._expired_fragment(client)
+
+        assert response.headers.get('hx-redirect'), (
+            'an expired session answered a fragment request with %d and no '
+            'HX-Redirect. htmx follows the redirect and swaps the resulting '
+            '200 -- the whole login document -- into the content area.'
+            % response.status_code
+        )
+        assert response.headers['hx-redirect'].endswith('login/?reason=session_ended'), (
+            response.headers['hx-redirect'])
+
+    def test_the_body_carries_no_login_form_to_swap(self, client):
+        """Belt and braces: even if something swaps it, there is nothing to
+        swap. A 204 has no body at all."""
+        response = self._expired_fragment(client)
+
+        assert 'name="password"' not in response.text, (
+            'the fragment response carried a sign-in form, which is the thing '
+            'that ends up nested inside the library page')
+
+    def test_a_normal_browser_navigation_still_gets_a_redirect(self, client):
+        """The counterweight. HX-Redirect is meaningless to a plain
+        navigation, and answering 204 to one would show a blank page."""
+        response = client.get('/wanted/',
+                              cookies={SESSION_COOKIE_NAME: 'stale.signature'})
+
+        assert response.status_code == 302, (
+            'a normal page load must still redirect, not 204')
+        assert response.headers['location'].endswith('login/?reason=session_ended')

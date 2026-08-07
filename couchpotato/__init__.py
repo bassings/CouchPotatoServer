@@ -811,6 +811,33 @@ def require_auth(request: Request):
         # D5 describes -- is exactly who the message is for.
         if request.cookies.get(SESSION_COOKIE_NAME):
             location += '?reason=session_ended'
+
+        # AC-DESIGN-7. An htmx fragment request must NOT get a plain redirect.
+        #
+        # htmx 2.0.4's default `responseHandling` swaps any 2xx, and it follows
+        # a 302 itself -- so the followed request returns the entire login
+        # DOCUMENT and htmx drops it inside the content area. The operator gets
+        # a login card nested in their movie list, on a page that still looks
+        # signed in, with the URL unchanged. Typing a password there posts to
+        # the page URL, which answers 405, which htmx does not swap: nothing
+        # happens, with no feedback.
+        #
+        # It also produces two `main` landmarks, one nested inside the other,
+        # which breaks landmark navigation and skip-to-main (WCAG 1.3.1), moves
+        # focus into a form that appeared unannounced (3.2.2) and leaves both
+        # live regions empty (4.1.3).
+        #
+        # `HX-Redirect` makes htmx perform a full-page navigation instead,
+        # which gives the announcement, the focus move and a single `main` for
+        # free. 204 rather than 200 because Starlette returns 204 and 304
+        # bodyless, so there is no document to swap even if something tried.
+        #
+        # This PR is what makes the expired-session state routine rather than
+        # rare: D3 enforces 24h/30d server-side and D1 rotates the secret on
+        # every sign-out and password change.
+        if request.headers.get('HX-Request'):
+            raise HTTPException(status_code=204, headers={'HX-Redirect': location})
+
         raise HTTPException(status_code=302, headers={'Location': location})
     return user
 
