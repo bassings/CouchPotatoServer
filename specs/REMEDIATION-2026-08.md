@@ -86,6 +86,139 @@ Every PR follows the same loop:
    agreed step (rule 6).
 
 ---
+## Tasks
+
+Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
+-> in-review #N -> merged`. The box is ticked only at `merged`, and only from
+`gh pr view`, never from memory.
+
+- [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
+- [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
+- [ ] T3: PR 3 — M1b data correctness at the SQLite seam — state: in-review #227
+- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
+- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
+- [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
+- [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
+- [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
+
+T4 carries the deferred review finding M2 (the startup `auth_required`
+migration is executed by no test; its only guard is a source-order string
+search). T7 carries the accessibility and product sets recorded in
+`QA/lens-review-2026-08-07-m1b-vs-master.md` and the three defects in
+`scratchpad/findings-from-read.md`.
+
+`needs:` is ordering, not exclusivity: T4, T5 and T8 all unblock on T3 and may
+run in parallel.
+
+### Review findings NOT fixed in PR 3, carried forward
+
+From `wf_3eafdf36-b0b` (2026-08-07). Recorded so the backlog stays true rather
+than being closed by omission -- the review's own H2 was that two tasks went
+missing without a note.
+
+| Finding | Carried to | Why not here |
+|---|---|---|
+| M1 cleanup still authorises a whole-library delete on one found movie | T8 | Further tightening of a delete path; same review as T3.3 |
+| M2 orphan cleanup dead, "Cleaned up N" can never fire | T8 | Same defect as T3.3; documented at the line meanwhile |
+| M3 `_delete_id_index` / `opened` still unresolved | T8 | Same compat surface as T3.3 |
+| M5 client-side password/refusal changes have no automated coverage | T7 | Needs a password-protected E2E fixture, which is its own change |
+| M6 error toast 3.92:1 in dark theme (below AA) | T7 | Accessibility floor; batched with the rest of the a11y set |
+| M7 6s toast covers the bottom nav at phone width | T7 | Same |
+| M9 refusal message names an internal key, defers to a log | T7 | Copy, batched with the product set |
+| M10 "Require login" gives no forward disclosure it needs a password | T7 | Copy |
+| M11 adding an index needs three coordinated edits, 16/19 never reach existing installs | T6 | Structural; belongs with the performance/index work |
+| M12 index expression duplicated in three places | T6 | Same |
+| M13 one skip decision expressed as two conditions | T8 | Same function as T3.3 |
+| M14 the repo forks a 206-line orchestrator to change a 4-entry table | — | Harness tooling, not product; raise upstream |
+| M15 SPEC BUG: the reviewed surface has no AC in any lens namespace | T7 | The plan-cycle must write ACs before the next PR; see below |
+| L1 unauthenticated caller can evict the 5 MB log ring via the lockout ERROR | T4 | Auth path, belongs with the session-cookie work |
+| L2, L6 toast dismiss/pause, `/settings/` overflow at 375px | T7 | Accessibility set |
+| L4 adapter locking guard enumerates methods by hand | T6 | Structural |
+| L5 E2E port guard proven only by a comment | T7 | Needs a harness test |
+| L7 dead import keeps a core->web dependency edge alive | T7 | Dead-code pass |
+| L8 `auth_required` parsed by two modules with no shared constant | T4 | Auth path |
+| L9 `release_download` string-key branch has no in-tree caller | T6 | Structural |
+
+**M15 is the process finding and it binds the next PR:** every PR from here runs
+`/plan-cycle` FIRST so its lenses write numbered `AC-<LENS>-<n>` criteria into
+this spec, because a review with no acceptance criteria can only report what it
+happens to notice.
+
+## Conductor log
+
+- **Tick 5** — review cycle wf_3eafdf36-b0b returned: 7 lenses, all FINDINGS,
+  none BLOCKED. 3 High, 15 Medium, 9 Low.
+
+  **H1 confirmed against the repo, and my verification was the false green.**
+  The committed `.claude/workflows/review-cycle.js` had a `//` inside an array
+  literal, swallowing the closing bracket. `node --check file.js` exits 0; the
+  same bytes as `.mjs` -- the mode the runtime loads, given `export const meta`
+  -- fail with exactly the error two lenses reported. I approved it with a
+  check run in the wrong mode, which is CLAUDE.md §11's "green test in the wrong
+  environment". The cycle only ran at all because the runtime fell back to the
+  global copy, which has none of this repo's seven fixes -- and that fallback is
+  also why `lens-operability` never triggered on a diff that changes scheduled
+  behaviour. Fixed, plus a test that parses every workflow script the way the
+  runtime does, proven by reinstating the exact shipped line.
+
+  Also fixed this tick: H3 (repeated settings toast never re-announced, WCAG
+  4.1.3 -- the panel took base.html's persistent-region half and left the
+  clear-then-$nextTick half behind), M8 (the refusal path still set
+  `lastSaved`, so the green "Saved" tick and its polite region fired alongside
+  the assertive error -- on the one flow this change exists to make truthful),
+  M4 (the lockout guard's `addEvent` wiring was executed by no test: deleting
+  one line made it inert with the suite green), L3 (the password mask keyed on
+  `== 'password'`, and `getType` returns 'unicode' for an UNREGISTERED option,
+  so it failed OPEN -- now keyed on whether the option was registered at all).
+  M2 recorded at the line: the orphan-release loop is dead on SQLiteAdapter, so
+  the new "Cleaned up N" log can never fire; pre-existing, and repairing it
+  changes a delete path, so it is deferred rather than folded in here.
+
+- **Tick 4** — woken by the #227 CI watcher. CI green: 19 passing, 0 failing;
+  20 review threads, all resolved. (The watcher's own thread-count query
+  returned a GraphQL quoting error, not a number -- re-ran it properly rather
+  than reading a broken result as zero.) Review workflow wf_3eafdf36-b0b still
+  running, 8 lenses in flight. Nothing else unblocked, so used the wait to load
+  T5's scope: PR 4 is the third attempt at upgrade replacement after two
+  withdrawals, and its sequencing constraint is the important part -- T4.1's
+  profile-independent ranking must be green BEFORE T4.2 attaches releases,
+  because attaching them is what makes the gate live and on attempt #2 that
+  would have activated the destruction. Armed: the review workflow. Next wake
+  expects the synthesised report.
+
+- **Tick 3** — push of d1c30476 landed, local gate green, local == remote.
+  Ran /review-cycle as a workflow against base fd5b43e8 (the #226 merge) with
+  the spec attached, so each lens verifies its own AC-<LENS>-<n> criteria. Run
+  wf_3eafdf36-b0b. This is the gate before merge, and it is warranted rather
+  than ceremonial here: the two committed lens reports predate six commits of
+  substantial security change, and two of my own fixes on this branch made a
+  disclosure WORSE and were caught only by review. Armed: the review workflow,
+  plus a CI watcher on #227's checks for the new push. Next wake expects a
+  synthesised report -- fix findings or record evidenced rejections -- then
+  merge if clean.
+
+- **Tick 2** — woken by the #227 check watcher. CI green: 19 passing, 0 failing.
+  One thread, marked a nit by the reviewer and agreed with: the per-directory
+  cleanup guard makes cleanup permanently inert for a legitimately empty folder.
+  Acted rather than merely recorded — the WARNING said what happened but not
+  what to do, so it now names the remedy (remove the folder from Settings >
+  Library, or check the mount). d1c30476. T3 -> `in-review`. Armed: push of
+  d1c30476 (pre-push hook re-runs the full gate). Next wake expects the push
+  landed, then runs /review-cycle against the final tip before merging.
+  Deliberately NOT running the review cycle concurrently with the gate: both
+  want the shared .venv, and worktree agents damaging it via its symlink is a
+  recorded hazard on this repo.
+
+- **Tick 1** — first invocation; checklist created from measured state, not memory.
+  `gh pr list` confirms T1 merged #225 and T2 merged #226. T3 is `awaiting-ci
+  #227`: 16 checks SUCCESS, 2 still running, 0 failing, 0 unresolved review
+  threads. T4 and T5 stay `queued` deliberately rather than starting in
+  parallel — both edit `couchpotato/__init__.py` and `release/main.py`, which
+  #227 changes heavily, so starting either now buys a rebase conflict for no
+  wall-clock gain. Armed: background watcher on #227's checks (single
+  notification on settle). Next wake expects #227 either green (then:
+  /review-cycle, then merge) or red (then: fix, push, re-arm).
+
 ## PR 1: M0: Safety net
 
 > **Revised 2026-08-03 after the planning cycle.** Six lenses ran
@@ -1425,6 +1558,16 @@ resilience. Three specific ones:
 - `api.py:68-70` collapses every handler failure into one generic error; the UI
   documents working around this (`ui/__init__.py:389,406`). Preserve the error
   type for logging at minimum.
+
+**PR 3 task outcomes (recorded 2026-08-07, review finding H2):** T3.1, T3.2 and
+T3.4 shipped. **T3.3 is DEFERRED, not done** -- the review measured the
+orphan-release loop as fully dead on `SQLiteAdapter` (`release.get('key')` is
+always `None`, so every arm below it is unreachable), which means deferring
+regresses nothing, but restoring it means deleting orphaned rows, and this
+project's rules put a delete path in its own change with its own review rather
+than folded into a data-correctness PR. Tracked as T8 in the conductor
+checklist. The dead loop is documented at the line in `release/main.py` so the
+"Cleaned up N" log does not read as a working report.
 
 **PR 3 acceptance:** the two-download fixture attributes files to the correct
 movie; library scan records completion; the adapter-method-existence test passes.

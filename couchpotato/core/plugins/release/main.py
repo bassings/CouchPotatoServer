@@ -116,7 +116,12 @@ class Release(Plugin):
         # Get (and remove) parentless releases
         releases = db.all('release', with_doc = False)
         media_exist = []
-        reindex = 0
+        # Renamed from `reindex`: the call it used to gate is gone (T3.2), so a
+        # variable still called `reindex` reads as a leftover nobody dared
+        # delete. It counts releases this pass found corrupt or orphaned, and
+        # it is LOGGED below -- an incremented-but-never-read counter is not
+        # "worth keeping", it is dead code with a comment claiming otherwise.
+        damaged = 0
         for release in releases:
             if release.get('key') in media_exist:
                 continue
@@ -126,7 +131,7 @@ class Release(Plugin):
                 try:
                     doc = db.get('id', release.get('_id'))
                 except RecordDeleted:
-                    reindex += 1
+                    damaged += 1
                     continue
 
                 db.get('id', release.get('key'))
@@ -140,19 +145,47 @@ class Release(Plugin):
                     log.error('Failed fixing mis-status tag: %s', traceback.format_exc())
             except ValueError:
                 fireEvent('database.delete_corrupted', release.get('key'), traceback_error = traceback.format_exc(0))
-                reindex += 1
+                damaged += 1
             except RecordDeleted:
                 try:
                     db.delete(doc)
                     log.debug('Deleted orphaned release: %s', doc)
                 except Exception:
                     log.debug('Failed deleting orphaned release (corrupt index), skipping: %s', doc.get('_id', '?'))
-                reindex += 1
+                damaged += 1
             except Exception:
                 log.debug('Failed cleaning up orphaned releases: %s', traceback.format_exc())
 
-        if reindex > 0:
-            db.reindex()
+        # The `db.reindex()` this used to gate is gone (T3.2): it is a
+        # documented no-op on SQLite, and its signature requires an
+        # `index_name` none of the four call sites passed -- so every one was a
+        # guaranteed TypeError, which in manage.updateLibrary swallowed the
+        # library-scan completion timestamp.
+        #
+        # The count is REPORTED rather than merely accumulated. Corrupt or
+        # orphaned release rows are the visible symptom of the index-family
+        # defects this branch exists to fix, so a number that quietly rises
+        # while nobody can see it is the least useful place for it.
+        #
+        # MEASURED CAVEAT, recorded so this line does not read as a working
+        # report: on SQLiteAdapter the loop above is currently DEAD, so
+        # `damaged` cannot become non-zero and this never fires. Driven against
+        # a real adapter seeded with an orphan and a legacy 'ignore' status:
+        # `db.all('release', with_doc=False)` returns rows keyed
+        # ['_id','_rev','_t','media_id','status'] with NO 'key' field, so
+        # `release.get('key')` is always None, `db.get('id', None)` raises
+        # KeyError, and every arm below it is unreachable -- `RecordDeleted` is
+        # never raised by this adapter at all, and `get` raises KeyError rather
+        # than ValueError. The orphan survived, the 'ignore' status was never
+        # migrated, and nothing was logged.
+        #
+        # That is a PRE-EXISTING defect in the CodernityDB-shaped assumptions,
+        # not something this branch introduced, and repairing it changes a path
+        # that DELETES releases -- which this project's own rules say gets its
+        # own change and its own review rather than being folded into a data
+        # correctness PR. Tracked in the plan's deferred list.
+        if damaged:
+            log.info('Cleaned up %s corrupt or orphaned release record(s)', damaged)
 
         del media_exist
 

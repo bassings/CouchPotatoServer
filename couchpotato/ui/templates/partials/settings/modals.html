@@ -13,13 +13,35 @@
 </div>
 
 <!-- Toast notification -->
-<div x-show="message" 
-     x-transition 
-     class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium"
+<!-- max-w-sm + break-words: every existing caller here was 15-40 characters,
+     so an unconstrained box anchored only on its right edge was fine. The
+     settings-refusal message is ~120 characters plus an interpolated value and
+     overflowed the 375px mobile-chrome viewport.
+
+     TWO regions, split by severity (WCAG 4.1.3). This was one region with a
+     static role="status" aria-live="polite" whatever `messageType` said, so an
+     ERROR -- now carrying security-relevant text about whether a setting was
+     refused -- was announced politely or queued behind other output. base.html
+     already solves this with two persistent regions; the settings panel never
+     got the same treatment, and this is the first caller to route something
+     error-severity and this long through it.
+
+     Both regions are PERSISTENT (always in the DOM, x-show only on the visible
+     box) for the reason base.html records: a screen reader announces a mutation
+     to an element already in the accessibility tree, not the arrival of a new
+     node. -->
+<div class="sr-only" aria-live="polite" aria-atomic="true"
+     data-testid="settings-announcer-polite"
+     x-text="politeAnnouncement"></div>
+<div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"
+     data-testid="settings-announcer-assertive"
+     x-text="assertiveAnnouncement"></div>
+
+<div x-show="message"
+     x-transition
+     class="fixed bottom-4 right-4 lg:bottom-8 lg:right-8 z-50 px-4 py-2 rounded-md text-xs font-medium max-w-sm break-words"
      :class="messageType === 'success' ? 'bg-cp-success/20 text-cp-success' : 'bg-cp-danger/20 text-cp-danger'"
-     x-text="message"
-     role="status"
-     aria-live="polite"></div>
+     x-text="message"></div>
 
 <!-- Directory Browser Modal -->
 <div x-show="browserOpen" 

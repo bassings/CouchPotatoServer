@@ -73,3 +73,4 @@ mutants/
 # key. A pattern that covers the class cannot regress that way.
 .e2e-*
 .claude/worktrees/
+.claude/active-plan

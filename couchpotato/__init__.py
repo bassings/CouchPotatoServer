@@ -83,29 +83,97 @@ def auth_is_required() -> bool:
     if configured is None or configured == '':
         return _auth_required_from_password()
 
+    # ORDER MATTERS: resolve what the setting MEANS before consulting the
+    # password.
+    #
+    # The first version of the lockout guard below checked the password first,
+    # so it fired for any value that was not None/'' -- including an explicit
+    # 0. That is the state every default install reaches: `runner.py`'s startup
+    # migration deliberately writes back `auth_required = 0` for an install
+    # with no password, so the value is greppable in config.ini. From the next
+    # request onward it logged '"Require login" is on but no password is
+    # stored' on EVERY page load, for the most common configuration this
+    # project ships. Nothing broke -- the return value was already correct --
+    # but the log asserted the opposite of the truth, on exactly the mechanism
+    # `runner.py`'s own comment says operators rely on. Same defect class this
+    # branch fixes three times elsewhere.
+    wants_auth = _parse_auth_required(configured)
+
+    if wants_auth is None:
+        # config.ini is the documented lock-out recovery path, so it gets
+        # hand-edited and typos here are expected. Reading an unrecognised
+        # value as "off" would silently make the server public; reading it as
+        # "on" would lock out an install with no password. Fall back to the
+        # same derivation used when the key is absent, which does neither.
+        log.error('Unrecognised auth_required value %r in config.ini; expected '
+                  '0 or 1. Falling back to "required only if a password is '
+                  'set". Fix the value to remove this warning.', configured)
+        return _auth_required_from_password()
+
+    if not wants_auth:
+        return False
+
+    # FAIL CLOSED. An earlier version of this function served the app WITHOUT
+    # authentication here, reasoning that a requirement nothing can satisfy
+    # should not be enforced. That was wrong, and measurably so.
+    #
+    # Driven against a real `create_app` with `auth_required=1` and no
+    # password, the fail-open version gave an unauthenticated caller:
+    #
+    #     GET /wanted/                          -> 200
+    #     the api_key, embedded in that page    -> present
+    #     movie.delete?delete_from=all          -> reachable
+    #
+    # So the trade was "a lockout the operator can fix" against "a remote
+    # stranger can read the api_key and delete the library". On a port-forwarded
+    # install that is not a close call, and it inverts this project's own
+    # precedence: irrecoverable data loss and security both outrank operability.
+    #
+    # The lockout is recoverable BY CONSTRUCTION. `Core.guardAuthRequired`
+    # blocks the settings UI and the wizard from creating this state, so the
+    # only remaining routes are a hand-edited config.ini or a restored backup --
+    # both of which require filesystem access, which is exactly what the remedy
+    # needs. The cost is a config edit; the cost of the alternative is the
+    # library.
+    #
+    # ERROR, not WARNING, and it names the remedy: this is the log line the
+    # locked-out operator will be reading.
+    if not Env.setting('password'):
+        log.error('"Require login" is ON but NO PASSWORD is stored, so no login '
+                  'can succeed and every request will be refused. Serving is '
+                  'CONTINUING with authentication enforced rather than falling '
+                  'open -- an unauthenticated instance would expose the api_key '
+                  'and allow the library to be deleted remotely. To recover: '
+                  'set "auth_required = 0" in the [core] section of config.ini '
+                  'and restart, then set a password from Settings.')
+
+    return True
+
+
+def _parse_auth_required(configured):
+    """True, False, or None when the value is not recognisable.
+
+    A STRING is the normal case on the startup path, not an edge case:
+    `runner.py` calls `auth_is_required()` before `loader.run()` has registered
+    the option's type, so `Settings.getType` falls back to 'unicode', which
+    `_coerce_value` does not coerce -- the raw ConfigParser string arrives
+    here. `bool('0')` is True, so this parsing is the only thing keeping an
+    explicit `auth_required = 0` from turning auth ON.
+
+    `None` for "cannot tell" rather than collapsing into False: the caller
+    errs toward the password-derived answer, and a typo must not be silently
+    read as "off".
+    """
+    if isinstance(configured, bool):
+        return configured
+
     if isinstance(configured, str):
-        # A STRING is the normal case on the startup path, not an edge case.
-        # `runner.py` calls this before `loader.run()` has registered the
-        # option's type, so `Settings.getType` falls back to 'unicode', which
-        # `_coerce_value` does not coerce -- the raw ConfigParser string
-        # arrives here. `bool('0')` is True, so this branch is the only thing
-        # keeping an explicit `auth_required = 0` from turning auth ON.
         value = configured.strip().lower()
         if value in ('1', 'true', 'yes', 'on'):
             return True
         if value in ('0', 'false', 'no', 'off'):
             return False
-
-        # Neither. config.ini is the documented lock-out recovery path, so it
-        # gets hand-edited and typos here are expected. Reading an
-        # unrecognised value as "off" would silently make the server public;
-        # reading it as "on" would lock out an install with no password. Fall
-        # back to the same derivation used when the key is absent, which does
-        # neither.
-        log.error('Unrecognised auth_required value %r in config.ini; expected '
-                  '0 or 1. Falling back to "required only if a password is '
-                  'set". Fix the value to remove this warning.', configured)
-        return _auth_required_from_password()
+        return None
 
     return bool(configured)
 
@@ -160,7 +228,21 @@ def require_auth(request: Request):
 
 def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(docs_url=None, redoc_url=None)
+    # openapi_url=None as well as docs_url/redoc_url.
+    #
+    # Turning off the two doc UIs left the SCHEMA they render still served, and
+    # unauthenticated: measured on an instance with auth_required=1 and a
+    # password set, `GET /openapi.json` returned 200 and 26,655 bytes
+    # enumerating all 77 paths while `/wanted/` 302'd to the login page. No
+    # credential is disclosed (the api_key is not in the body -- checked with a
+    # realistic key, since a short one produces a false positive), so this is
+    # reconnaissance rather than access: a complete machine-readable map of the
+    # API from a server the operator believes is behind a login.
+    #
+    # Disabled rather than gated behind require_auth: nothing in this app reads
+    # the schema, so there is no functionality to preserve, and a route that
+    # does not exist cannot be left unprotected by the next change.
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     # Rate limiting middleware
     from couchpotato.core.rate_limit import RateLimitMiddleware

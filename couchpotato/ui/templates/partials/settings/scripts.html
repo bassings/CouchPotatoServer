@@ -459,13 +459,72 @@ function settingsPanel() {
           return;   // leave the value dirty and unchanged: it did NOT save
         }
 
-        if (!this.values[section]) this.values[section] = {};
-        this.values[section][name] = value;
+        // Store what the SERVER stored, not what we submitted.
+        //
+        // A save hook may rewrite the value: `Core.guardAuthRequired` turns a
+        // submitted `1` into `0` when no password is set, refusing to create an
+        // unrecoverable lockout. The response is `success: true` -- the write
+        // genuinely happened -- so the refusal path above does not catch it,
+        // and writing `value` here left the "Require login" checkbox ticked,
+        // the dirty flag cleared and "Saved" announced, while the server stayed
+        // PUBLIC. The UI stated the opposite of the truth about whether
+        // authentication was on.
+        //
+        // NEVER fall back to the submitted value.
+        //
+        // This used to do `('value' in payload) ? payload.value : value`, which
+        // reads as harmless defensiveness and is not: the server deliberately
+        // OMITS `value` for a password-typed option, so the fallback substituted
+        // the plaintext the operator had just typed -- into `this.values` and,
+        // via the toast below, onto the screen. The absence of `value` is a
+        // deliberate refusal to disclose, and treating it as a gap to be filled
+        // locally defeats it.
+        //
+        // No `value` means: do not update local state for this field. The last
+        // loaded value (already masked by `getValues` for a password) stays,
+        // which is exactly right -- there is nothing displayable to replace it
+        // with.
+        const hasValue = payload && 'value' in payload;
+
+        if (hasValue) {
+          if (!this.values[section]) this.values[section] = {};
+          this.values[section][name] = payload.value;
+        }
         delete this.dirty[section + '.' + name];
-        
+
+        // Say so when the server did not take what was asked for. Silently
+        // showing a different value than the one just typed is how the operator
+        // ends up believing a security control is on.
+        //
+        // Gated on `hasValue` as well as `changed`: the message names the stored
+        // value, and the only value available when the server withheld one is
+        // the secret the operator just typed.
+        if (payload && payload.changed && hasValue) {
+          this.toast(
+            name.replace(/_/g, ' ') + ' could not be set to that value; the server stored "'
+              + payload.value + '" instead. Check the log for the reason.',
+            'error', 6000,
+          );
+          // RETURN. Without it, `lastSaved = true` below fires the green "Saved"
+          // tick in header.html and its own role="status" aria-live="polite"
+          // region -- so on the one flow this change exists to make truthful,
+          // the primary confirmation affordance said the save was accepted.
+          // Measured: the real client function returned message='... could not
+          // be set ...', messageType='error' AND lastSaved=true together, so a
+          // sighted operator glancing at the header sees a tick, and a screen
+          // reader delivers "Saved" from the polite queue after the assertive
+          // error.
+          //
+          // The comment a few lines above already closed this for the
+          // `success: false` branch; the `changed` branch is new in the same
+          // commit and did not inherit it.
+          this.saving = false;
+          return;
+        }
+
         const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
         if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;
-        
+
         this.lastSaved = true;
         setTimeout(() => { this.lastSaved = false; }, 2000);
       } catch (e) {
@@ -526,10 +585,47 @@ function settingsPanel() {
       }
     },
 
-    toast(msg, type) {
+    // Announcement state, SEPARATE from `message`.
+    //
+    // The two sr-only regions used to bind straight to `message`, and assigning
+    // the SAME string is a no-op under Alpine's reactivity -- so `x-text` never
+    // mutated and a repeated message was announced zero times. Measured with a
+    // MutationObserver driving the real control: ticking "Require login" twice
+    // on a passwordless server gave one mutation on attempt 1 and ZERO on
+    // attempt 2, and the checkbox reverts either way, so there was no other
+    // signal at all. WCAG 4.1.3.
+    //
+    // `base.html:214-229` already solves this with clear-then-$nextTick, and
+    // accessibility.a11y.spec.ts:687 guards it there. This panel took the
+    // persistent-region half of that pattern and left the repeat half behind.
+    // Keeping the announcement in its own state means the visible toast does
+    // not flicker when the text is cleared to force the mutation.
+    politeAnnouncement: '',
+    assertiveAnnouncement: '',
+
+    toast(msg, type, duration = 3000) {
+      // `duration` is honoured, and the pending timer cancelled.
+      //
+      // This took a hardcoded 3000 and silently DROPPED any third argument, so
+      // the long refusal message added for the auth guard got the same 3s dwell
+      // as "Restarting..." -- the opposite of the intent, with no error to say
+      // so. The sibling toast() at :837 and the one in base.html both already
+      // accept a duration; this one did not, and the call site was modelled on
+      // them.
+      //
+      // clearTimeout for the same reason :837 does it: without it a stale timer
+      // from an earlier toast wipes a newer one early.
+      clearTimeout(this._settingsToastTimer);
       this.message = msg;
       this.messageType = type;
-      setTimeout(() => this.message = '', 3000);
+
+      // Cleared first, then set on the next tick, so the region MUTATES even
+      // when the message is identical to the previous one.
+      const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+      this[region] = '';
+      this.$nextTick(() => { this[region] = msg; });
+
+      this._settingsToastTimer = setTimeout(() => this.message = '', duration);
     },
 
     async browseDirectory(section, name, index = null) {

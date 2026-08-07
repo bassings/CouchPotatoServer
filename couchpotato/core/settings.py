@@ -28,6 +28,35 @@ def _strip_bytes_literal(value: str) -> str:
     return value
 
 
+def _resolve_saved_value(hook_result: Any, submitted: Any) -> Any:
+    """Pick between a `setting.save.<section>.<option>` hook's result and the
+    value the caller submitted.
+
+    This used to be `hook_result if hook_result else submitted`, which quietly
+    made it impossible for a hook to force a FALSY value: a guard returning `0`
+    was discarded and the caller's original `1` stored instead. That is not
+    hypothetical -- it is exactly what the auth_required lockout guard
+    (`Core.guardAuthRequired`) needs to do, and measured before this change the
+    guard returned 0 and config.ini still received 1.
+
+    Two "no result" shapes have to be told apart from a deliberate falsy one:
+
+      - `None`, the ordinary return of a handler that chose not to rewrite.
+      - `[]`, which is what `fireEvent(..., single=True)` returns when NOTHING
+        handles the event (`event.py`: `final = results[0] if results else []`).
+        Most options have no hook at all, so this is the common case -- treating
+        it as a value would write a literal empty list into config.ini for every
+        setting anyone saves.
+
+    Anything else wins, including `0` and `''`.
+    """
+    if hook_result is None:
+        return submitted
+    if isinstance(hook_result, list) and not hook_result:
+        return submitted
+    return hook_result
+
+
 def _coerce_value(value: Any, type_name: str) -> Any:
     """Use Pydantic's type coercion to convert config values."""
     # Handle bytes from config (Python 3 compatibility)
@@ -478,13 +507,107 @@ class Settings:
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
         # serialises as b'...' literals (Python 3 bug)
-        self.set(section, option, new_value if new_value else value)
+        stored = _resolve_saved_value(new_value, value)
+        self.set(section, option, stored)
         self.save()
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
         fireEvent('setting.save.%s.*.after' % section, single=True)
 
-        return {'success': True}
+        # Report what was ACTUALLY STORED, not merely that a write happened.
+        #
+        # A hook may rewrite the submitted value -- `Core.guardAuthRequired`
+        # turns a `1` into a `0` when no password is set, refusing to create an
+        # unrecoverable lockout. Returning a bare `{'success': True}` told the
+        # settings client the submitted value had been accepted, so it kept `1`
+        # in local state, cleared the dirty flag, left the checkbox ticked and
+        # announced "Saved" -- while the server remained public.
+        return self._save_result(section, option, stored, value)
+
+    def _save_result(self, section, option, stored, submitted):
+        """The saveView response body: what was stored, and whether it differs.
+
+        Two things this has to get right, both of which the first version got
+        wrong and both of which were introduced BY the fix above:
+
+        NEVER ECHO A SECRET. `getValues` masks `type == 'password'` options
+        before they reach a client, and this path had no such mask.
+        `Core.md5Password` returns `hash_password(md5(value))`, so a password
+        save put the full bcrypt string in the response body -- which the
+        settings client then wrote into `values.core.password` (bound to the
+        visible input) and, because of the type bug below, interpolated into an
+        on-screen toast. Measured: `'$2b$12$...'` in the response.
+
+        COMPARE LIKE WITH LIKE. Every form/query POST arrives as a string
+        (`dict(request.form())`, and the client explicitly does `String(value)`),
+        while hooks return native types -- `guardAuthRequired` returns `int` 1,
+        `checkApikey` returns a str, `md5Password` a hash. So `stored != value`
+        was `1 != '1'` for the ACCEPTED case and reported `changed` on every
+        successful "Require login" enable, every password save and every api-key
+        regeneration -- firing a refusal toast for a save that succeeded. That
+        is the same "UI states the opposite of what happened" defect the
+        `changed` flag exists to prevent, reintroduced by its own implementation.
+
+        Both sides are coerced through the option's registered type before
+        comparing, so `'1'` and `1` are the same answer.
+        """
+        option_type = self.getType(section, option)
+
+        def coerce(v):
+            try:
+                return _coerce_value(v, option_type)
+            except Exception:
+                # An uncoercible value is not a reason to fail the save that
+                # already happened; fall back to comparing what we have.
+                return v
+
+        # Withhold unless the option is REGISTERED and registered non-secret.
+        #
+        # `getType` returns 'unicode' for a password option that is merely
+        # missing from `self.types`, so a blocklist on `== 'password'` fails
+        # OPEN for an unregistered one -- driven with `opt_type=None` against
+        # the real function, the old form returned BOTH the hash and the
+        # plaintext. Registration happens in `loader.run()` at startup, so a
+        # shipped server is very likely fine; "very likely registered" is the
+        # wrong thing for a disclosure decision to rest on.
+        #
+        # An allowlist of type NAMES cannot express this, because the unknown
+        # case and the ordinary-string case are the same name. So the question
+        # asked is "was this option registered at all", which distinguishes
+        # them -- and an unregistered option withholds, costing only the
+        # `changed` hint on a setting nothing declared.
+        registered = option in (self.types.get(section) or {})
+        if not registered or option_type == 'password':
+            # NOTHING but success. Not the value, and not `changed` either.
+            #
+            # Reporting `changed` looked harmless and was worse than the leak it
+            # replaced. `_coerce_value` has no adapter for 'password', so
+            # coercion is a no-op for this type -- and `stored` is the bcrypt
+            # hash from `md5Password` while `submitted` is the plaintext the
+            # operator just typed. They are never equal, so `changed` was True
+            # for every real password change. No type coercion can close that:
+            # it is a VALUE transformation, not a type mismatch.
+            #
+            # The client then took `changed` as "the server stored something
+            # else", fell back to the submitted value because `value` was
+            # (correctly) absent, and interpolated it into an error toast -- so
+            # masking the hash turned a hash disclosure into a PLAINTEXT
+            # PASSWORD on screen, for six seconds, announced through the
+            # assertive live region this same branch had just added.
+            #
+            # "Did the password change?" is not a question the client needs
+            # answered, and it is not one that can be answered without comparing
+            # against the secret. So it is not answered.
+            return {'success': True}
+
+        changed = coerce(stored) != coerce(submitted)
+
+        return {
+            'success': True,
+            'value': stored,
+            'submitted': submitted,
+            'changed': changed,
+        }
 
     # Meta option helpers
     def optionMetaSuffix(self):
