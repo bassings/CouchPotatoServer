@@ -81,11 +81,43 @@ def auth_is_required() -> bool:
     configured = Env.setting('auth_required', default=None)
 
     if configured is None or configured == '':
-        return bool(Env.setting('password'))
+        return _auth_required_from_password()
 
     if isinstance(configured, str):
-        return configured.strip().lower() in ('1', 'true', 'yes', 'on')
+        # A STRING is the normal case on the startup path, not an edge case.
+        # `runner.py` calls this before `loader.run()` has registered the
+        # option's type, so `Settings.getType` falls back to 'unicode', which
+        # `_coerce_value` does not coerce -- the raw ConfigParser string
+        # arrives here. `bool('0')` is True, so this branch is the only thing
+        # keeping an explicit `auth_required = 0` from turning auth ON.
+        value = configured.strip().lower()
+        if value in ('1', 'true', 'yes', 'on'):
+            return True
+        if value in ('0', 'false', 'no', 'off'):
+            return False
+
+        # Neither. config.ini is the documented lock-out recovery path, so it
+        # gets hand-edited and typos here are expected. Reading an
+        # unrecognised value as "off" would silently make the server public;
+        # reading it as "on" would lock out an install with no password. Fall
+        # back to the same derivation used when the key is absent, which does
+        # neither.
+        log.error('Unrecognised auth_required value %r in config.ini; expected '
+                  '0 or 1. Falling back to "required only if a password is '
+                  'set". Fix the value to remove this warning.', configured)
+        return _auth_required_from_password()
+
     return bool(configured)
+
+
+def _auth_required_from_password() -> bool:
+    """Derive the gate from whether a password exists.
+
+    Used when `auth_required` is absent or unreadable. Keeps a
+    password-protected install protected without ever producing the
+    auth-on-with-no-password state that nothing can satisfy.
+    """
+    return bool(Env.setting('password'))
 
 
 def get_current_user(request: Request):

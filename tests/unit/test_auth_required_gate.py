@@ -383,3 +383,110 @@ class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
             'the "absent" check skips and every upgraded install that had a '
             'password set becomes PUBLIC.'
         )
+
+
+class TestAuthRequiredArrivesAsAStringAtStartup:
+    """At `runner.py:288` the value is a STRING, and `bool('0')` is True.
+
+    `auth_is_required()` is called from `runner.py:288`, before `loader.run()`
+    (`:333`) has reached `registerDefaults` -> `setType`. Until that runs,
+    `Settings.getType` cannot find the option and falls back to `'unicode'`
+    (`settings.py:375-379`), which is not a key in `_type_adapters`
+    (`settings.py:16-21`) -- so `_coerce_value` returns the raw ConfigParser
+    string untouched.
+
+    So on the startup path the value is `'0'` or `'1'`, never an int. Every
+    other test in this file hands back real Python ints, which means the
+    `isinstance(configured, str)` branch had no coverage at all while being the
+    only thing standing between an operator and a lockout:
+
+        bool('0') is True
+
+    Drop that branch and an install with an explicit `auth_required = 0` and no
+    password comes up with authentication ON and no credential that can satisfy
+    it. That is the same lockout this branch has already had to close twice, so
+    it gets a test rather than a comment.
+    """
+
+    def test_the_premise_holds_an_unregistered_option_is_not_coerced(self):
+        """Verify the REASON, not just the behaviour.
+
+        If someone later registers the type earlier and this stops being true,
+        this fails and points at the branch below rather than leaving it as
+        unexplained defensive code nobody dares delete.
+        """
+        from couchpotato.core.settings import Settings, _coerce_value
+
+        s = Settings.__new__(Settings)
+        s.types = {}
+        assert s.getType('core', 'auth_required') == 'unicode', (
+            'auth_required now has a registered type at lookup time; if that '
+            'is true at runner.py:288 as well, the string branch in '
+            'auth_is_required may no longer be needed'
+        )
+        assert _coerce_value('0', 'unicode') == '0', (
+            "'unicode' is not in _type_adapters, so the raw string must pass "
+            'through uncoerced'
+        )
+
+    def test_the_trap_this_guards_is_real(self):
+        """Anti-vacuity: without the branch, `'0'` reads as True."""
+        assert bool('0') is True
+
+    @pytest.mark.parametrize('stored', ['0', 'false', 'False', 'no', 'off', ' 0 ', ''])
+    def test_a_falsy_string_leaves_auth_off(self, settings, stored):
+        settings['auth_required'] = stored
+        settings['password'] = ''
+
+        assert _current_user(_request()) is True, (
+            'auth_required was the string %r, which the operator set to turn '
+            'authentication OFF. It came up ON instead, and with no password '
+            'stored nothing can satisfy it -- the operator is locked out of '
+            'their own server.' % (stored,)
+        )
+
+    @pytest.mark.parametrize('stored', ['1', 'true', 'True', 'yes', 'on', ' 1 '])
+    def test_a_truthy_string_turns_auth_on(self, settings, stored):
+        settings['auth_required'] = stored
+        settings['password'] = 'hashed'
+
+        assert _current_user(_request()) is None, (
+            'auth_required was the string %r and the server stayed PUBLIC' % (stored,)
+        )
+        assert _current_user(_request('THEKEY')) == 'THEKEY'
+
+    def test_an_unrecognised_string_with_a_password_stays_shut(self, settings):
+        """Garbage in config.ini must not open the server.
+
+        A hand-edited config.ini is the documented lock-out recovery path, so
+        typos in this field are expected. This test found a real defect: `'yess'`
+        is in neither the truthy nor the falsy set, and the original branch
+        returned False for anything it did not recognise -- so a single typo
+        silently made a password-protected server PUBLIC.
+        """
+        settings['auth_required'] = 'yess'
+        settings['password'] = 'hashed'
+
+        assert _current_user(_request()) is None, (
+            'a typo in auth_required made the server public'
+        )
+        assert _current_user(_request('THEKEY')) == 'THEKEY', (
+            'the password can still satisfy the gate'
+        )
+
+    def test_an_unrecognised_string_without_a_password_does_not_lock_out(self, settings):
+        """...but "fail closed" must not mean "fail unopenable".
+
+        Reading garbage as ON would turn auth on for an install with no
+        password, which nothing can then satisfy -- the lockout this branch has
+        already had to close twice. So an unrecognised value derives from the
+        password instead of picking a fixed side, which errs shut exactly when
+        there is a credential to open it with.
+        """
+        settings['auth_required'] = 'yess'
+        settings['password'] = ''
+
+        assert _current_user(_request()) is True, (
+            'a typo in auth_required locked the operator out of a server that '
+            'has no password to log in with'
+        )
