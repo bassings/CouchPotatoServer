@@ -135,15 +135,27 @@ class Core(Plugin):
         # An operator who wants a password AND an open instance can still turn
         # "Require login" off explicitly afterwards -- that setting remains
         # theirs to set. This only moves it when the password itself changes.
-        # Guarded, and NOT silently: hashing the password must not fail
-        # because a secondary write did, but a swallowed failure here puts the
-        # instance back in the state this whole block exists to prevent -- so
-        # it is logged at ERROR, naming the consequence, rather than passed
-        # over. (It also keeps this hook callable in isolation, e.g. from a
-        # unit test, where no settings store is loaded.)
-        from couchpotato.environment import Env
+        # Set, do NOT save. `Env.setting(attr, value=...)` calls `save()`
+        # immediately, and `Settings.saveView` then does its own
+        # `set(...); save()` after this hook returns -- so going through
+        # Env.setting would persist auth_required in a SEPARATE, EARLIER write
+        # than the password itself. A crash, a full volume or a kill between
+        # those two saves leaves authentication ON with no password stored:
+        # every request denied, every login refused, no way back short of
+        # hand-editing config.ini. That is precisely the lockout this block
+        # exists to prevent, reintroduced through a different door.
+        #
+        # Touching only the in-memory parser lets the caller's single
+        # `save()` persist both -- and that save is atomic (T2.0), so the pair
+        # lands together or not at all.
+        #
+        # Guarded, and NOT silently: hashing must not fail because a secondary
+        # write did, but a swallowed failure here restores the very state this
+        # prevents, so it is logged at ERROR naming the consequence.
         try:
-            Env.setting('auth_required', value=1 if value else 0)
+            settings = Env.get('settings')
+            settings.addSection('core')
+            settings.set('core', 'auth_required', 1 if value else 0)
         except Exception:
             log.error('Password saved but could not update "auth_required" -- '
                       'authentication may not match the password you just set. '

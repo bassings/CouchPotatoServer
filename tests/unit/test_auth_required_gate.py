@@ -41,9 +41,17 @@ from couchpotato.environment import Env
 
 @pytest.fixture
 def settings():
-    """Env.setting backed by a plain dict, restored afterwards."""
+    """One dict behind BOTH `Env.setting` and `Env.get('settings')`.
+
+    The password hook writes through `Env.get('settings').set(...)` rather than
+    `Env.setting(value=...)`, deliberately -- see
+    TestAuthRequiredAndPasswordArePersistedTogether. A fixture that stubbed
+    only one of the two would let these tests disagree with the code about
+    where settings live, so both views share the same storage.
+    """
     data = {'api_key': 'THEKEY'}
-    original = Env.setting
+    original_setting = Env.setting
+    original_get = Env.get
 
     def mock_setting(key=None, *args, **kwargs):
         if 'value' in kwargs:
@@ -51,9 +59,32 @@ def settings():
             return
         return data.get(key, kwargs.get('default', ''))
 
+    class FakeSettings:
+        def addSection(self, section):
+            pass
+
+        def set(self, section, option, value):
+            data[option] = value
+
+        def save(self):
+            raise AssertionError(
+                'the password hook must not save on its own: auth_required '
+                'would land on disk before the password'
+            )
+
+        def get(self, attr, default=None, section='core', type=None):
+            return data.get(attr, default)
+
+    def mock_get(key, default=None):
+        if key == 'settings':
+            return FakeSettings()
+        return original_get(key, default) if key != 'dev' else False
+
     Env.setting = staticmethod(mock_setting)
+    Env.get = staticmethod(mock_get)
     yield data
-    Env.setting = original
+    Env.setting = original_setting
+    Env.get = original_get
 
 
 def _request(cookie=None):
@@ -218,3 +249,137 @@ class TestSavingAPasswordKeepsAuthRequiredHonest:
 
         # Nobody is locked out: with no password, the instance is open.
         assert _current_user(_request()) is True
+
+
+class TestAuthRequiredAndPasswordArePersistedTogether:
+    """One save, not two -- or a crash between them recreates the lockout.
+
+    `Env.setting(attr, value=...)` (`environment.py:63-76`) calls `s.save()`
+    immediately and independently. `Settings.saveView` then does its own
+    `self.set(section, option, new_value); self.save()` AFTER `fireEvent`
+    returns. So writing `auth_required` through `Env.setting` from inside the
+    password hook persists it in a SEPARATE, EARLIER save than the password
+    itself.
+
+    Setting a password: `auth_required = 1` lands on disk first. A crash, a
+    full volume, or a kill between the two saves leaves authentication ON with
+    no password stored -- every request denied, every login refused, and no way
+    back in short of hand-editing config.ini. Exactly the lockout the change
+    was written to close, reintroduced through a different door.
+
+    So the hook must only touch the in-memory parser and let the caller's
+    single save persist both. `Settings.save()` is atomic (T2.0), so one save
+    means the pair lands or neither does.
+    """
+
+    def test_the_hook_does_not_save_by_itself(self, monkeypatch):
+        """Pins the mechanism, because the crash window cannot be reproduced.
+
+        Nothing observable distinguishes "wrote both in one save" from "wrote
+        them in two" once both have completed -- the difference only appears if
+        the process dies in between. So the assertion is on the mechanism: the
+        hook must not trigger a save of its own.
+        """
+        from couchpotato.core._base._core import Core
+        from couchpotato.environment import Env
+
+        saves = []
+
+        class FakeSettings:
+            p = object()
+
+            def addSection(self, section):
+                pass
+
+            def set(self, section, option, value):
+                pass
+
+            def save(self):
+                saves.append(1)
+
+            def get(self, attr, default=None, section='core', type=None):
+                return default
+
+        monkeypatch.setattr(Env, 'get', staticmethod(
+            lambda key, default=None: FakeSettings() if key == 'settings' else default))
+
+        Core.__new__(Core).md5Password('hunter2')
+
+        assert saves == [], (
+            'the password hook triggered %d independent save(s). auth_required '
+            'then lands on disk BEFORE the password, and a crash in between '
+            'leaves authentication on with no password: locked out.' % len(saves)
+        )
+
+    def test_the_value_still_reaches_the_settings_object(self, monkeypatch):
+        """Not saving must not mean not setting -- the caller's save needs the
+        value already in the parser."""
+        from couchpotato.core._base._core import Core
+        from couchpotato.environment import Env
+
+        written = {}
+
+        class FakeSettings:
+            def addSection(self, section):
+                pass
+
+            def set(self, section, option, value):
+                written[(section, option)] = value
+
+            def save(self):
+                raise AssertionError('the hook must not save')
+
+            def get(self, attr, default=None, section='core', type=None):
+                return default
+
+        monkeypatch.setattr(Env, 'get', staticmethod(
+            lambda key, default=None: FakeSettings() if key == 'settings' else default))
+
+        Core.__new__(Core).md5Password('hunter2')
+
+        assert written.get(('core', 'auth_required')) == 1, written
+
+
+class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
+    """The migration's correctness IS its position in runner.py.
+
+    `runner.py` resolves `auth_required` only when the key is **absent**:
+
+        if Env.setting('auth_required', default=None) in (None, ''):
+            resolved = 1 if Env.setting('password') else 0
+
+    That is what stops a password-protected install falling open on upgrade.
+    It only holds because the block runs BEFORE `loader.preload()`/
+    `loader.run()`, which fire `settings.register` and reach
+    `Settings.registerDefaults` -> `setDefault`, materialising the registered
+    default of `0` into the config.
+
+    Move the block below the loader and the check sees `0` rather than absent,
+    skips, and every existing install with a password becomes public -- with no
+    failing test, no log line, and a diff that looks like tidying.
+
+    So the ordering is pinned. A source-order assertion is a blunt instrument,
+    but the alternative is a comment, and this repo has already learned what
+    comments are worth when the code stops matching them.
+    """
+
+    def test_the_migration_precedes_loader_run(self):
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] /
+                  'couchpotato' / 'runner.py').read_text(encoding='utf-8')
+
+        migration = source.find("Env.setting('auth_required', value=")
+        loader_run = source.find('loader.run()')
+
+        assert migration != -1, (
+            'the auth_required startup migration is gone from runner.py; if '
+            'that was deliberate, this guard needs to go with it'
+        )
+        assert loader_run != -1, 'loader.run() not found in runner.py'
+        assert migration < loader_run, (
+            'the auth_required migration now runs AFTER loader.run(). '
+            'registerDefaults will have written auth_required = 0 by then, so '
+            'the "absent" check skips and every upgraded install that had a '
+            'password set becomes PUBLIC.'
+        )
