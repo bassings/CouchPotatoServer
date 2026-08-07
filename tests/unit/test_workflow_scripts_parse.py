@@ -123,3 +123,48 @@ def test_the_check_accepts_top_level_return_and_await(tmp_path):
     ok, stderr = _node_check(_as_runtime_module(valid), tmp_path)
 
     assert ok, 'the guard rejected valid workflow-script shape: %s' % stderr
+
+
+#: Globals the workflow runtime does NOT provide. It is a sandbox, not Node:
+#: `agent`, `parallel`, `pipeline`, `log`, `phase`, `args`, `budget` and
+#: `workflow` exist; the Node standard library does not.
+#:
+#: This is not hypothetical. `review-cycle.js` shipped
+#:
+#:     const MAIN_REPO = process.cwd()
+#:
+#: written to replace a hardcoded contributor path -- a correct intent with an
+#: unavailable mechanism. It PARSED fine, so the parse test above passed it, and
+#: the failure only appeared when the mandated review gate was actually invoked:
+#:
+#:     Error: process is not defined  at workflow.js:9:26
+#:
+#: A syntax check cannot see an undefined global. This can, and it costs one
+#: grep rather than a broken gate discovered at the moment it was needed.
+FORBIDDEN_GLOBALS = ('process.', 'require(', '__dirname', '__filename',
+                     'globalThis.process')
+
+
+@pytest.mark.parametrize('script', SCRIPTS, ids=lambda p: p.name)
+def test_the_workflow_script_uses_no_node_only_globals(script):
+    text = script.read_text(encoding='utf-8')
+    hits = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        code = line.split('//', 1)[0]
+        if code.lstrip().startswith(('*', '#:')):
+            continue
+        for bad in FORBIDDEN_GLOBALS:
+            if bad in code:
+                hits.append('%d: %s  (uses %s)' % (lineno, line.strip(), bad))
+
+    assert not hits, (
+        '%s uses globals the workflow runtime does not provide:\n  %s\n\n'
+        'The runtime is a sandbox: agent/parallel/pipeline/log/phase/args/'
+        'budget/workflow exist, the Node standard library does not. This '
+        'PARSES, so the parse test cannot catch it -- it fails only when the '
+        'workflow is invoked, which for the review cycle means at the moment '
+        'the gate is needed. Resolve paths inside an agent (which runs in a '
+        'real shell) instead: `git rev-parse --git-common-dir` works from a '
+        'worktree as well as the main checkout.'
+        % (script.name, '\n  '.join(hits))
+    )
