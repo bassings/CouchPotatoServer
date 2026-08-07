@@ -561,7 +561,23 @@ class Settings:
                 # already happened; fall back to comparing what we have.
                 return v
 
-        if option_type == 'password':
+        # Withhold unless the option is REGISTERED and registered non-secret.
+        #
+        # `getType` returns 'unicode' for a password option that is merely
+        # missing from `self.types`, so a blocklist on `== 'password'` fails
+        # OPEN for an unregistered one -- driven with `opt_type=None` against
+        # the real function, the old form returned BOTH the hash and the
+        # plaintext. Registration happens in `loader.run()` at startup, so a
+        # shipped server is very likely fine; "very likely registered" is the
+        # wrong thing for a disclosure decision to rest on.
+        #
+        # An allowlist of type NAMES cannot express this, because the unknown
+        # case and the ordinary-string case are the same name. So the question
+        # asked is "was this option registered at all", which distinguishes
+        # them -- and an unregistered option withholds, costing only the
+        # `changed` hint on a setting nothing declared.
+        registered = option in (self.types.get(section) or {})
+        if not registered or option_type == 'password':
             # NOTHING but success. Not the value, and not `changed` either.
             #
             # Reporting `changed` looked harmless and was worse than the leak it

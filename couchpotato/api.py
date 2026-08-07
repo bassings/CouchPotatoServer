@@ -65,8 +65,15 @@ def callApiHandler(route, **kwargs):
 
         result = api[route](**kwargs)
         return result
-    except Exception:
-        log.error('Failed doing api request "%s": %s', route, traceback.format_exc())
+    except Exception as e:
+        # Name the exception TYPE in the log. Every handler failure used to
+        # collapse into one generic line, which is why the UI documents working
+        # around this route rather than diagnosing it (see the comments in
+        # `ui/__init__.py`'s suggestions and charts partials). The response body
+        # stays generic on purpose -- it is the log that needed the detail, not
+        # the client. T3.4.
+        log.error('Failed doing api request "%s" (%s): %s',
+                  route, type(e).__name__, traceback.format_exc())
         return {'success': False, 'error': 'Failed returning results'}
     finally:
         if lock:

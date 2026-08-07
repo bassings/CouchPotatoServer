@@ -265,6 +265,14 @@ def fireEvent(name, *args, **kwargs):
         return final
     except Exception:
         log.error('%s: %s', name, traceback.format_exc())
+        # `[]`, not an implicit None. This function's contract is "a list of
+        # handler results" -- the no-handler path above already returns `[]` --
+        # and callers index it directly (`searcher.py`'s
+        # `[x['_id'] for x in fireEvent('media.with_status', ...)]`). Falling
+        # out of this handler with None turns a logged, recovered dispatch
+        # error into a TypeError in the caller, several frames from the cause.
+        # T3.4.
+        return []
 
 
 def fireEventAsync(*args, **kwargs):

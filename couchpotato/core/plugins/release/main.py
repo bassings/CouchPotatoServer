@@ -162,10 +162,28 @@ class Release(Plugin):
         # guaranteed TypeError, which in manage.updateLibrary swallowed the
         # library-scan completion timestamp.
         #
-        # The count is now REPORTED rather than merely accumulated. Corrupt or
+        # The count is REPORTED rather than merely accumulated. Corrupt or
         # orphaned release rows are the visible symptom of the index-family
         # defects this branch exists to fix, so a number that quietly rises
         # while nobody can see it is the least useful place for it.
+        #
+        # MEASURED CAVEAT, recorded so this line does not read as a working
+        # report: on SQLiteAdapter the loop above is currently DEAD, so
+        # `damaged` cannot become non-zero and this never fires. Driven against
+        # a real adapter seeded with an orphan and a legacy 'ignore' status:
+        # `db.all('release', with_doc=False)` returns rows keyed
+        # ['_id','_rev','_t','media_id','status'] with NO 'key' field, so
+        # `release.get('key')` is always None, `db.get('id', None)` raises
+        # KeyError, and every arm below it is unreachable -- `RecordDeleted` is
+        # never raised by this adapter at all, and `get` raises KeyError rather
+        # than ValueError. The orphan survived, the 'ignore' status was never
+        # migrated, and nothing was logged.
+        #
+        # That is a PRE-EXISTING defect in the CodernityDB-shaped assumptions,
+        # not something this branch introduced, and repairing it changes a path
+        # that DELETES releases -- which this project's own rules say gets its
+        # own change and its own review rather than being folded into a data
+        # correctness PR. Tracked in the plan's deferred list.
         if damaged:
             log.info('Cleaned up %s corrupt or orphaned release record(s)', damaged)
 

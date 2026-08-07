@@ -347,8 +347,16 @@ class TestSaveViewReportsWhatItActuallyStored:
         )
 
     def test_no_handler_still_reports_the_submitted_value(self):
-        """`fireEvent(single=True)` returns [] with no handler -- the common case."""
-        result, stored = self._save_view(hook_result=[], submitted='some-value')
+        """`fireEvent(single=True)` returns [] with no handler -- the common case.
+
+        `opt_type` is supplied because the response now withholds the value for
+        an UNREGISTERED option (see TestTheMaskWithholdsForAnUnregisteredOption).
+        This test is about `_resolve_saved_value`'s no-handler fallback, not the
+        mask, so it registers an ordinary type and lets the fallback be what is
+        measured.
+        """
+        result, stored = self._save_view(hook_result=[], submitted='some-value',
+                                         opt_type='unicode')
 
         assert stored == 'some-value'
         assert result['value'] == 'some-value'
@@ -421,4 +429,108 @@ class TestASavedPasswordIsNeverEchoedBack:
     def test_a_non_password_option_still_echoes_its_value(self):
         """Anti-vacuity: the mask must be scoped to secrets."""
         result, _ = self._save('url_base', '/cp', '/cp', 'unicode')
+        assert result['value'] == '/cp'
+
+
+class TestTheGuardIsActuallyWiredUp:
+    """The registration is the thing that makes the guard work, and nothing pinned it.
+
+    `grep -rn "setting.save.core.auth_required"` returns exactly one hit --
+    `_core.py`'s `addEvent` -- and nothing under `tests/`. Every guard test
+    calls `guardAuthRequired` directly, and the `saveView` harness stubs
+    `fireEvent` out entirely, so deleting or renaming that one line reopens the
+    one-click lockout with the whole suite green.
+
+    A guard whose wiring nothing exercises is a guard that only appears to be
+    installed.
+    """
+
+    def test_core_registers_the_auth_required_hook(self):
+        """Assert on the real `Core.__init__` registrations, not on a grep."""
+        import couchpotato.core._base._core as core_module
+
+        registered = []
+
+        def fake_add_event(name, handler, **kwargs):
+            registered.append((name, getattr(handler, '__name__', '')))
+
+        original = core_module.addEvent
+        core_module.addEvent = fake_add_event
+        try:
+            core_module.Core()
+        finally:
+            core_module.addEvent = original
+
+        assert ('setting.save.core.auth_required', 'guardAuthRequired') in registered, (
+            'Core does not register the auth_required save hook. Without it the '
+            'settings UI and the wizard can store "Require login" with no '
+            'password -- an unrecoverable lockout -- and every other test in '
+            'this file still passes, because they call the guard directly.\n'
+            'Registered: %r' % (registered,)
+        )
+
+    def test_the_hook_runs_through_the_real_dispatcher(self, settings):
+        """End to end through `fireEvent`, not a stub.
+
+        The unit tests above prove the guard's logic; this proves the wiring
+        carries it. Uses the real event registry so a rename of either the event
+        string or the method reds it.
+        """
+        from couchpotato.core.event import addEvent, fireEvent, removeEvent
+        from couchpotato.core._base._core import Core
+
+        settings['password'] = ''
+        core = Core.__new__(Core)
+
+        removeEvent('setting.save.core.auth_required')
+        addEvent('setting.save.core.auth_required', core.guardAuthRequired)
+        try:
+            result = fireEvent('setting.save.core.auth_required', '1', single=True)
+        finally:
+            removeEvent('setting.save.core.auth_required')
+
+        assert result == 0, (
+            'dispatching the real event with no password stored returned %r; '
+            'the guard must refuse by returning 0' % (result,)
+        )
+
+
+class TestTheMaskWithholdsForAnUnregisteredOption:
+    """`getType` returns 'unicode' for an option merely missing from `self.types`.
+
+    So a blocklist on `== 'password'` fails OPEN for an unregistered password
+    option: driven with no registered type, the earlier form returned BOTH the
+    bcrypt hash and the plaintext. Registration happens in `loader.run()` at
+    startup, so a shipped server is very likely fine -- but a disclosure
+    decision should not rest on "very likely", and its failure direction should
+    be silence.
+    """
+
+    def _save(self, types_map):
+        return TestSaveViewReportsWhatItActuallyStored._save_view(
+            TestSaveViewReportsWhatItActuallyStored(),
+            hook_result='$2b$12$SECRETHASH', submitted='hunter2',
+            opt_type=None, option='password',
+        ) if types_map is None else None
+
+    def test_an_unregistered_password_option_echoes_nothing(self):
+        result, _ = TestSaveViewReportsWhatItActuallyStored._save_view(
+            TestSaveViewReportsWhatItActuallyStored(),
+            hook_result='$2b$12$SECRETHASH', submitted='hunter2',
+            opt_type=None, option='password',
+        )
+
+        assert result == {'success': True}, (
+            'an UNREGISTERED password option echoed its value: %r' % (result,)
+        )
+        blob = repr(result)
+        assert 'hunter2' not in blob and '$2b$' not in blob
+
+    def test_a_registered_ordinary_string_still_echoes(self):
+        """Anti-vacuity: withholding must not become "withhold everything"."""
+        result, _ = TestSaveViewReportsWhatItActuallyStored._save_view(
+            TestSaveViewReportsWhatItActuallyStored(),
+            hook_result='/cp', submitted='/cp',
+            opt_type='unicode', option='url_base',
+        )
         assert result['value'] == '/cp'

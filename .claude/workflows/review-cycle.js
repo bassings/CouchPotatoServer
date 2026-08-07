@@ -20,7 +20,17 @@ const MAIN_REPO = process.cwd()
 const MAIN_PYTHON = `${MAIN_REPO}/.venv/bin/python`
 
 const DATA_GLOBS = ['couchpotato/core/db/**', 'couchpotato/core/database.py', '**/schema.sql', 'couchpotato/core/plugins/renamer/**', 'couchpotato/core/plugins/scanner/**', 'couchpotato/core/plugins/release/**']
-const ARCH_FILES = ['couchpotato/core/event.py', 'couchpotato/core/loader.py', 'couchpotato/api.py'  // NOT core/api.py -- that path does not exist, so the API boundary never triggered lens-architecture, 'couchpotato/__init__.py']
+// `couchpotato/api.py`, NOT `couchpotato/core/api.py`. The latter does not
+// exist, so the API boundary never triggered lens-architecture at all. The
+// comment lives ABOVE the array, not inside it: a `//` inside an array literal
+// swallows the rest of the physical line INCLUDING the closing bracket, which
+// is how this line shipped broken.
+const ARCH_FILES = [
+  'couchpotato/core/event.py',
+  'couchpotato/core/loader.py',
+  'couchpotato/api.py',
+  'couchpotato/__init__.py',
+]
 const OPS_GLOBS = ['Dockerfile', 'docker-*.yml', '.github/workflows/**', 'couchpotato/core/logger.py', 'scripts/**',
   // Scheduled behaviour is an operability concern wherever it lives, and
   // path globs alone missed it: the commit that added this line changed the

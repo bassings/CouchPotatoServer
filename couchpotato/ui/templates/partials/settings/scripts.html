@@ -505,11 +505,26 @@ function settingsPanel() {
               + payload.value + '" instead. Check the log for the reason.',
             'error', 6000,
           );
+          // RETURN. Without it, `lastSaved = true` below fires the green "Saved"
+          // tick in header.html and its own role="status" aria-live="polite"
+          // region -- so on the one flow this change exists to make truthful,
+          // the primary confirmation affordance said the save was accepted.
+          // Measured: the real client function returned message='... could not
+          // be set ...', messageType='error' AND lastSaved=true together, so a
+          // sighted operator glancing at the header sees a tick, and a screen
+          // reader delivers "Saved" from the polite queue after the assertive
+          // error.
+          //
+          // The comment a few lines above already closed this for the
+          // `success: false` branch; the `changed` branch is new in the same
+          // commit and did not inherit it.
+          this.saving = false;
+          return;
         }
-        
+
         const restartKeys = ['core.port', 'core.ssl_cert', 'core.ssl_key', 'core.username', 'core.password'];
         if (restartKeys.includes(section + '.' + name)) this.needsRestart = true;
-        
+
         this.lastSaved = true;
         setTimeout(() => { this.lastSaved = false; }, 2000);
       } catch (e) {
@@ -570,6 +585,24 @@ function settingsPanel() {
       }
     },
 
+    // Announcement state, SEPARATE from `message`.
+    //
+    // The two sr-only regions used to bind straight to `message`, and assigning
+    // the SAME string is a no-op under Alpine's reactivity -- so `x-text` never
+    // mutated and a repeated message was announced zero times. Measured with a
+    // MutationObserver driving the real control: ticking "Require login" twice
+    // on a passwordless server gave one mutation on attempt 1 and ZERO on
+    // attempt 2, and the checkbox reverts either way, so there was no other
+    // signal at all. WCAG 4.1.3.
+    //
+    // `base.html:214-229` already solves this with clear-then-$nextTick, and
+    // accessibility.a11y.spec.ts:687 guards it there. This panel took the
+    // persistent-region half of that pattern and left the repeat half behind.
+    // Keeping the announcement in its own state means the visible toast does
+    // not flicker when the text is cleared to force the mutation.
+    politeAnnouncement: '',
+    assertiveAnnouncement: '',
+
     toast(msg, type, duration = 3000) {
       // `duration` is honoured, and the pending timer cancelled.
       //
@@ -585,6 +618,13 @@ function settingsPanel() {
       clearTimeout(this._settingsToastTimer);
       this.message = msg;
       this.messageType = type;
+
+      // Cleared first, then set on the next tick, so the region MUTATES even
+      // when the message is identical to the previous one.
+      const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+      this[region] = '';
+      this.$nextTick(() => { this[region] = msg; });
+
       this._settingsToastTimer = setTimeout(() => this.message = '', duration);
     },
 

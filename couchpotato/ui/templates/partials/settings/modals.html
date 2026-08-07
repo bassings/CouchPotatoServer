@@ -32,10 +32,10 @@
      node. -->
 <div class="sr-only" aria-live="polite" aria-atomic="true"
      data-testid="settings-announcer-polite"
-     x-text="messageType === 'error' ? '' : message"></div>
+     x-text="politeAnnouncement"></div>
 <div class="sr-only" role="alert" aria-live="assertive" aria-atomic="true"
      data-testid="settings-announcer-assertive"
-     x-text="messageType === 'error' ? message : ''"></div>
+     x-text="assertiveAnnouncement"></div>
 
 <div x-show="message"
      x-transition

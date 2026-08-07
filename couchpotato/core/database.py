@@ -128,9 +128,16 @@ class Database:
                 'success': True
             }
         except Exception:
+            # Log server-side, return a generic error. `traceback.format_exc()`
+            # in the response body hands an API client absolute filesystem
+            # paths, the module layout and library versions -- and these two
+            # views are reachable by anyone holding the api_key, which the
+            # userscript and every third-party script also hold. T3.4.
+            log.error('Failed handling database document request: %s',
+                      traceback.format_exc())
             return {
                 'success': False,
-                'error': traceback.format_exc()
+                'error': 'Request failed; see the server log for details'
             }
 
     @staticmethod
@@ -175,9 +182,16 @@ class Database:
                 'document': document
             }
         except Exception:
+            # Log server-side, return a generic error. `traceback.format_exc()`
+            # in the response body hands an API client absolute filesystem
+            # paths, the module layout and library versions -- and these two
+            # views are reachable by anyone holding the api_key, which the
+            # userscript and every third-party script also hold. T3.4.
+            log.error('Failed handling database document request: %s',
+                      traceback.format_exc())
             return {
                 'success': False,
-                'error': traceback.format_exc()
+                'error': 'Request failed; see the server log for details'
             }
 
     def listDocuments(self, **kwargs):
