@@ -68,6 +68,21 @@ _REPLACE_PRIVATE_BARE = ['api_key', 'apikey', 'password', 'passkey', 'token', 'a
 #: `[\w-]*sid=` would eat ordinary words. Matched exactly, case-insensitively.
 _REPLACE_PRIVATE_BARE_EXACT = ['sid']
 
+#: Home-directory prefixes, redacted to the directory name alone.
+#:
+#: `traceback.format_exc()` writes every frame's ABSOLUTE source path, so an
+#: unhandled error in a native install logs `/home/<name>/...` or
+#: `/Users/<name>/...` -- the operator's username and directory layout, in a
+#: file that routinely gets pasted into bug reports. The project security floor
+#: says no private filesystem paths in logs, and this filter had no path
+#: handling at all.
+#:
+#: The tail is KEPT deliberately. The module path, line number and function are
+#: the entire reason a traceback is logged; a filter that ate the line would
+#: remove the diagnosis along with the leak, which is how redaction gets
+#: switched off.
+_HOME_PREFIX_RE = re.compile(r'(?:/home/|/Users/)[^/\s"\':,)]+')
+
 
 #: Seconds a `log_suppressed` key stays quiet after its first record.
 #:
@@ -226,6 +241,8 @@ class PrivacyFilter(logging.Filter):
             msg = re.sub(r'[\w-]*%s=[^\s&,;)\]}\'"]+' % replace,
                          lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
                          flags=re.IGNORECASE)
+        msg = _HOME_PREFIX_RE.sub('<home>', msg)
+
         for replace in _REPLACE_PRIVATE_BARE_EXACT:
             msg = re.sub(r'\b%s=[^\s&,;)\]}\'"]+' % replace,
                          lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
