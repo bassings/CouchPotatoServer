@@ -412,12 +412,21 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     from couchpotato import auth_is_required
     resolve_auth_required_setting()
 
-    log_authentication_posture()
-
     # Create FastAPI app
     from couchpotato import create_app
     web_base = ('/' + Env.setting('url_base').lstrip('/') + '/') if Env.setting('url_base') else '/'
     Env.set('web_base', web_base)
+
+    # AFTER `web_base` is set, and that ordering is load-bearing rather than
+    # tidy: the posture line reports the derived `secure` value, which comes
+    # from `session_cookie_attributes()`, which reads `Env.get('web_base')`.
+    # Called any earlier the server dies on boot with
+    # `AttributeError: type object 'Env' has no attribute '_web_base'`.
+    # It did: the first version of this call sat above, and every unit test
+    # passed because they monkeypatched `session_cookie_attributes` -- mocking
+    # the one thing that breaks. Only the E2E, which starts a real server,
+    # caught it.
+    log_authentication_posture()
 
     api_key = Env.setting('api_key')
     if not api_key:
