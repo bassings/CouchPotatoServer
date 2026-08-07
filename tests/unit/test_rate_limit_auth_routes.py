@@ -469,3 +469,80 @@ class TestViewingTheLoginPageDoesNotSpendACredentialAttempt:
 
         assert 429 in codes, (
             '/getkey/ is no longer limited on GET: %s' % codes)
+
+
+class TestTheLocalhostExemptionDoesNotCoverAuthRoutes:
+    """High finding on #229: deployment topology could disable the throttle.
+
+    `dispatch` computes `auth_route` up front precisely so credential routes
+    are counted even when the request looks like an ordinary page load -- and
+    then exempted every request whose peer is 127.0.0.1 before any counting
+    happened.
+
+    Nothing in this tree configures uvicorn's `proxy_headers` or
+    `forwarded_allow_ips`, so `request.client.host` is the TCP peer. On the
+    ordinary self-hosted shape -- nginx, Caddy or Traefik on the SAME host, or
+    a proxy container talking to a port-mapped app -- every remote request
+    arrives as 127.0.0.1. So `POST /login/` was unthrottled for the entire
+    internet, with bcrypt's ~166ms the only brake.
+
+    Measured before the fix, driving the real app with `client=('127.0.0.1',
+    40000)`: 15 consecutive `POST /login/`, not one 429.
+
+    The rest of the exemption STAYS. It exists so the UI on the same host is
+    not throttled while loading partials and polling logs, and removing it
+    would throttle ordinary browsing. Only the credential routes are carved
+    out of it.
+
+    The existing suite could not catch this: Starlette's `TestClient` reports
+    a scope client host of `testclient`, so the exemption path was never
+    exercised. Hence the explicit `client=` below.
+    """
+
+    def _local(self, settings):
+        from couchpotato import create_app
+        # `client=` is the whole point: the default TestClient reports a host
+        # of `testclient`, which is not in _LOCALHOST_IPS, so every other test
+        # in this file sails past the exemption without touching it.
+        return TestClient(create_app(API_KEY, '/'), follow_redirects=False,
+                          client=('127.0.0.1', 40000))
+
+    def test_a_login_post_from_localhost_is_still_throttled(self, settings):
+        local = self._local(settings)
+
+        codes = [local.post('/login/', data={'password': 'w%d' % i},
+                            headers={'accept': 'text/html'}).status_code
+                 for i in range(MAX + 3)]
+
+        assert 429 in codes, (
+            'password guessing from 127.0.0.1 is unlimited, so behind a '
+            'same-host reverse proxy the throttle does not exist: %s' % codes)
+
+    def test_getkey_from_localhost_is_still_throttled(self, settings):
+        local = self._local(settings)
+
+        codes = [local.get('/getkey/').status_code for _ in range(MAX + 3)]
+
+        assert 429 in codes, codes
+
+    def test_same_host_xhr_stays_exempt(self, settings):
+        """The counterweight, and the reason the exemption exists at all.
+
+        `accept: */*`, NOT `text/html`. A page NAVIGATION is already exempted
+        earlier by the HTML rule, so asserting on one proves nothing about
+        this branch -- the first version of this test did exactly that and
+        stayed green when the localhost exemption was deleted entirely.
+
+        What the exemption actually protects is the UI's own XHR: htmx
+        fragment loads and the ten-second log poll, which the browser sends
+        with `*/*`. Throttling those would be a worse defect than the one
+        being fixed.
+        """
+        local = self._local(settings)
+
+        codes = [local.get('/partial/movies', headers={'accept': '*/*'}).status_code
+                 for _ in range(MAX + 5)]
+
+        assert 429 not in codes, (
+            'the UI\'s own same-host XHR is now throttled, so fragment loads '
+            'and the log poll break: %s' % codes)

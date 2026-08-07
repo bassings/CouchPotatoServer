@@ -193,8 +193,27 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         client_ip = request.client.host if request.client else '127.0.0.1'
 
-        # Exempt localhost requests (UI runs on same host)
-        if client_ip in self._LOCALHOST_IPS:
+        # Exempt localhost -- but NOT the credential routes.
+        #
+        # The exemption exists because the UI runs on the same host and would
+        # otherwise be throttled while loading partials and polling logs.
+        # Applying it to `/login`, `/logout` and `/getkey` as well made the
+        # whole throttle a function of deployment topology: nothing here
+        # configures uvicorn's `proxy_headers` or `forwarded_allow_ips`, so
+        # `request.client.host` is the TCP peer -- and on the ordinary
+        # self-hosted shape (nginx, Caddy or Traefik on the SAME host, or a
+        # proxy container talking to a port-mapped app) every remote request
+        # arrives as 127.0.0.1.
+        #
+        # Measured before this change, driving the real app with
+        # `client=('127.0.0.1', 40000)`: 15 consecutive `POST /login/`, not one
+        # 429. Password guessing was unthrottled for the entire internet with
+        # bcrypt's ~166ms the only brake -- which made AC-SEC-42 inert on the
+        # deployment this project actually documents.
+        #
+        # The existing suite could not see it: Starlette's `TestClient` reports
+        # a client host of `testclient`, so no test ever reached this branch.
+        if client_ip in self._LOCALHOST_IPS and not auth_route:
             return await call_next(request)
 
         retry_after = self._is_rate_limited(client_ip)
