@@ -195,14 +195,23 @@ function cpSuggestionLoader(variant = 'personal') {
     // slightly slower. Load decides whether it fires, which is the signature
     // of a latent race rather than broken logic.
     //
-    // ONE helper rather than three copies, deliberately. The first fix patched
-    // `fail()` alone; review found `retry()` carrying the identical shape one
-    // function down, and `keepWaiting()` had it too. Fixing the instance and
-    // leaving the class is how this comes back.
+    // Reading `offsetHeight` is the fix, and it is DETERMINISTIC: it forces the
+    // browser to flush pending style and layout synchronously, so by the time
+    // `focus()` runs the element is definitively no longer `display:none`.
+    // An earlier version relied on `requestAnimationFrame` instead, which only
+    // moved the load threshold at which the bug reappears -- one frame is not
+    // a guarantee on a slow machine or a busy main thread. The rAF retry is
+    // kept purely as belt and braces behind the flush, not as the mechanism.
+    //
+    // ONE helper rather than a copy per call site: the first fix patched
+    // `fail()` alone and review found `retry()` carrying the identical shape
+    // one function down. Fixing the instance and leaving the class is how this
+    // comes back.
     _focusWhenShown(ref) {
       this.$nextTick(() => {
         const el = this.$refs[ref];
         if (!el) return;
+        void el.offsetHeight;  // force the pending style/layout flush
         el.focus();
         if (document.activeElement !== el) {
           requestAnimationFrame(() => el.focus());
@@ -228,6 +237,15 @@ function cpSuggestionLoader(variant = 'personal') {
     },
     // Returning focus to the loading panel keeps the user oriented after the
     // stall control they were on (Keep waiting) is hidden (WCAG 2.4.3).
+    //
+    // NOT the display race the helper exists for, and an earlier commit
+    // message claimed otherwise on the strength of a grep rather than the
+    // markup. `loadingPanel` is `x-show="!loaded && !failed"`; the Keep
+    // waiting button lives inside `x-show="stalled"` WITHIN that panel, and
+    // this method touches neither `loaded` nor `failed` -- so the panel is
+    // already visible when it runs and never transitions hidden -> shown.
+    // It uses the helper for uniformity, not because a race was demonstrated
+    // here.
     keepWaiting() {
       this.stalled = false;
       this._stallAt = this.elapsed + CP.ui.SUGGESTION_KEEP_WAITING_EXTENSION;
