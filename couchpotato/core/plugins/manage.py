@@ -223,7 +223,10 @@ class Manage(Plugin):
                             'director%s scanned but contained no movies (%s). '
                             'That is what an unmounted or empty library folder '
                             'looks like, and deleting movies on that basis is '
-                            'not recoverable. Nothing was removed.',
+                            'not recoverable. Nothing was removed. If that '
+                            'folder is meant to be empty, remove it from '
+                            'Settings > Library > Library Folders and cleanup '
+                            'will resume; otherwise check the mount.',
                             len(empty_directories), len(directories),
                             'y' if len(directories) == 1 else 'ies',
                             ', '.join(empty_directories))

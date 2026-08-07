@@ -86,6 +86,41 @@ Every PR follows the same loop:
    agreed step (rule 6).
 
 ---
+## Tasks
+
+Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
+-> in-review #N -> merged`. The box is ticked only at `merged`, and only from
+`gh pr view`, never from memory.
+
+- [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
+- [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
+- [ ] T3: PR 3 — M1b data correctness at the SQLite seam — state: awaiting-ci #227
+- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
+- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
+- [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
+- [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
+
+T4 carries the deferred review finding M2 (the startup `auth_required`
+migration is executed by no test; its only guard is a source-order string
+search). T7 carries the accessibility and product sets recorded in
+`QA/lens-review-2026-08-07-m1b-vs-master.md` and the three defects in
+`scratchpad/findings-from-read.md`.
+
+`needs:` is ordering, not exclusivity: T4 and T5 both unblock on T3 and may run
+in parallel.
+
+## Conductor log
+
+- **Tick 1** — first invocation; checklist created from measured state, not memory.
+  `gh pr list` confirms T1 merged #225 and T2 merged #226. T3 is `awaiting-ci
+  #227`: 16 checks SUCCESS, 2 still running, 0 failing, 0 unresolved review
+  threads. T4 and T5 stay `queued` deliberately rather than starting in
+  parallel — both edit `couchpotato/__init__.py` and `release/main.py`, which
+  #227 changes heavily, so starting either now buys a rebase conflict for no
+  wall-clock gain. Armed: background watcher on #227's checks (single
+  notification on settle). Next wake expects #227 either green (then:
+  /review-cycle, then merge) or red (then: fix, push, re-arm).
+
 ## PR 1: M0: Safety net
 
 > **Revised 2026-08-03 after the planning cycle.** Six lenses ran
