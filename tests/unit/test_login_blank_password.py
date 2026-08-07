@@ -28,6 +28,12 @@ from fastapi.testclient import TestClient
 from couchpotato.api import addApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing
 from couchpotato.environment import Env
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import stored_session_secret  # noqa: E402
+
 
 @pytest.fixture
 def settings(tmp_path):
@@ -116,7 +122,8 @@ class TestConfiguredPasswordStillWorks:
 
         settings['password'] = hash_password(md5('correct-horse'))
 
-        response = _client().post('/login/', data={'username': 'admin', 'password': 'correct-horse'})
+        with stored_session_secret():
+            response = _client().post('/login/', data={'username': 'admin', 'password': 'correct-horse'})
 
         assert _logged_in(response), (
             'a correctly configured login was refused: the guard disabled the '

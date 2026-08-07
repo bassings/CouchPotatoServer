@@ -372,6 +372,29 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     except Exception as e:
         log.warning('Profile quality order fix skipped: %s', e)
 
+    # Create the session signing secret ONCE, here, before the first request is
+    # served (D2). Not on a request path: the property store has no uniqueness
+    # constraint on `identifier`, so concurrent first-time creates produce
+    # duplicate rows and lost writes (measured on `Settings.setProperty`: four
+    # concurrent creates gave two rows), and a per-request property read takes
+    # the adapter's process-wide RLock.
+    #
+    # Skipped when authentication is off, so an install that never enabled it
+    # never grows the row.
+    #
+    # A failure here is logged rather than fatal: the process still serves the
+    # login page and `config.ini` is still editable, which is the documented
+    # way back in. Exiting would take away the page that explains the problem.
+    if auth_is_required():
+        from couchpotato import ensure_session_secret
+        try:
+            ensure_session_secret(db)
+        except Exception:
+            log.error('Could not create or read the session signing secret, so '
+                      'NO login can succeed. To recover: set "auth_required = 0" '
+                      'in the [core] section of config.ini and restart, then '
+                      'check the database is writable. %s', traceback.format_exc())
+
     fireEventAsync('app.load')
 
     # Run with uvicorn

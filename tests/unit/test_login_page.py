@@ -15,6 +15,12 @@ from fastapi.testclient import TestClient
 from couchpotato.api import addApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing
 from couchpotato.environment import Env
 
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import stored_session_secret  # noqa: E402
+
 
 @pytest.fixture(autouse=True)
 def setup_env(tmp_path):
@@ -178,10 +184,11 @@ class TestLoginPageBehaviourUnchanged:
         from couchpotato.core.helpers.variable import md5
         Env.setting('password', value=md5('secret'))
 
-        resp = client.post('/login/', data={
-            'username': 'admin',
-            'password': 'secret',
-        }, follow_redirects=False)
+        with stored_session_secret():
+            resp = client.post('/login/', data={
+                'username': 'admin',
+                'password': 'secret',
+            }, follow_redirects=False)
 
         assert resp.status_code == 302
         assert 'user' in resp.cookies or 'set-cookie' in resp.headers

@@ -32,11 +32,16 @@ password-protected installs stay protected and the value is greppable
 afterwards -- which matters because grepping `config.ini` is the documented
 lock-out recovery path.
 """
+import sys
 import types
+from pathlib import Path
 
 import pytest
 
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import session_cookie, stored_session_secret  # noqa: E402
 
 
 @pytest.fixture
@@ -89,6 +94,18 @@ def settings():
 
 def _request(cookie=None):
     return types.SimpleNamespace(cookies=({'user': cookie} if cookie else {}))
+
+
+@pytest.fixture
+def session():
+    """A signing secret in the property store, and a valid cookie for it.
+
+    The cookie used to BE `api_key`, so these tests could write 'THEKEY' and
+    have it accepted. It is now an HMAC-signed token, minted by the one test
+    helper (AC-ARCH-14) rather than constructed here.
+    """
+    with stored_session_secret():
+        yield session_cookie()
 
 
 def _current_user(request):
@@ -147,17 +164,26 @@ class TestAuthRequiredOn:
             'and can delete the library (username=%r)' % (username,)
         )
 
-    def test_a_valid_cookie_is_accepted(self, settings):
+    def test_a_valid_cookie_is_accepted(self, settings, session):
         settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
 
-        assert _current_user(_request('THEKEY')) == 'THEKEY'
+        assert _current_user(_request(session)) is True
 
-    def test_a_wrong_cookie_is_denied(self, settings):
+    def test_a_wrong_cookie_is_denied(self, settings, session):
         settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
 
         assert _current_user(_request('not-the-key')) is None
 
-    def test_a_blank_username_does_not_disable_auth(self, settings):
+    def test_the_api_key_is_no_longer_a_valid_cookie(self, settings, session):
+        """D5: no compatibility window. Every browser that logged in before
+        this change holds exactly this value, and it stops working on the
+        first request after upgrade -- the way back in is the login page with
+        the password the operator already has."""
+        settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
+
+        assert _current_user(_request('THEKEY')) is None
+
+    def test_a_blank_username_does_not_disable_auth(self, settings, session):
         """The whole point. This combination was PUBLIC before."""
         settings.update({'username': '', 'password': 'secret', 'auth_required': 1})
 
@@ -165,7 +191,7 @@ class TestAuthRequiredOn:
             'a blank username disabled authentication even with auth_required '
             'ON -- the exact trap the old `if username and password` gate set'
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY', (
+        assert _current_user(_request(session)) is True, (
             'a blank username must mean "any username is accepted", not '
             '"nobody can log in"'
         )
@@ -480,16 +506,16 @@ class TestAuthRequiredArrivesAsAStringAtStartup:
         )
 
     @pytest.mark.parametrize('stored', ['1', 'true', 'True', 'yes', 'on', ' 1 '])
-    def test_a_truthy_string_turns_auth_on(self, settings, stored):
+    def test_a_truthy_string_turns_auth_on(self, settings, session, stored):
         settings['auth_required'] = stored
         settings['password'] = 'hashed'
 
         assert _current_user(_request()) is None, (
             'auth_required was the string %r and the server stayed PUBLIC' % (stored,)
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY'
+        assert _current_user(_request(session)) is True
 
-    def test_an_unrecognised_string_with_a_password_stays_shut(self, settings):
+    def test_an_unrecognised_string_with_a_password_stays_shut(self, settings, session):
         """Garbage in config.ini must not open the server.
 
         A hand-edited config.ini is the documented lock-out recovery path, so
@@ -504,7 +530,7 @@ class TestAuthRequiredArrivesAsAStringAtStartup:
         assert _current_user(_request()) is None, (
             'a typo in auth_required made the server public'
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY', (
+        assert _current_user(_request(session)) is True, (
             'the password can still satisfy the gate'
         )
 

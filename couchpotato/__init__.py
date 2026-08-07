@@ -3,10 +3,14 @@
 Provides web views, authentication, and the main application setup.
 """
 import asyncio
+import base64
+import hashlib
 import hmac
 import json
 import os
 import re
+import secrets
+import threading
 import time
 import traceback
 
@@ -188,17 +192,245 @@ def _auth_required_from_password() -> bool:
     return bool(Env.setting('password'))
 
 
+# --- Session cookie ---
+#
+# The browser used to be handed `Env.setting('api_key')` verbatim as its `user`
+# cookie, so the session cookie WAS the credential `/api/{route:path}`
+# authenticates with: reading it bought add, rename and
+# `movie.delete?delete_from=all`. Logout could only ask the browser to forget a
+# value the thief already had, and the only revocation was rotating the api_key,
+# which breaks the userscript and every downloader at once -- so it never
+# happened and a leaked cookie was valid forever.
+#
+# The cookie is now `<absolute expiry>.<HMAC-SHA256 of that expiry>` under a
+# secret held in the existing property store. No new table and no DDL
+# (`SQLiteAdapter.open()` runs none, so a `schema.sql` addition would reach
+# fresh installs only and raise `no such table` on the first login of every
+# existing one), and no `db.get('session', ...)` -- `_query_index`'s generic
+# `else` branch discards the key and returns an arbitrary document, which this
+# repo has shipped as a live defect twice.
+#
+# Everything below takes its clock and its secret as arguments so expiry is
+# provable without `sleep` and without patching module-level `time.time` (which
+# also freezes `date.today()` -- a recorded false positive on this repo).
+
+SESSION_COOKIE_NAME = 'user'
+SESSION_SECRET_PROPERTY = 'session_secret'
+
+# Lifetimes, not settings: a wrong value here makes the cookie undeliverable or
+# the session eternal, and neither belongs one typo away in config.ini. 24 hours
+# clears WCAG 2.2.1's 20-hour exception, so no warn-and-extend is owed.
+SESSION_LIFETIME = 24 * 3600
+SESSION_LIFETIME_REMEMBERED = 30 * 24 * 3600
+
+# Serialises the read-then-create in `ensure_session_secret`. The property store
+# has no uniqueness constraint on `identifier`, so two threads that both find
+# nothing both insert -- measured on `Settings.setProperty`: four concurrent
+# creates produced two rows and lost two writes. The adapter is single-process
+# over a single connection (see `SQLiteAdapter.update`), so a process-local lock
+# is the whole story.
+_SESSION_SECRET_WRITE_LOCK = threading.Lock()
+
+_SESSION_SECRET_MISSING = (
+    'The session signing secret could not be read, so NO login can succeed and '
+    'every browser session is refused. The api_key and the /api/ routes are '
+    'unaffected. To recover: set "auth_required = 0" in the [core] section of '
+    'config.ini and restart, then check the database is readable.'
+)
+
+
+def generate_session_secret() -> str:
+    """A fresh signing secret: 32 bytes of entropy, as hex text.
+
+    Hex, not raw bytes, and that is correctness rather than tidiness.
+    `Settings.setProperty` stores `toUnicode(value)`, which decodes with
+    REPLACEMENT, so `os.urandom(32)` comes back mangled and how much survives
+    depends on which random bytes happened to form valid UTF-8 (measured twice:
+    29 characters once, 31 the next). A secret stored raw would differ silently
+    on every install and be unrecoverable after the fact.
+
+    Never derived from `api_key` (embedded in every rendered page), `uuid4`,
+    `md5`, the clock or the password hash: a secret anyone can recompute makes
+    session forgery permanent and survives every api_key rotation.
+    """
+    return secrets.token_hex(32)
+
+
+def _sign_session_payload(payload: str, secret) -> str:
+    """The ONLY HMAC computation for session cookies in the tree."""
+    signature = hmac.new(
+        str(secret).encode('utf-8'),
+        payload.encode('utf-8'),
+        hashlib.sha256,
+    ).digest()
+    return base64.urlsafe_b64encode(signature).decode('ascii').rstrip('=')
+
+
+def mint_session_token(secret, lifetime: int, now=None) -> str:
+    """A signed cookie value valid for `lifetime` seconds from `now`."""
+    if not secret:
+        # Never sign with '' or None. A constant fallback key would make every
+        # install forgeable by anyone who can read this file.
+        raise ValueError('refusing to sign a session token without a secret')
+
+    current = time.time() if now is None else now
+    payload = str(int(current) + int(lifetime))
+    return '%s.%s' % (payload, _sign_session_payload(payload, secret))
+
+
+def verify_session_token(token, secret, now=None) -> bool:
+    """Is `token` a signature we issued, and is it still inside its lifetime?
+
+    Signature first, expiry second: the expiry is only trustworthy once the
+    payload is known to be ours.
+    """
+    if not secret or not token or not isinstance(token, str):
+        return False
+
+    payload, separator, signature = token.partition('.')
+    if not separator or not signature:
+        return False
+
+    try:
+        presented = signature.encode('ascii')
+    except UnicodeEncodeError:
+        # `hmac.compare_digest` refuses non-ASCII str; a cookie is whatever the
+        # client sent, so this is a refusal rather than a 500.
+        return False
+
+    expected = _sign_session_payload(payload, secret).encode('ascii')
+    if not hmac.compare_digest(presented, expected):
+        # Constant-time: a plain `==` short-circuits on the first differing
+        # byte and leaks the correct signature to anyone who can time us.
+        return False
+
+    try:
+        expires_at = int(payload)
+    except (TypeError, ValueError):
+        return False
+
+    current = time.time() if now is None else now
+    return current < expires_at
+
+
+def _session_secret_row(db):
+    """The stored secret's property document, or None.
+
+    Filtered on `identifier` again after the query. `_query_index` honours the
+    key for the `property` index today, but its generic `else` branch discards
+    the key and returns an arbitrary document, and this repo has shipped that
+    exact defect twice (`release_download`, `media`). Accepting whatever came
+    back would mean signing with another property's value.
+    """
+    for row in db.query('property', SESSION_SECRET_PROPERTY):
+        if row.get('identifier') == SESSION_SECRET_PROPERTY:
+            return row
+    return None
+
+
+def _write_session_secret(secret: str, db=None, attempts: int = 3) -> str:
+    """The ONLY function in the tree that writes the session secret.
+
+    `Settings.setProperty` cannot be used: it wraps get-then-update in a bare
+    `except Exception:` that falls through to `insert`, so a lost
+    compare-and-swap becomes a DUPLICATE property row and a silently discarded
+    write (measured: after the conflict, `get()` returned the older value).
+    Retrying against a re-read row is the fix, and it lives here because
+    `couchpotato/core/settings.py` stays out of this diff.
+    """
+    from couchpotato.core.db.sqlite_adapter import ConflictError
+
+    db = get_db() if db is None else db
+
+    for _ in range(attempts):
+        existing = _session_secret_row(db)
+
+        if existing is None:
+            db.insert({
+                '_t': 'property',
+                'identifier': SESSION_SECRET_PROPERTY,
+                'value': secret,
+            })
+            return secret
+
+        existing['identifier'] = SESSION_SECRET_PROPERTY
+        existing['value'] = secret
+        try:
+            db.update(existing)
+            return secret
+        except ConflictError:
+            # Lost the compare-and-swap. Re-read and retry. NEVER fall through
+            # to insert: that is `setProperty`'s defect, and a second row makes
+            # the lookup arbitrary for the life of the install.
+            continue
+
+    raise RuntimeError(
+        'could not store the session signing secret after %d attempts' % attempts
+    )
+
+
+def ensure_session_secret(db=None) -> str:
+    """Read the signing secret, creating it once if this install has none.
+
+    Called from `runner.py` at startup, BEFORE the first request is served, so
+    the request path only ever reads (D2). Verification never reaches here.
+    """
+    db = get_db() if db is None else db
+
+    with _SESSION_SECRET_WRITE_LOCK:
+        existing = _session_secret_row(db)
+        if existing is not None and existing.get('value'):
+            return existing['value']
+
+        secret = generate_session_secret()
+        _write_session_secret(secret, db=db)
+        log.info('Created a session signing secret. Browser logins are now '
+                 'signed sessions rather than the api_key, so any existing '
+                 'login is invalidated and must sign in again. The api_key '
+                 'itself is unchanged and every script keeps working.')
+        return secret
+
+
+def get_session_secret():
+    """The signing secret, or None. Reads only -- it never creates one.
+
+    A verification path that could create a secret would let an unauthenticated
+    caller write to the database, and would quietly mint a NEW secret whenever
+    the store hiccupped, invalidating every live session at random.
+    """
+    try:
+        secret = Env.prop(SESSION_SECRET_PROPERTY)
+    except Exception:
+        secret = None
+
+    if not secret:
+        log.error(_SESSION_SECRET_MISSING)
+        return None
+
+    return secret
+
+
 def get_current_user(request: Request):
     """FastAPI dependency for cookie-based auth."""
     if not auth_is_required():
         return True
 
-    user = request.cookies.get('user')
-    if not user:
+    token = request.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
         return None
-    api_key = Env.setting('api_key')
-    if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
-        return user
+
+    # No legacy branch. The cookie used to be compared against
+    # `Env.setting('api_key')` and that comparison is GONE rather than kept as
+    # a fallback: a fallback would mean the api_key still authenticates the
+    # browser, which is the whole defect. An api_key-valued cookie carries no
+    # signature, so it is refused here like any other forgery.
+    secret = get_session_secret()
+    if not secret:
+        return None
+
+    if verify_session_token(token, secret):
+        return True
+
     return None
 
 
@@ -456,7 +688,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         form_password = form.get('password', '')
         form_password_md5 = md5(form_password)
 
-        api_key_val = None
+        authenticated = False
         # `password and ...`, NOT `... or not password`.
         #
         # The old spelling short-circuited the entire credential check to True
@@ -475,17 +707,44 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # it stops the operator looking for the lock.
         if password and (form.get('username') == username or not username) \
                 and check_password(form_password_md5, password):
-            api_key_val = Env.setting('api_key')
+            authenticated = True
             if password and is_legacy_md5_hash(password):
                 Env.setting('password', value=hash_password(form_password_md5))
 
         response = RedirectResponse(url=web_base, status_code=302)
-        if api_key_val:
-            remember_me = tryInt(form.get('remember_me', 0))
-            max_age = 30 * 24 * 3600 if remember_me > 0 else None
-            # Set cookie with path=/ to share session across all routes (new UI, old UI, API)
-            # This fixes DEF-004: Classic UI requires separate authentication
-            response.set_cookie('user', api_key_val, max_age=max_age, httponly=True, path='/')  # codeql[py/clear-text-storage-sensitive-data]
+        if authenticated:
+            # The cookie is a signed token, NOT the api_key. `get_session_secret`
+            # only reads -- if the secret is unreadable no cookie is issued at
+            # all, because signing with '' or a constant would hand every reader
+            # of this source a valid session on every install.
+            secret = get_session_secret()
+            if secret:
+                remember_me = tryInt(form.get('remember_me', 0)) > 0
+                lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
+                # `max_age` is UNCHANGED from before this PR: 30 days when
+                # "remember me" is ticked, absent otherwise so the cookie dies
+                # with the browser process. Absent is the more conservative of
+                # the two and it is what operators already have; the reason it
+                # was called out as a defect was that the value stayed valid
+                # SERVER-side regardless, and that is what the signed expiry
+                # above fixes. Max-Age was never enforcement anyway -- a replay
+                # simply omits it.
+                #
+                # `secure` is deliberately NOT set here. This deployment is
+                # plain HTTP, and a Secure cookie on plain HTTP is undeliverable:
+                # the browser drops it, the redirect to `/` bounces straight
+                # back to `/login/`, and the operator is locked out of their own
+                # server by an upgrade.
+                #
+                # path='/' shares the session across the new UI, the old UI and
+                # the API routes (DEF-004).
+                response.set_cookie(
+                    SESSION_COOKIE_NAME,
+                    mint_session_token(secret, lifetime),
+                    max_age=lifetime if remember_me else None,
+                    httponly=True,
+                    path='/',
+                )
 
         return response
 
@@ -493,8 +752,14 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     @app.get(web_base + 'logout')
     async def logout(request: Request):
         response = RedirectResponse(url='%slogin/' % web_base, status_code=302)
-        # Delete cookie with path=/ to match the path set during login
-        response.delete_cookie('user', path='/')
+        # Delete cookie with path=/ to match the path set during login.
+        #
+        # This asks the BROWSER to forget the token; it does not yet revoke it
+        # server-side. Revocation is secret rotation (D1) and lands with the
+        # sign-out control, not in this tranche -- until then a token in
+        # someone else's hands stays valid until its signed expiry, which is at
+        # least bounded now where it previously was not.
+        response.delete_cookie(SESSION_COOKIE_NAME, path='/')
         return response
 
     # Legacy /old/* catch-all — redirect to the new UI root. The dead views

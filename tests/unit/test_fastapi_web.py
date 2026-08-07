@@ -12,9 +12,14 @@ from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 
+from pathlib import Path
+
 from couchpotato import get_current_user
 from couchpotato.api import addApiView, addNonBlockApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing, callApiHandler
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import authenticate, stored_session_secret  # noqa: E402
 
 
 # --- Fixtures ---
@@ -86,13 +91,24 @@ def client(app):
 
 
 @pytest.fixture
-def authed_client(app, setup_env):
-    """Create an authenticated test client."""
+def session_secret():
+    """A signing secret in the property store for the duration of a test."""
+    with stored_session_secret() as secret:
+        yield secret
+
+
+@pytest.fixture
+def authed_client(app, setup_env, session_secret):
+    """Create an authenticated test client.
+
+    The cookie is a signed session token minted by the one test helper
+    (AC-ARCH-14), not the api_key -- handing the browser the api_key was the
+    defect PR 2b removes.
+    """
     setup_env['username'] = 'admin'
     setup_env['password'] = 'secret'
     client = TestClient(app)
-    # Set auth cookie
-    client.cookies.set('user', 'testkey123')
+    authenticate(client, session_secret)
     return client
 
 
@@ -223,8 +239,21 @@ class TestAuthentication:
 
         assert user is None
 
-    def test_auth_accepts_api_key_user_cookie(self, app, setup_env):
-        """The login cookie value is accepted only when it matches the API key."""
+    def test_auth_accepts_a_signed_session_cookie(self, app, setup_env, session_secret):
+        """A cookie carrying a signature we issued is accepted."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        authenticate(client, session_secret)
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code == 200
+
+    def test_auth_rejects_the_api_key_as_a_user_cookie(self, app, setup_env, session_secret):
+        """The cookie used to BE the api_key. It is refused from the first
+        request after upgrade (D5): no compatibility window, because a
+        fallback would mean the api_key still authenticates the browser."""
         setup_env['username'] = 'admin'
         setup_env['password'] = 'secret'
         client = TestClient(app)
@@ -232,7 +261,8 @@ class TestAuthentication:
 
         resp = client.get('/', follow_redirects=False)
 
-        assert resp.status_code == 200
+        assert resp.status_code in (302, 307)
+        assert 'login' in resp.headers.get('location', '')
 
     def test_login_page_renders(self, app, setup_env):
         """Login page renders when credentials are set."""
@@ -244,7 +274,7 @@ class TestAuthentication:
             assert resp.status_code == 200
             assert 'login' in resp.text.lower() or 'password' in resp.text.lower()
 
-    def test_login_with_correct_credentials(self, app, setup_env):
+    def test_login_with_correct_credentials(self, app, setup_env, session_secret):
         """Successful login sets a cookie and redirects."""
         from couchpotato.core.helpers.variable import md5
         setup_env['username'] = 'admin'
