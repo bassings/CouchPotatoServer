@@ -8,7 +8,7 @@ import webbrowser
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import fireEvent, addEvent
-from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compareVersions
+from couchpotato.core.helpers.variable import cleanHost, md5, isSubFolder, compareVersions, hash_password
 from couchpotato.core.logger import CPLog
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.environment import Env
@@ -87,7 +87,82 @@ class Core(Plugin):
             log.error('OpenSSL not available, please install for better requests validation: `https://pyopenssl.readthedocs.org/en/latest/install.html`: %s', traceback.format_exc())
 
     def md5Password(self, value):
-        return md5(value) if value else ''
+        """Hash a password on its way into config.ini.
+
+        The name is historical and now misleading: this returns **bcrypt**, not
+        MD5. It used to return `md5(value)`, so every password set through the
+        settings UI or the first-run wizard was written to config.ini as an
+        unsalted MD5 -- reversible for any password in a rainbow table.
+
+        bcrypt was reached only by the login-time upgrade
+        (`couchpotato/__init__.py:308`), which rehashes on a successful login
+        and therefore never ran for anyone who had not logged in. Until
+        `auth_required` landed, the server never asked anyone to log in. So the
+        users this hashing exists to protect were exactly the ones still on
+        MD5.
+
+        bcrypt OVER `md5(value)`, not over the plaintext. That is not a choice
+        made here: `login_post` computes `md5(form_password)` and passes it to
+        `check_password`, so hashing the plaintext directly would lock out
+        every existing and future user. Changing the inner encoding needs its
+        own migration and login-time upgrade, and is not a tidy-up to fold in
+        here.
+
+        The event name (`setting.save.core.password`) and this method name stay
+        as they are: renaming them is a separate change with its own blast
+        radius, and a wrong name with a correct docstring is safer than a
+        rename made at the same time as a security fix.
+        """
+        # Keep `auth_required` honest, in BOTH directions.
+        #
+        # The settings copy says "Setting one turns 'Require login' on", and
+        # that was false: `auth_required` was written in exactly one place --
+        # runner.py's startup migration -- gated on the key being ABSENT. After
+        # the first boot of a passwordless install the key is an explicit 0, so
+        # a user who then set a password through the wizard or the settings UI
+        # got no authentication at all while both field descriptions told them
+        # otherwise. Copy promising an auth behaviour the code does not
+        # implement is the exact defect class this PR exists to close.
+        #
+        # Clearing the password turns it back OFF, and that half is not
+        # symmetry for its own sake -- it closes a LOCKOUT. `auth_required = 1`
+        # with no password denies every request (get_current_user) AND refuses
+        # every login (login_post now requires a configured password), leaving
+        # no way in short of hand-editing config.ini. Reachable simply by
+        # setting a password and later clearing it. Neither of those two fixes
+        # created that state alone; together they did.
+        #
+        # An operator who wants a password AND an open instance can still turn
+        # "Require login" off explicitly afterwards -- that setting remains
+        # theirs to set. This only moves it when the password itself changes.
+        # Set, do NOT save. `Env.setting(attr, value=...)` calls `save()`
+        # immediately, and `Settings.saveView` then does its own
+        # `set(...); save()` after this hook returns -- so going through
+        # Env.setting would persist auth_required in a SEPARATE, EARLIER write
+        # than the password itself. A crash, a full volume or a kill between
+        # those two saves leaves authentication ON with no password stored:
+        # every request denied, every login refused, no way back short of
+        # hand-editing config.ini. That is precisely the lockout this block
+        # exists to prevent, reintroduced through a different door.
+        #
+        # Touching only the in-memory parser lets the caller's single
+        # `save()` persist both -- and that save is atomic (T2.0), so the pair
+        # lands together or not at all.
+        #
+        # Guarded, and NOT silently: hashing must not fail because a secondary
+        # write did, but a swallowed failure here restores the very state this
+        # prevents, so it is logged at ERROR naming the consequence.
+        try:
+            settings = Env.get('settings')
+            settings.addSection('core')
+            settings.set('core', 'auth_required', 1 if value else 0)
+        except Exception:
+            log.error('Password saved but could not update "auth_required" -- '
+                      'authentication may not match the password you just set. '
+                      'Check Settings > Server > Require login. %s',
+                      traceback.format_exc())
+
+        return hash_password(md5(value)) if value else ''
 
     def checkApikey(self, value):
         return value if value and len(value) > 3 else uuid4().hex
@@ -270,10 +345,26 @@ config = [{
             'wizard': True,
             'options': [
                 {
+                    'name': 'auth_required',
+                    'default': 0,
+                    'type': 'bool',
+                    'label': 'Require login',
+                    'description': 'Require login for the web interface. Turned on '
+                                   'whenever you set a password, and off again if you '
+                                   'clear it. Turn off here only for a trusted LAN.',
+                },
+                {
                     'name': 'username',
                     'default': '',
                     'label': 'Username',
-                    'description': 'Username for web interface login. Leave empty to disable authentication.',
+                    # The "leave empty to disable authentication" copy that used to
+                    # live here was not merely misleading, it described a real trap:
+                    # the old gate was `if username and password`, so a blank
+                    # username DID disable auth -- including for someone who had set
+                    # a password. The off-switch is `auth_required` now, and this
+                    # field means what it says.
+                    'description': 'Username for web interface login. Leave empty to '
+                                   'accept any username.',
                     'ui-meta' : 'rw',
                 },
                 {
@@ -281,7 +372,9 @@ config = [{
                     'default': '',
                     'type': 'password',
                     'label': 'Password',
-                    'description': 'Password for web interface login.',
+                    'description': 'Password for web interface login. Setting one turns '
+                                   '"Require login" on; clearing it turns it off, so you '
+                                   'cannot lock yourself out.',
                 },
                 {
                     'name': 'port',

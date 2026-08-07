@@ -740,3 +740,26 @@ exit-code-swallowing shape in a repo that ships a guard against exactly that:
 the command reports success having measured nothing. Whoever fixes the sandbox
 should decide whether "the runner could not start" deserves to be
 distinguished from "the runner ran and found survivors".
+
+**ANSWERED (was an open question): `app.routes` does not contain the UI
+routes, because FastAPI 0.140 stopped flattening included routers.**
+
+`app.include_router(...)` leaves a single `fastapi.routing._IncludedRouter`
+object in `app.routes`; the router's own routes hang off
+`.original_router.routes`. So a naive `for r in app.routes` sees 14 routes on
+this app and **zero** carrying `require_auth`, while the real figure is 80
+APIRoutes with 33 distinct protected paths and 11 public ones.
+
+That matters beyond the one test: any code, script or future check that
+introspects `app.routes` in this codebase silently misses every UI route, and
+its conclusion is not merely incomplete, it is inverted -- "no route is
+authenticated" is what a broken walk reports.
+
+The route-inventory test now exists (`tests/unit/test_route_auth_inventory.py`)
+and walks `_IncludedRouter.original_router` recursively. It carries an explicit
+anti-vacuity test, because the false alarm above was produced TWICE during
+development -- once from an `Env` too crude for `create_app` to finish, once
+from the naive walk -- and both times it read like a catastrophic security
+finding. Reverting the walker to the naive form reds that guard; removing
+`Depends(require_auth)` from a single UI route reds the inventory itself.
+

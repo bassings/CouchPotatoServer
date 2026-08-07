@@ -1,4 +1,6 @@
 import configparser as ConfigParser
+import os
+import tempfile
 import traceback
 from hashlib import md5
 from typing import Any, Optional
@@ -234,8 +236,128 @@ class Settings:
         return values
 
     def save(self):
-        with open(self.file, 'w', encoding='utf-8') as configfile:
-            self.p.write(configfile)
+        """Write the settings file atomically: temp file, fsync, rename.
+
+        The previous implementation was `open(self.file, 'w')`, which
+        TRUNCATES before writing anything. If the process died or the volume
+        filled between the truncate and the flush, `config.ini` was left empty
+        or partial -- and it holds the api_key, the UI password, and every
+        downloader and notifier credential. It is also the documented lock-out
+        recovery file, so the failure destroyed the remedy along with the
+        configuration. `Env.setting(attr, value=...)` calls this
+        unconditionally (`environment.py:71`).
+
+        Four details, none incidental:
+
+        - `realpath` FIRST. `--config_file` is user-supplied and only
+          `expanduser`'d (`runner.py:86`), so pointing it at a symlink is
+          legitimate -- and `os.replace` onto a symlink replaces the LINK,
+          orphaning the operator's real file. The old truncating write
+          followed the link, so resolving here preserves existing behaviour
+          rather than changing it.
+
+        - The temp file is a SIBLING. `os.replace` is atomic only within one
+          filesystem, and production bind-mounts `/config`; a temp in /tmp
+          would be a different device and the rename would fail outright.
+
+        - Mode is carried across. `mkstemp` creates 0600, so without this a
+          save would silently tighten an existing 0644 file. A file that does
+          not exist yet IS created 0600 deliberately: it holds credentials,
+          and 0644 -- what the old code produced under a default umask -- made
+          every secret in it world-readable.
+
+        - fsync the file before the rename and the directory after it.
+          Otherwise a power failure can leave the rename durable while the
+          contents are not, which is the same lost-config outcome by a
+          slower route.
+        """
+        path = os.path.realpath(self.file)
+        directory = os.path.dirname(path) or '.'
+
+        # Carry the existing file's identity across the replace.
+        #
+        # `os.replace` swaps in a NEW inode; the truncate-then-write this
+        # replaced kept the old one, so owner, group and ACLs survived for
+        # free. They have to be copied deliberately now, or a config.ini with a
+        # managed group -- readable by a backup account, say -- silently
+        # becomes owned by the server process on the next save.
+        try:
+            existing = os.stat(path)
+            mode = existing.st_mode & 0o777
+            owner = (existing.st_uid, existing.st_gid)
+        except OSError:
+            mode = 0o600
+            owner = None
+
+        # Clear the WORLD bits, always.
+        #
+        # Preserving the mode exactly would mean every config.ini written
+        # before this change -- created 0644 by `open(file, 'w')` under a
+        # default umask -- stays world-readable forever, through every
+        # subsequent save. The file holds the api_key, the password hash, and
+        # every downloader and notifier credential, so the fix would harden new
+        # installs and do nothing for the ones that already have the problem.
+        #
+        # ONLY the world bits. Group access is left exactly as the operator set
+        # it: backup tooling reading through a shared group is a legitimate
+        # arrangement, and silently breaking it would be worse than the
+        # exposure being closed.
+        if mode & 0o007 and self.log:
+            self.log.info('Removing world access from %s: it holds the api_key '
+                          'and stored credentials (mode %o -> %o)',
+                          path, mode, mode & ~0o007)
+        mode &= ~0o007
+
+        tmp_fd, tmp_path = tempfile.mkstemp(
+            prefix='.%s.' % os.path.basename(path), suffix='.tmp', dir=directory
+        )
+        try:
+            with os.fdopen(tmp_fd, 'w', encoding='utf-8') as configfile:
+                self.p.write(configfile)
+                configfile.flush()
+                os.fsync(configfile.fileno())
+
+            # Best-effort: chown to a DIFFERENT uid needs privilege this
+            # process will not have, but restoring the gid it already had is
+            # something a member of that group can do, and that is the case
+            # that actually breaks deployments. A failure here must not fail
+            # the save -- the alternative is refusing to persist settings.
+            #
+            # NOT preserved: POSIX ACLs beyond the mode bits. Copying those
+            # needs privileged xattr writes that would fail on most of the
+            # setups that have them, and a half-applied ACL is worse than a
+            # documented gap.
+            if owner is not None:
+                try:
+                    os.chown(tmp_path, owner[0], owner[1])
+                except OSError:
+                    if self.log:
+                        self.log.debug('Could not preserve owner/group on %s: %s',
+                                       path, traceback.format_exc(1))
+
+            os.chmod(tmp_path, mode)
+            os.replace(tmp_path, path)
+        except BaseException:
+            # BaseException, not Exception: a KeyboardInterrupt or SystemExit
+            # mid-write must not leave a stray `.config.ini.*.tmp` behind --
+            # `config.ini.*` is exactly what a locked-out operator reaches for.
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
+        # Durability of the RENAME itself, not just the contents.
+        try:
+            dir_fd = os.open(directory, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(dir_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(dir_fd)
 
     def addSection(self, section):
         if self.p and not self.p.has_section(section):

@@ -54,21 +54,84 @@ def get_db():
 
 # --- Authentication ---
 
+def auth_is_required() -> bool:
+    """Is the web interface gated on a session?
+
+    An EXPLICIT setting, not an inference from two unrelated fields. The old
+    gate was `if username and password:`, which meant a blank username silently
+    disabled authentication -- and the settings copy put "Leave empty to
+    disable authentication" on the USERNAME field, so the field that turned
+    auth off was the one whose description promised exactly that. Driven
+    directly, three of the four credential combinations returned "fully
+    public", including password-set-with-blank-username.
+
+    Absent (an upgrade from any config.ini written before this change) derives
+    from whether a password is set, so an install that had bothered to set one
+    stays protected rather than falling open on upgrade. `runner.py` writes the
+    resolved value back once at startup, after which it is an explicit 0 or 1
+    the operator can find with `grep` -- which matters, because grepping
+    config.ini is the documented lock-out recovery path.
+
+    Deliberately NOT a tri-state `None` default. `registerDefaults`
+    materialises the literal `auth_required = None` into config.ini on first
+    boot and `Env.setting`'s own default is `''`, so the natural
+    `Env.setting('auth_required', type='bool')` reads falsy and auth stays off
+    on every install, silently, with no failing test and no log line.
+    """
+    configured = Env.setting('auth_required', default=None)
+
+    if configured is None or configured == '':
+        return _auth_required_from_password()
+
+    if isinstance(configured, str):
+        # A STRING is the normal case on the startup path, not an edge case.
+        # `runner.py` calls this before `loader.run()` has registered the
+        # option's type, so `Settings.getType` falls back to 'unicode', which
+        # `_coerce_value` does not coerce -- the raw ConfigParser string
+        # arrives here. `bool('0')` is True, so this branch is the only thing
+        # keeping an explicit `auth_required = 0` from turning auth ON.
+        value = configured.strip().lower()
+        if value in ('1', 'true', 'yes', 'on'):
+            return True
+        if value in ('0', 'false', 'no', 'off'):
+            return False
+
+        # Neither. config.ini is the documented lock-out recovery path, so it
+        # gets hand-edited and typos here are expected. Reading an
+        # unrecognised value as "off" would silently make the server public;
+        # reading it as "on" would lock out an install with no password. Fall
+        # back to the same derivation used when the key is absent, which does
+        # neither.
+        log.error('Unrecognised auth_required value %r in config.ini; expected '
+                  '0 or 1. Falling back to "required only if a password is '
+                  'set". Fix the value to remove this warning.', configured)
+        return _auth_required_from_password()
+
+    return bool(configured)
+
+
+def _auth_required_from_password() -> bool:
+    """Derive the gate from whether a password exists.
+
+    Used when `auth_required` is absent or unreadable. Keeps a
+    password-protected install protected without ever producing the
+    auth-on-with-no-password state that nothing can satisfy.
+    """
+    return bool(Env.setting('password'))
+
+
 def get_current_user(request: Request):
     """FastAPI dependency for cookie-based auth."""
-    username = Env.setting('username')
-    password = Env.setting('password')
-
-    if username and password:
-        user = request.cookies.get('user')
-        if not user:
-            return None
-        api_key = Env.setting('api_key')
-        if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
-            return user
-        return None
-    else:
+    if not auth_is_required():
         return True
+
+    user = request.cookies.get('user')
+    if not user:
+        return None
+    api_key = Env.setting('api_key')
+    if api_key and hmac.compare_digest(str(user).encode('utf-8'), str(api_key).encode('utf-8')):
+        return user
+    return None
 
 
 def require_auth(request: Request):
@@ -272,7 +335,18 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             p_param = request.query_params.get('p', '')
 
             api_key_val = None
-            if (u_param == md5(username) or not username) and (check_password(p_param, password) or not password):
+            # `password and ...`, the same fix as login_post and for the same
+            # reason -- `or not password` short-circuited the credential check
+            # to True whenever no password was configured.
+            #
+            # Worse here than at login: this returns the api_key itself, in a
+            # JSON body, over GET, with the credentials in the query string --
+            # so the request line lands in access logs, proxy logs and browser
+            # history, and an unauthenticated caller received the key outright.
+            # The `u` parameter is no protection: it is the md5 of the
+            # username, which is not a secret.
+            if password and (u_param == md5(username) or not username) \
+                    and check_password(p_param, password):
                 api_key_val = Env.setting('api_key')
                 if password and is_legacy_md5_hash(password):
                     Env.setting('password', value=hash_password(p_param))
@@ -301,7 +375,24 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         form_password_md5 = md5(form_password)
 
         api_key_val = None
-        if (form.get('username') == username or not username) and (check_password(form_password_md5, password) or not password):
+        # `password and ...`, NOT `... or not password`.
+        #
+        # The old spelling short-circuited the entire credential check to True
+        # whenever no password was configured, so ANY submitted credentials
+        # were accepted and a valid `user` cookie -- the api_key itself -- was
+        # written to the browser. Not merely a UI bypass: that cookie is the
+        # credential the whole API authenticates with.
+        #
+        # A blank password already means `get_current_user` returns True and
+        # the instance is open, so refusing the login here costs nobody a
+        # session they needed. What it closes is the state PR 2 introduces:
+        # `auth_required` ON with no password set, one click away in the
+        # settings UI. That instance LOOKS protected -- there is a login page,
+        # it asks for credentials, it refuses nothing -- and admits everyone.
+        # A door locked in appearance only is worse than an open one, because
+        # it stops the operator looking for the lock.
+        if password and (form.get('username') == username or not username) \
+                and check_password(form_password_md5, password):
             api_key_val = Env.setting('api_key')
             if password and is_legacy_md5_hash(password):
                 Env.setting('password', value=hash_password(form_password_md5))

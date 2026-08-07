@@ -24,7 +24,39 @@ INFO2 = 21
 logging.addLevelName(INFO2, 'INFO')
 
 # Privacy filter patterns
-_REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'uid', 'key', 'passkey']
+_REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'uid', 'key', 'passkey',
+                    'token', 'authkey', 'torrent_pass', 'sid']
+
+#: Names redacted even OUTSIDE a query string, i.e. bare `name=value` in prose.
+#:
+#: The query-param pass below only matches `?name=` and `&name=`, so anything
+#: logged outside a URL went through in the clear. Three live call sites did
+#: exactly that: `notifications/telegrambot.py:37` logs `token=%s` at ERROR
+#: (so it reaches production logs, and a Telegram bot token is a full
+#: send-as-this-bot credential), `downloaders/synology.py:125` logs `sid=%s`,
+#: and `http_client.py:236` logs whole URLs whose parameter names were not all
+#: in the list above.
+#:
+#: Deliberately NARROWER than _REPLACE_PRIVATE: `h`, `uid`, `key` and
+#: `username` are too generic to match bare assignments safely -- `key=` alone
+#: appears in ordinary dict-dumping messages, and eating those destroys the
+#: diagnostic the operator needed. A redaction nobody can read around is one
+#: that gets switched off.
+#:
+#: Matched case-INSENSITIVELY and with an optional `[\w-]*` prefix, so
+#: `access_token=`, `bot_token=` and `X-Plex-Token=` are caught as well as
+#: `token=`. That is not hypothetical tidiness:
+#: `notifications/plex/server.py:85` builds `...?X-Plex-Token=%s` and hands it
+#: to `urlopen`, and `http_client.py:236` logs the whole URL at INFO -- so the
+#: Plex auth token was written to the log on every notification, matched by
+#: neither pass (the query-string one wants an exact lowercase `token` right
+#: after `?`/`&`; this one was case-sensitive and anchored on `\b`).
+_REPLACE_PRIVATE_BARE = ['api_key', 'apikey', 'password', 'passkey', 'token', 'authkey',
+                         'torrent_pass']
+
+#: Names too SHORT to carry a prefix match. `sid` is three characters, and
+#: `[\w-]*sid=` would eat ordinary words. Matched exactly, case-insensitively.
+_REPLACE_PRIVATE_BARE_EXACT = ['sid']
 
 
 class ColorFormatter(logging.Formatter):
@@ -78,6 +110,26 @@ class PrivacyFilter(logging.Filter):
         for replace in _REPLACE_PRIVATE:
             msg = re.sub(r'(\?%s=)[^\&]+' % replace, r'?%s=xxx' % replace, msg)
             msg = re.sub(r'(&%s=)[^\&]+' % replace, r'&%s=xxx' % replace, msg)
+
+        # Bare `name=value`, outside any query string.
+        #
+        # Stops at whitespace or at any of `&,;)]}'"` so the REST of the
+        # message survives -- `token=SECRET and the response was 404` must keep
+        # the 404. A filter that swallows the line removes the reason the line
+        # was logged, and the operator turns it off.
+        #
+        # Longer names take an optional `[\w-]*` prefix and are matched
+        # case-insensitively, so `access_token=` and `X-Plex-Token=` are caught
+        # too; short ones (see _REPLACE_PRIVATE_BARE_EXACT) are matched exactly,
+        # because prefix-matching three characters eats ordinary words.
+        for replace in _REPLACE_PRIVATE_BARE:
+            msg = re.sub(r'[\w-]*%s=[^\s&,;)\]}\'"]+' % replace,
+                         lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
+                         flags=re.IGNORECASE)
+        for replace in _REPLACE_PRIVATE_BARE_EXACT:
+            msg = re.sub(r'\b%s=[^\s&,;)\]}\'"]+' % replace,
+                         lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
+                         flags=re.IGNORECASE)
 
         # Replace api key.
         #
