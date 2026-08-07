@@ -533,8 +533,107 @@ def require_auth(request: Request):
     user = get_current_user(request)
     if not user:
         web_base = Env.get('web_base')
-        raise HTTPException(status_code=302, headers={'Location': '%slogin/' % web_base})
+        location = '%slogin/' % web_base
+        # ONLY when the caller actually presented a session. A first-time
+        # visitor who has never logged in must not be told their session ended
+        # (AC-A11Y-5's negative half); somebody whose working login just
+        # stopped working -- expired, revoked, or invalidated by the upgrade
+        # D5 describes -- is exactly who the message is for.
+        if request.cookies.get(SESSION_COOKIE_NAME):
+            location += '?reason=session_ended'
+        raise HTTPException(status_code=302, headers={'Location': location})
     return user
+
+
+# --- Login page copy ---
+#
+# One place, so the wording can be reviewed as writing rather than hunted for
+# across three routes. The tone selects the panel tint and the ARIA role; the
+# text is rendered verbatim and is the only thing the person reads.
+#
+# Nothing here names the mechanism -- no token, signature, cookie or status
+# code. A status code tells the operator nothing they can act on, and the rest
+# describes an implementation they did not ask about. Pinned by a test, because
+# copy drifts.
+LOGIN_MESSAGES = {
+    'signed_out': (
+        'notice',
+        'You have been signed out on every device, not just this browser. '
+        'Sign in again to continue.',
+    ),
+    'session_ended': (
+        'notice',
+        'Your session has ended, so you need to sign in again. If CouchPotato '
+        'was just updated, the update ended every existing session; your '
+        'existing password still works.',
+    ),
+    'rejected': (
+        'error',
+        'That username or password was not accepted. Check them and try again.',
+    ),
+    'empty_password': (
+        'error',
+        'Enter your password to sign in.',
+    ),
+    'sign_out_failed': (
+        'error',
+        'Sign-out did not work, so every session is still signed in on every '
+        'device. The server could not write the change to its database. Check '
+        'the server log, then try again.',
+    ),
+}
+
+#: The only two reasons a URL may ask for. Everything else is produced by the
+#: server as the direct result of a POST it just handled, so accepting it from
+#: the query string would let any link claim the operator's last attempt was
+#: rejected. Unknown values render no message at all rather than an error.
+LOGIN_REASONS_FROM_URL = ('signed_out', 'session_ended')
+
+#: A rejected username is reflected back so the operator does not retype it.
+#: Bounded because it is untrusted input that ends up in a page and in the
+#: browser's history.
+MAX_REFLECTED_USERNAME = 100
+
+
+def render_login_page(reason=None, username='', status_code: int = 200,
+                      mode: str = 'signin'):
+    """The ONE renderer of `login.html`, for every state it has.
+
+    `login_get`, a rejected `login_post` and a failed sign-out all land here,
+    so the status region, the focus target and the escaping are decided once.
+    Three separate call sites would drift, and the one that drifted would be
+    the one nobody looks at -- the failure path.
+    """
+    tone = text = None
+    if reason:
+        tone, text = LOGIN_MESSAGES[reason]
+
+    if mode == 'signout_failed':
+        # The person is still signed in, so there is nothing to type. Focus
+        # goes to the message: it is the only thing on the page that changed,
+        # and it is what they need to have read before pressing anything.
+        focus_field = 'message'
+    elif tone == 'error':
+        focus_field = 'password'
+    else:
+        focus_field = 'username'
+
+    tmpl = _jinja_env.get_template('login.html')
+    return HTMLResponse(
+        tmpl.render(
+            web_base=Env.get('web_base') or '/',
+            heading='Sign-out failed' if mode == 'signout_failed' else 'Sign in',
+            mode=mode,
+            message_tone=tone,
+            message_text=text,
+            # `alert` interrupts, `status` waits for a pause. A failed attempt
+            # is the former; a confirmation the operator asked for is not.
+            message_role='alert' if tone == 'error' else 'status',
+            username_value=username,
+            focus_field=focus_field,
+        ),
+        status_code=status_code,
+    )
 
 
 # --- Web Views ---
@@ -770,8 +869,12 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         user = get_current_user(request)
         if user:
             return RedirectResponse(url=web_base)
-        tmpl = _jinja_env.get_template('login.html')
-        return HTMLResponse(tmpl.render(web_base=Env.get('web_base') or '/'))
+        # Allowlisted, never reflected. The parameter names a message the
+        # server holds; it is not itself the message.
+        reason = request.query_params.get('reason')
+        if reason not in LOGIN_REASONS_FROM_URL:
+            reason = None
+        return render_login_page(reason=reason)
 
     @app.post(web_base + 'login/')
     @app.post(web_base + 'login')
@@ -805,33 +908,48 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             if password and is_legacy_md5_hash(password):
                 Env.setting('password', value=hash_password(form_password_md5))
 
+        if not authenticated:
+            # Back to the FORM, carrying the failure -- not a redirect to the
+            # app root. The old spelling answered a wrong password with exactly
+            # the response a correct one produced, so the failure was
+            # discarded: the browser bounced to `/`, `require_auth` bounced it
+            # back to `/login/`, and the person saw an empty form twice with no
+            # explanation. Rendering here also costs zero redirects, so an
+            # accidental `/` <-> `/login/` loop cannot hide in this path.
+            submitted = form.get('username', '')
+            if not isinstance(submitted, str):
+                submitted = ''
+            return render_login_page(
+                reason='empty_password' if not form_password else 'rejected',
+                username=submitted[:MAX_REFLECTED_USERNAME],
+            )
+
         response = RedirectResponse(url=web_base, status_code=302)
-        if authenticated:
-            # The cookie is a signed token, NOT the api_key. `get_session_secret`
-            # only reads -- if the secret is unreadable no cookie is issued at
-            # all, because signing with '' or a constant would hand every reader
-            # of this source a valid session on every install.
-            secret = get_session_secret()
-            if secret:
-                remember_me = tryInt(form.get('remember_me', 0)) > 0
-                lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
-                # `max_age` is UNCHANGED from before this PR: 30 days when
-                # "remember me" is ticked, absent otherwise so the cookie dies
-                # with the browser process. Absent is the more conservative of
-                # the two and it is what operators already have; the reason it
-                # was called out as a defect was that the value stayed valid
-                # SERVER-side regardless, and that is what the signed expiry
-                # above fixes. Max-Age was never enforcement anyway -- a replay
-                # simply omits it.
-                #
-                # Every other attribute comes from `session_cookie_attributes`,
-                # which the logout deletion uses too so the two cannot drift.
-                response.set_cookie(
-                    SESSION_COOKIE_NAME,
-                    mint_session_token(secret, lifetime),
-                    max_age=lifetime if remember_me else None,
-                    **session_cookie_attributes(),
-                )
+        # The cookie is a signed token, NOT the api_key. `get_session_secret`
+        # only reads -- if the secret is unreadable no cookie is issued at
+        # all, because signing with '' or a constant would hand every reader
+        # of this source a valid session on every install.
+        secret = get_session_secret()
+        if secret:
+            remember_me = tryInt(form.get('remember_me', 0)) > 0
+            lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
+            # `max_age` is UNCHANGED from before this PR: 30 days when
+            # "remember me" is ticked, absent otherwise so the cookie dies
+            # with the browser process. Absent is the more conservative of
+            # the two and it is what operators already have; the reason it
+            # was called out as a defect was that the value stayed valid
+            # SERVER-side regardless, and that is what the signed expiry
+            # above fixes. Max-Age was never enforcement anyway -- a replay
+            # simply omits it.
+            #
+            # Every other attribute comes from `session_cookie_attributes`,
+            # which the logout deletion uses too so the two cannot drift.
+            response.set_cookie(
+                SESSION_COOKIE_NAME,
+                mint_session_token(secret, lifetime),
+                max_age=lifetime if remember_me else None,
+                **session_cookie_attributes(),
+            )
 
         return response
 
@@ -875,16 +993,20 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                       'every device. Nothing has been signed out. Check that '
                       'the database is writable and try again. %s',
                       traceback.format_exc())
-            return Response(
-                content='Sign-out failed: existing sessions are still valid. '
-                        'See the server log.',
-                status_code=500,
-                media_type='text/plain',
-            )
+            # A real page rather than the plain-text 500 this used to be
+            # (spec gap 7). The BEHAVIOUR is unchanged and deliberately so --
+            # still 500, still no `Set-Cookie` -- but this is the one screen
+            # where the operator most needs to be told plainly that nothing
+            # was revoked, and a bare stack-trace-coloured 500 does not do
+            # that. It renders the same card, the same status region and the
+            # same tokens as the login page: no new component, no new colour.
+            return render_login_page(
+                reason='sign_out_failed', status_code=500, mode='signout_failed')
 
         # 303, not 302: this is the response to a POST, and 303 is the status
         # that tells the browser to fetch the login page with GET.
-        response = RedirectResponse(url='%slogin/' % web_base, status_code=303)
+        response = RedirectResponse(
+            url='%slogin/?reason=signed_out' % web_base, status_code=303)
         # Asking the browser to drop its copy as well. Not the revocation --
         # the rotation above is -- but without it the client keeps sending a
         # dead cookie and every request logs a rejection.

@@ -199,8 +199,14 @@ class TestLoginPageBehaviourUnchanged:
             'password': 'wrong',
         }, follow_redirects=False)
 
-        assert resp.status_code == 302
+        # 200 with the form re-rendered, not the 302 this used to answer.
+        # AC-DESIGN-5: the old redirect was byte-identical to a SUCCESSFUL
+        # login's, so the failure was discarded and the person saw an empty
+        # form with no explanation. The no-cookie half of this test is the
+        # part that guards the credential and is unchanged.
+        assert resp.status_code == 200
         assert 'user' not in resp.cookies
+        assert 'set-cookie' not in resp.headers
 
 
 class TestBootAfterLegacyAssetCleanup:

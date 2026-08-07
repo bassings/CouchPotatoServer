@@ -10,7 +10,7 @@
 > remediation programme. The parent plan's M15 rule binds: no implementation
 > before the lenses write the `AC-<LENS>-<n>` criteria below.
 
-**Status:** in progress — criteria written, tranches A and B implemented
+**Status:** in progress — criteria written, tranches A, B and C implemented
 **Lenses run:** all nine at planning (security, qa, simplicity, product, design,
 accessibility, data, architecture, operability) · **Skipped:** none
 
@@ -440,3 +440,55 @@ against the repo, not taken from the report.**
    only surfaced once logout began writing. Fixed locally with a fixture, but
    the pattern exists elsewhere and no AC covers test isolation. I hit the same
    trap myself while verifying, so it is not hypothetical.
+
+**From tranche C, 2026-08-07.**
+
+10. **AC-SIMP-3's file list cannot satisfy D8.** The sign-out control needs the
+    app shell to know whether a session exists, and the shell's context is
+    built by `couchpotato/ui/__init__.py::_ctx` — which is not in the amended
+    allowlist, and has no substitute: registering a Jinja global would touch
+    the same file. Tranche C adds one key to that dict and nothing else. The
+    allowlist needs a ninth entry, forced by D8 for the same reason the other
+    five additions were forced.
+
+11. **`POST /logout/` on an install with authentication OFF writes a
+    session-secret row.** Executed against a real `SQLiteAdapter` with
+    `auth_required=0` and no password: `secret rows before: 0`,
+    `POST /logout/ -> 303`, `secret rows after: 1`. With auth off `require_auth`
+    returns truthy for everyone, so this is an **unauthenticated** database
+    write, and it contradicts AC-QA-21 and AC-SEC-46, both of which say an
+    install that never enabled authentication never grows a secret row. It
+    grants no access (such an install serves every request anyway) and it is
+    bounded to one row. Introduced by tranche B, **not fixed in tranche C**:
+    the narrow fix sits in the revocation path that D6's ordering also depends
+    on, and rule 11 says a fix on that path is reviewed as new work.
+
+12. **AC-A11Y-1, AC-A11Y-13 and AC-A11Y-14 have no navigable page to run
+    against until AC-QA-27.** `login_get` redirects anyone `get_current_user`
+    accepts, and with `auth_required` off that is everybody — so on the seeded
+    E2E instances `/login/` cannot be reached at all. The criteria were written
+    as if a browser could simply visit it. Tranche C works around this by
+    rendering each state through the real routes
+    (`tests/e2e/render_login_states.py`) and serving the bytes back at the
+    instance's own `/login/` URL, which covers axe, the real target bounding
+    box and reflow — but **not** that the route is reachable with
+    authentication on, and **not** the sign-out control in `base.html`, which
+    has no equivalent workaround. Both need AC-QA-27's server.
+
+13. **AC-A11Y-4's rate-limited case is unreachable from the login renderer.**
+    It asks for "attempt rate-limited" to appear in the same `role="alert"`
+    region as the other two. The 429 is produced by `RateLimitMiddleware`
+    before the route runs, so it can never render a login page — and
+    `couchpotato/core/rate_limit.py` belongs to a later tranche. The criterion
+    needs splitting: the message belongs with the middleware fix, not with the
+    login page.
+
+14. **A guard that looked specific and was vacuous, caught only by mutating.**
+    The end-to-end "a user can sign out using only what the page gives them"
+    test located the control by `action="/logout/"` and took the first match.
+    Pointing the *sidebar* form at `/sign-out/` left the *mobile* one matching,
+    so the chain stayed green against a control that answers 404. It now finds
+    controls by their accessible name and drives each one's own declared
+    action. Recorded because the shape — filter a list by the thing you are
+    about to assert, then take `[0]` — is not covered by any AC and reads as
+    thorough.

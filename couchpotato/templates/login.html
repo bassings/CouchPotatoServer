@@ -71,7 +71,31 @@ tailwind.config = {
 
   /* A11Y: Focus indicators (A11Y-013) */
   :focus-visible { outline: 2px solid #35c5f4; outline-offset: 2px; }
+  /* A11Y (WCAG 2.2 AA 1.4.11): the SAME light-theme override base.html:168
+     already carries, which this page never got. Measured with the ratio
+     helper in tests/unit/test_focus_ring_contrast.py:
+       #35c5f4 on --cp-bg #0d0d0d (dark)  = 9.67:1
+       #35c5f4 on --cp-bg #f5f5f7 (light) = 1.85:1   <- present, invisible
+       #0e7490 on --cp-bg #f5f5f7 (light) = 4.92:1
+       #0e7490 on --cp-card #ffffff       = 5.36:1
+       #0e7490 on --cp-surface #fafafa    = 5.13:1
+     The controls below deliberately carry NO `focus:outline-none`: Tailwind
+     compiles that to `outline: 2px solid transparent` at higher specificity
+     than this rule, which left every input on this page with only its
+     `focus:ring-cp-accent` ring -- 2.01:1 against the light surface. */
+  :root.light :focus-visible { outline-color: #0e7490; }
   :focus:not(:focus-visible) { outline: none; }
+
+  /* A11Y (WCAG 2.3.3): mirrors base.html:179. This page carries no animation
+     of its own, but its submit button transitions colour on hover. */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 </style>
 <!-- IMP-006: Honor the light/dark theme the user chose elsewhere in the app
      (persisted in localStorage as 'cp-theme'), mirroring base.html's runtime
@@ -88,12 +112,57 @@ tailwind.config = {
 </script>
 </head>
 <body class="min-h-screen bg-cp-bg text-cp-text font-sans antialiased flex items-center justify-center px-4 py-12">
-  <div class="w-full max-w-sm">
+  <main class="w-full max-w-sm">
     <p class="text-center text-2xl font-semibold tracking-tight text-cp-text mb-6">CouchPotato</p>
 
     <div class="bg-cp-card border border-cp-border rounded-xl shadow-lg p-6 sm:p-8">
-      <h1 class="text-lg font-medium text-cp-text mb-6">Sign in</h1>
+      <h1 class="text-lg font-medium text-cp-text mb-6">{{ heading }}</h1>
 
+      {% if message_text %}
+      {#- The status region, inside <main> so WCAG 3.3.1's error identification
+          sits with the content it describes.
+
+          It carries `role` STATICALLY and is rendered on a full page load, so
+          it is part of the document from the first paint rather than a node
+          injected next to a live region -- there is no client-side update
+          here to miss.
+
+          Colour: the body text is `text-cp-text` on a 20% tint of an existing
+          token, never `text-cp-danger`. Measured (see
+          tests/unit/test_login_page_a11y.py, which recomputes these from the
+          token block above rather than trusting this comment):
+            cp-danger  #f04848 on the light card #ffffff  = 3.67:1  FAILS
+            cp-danger  #f04848 on the dark  card #161618  = 4.93:1
+            cp-text on danger/20  over light card #fcdada = 13.41:1
+            cp-text on danger/20  over dark  card #422022 = 10.92:1
+            cp-text on warning/20 over light card #faeccf = 14.89:1
+            cp-text on warning/20 over dark  card #3f3216 =  9.50:1
+          The tint also means the two tones differ by more than colour: the
+          wording differs, so nothing here is conveyed by colour alone. -#}
+      <div
+        data-testid="login-message"
+        role="{{ message_role }}"
+        {% if focus_field == 'message' %}tabindex="-1" autofocus{% endif %}
+        class="mb-5 rounded-lg border p-3 text-sm text-cp-text {% if message_tone == 'error' %}bg-cp-danger/20 border-cp-danger/30{% else %}bg-cp-warning/20 border-cp-warning/30{% endif %}"
+      >{{ message_text }}</div>
+      {% endif %}
+
+      {% if mode == 'signout_failed' %}
+      {#- Spec gap 7. Deliberately NOT the sign-in form: showing that is what a
+          successful sign-out looks like, and nothing was revoked. The cookie is
+          left in place by the route for the same reason. -#}
+      <form method="post" action="{{ web_base }}logout/">
+        <button
+          type="submit"
+          class="w-full h-10 min-h-[40px] rounded-lg bg-cp-accent text-black font-medium hover:bg-cp-accentHover focus:ring-2 focus:ring-cp-accent focus:ring-offset-2 focus:ring-offset-cp-card transition-colors"
+        >
+          Try signing out again
+        </button>
+      </form>
+      <p class="mt-4 text-center text-sm">
+        <a href="{{ web_base }}" class="text-cp-text underline">Back to CouchPotato</a>
+      </p>
+      {% else %}
       <form method="post" action="" novalidate>
         <div class="mb-4">
           <label for="username" class="block text-sm font-medium text-cp-muted mb-1.5">Username</label>
@@ -105,13 +174,17 @@ tailwind.config = {
             autocorrect="off"
             autocapitalize="off"
             spellcheck="false"
-            autofocus
-            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:outline-none focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
+            value="{{ username_value }}"
+            {% if focus_field != 'password' %}autofocus{% endif %}
+            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
           >
         </div>
 
         <div class="mb-5">
           <label for="password" class="block text-sm font-medium text-cp-muted mb-1.5">Password</label>
+          {# No `value` attribute, ever: a rejected password written back into
+              the page lands in the browser's back/forward cache and in any
+              proxy that logs bodies. -#}
           <input
             id="password"
             name="password"
@@ -120,32 +193,41 @@ tailwind.config = {
             autocorrect="off"
             autocapitalize="off"
             spellcheck="false"
-            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:outline-none focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
+            {% if focus_field == 'password' %}autofocus{% endif %}
+            class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
           >
         </div>
 
         <div class="flex items-center justify-between mb-6">
-          <label for="remember_me" class="flex items-center gap-2 text-sm text-cp-muted cursor-pointer select-none">
+          {# `min-h-[24px]` is WCAG 2.2 AA 2.5.8's floor for the target, which
+              is the LABEL (the `for=` makes the whole thing activate the
+              checkbox), not the 16px box inside it. 24 rather than the house
+              44: see the veto record in specs/PR2B-SESSION-COOKIE.md. -#}
+          <label for="remember_me" class="flex items-center gap-2 min-h-[24px] text-sm text-cp-muted cursor-pointer select-none">
             <input
               id="remember_me"
               name="remember_me"
               type="checkbox"
               value="1"
               checked
-              class="w-4 h-4 rounded border-cp-border bg-cp-surface text-cp-accent focus:outline-none focus:ring-2 focus:ring-cp-accent"
+              class="w-4 h-4 rounded border-cp-border bg-cp-surface text-cp-accent focus:ring-2 focus:ring-cp-accent"
             >
             <span>Remember me for 30 days</span>
           </label>
         </div>
 
+        {# `text-black`, not `text-cp-bg`. `--cp-bg` is #f5f5f7 in the light
+            theme, so the label measured 1.85:1 on the accent; #000000 measures
+            10.44:1 and matches the app's other ten accent buttons. -#}
         <button
           type="submit"
-          class="w-full h-10 min-h-[40px] rounded-lg bg-cp-accent text-cp-bg font-medium hover:bg-cp-accentHover focus:outline-none focus:ring-2 focus:ring-cp-accent focus:ring-offset-2 focus:ring-offset-cp-card transition-colors"
+          class="w-full h-10 min-h-[40px] rounded-lg bg-cp-accent text-black font-medium hover:bg-cp-accentHover focus:ring-2 focus:ring-cp-accent focus:ring-offset-2 focus:ring-offset-cp-card transition-colors"
         >
           Login
         </button>
       </form>
+      {% endif %}
     </div>
-  </div>
+  </main>
 </body>
 </html>

@@ -91,8 +91,38 @@ test.describe('Navigation', () => {
     await collapseBtn.click();
     // Check that sidebar is collapsed (narrower width)
     await expect(sidebar).toHaveClass(/w-16/);
-    // Click again to expand
-    await page.click('aside button:last-child');
+    // Click the SAME named control again rather than `aside button:last-child`.
+    // That selector means "any button that is the last child of its parent",
+    // not "the last button in the sidebar" -- so the D8 sign-out button, the
+    // only child of its <form>, matches it too. It does not bite today only
+    // because the seeded E2E instance has no password and the control is not
+    // rendered (see the test below); it would become a strict-mode violation
+    // the moment AC-QA-27 turns authentication on.
+    await collapseBtn.click();
     await expect(sidebar).toHaveClass(/w-56/);
+  });
+
+  /*
+   * D8's negative half, asserted UNCONDITIONALLY.
+   *
+   * scripts/seed_e2e_data.py seeds no password, so `auth_is_required()` is
+   * false on every worker's instance and there is no session for a sign-out
+   * control to end. Rendering one anyway would be a button that signs the
+   * operator out of nothing.
+   *
+   * Deliberately not written as `if (authOn) { ... }`: that shape passes
+   * silently in exactly the configuration this suite runs in, which is the
+   * vacuous-guard pattern `make check-traps` exists to stop. It fails if the
+   * `{% if auth_required %}` guard in base.html is dropped, and it fails if
+   * this instance ever starts requiring a login -- at which point AC-QA-27's
+   * authenticated E2E is the test that should replace it.
+   */
+  test('with authentication off, the shell renders no sign-out control', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).not.toHaveURL(/login/);
+    await expect(page.locator('aside')).toBeVisible();
+
+    await expect(page.locator('form[action$="logout/"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /sign out|log out/i })).toHaveCount(0);
   });
 });
