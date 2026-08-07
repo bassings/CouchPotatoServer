@@ -561,12 +561,30 @@ class Settings:
                 # already happened; fall back to comparing what we have.
                 return v
 
-        changed = coerce(stored) != coerce(submitted)
-
         if option_type == 'password':
-            # Report THAT it changed, never what to. The client only needs the
-            # boolean; echoing the value is what leaked the hash.
-            return {'success': True, 'changed': changed}
+            # NOTHING but success. Not the value, and not `changed` either.
+            #
+            # Reporting `changed` looked harmless and was worse than the leak it
+            # replaced. `_coerce_value` has no adapter for 'password', so
+            # coercion is a no-op for this type -- and `stored` is the bcrypt
+            # hash from `md5Password` while `submitted` is the plaintext the
+            # operator just typed. They are never equal, so `changed` was True
+            # for every real password change. No type coercion can close that:
+            # it is a VALUE transformation, not a type mismatch.
+            #
+            # The client then took `changed` as "the server stored something
+            # else", fell back to the submitted value because `value` was
+            # (correctly) absent, and interpolated it into an error toast -- so
+            # masking the hash turned a hash disclosure into a PLAINTEXT
+            # PASSWORD on screen, for six seconds, announced through the
+            # assertive live region this same branch had just added.
+            #
+            # "Did the password change?" is not a question the client needs
+            # answered, and it is not one that can be answered without comparing
+            # against the secret. So it is not answered.
+            return {'success': True}
+
+        changed = coerce(stored) != coerce(submitted)
 
         return {
             'success': True,

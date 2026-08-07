@@ -470,21 +470,39 @@ function settingsPanel() {
         // PUBLIC. The UI stated the opposite of the truth about whether
         // authentication was on.
         //
-        // `payload.value` is absent on any older/other response shape, so fall
-        // back to the submitted value rather than writing `undefined`.
-        const stored = (payload && 'value' in payload) ? payload.value : value;
+        // NEVER fall back to the submitted value.
+        //
+        // This used to do `('value' in payload) ? payload.value : value`, which
+        // reads as harmless defensiveness and is not: the server deliberately
+        // OMITS `value` for a password-typed option, so the fallback substituted
+        // the plaintext the operator had just typed -- into `this.values` and,
+        // via the toast below, onto the screen. The absence of `value` is a
+        // deliberate refusal to disclose, and treating it as a gap to be filled
+        // locally defeats it.
+        //
+        // No `value` means: do not update local state for this field. The last
+        // loaded value (already masked by `getValues` for a password) stays,
+        // which is exactly right -- there is nothing displayable to replace it
+        // with.
+        const hasValue = payload && 'value' in payload;
 
-        if (!this.values[section]) this.values[section] = {};
-        this.values[section][name] = stored;
+        if (hasValue) {
+          if (!this.values[section]) this.values[section] = {};
+          this.values[section][name] = payload.value;
+        }
         delete this.dirty[section + '.' + name];
 
         // Say so when the server did not take what was asked for. Silently
-        // showing a different value than the one just typed is how the
-        // operator ends up believing a security control is on.
-        if (payload && payload.changed) {
+        // showing a different value than the one just typed is how the operator
+        // ends up believing a security control is on.
+        //
+        // Gated on `hasValue` as well as `changed`: the message names the stored
+        // value, and the only value available when the server withheld one is
+        // the secret the operator just typed.
+        if (payload && payload.changed && hasValue) {
           this.toast(
             name.replace(/_/g, ' ') + ' could not be set to that value; the server stored "'
-              + stored + '" instead. Check the log for the reason.',
+              + payload.value + '" instead. Check the log for the reason.',
             'error', 6000,
           );
         }

@@ -386,11 +386,37 @@ class TestASavedPasswordIsNeverEchoedBack:
             'a bcrypt hash reached the response body: %r' % (result,)
         )
 
-    def test_a_password_save_still_reports_whether_it_changed(self):
-        """The boolean is all the client needs, and it must survive the mask."""
+    def test_a_password_save_reports_NOTHING_but_success(self):
+        """Not even `changed`. Reporting it leaked the PLAINTEXT.
+
+        `_coerce_value` has no adapter for 'password', so coercion is a no-op
+        for this type -- and `stored` is the bcrypt hash while `submitted` is
+        the plaintext just typed. They are never equal, so `changed` was True
+        for every real password change. No type coercion can close that: it is
+        a value transformation, not a type mismatch.
+
+        The client then read `changed` as "the server stored something else",
+        fell back to the submitted value because `value` was (correctly)
+        absent, and interpolated it into an error toast -- so masking the hash
+        turned a hash disclosure into a plaintext password on screen, for six
+        seconds, announced through the assertive live region added in the same
+        branch.
+        """
         result, _ = self._save('password', 'hunter2', '$2b$12$xyz', 'password')
-        assert result['changed'] is True
-        assert result['success'] is True
+
+        assert result == {'success': True}, (
+            'a password save returned more than success: %r. Every extra field '
+            'is something a client can render, and the only values available '
+            'here are the hash and the plaintext.' % (result,)
+        )
+
+    def test_no_password_save_response_field_can_carry_the_secret(self):
+        """Whatever the shape becomes, neither secret may appear in it."""
+        result, _ = self._save('password', 'hunter2', '$2b$12$abcdef', 'password')
+
+        blob = repr(result)
+        assert 'hunter2' not in blob, 'the PLAINTEXT password is in the response: %s' % blob
+        assert '$2b$' not in blob, 'the password HASH is in the response: %s' % blob
 
     def test_a_non_password_option_still_echoes_its_value(self):
         """Anti-vacuity: the mask must be scoped to secrets."""
