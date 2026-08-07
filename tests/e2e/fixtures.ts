@@ -21,6 +21,7 @@
  */
 import { type ChildProcess, execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -269,6 +270,63 @@ export const test = base.extend<{}, { workerServer: WorkerServer }>({
       const stderr = (err as { stderr?: Buffer | string })?.stderr;
       throw new Error(`worker ${idx}: could not reserve a data dir -- ${stderr ? decode(stderr) : err}`);
     }
+
+    // Claim the port BEFORE anything else, and fail loudly if we cannot.
+    //
+    // The readiness probe below proves the port answers like CouchPotato. It
+    // cannot prove the answering server is OURS. A second, separately seeded
+    // instance on the same port satisfies every one of its three checks, so a
+    // collision produced a FULLY GREEN suite that never ran the application
+    // under test: reproduced at 7 passed / exit 0 / 13.9s while this worker's
+    // own server was SIGTERMed mid-initialisation. It happened three times
+    // unprompted during a review, from sibling worktrees holding 5150.
+    //
+    // That is the false-green class the gate exists to remove, reintroduced by
+    // the harness that removes it -- and `make verify` is hard rule 2's source
+    // of truth, so it is the worst possible place for it.
+    //
+    // CONNECT, do not bind.
+    //
+    // The obvious implementation -- `net.createServer().listen(port)` and treat
+    // EADDRINUSE as a collision -- is INERT here, and silently so. Node sets
+    // SO_REUSEADDR on listening sockets by default, and CouchPotato binds the
+    // wildcard `0.0.0.0` (runner.py's `host` default), so a probe binding the
+    // more specific `127.0.0.1` succeeds happily ALONGSIDE the foreign
+    // listener on BSD/macOS. Measured: with a real second CouchPotato holding
+    // *:5150, the bind probe raised nothing and the suite still went green.
+    //
+    // A successful TCP connection has no such ambiguity: if something accepts
+    // on this port, the port is taken, whatever address family or socket
+    // options either side used.
+    //
+    // This is a check for a foreign server ALREADY holding the port, which is
+    // the case that actually occurs (sibling worktrees, a concurrent run, an
+    // orphan). It is NOT a proof of identity: something could still take the
+    // port between this probe and the spawn below. Closing that needs the
+    // readiness probe to verify identity -- e.g. against the api_key this
+    // worker seeded -- which the fixture does not currently know. Recorded so
+    // the remaining gap is visible rather than assumed closed.
+    await new Promise<void>((resolve, reject) => {
+      const probe = net.connect({ port, host: '127.0.0.1' });
+      const done = (err?: Error) => {
+        probe.destroy();
+        err ? reject(err) : resolve();
+      };
+      probe.setTimeout(2000);
+      probe.once('connect', () => done(new Error(
+        `worker ${idx}: port ${port} is ALREADY SERVING. Something else is `
+        + `listening there -- another Playwright run, a sibling git worktree, `
+        + `or an orphaned CouchPotato from an earlier run. Refusing to start: `
+        + `if that process answers like CouchPotato, this entire suite passes `
+        + `green against ITS database and never touches the code under test. `
+        + `Measured: 7 passed, exit 0, in 13.9s, while this worker's own `
+        + `server was killed mid-initialisation. Free the port `
+        + `(lsof -nP -iTCP:${port} -sTCP:LISTEN) and re-run.`,
+      )));
+      // Nothing listening -- ECONNREFUSED is the GOOD outcome.
+      probe.once('error', () => done());
+      probe.once('timeout', () => done());
+    });
 
     let proc: ChildProcess | undefined;
     let output = '';
