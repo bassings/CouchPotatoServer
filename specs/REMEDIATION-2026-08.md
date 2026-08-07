@@ -100,6 +100,29 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
+- [ ] T10: `tests/e2e/suggestions.spec.ts:99` fails only inside a FULL local run — state: queued (no deps)
+
+      Measured 2026-08-08, not inferred: 13/13 pass running the spec alone,
+      19/19 running it with `settings.spec.ts` (its immediate predecessor),
+      and **3/3 fail inside a full `make verify`**, on `expect(alert)
+      .toBeFocused()`. CI has passed it across 30+ runs WITH
+      `--fail-on-flaky-tests`, which means it has never even transiently
+      failed there.
+
+      NOT caused by the PR 2b branch: the spec is untouched by it, the rate
+      limiter returns early for localhost before any limiting, and both
+      sign-out controls sit inside `{% if auth_required %}` while E2E seeds no
+      password, so the app shell renders byte-identically. `fail()` already
+      defers the focus with `$nextTick`, so the naive "focus a hidden element"
+      race is not it either.
+
+      The remaining hypothesis is that the focus move is unreliable after ~128
+      preceding tests. If so it is an APP defect, not a test defect: a focus
+      that lands only on a fast machine is a real WCAG 2.4.3 problem for a
+      user on a slow one. **Do not close this by adding a retry or loosening
+      the assertion** — CI's `--fail-on-flaky-tests` would then stop reporting
+      it, and the signal is lost permanently.
+
 - [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued · the PLAN merged as #228; `ci.yml` is untouched, so the gate is still slow and the deliverable is outstanding. Needs /plan-cycle for its ACs before implementation
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
