@@ -191,3 +191,98 @@ class TestSavePreservesFileProperties:
         assert _read(real)['core']['api_key'] == 'THROUGH-THE-LINK', (
             'the write did not reach the symlink target'
         )
+
+
+class TestSaveDoesNotSilentlyChangeFileIdentity:
+    """`os.replace` creates a NEW inode; truncate-then-write reused the old one.
+
+    That difference is the price of atomicity, and it is not free. The previous
+    implementation preserved owner, group, ACLs and any hardlinks simply by
+    never replacing the inode. This one has to copy those forward deliberately,
+    or a config.ini with a managed owner or group -- say, group-readable by a
+    backup account -- silently becomes owned by the server process on the next
+    save, locking that tooling out or handing the server's primary group access
+    to stored credentials.
+    """
+
+    def test_group_ownership_is_carried_across(self, tmp_path):
+        """Set a NON-primary group first, or this test cannot fail.
+
+        `mkstemp` creates the temp file with the process's PRIMARY gid. If the
+        fixture leaves config.ini on that same gid, the assertion passes
+        whether the code preserves anything or not -- the incidentally-passing
+        shape. So the file is first chgrp'd to another group this user belongs
+        to, which is exactly what a managed deployment does (group-readable by
+        a backup account) and exactly what `os.replace` would silently discard.
+        """
+        import os as _os
+
+        alternates = [g for g in _os.getgroups() if g != _os.getgid()]
+        if not alternates:
+            pytest.skip('this user belongs to no group other than its primary; '
+                        'the assertion could not fail here')
+        alt_gid = alternates[0]
+
+        target = tmp_path / 'config.ini'
+        settings = _settings(target)
+        settings.save()
+        _os.chown(target, -1, alt_gid)
+        assert _os.stat(target).st_gid == alt_gid, 'fixture did not take effect'
+
+        settings.p.set('core', 'api_key', 'ROTATED')
+        settings.save()
+
+        assert _os.stat(target).st_gid == alt_gid, (
+            'the save reset the file group to the process default, discarding '
+            'a deliberate ownership arrangement'
+        )
+
+
+class TestSaveTightensAWorldReadableConfig:
+    """Preserving the mode means an ALREADY-DEPLOYED 0644 config stays 0644.
+
+    Every config.ini written before this change was created world-readable by
+    `open(file, 'w')` under a default umask -- holding the api_key, the
+    password hash, and every downloader and notifier credential. Carrying the
+    mode forward unchanged means those files stay world-readable forever,
+    through every subsequent save, so the fix would harden new installs and do
+    nothing for the ones that already have the problem.
+
+    Only the WORLD bits are cleared. Group access is left exactly as the
+    operator has it, because backup tooling reading via a shared group is a
+    legitimate arrangement and silently breaking it would be a worse outcome
+    than the exposure.
+    """
+
+    def test_world_readable_bits_are_removed_on_save(self, tmp_path):
+        import os as _os
+        import stat as _stat
+
+        target = tmp_path / 'config.ini'
+        settings = _settings(target)
+        settings.save()
+        _os.chmod(target, 0o644)          # what every pre-existing install has
+
+        settings.p.set('core', 'api_key', 'ROTATED')
+        settings.save()
+
+        mode = _stat.S_IMODE(_os.stat(target).st_mode)
+        assert not mode & 0o007, (
+            'config.ini is still world-accessible (mode %o) after a save; it '
+            'holds the api_key and every downloader credential' % mode
+        )
+
+    def test_group_access_is_left_alone(self, tmp_path):
+        """0640 is a deliberate arrangement -- do not tighten it to 0600."""
+        import os as _os
+        import stat as _stat
+
+        target = tmp_path / 'config.ini'
+        settings = _settings(target)
+        settings.save()
+        _os.chmod(target, 0o640)
+
+        settings.p.set('core', 'api_key', 'ROTATED')
+        settings.save()
+
+        assert _stat.S_IMODE(_os.stat(target).st_mode) == 0o640

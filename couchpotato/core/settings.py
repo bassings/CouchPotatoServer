@@ -274,12 +274,39 @@ class Settings:
         path = os.path.realpath(self.file)
         directory = os.path.dirname(path) or '.'
 
+        # Carry the existing file's identity across the replace.
+        #
+        # `os.replace` swaps in a NEW inode; the truncate-then-write this
+        # replaced kept the old one, so owner, group and ACLs survived for
+        # free. They have to be copied deliberately now, or a config.ini with a
+        # managed group -- readable by a backup account, say -- silently
+        # becomes owned by the server process on the next save.
         try:
-            # `& 0o777` rather than stat.S_IMODE: `stat` is not imported here,
-            # and this fix should not need to add a module-level import.
-            mode = os.stat(path).st_mode & 0o777
+            existing = os.stat(path)
+            mode = existing.st_mode & 0o777
+            owner = (existing.st_uid, existing.st_gid)
         except OSError:
             mode = 0o600
+            owner = None
+
+        # Clear the WORLD bits, always.
+        #
+        # Preserving the mode exactly would mean every config.ini written
+        # before this change -- created 0644 by `open(file, 'w')` under a
+        # default umask -- stays world-readable forever, through every
+        # subsequent save. The file holds the api_key, the password hash, and
+        # every downloader and notifier credential, so the fix would harden new
+        # installs and do nothing for the ones that already have the problem.
+        #
+        # ONLY the world bits. Group access is left exactly as the operator set
+        # it: backup tooling reading through a shared group is a legitimate
+        # arrangement, and silently breaking it would be worse than the
+        # exposure being closed.
+        if mode & 0o007 and self.log:
+            self.log.info('Removing world access from %s: it holds the api_key '
+                          'and stored credentials (mode %o -> %o)',
+                          path, mode, mode & ~0o007)
+        mode &= ~0o007
 
         tmp_fd, tmp_path = tempfile.mkstemp(
             prefix='.%s.' % os.path.basename(path), suffix='.tmp', dir=directory
@@ -289,6 +316,24 @@ class Settings:
                 self.p.write(configfile)
                 configfile.flush()
                 os.fsync(configfile.fileno())
+
+            # Best-effort: chown to a DIFFERENT uid needs privilege this
+            # process will not have, but restoring the gid it already had is
+            # something a member of that group can do, and that is the case
+            # that actually breaks deployments. A failure here must not fail
+            # the save -- the alternative is refusing to persist settings.
+            #
+            # NOT preserved: POSIX ACLs beyond the mode bits. Copying those
+            # needs privileged xattr writes that would fail on most of the
+            # setups that have them, and a half-applied ACL is worse than a
+            # documented gap.
+            if owner is not None:
+                try:
+                    os.chown(tmp_path, owner[0], owner[1])
+                except OSError:
+                    if self.log:
+                        self.log.debug('Could not preserve owner/group on %s: %s',
+                                       path, traceback.format_exc(1))
 
             os.chmod(tmp_path, mode)
             os.replace(tmp_path, path)

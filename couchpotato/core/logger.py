@@ -42,8 +42,21 @@ _REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'ui
 #: appears in ordinary dict-dumping messages, and eating those destroys the
 #: diagnostic the operator needed. A redaction nobody can read around is one
 #: that gets switched off.
+#:
+#: Matched case-INSENSITIVELY and with an optional `[\w-]*` prefix, so
+#: `access_token=`, `bot_token=` and `X-Plex-Token=` are caught as well as
+#: `token=`. That is not hypothetical tidiness:
+#: `notifications/plex/server.py:85` builds `...?X-Plex-Token=%s` and hands it
+#: to `urlopen`, and `http_client.py:236` logs the whole URL at INFO -- so the
+#: Plex auth token was written to the log on every notification, matched by
+#: neither pass (the query-string one wants an exact lowercase `token` right
+#: after `?`/`&`; this one was case-sensitive and anchored on `\b`).
 _REPLACE_PRIVATE_BARE = ['api_key', 'apikey', 'password', 'passkey', 'token', 'authkey',
-                         'torrent_pass', 'sid']
+                         'torrent_pass']
+
+#: Names too SHORT to carry a prefix match. `sid` is three characters, and
+#: `[\w-]*sid=` would eat ordinary words. Matched exactly, case-insensitively.
+_REPLACE_PRIVATE_BARE_EXACT = ['sid']
 
 
 class ColorFormatter(logging.Formatter):
@@ -105,10 +118,18 @@ class PrivacyFilter(logging.Filter):
         # the 404. A filter that swallows the line removes the reason the line
         # was logged, and the operator turns it off.
         #
-        # \b on the left so `mytoken=` is left alone rather than
-        # half-redacted.
+        # Longer names take an optional `[\w-]*` prefix and are matched
+        # case-insensitively, so `access_token=` and `X-Plex-Token=` are caught
+        # too; short ones (see _REPLACE_PRIVATE_BARE_EXACT) are matched exactly,
+        # because prefix-matching three characters eats ordinary words.
         for replace in _REPLACE_PRIVATE_BARE:
-            msg = re.sub(r'\b(%s=)[^\s&,;)\]}\'"]+' % replace, r'\1xxx', msg)
+            msg = re.sub(r'[\w-]*%s=[^\s&,;)\]}\'"]+' % replace,
+                         lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
+                         flags=re.IGNORECASE)
+        for replace in _REPLACE_PRIVATE_BARE_EXACT:
+            msg = re.sub(r'\b%s=[^\s&,;)\]}\'"]+' % replace,
+                         lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
+                         flags=re.IGNORECASE)
 
         # Replace api key.
         #

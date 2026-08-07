@@ -143,3 +143,78 @@ class TestTheDefault:
         settings.pop('auth_required', None)
 
         assert _current_user(_request()) is True
+
+
+class TestSavingAPasswordKeepsAuthRequiredHonest:
+    """The settings copy promises "Setting one turns 'Require login' on".
+
+    It was not true. `auth_required` was written in exactly ONE place --
+    `runner.py`'s startup migration -- and that is gated on the key being
+    ABSENT. After the first boot of a passwordless install the key is an
+    explicit `0`, so a user who then sets a password through the wizard or the
+    settings UI got no authentication at all, while both field descriptions
+    told them they had.
+
+    That is the same defect class this PR exists to close: copy that promises
+    an auth behaviour the code does not implement. It was introduced by the
+    copy added in this PR, which makes it worse, not better.
+
+    The second half is a lockout that neither fix caused alone. With
+    `auth_required = 1` and the password cleared, `get_current_user` denies
+    every request AND `login_post` refuses every credential (it now requires a
+    configured password), so the operator is locked out entirely and can only
+    recover by hand-editing config.ini. Reachable by setting a password and
+    then clearing it. Saving the password keeps the two settings consistent in
+    BOTH directions, which closes it.
+    """
+
+    @pytest.fixture
+    def core(self):
+        from couchpotato.core._base._core import Core
+        return Core.__new__(Core)
+
+    def test_setting_a_password_turns_auth_required_on(self, settings, core):
+        settings['auth_required'] = 0
+
+        core.md5Password('hunter2')
+
+        assert settings['auth_required'] == 1, (
+            'a password was set and authentication stayed OFF, while the '
+            'settings copy says setting one turns login on'
+        )
+
+    def test_the_new_password_is_still_what_gets_stored(self, settings, core):
+        """The hook's return value is what lands in config.ini; the
+        auth_required write must not displace it."""
+        settings['auth_required'] = 0
+
+        stored = core.md5Password('hunter2')
+
+        assert stored.startswith(('$2a$', '$2b$', '$2y$')), stored
+
+    def test_clearing_the_password_turns_auth_required_off(self, settings, core):
+        """Otherwise the operator is locked out with no way back in.
+
+        auth_required=1 + no password means every request is denied and every
+        login is refused, because login now requires a configured password.
+        """
+        settings['auth_required'] = 1
+
+        core.md5Password('')
+
+        assert settings['auth_required'] == 0, (
+            'clearing the password left authentication ON, which denies every '
+            'request AND refuses every login: an unrecoverable lockout short '
+            'of hand-editing config.ini'
+        )
+
+    def test_the_lockout_state_is_not_reachable_through_the_save_hook(self, settings, core):
+        """End-to-end on the state itself, not just the flag."""
+        settings.update({'username': 'admin', 'password': 'old'})
+        settings['auth_required'] = 1
+
+        core.md5Password('')          # operator clears the password
+        settings['password'] = ''     # ...which is then stored
+
+        # Nobody is locked out: with no password, the instance is open.
+        assert _current_user(_request()) is True

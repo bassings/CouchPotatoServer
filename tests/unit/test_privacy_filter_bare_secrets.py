@@ -108,3 +108,58 @@ class TestRedactionStaysUseful:
         out = _filtered(record_filter, 'GET /api/THEAPIKEY/movie.list')
 
         assert 'THEAPIKEY' not in out, out
+
+
+class TestPrefixedAndMixedCaseSecretNames:
+    """`X-Plex-Token=` reaches the log and neither pass caught it.
+
+    `notifications/plex/server.py:85` builds
+    `'%s/%s?X-Plex-Token=%s' % (host, path, auth_token)` and hands it to
+    `urlopen`, and `http_client.py:236` logs `'Opening url: %s %s'` with the
+    full URL at INFO. So the Plex auth token was written to the log on every
+    Plex notification.
+
+    Neither redaction pass matched it: the query-string pass wants an exact
+    lowercase `token` immediately after `?` or `&`, and the bare pass was
+    case-sensitive and anchored with `\\b` directly against the name. Raised as
+    a nit; it is a live secret leak.
+
+    Prefix matching is applied ONLY to names long and distinctive enough to
+    carry it -- see `test_short_names_are_not_prefix_matched`.
+    """
+
+    @pytest.mark.parametrize('spelling', [
+        'token=SECRETVALUE',
+        'access_token=SECRETVALUE',
+        'bot_token=SECRETVALUE',
+        'X-Plex-Token=SECRETVALUE',
+        'Token=SECRETVALUE',
+        'API_KEY=SECRETVALUE',
+        'new_password=SECRETVALUE',
+    ])
+    def test_prefixed_and_mixed_case_names_are_redacted(self, record_filter, spelling):
+        out = _filtered(record_filter, 'request failed: %s' % spelling)
+
+        assert 'SECRETVALUE' not in out, (
+            '%s went to the log in the clear: %r' % (spelling, out)
+        )
+
+    def test_the_real_plex_url_shape(self, record_filter):
+        out = _filtered(
+            record_filter,
+            'Opening url: %s %s, data: %s',
+            'get', 'http://plex:32400/library?X-Plex-Token=PLEXAUTHTOKEN', "['a']",
+        )
+
+        assert 'PLEXAUTHTOKEN' not in out, out
+        assert 'plex:32400' in out, 'the host was destroyed along with the token'
+
+    def test_short_names_are_not_prefix_matched(self, record_filter):
+        """`sid` is three characters; prefix-matching it would eat ordinary words.
+
+        The redaction has to stay narrow enough that people leave it on.
+        """
+        out = _filtered(record_filter, 'basid=notasecret and resid=alsofine')
+
+        assert 'notasecret' in out, out
+        assert 'alsofine' in out, out

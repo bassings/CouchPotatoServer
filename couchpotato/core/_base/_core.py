@@ -113,6 +113,43 @@ class Core(Plugin):
         radius, and a wrong name with a correct docstring is safer than a
         rename made at the same time as a security fix.
         """
+        # Keep `auth_required` honest, in BOTH directions.
+        #
+        # The settings copy says "Setting one turns 'Require login' on", and
+        # that was false: `auth_required` was written in exactly one place --
+        # runner.py's startup migration -- gated on the key being ABSENT. After
+        # the first boot of a passwordless install the key is an explicit 0, so
+        # a user who then set a password through the wizard or the settings UI
+        # got no authentication at all while both field descriptions told them
+        # otherwise. Copy promising an auth behaviour the code does not
+        # implement is the exact defect class this PR exists to close.
+        #
+        # Clearing the password turns it back OFF, and that half is not
+        # symmetry for its own sake -- it closes a LOCKOUT. `auth_required = 1`
+        # with no password denies every request (get_current_user) AND refuses
+        # every login (login_post now requires a configured password), leaving
+        # no way in short of hand-editing config.ini. Reachable simply by
+        # setting a password and later clearing it. Neither of those two fixes
+        # created that state alone; together they did.
+        #
+        # An operator who wants a password AND an open instance can still turn
+        # "Require login" off explicitly afterwards -- that setting remains
+        # theirs to set. This only moves it when the password itself changes.
+        # Guarded, and NOT silently: hashing the password must not fail
+        # because a secondary write did, but a swallowed failure here puts the
+        # instance back in the state this whole block exists to prevent -- so
+        # it is logged at ERROR, naming the consequence, rather than passed
+        # over. (It also keeps this hook callable in isolation, e.g. from a
+        # unit test, where no settings store is loaded.)
+        from couchpotato.environment import Env
+        try:
+            Env.setting('auth_required', value=1 if value else 0)
+        except Exception:
+            log.error('Password saved but could not update "auth_required" -- '
+                      'authentication may not match the password you just set. '
+                      'Check Settings > Server > Require login. %s',
+                      traceback.format_exc())
+
         return hash_password(md5(value)) if value else ''
 
     def checkApikey(self, value):
@@ -301,8 +338,8 @@ config = [{
                     'type': 'bool',
                     'label': 'Require login',
                     'description': 'Require login for the web interface. Turned on '
-                                   'automatically the first time a password is set. '
-                                   'Turn off only for a trusted LAN.',
+                                   'whenever you set a password, and off again if you '
+                                   'clear it. Turn off here only for a trusted LAN.',
                 },
                 {
                     'name': 'username',
@@ -324,7 +361,8 @@ config = [{
                     'type': 'password',
                     'label': 'Password',
                     'description': 'Password for web interface login. Setting one turns '
-                                   '"Require login" on.',
+                                   '"Require login" on; clearing it turns it off, so you '
+                                   'cannot lock yourself out.',
                 },
                 {
                     'name': 'port',
