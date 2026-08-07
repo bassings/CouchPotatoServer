@@ -94,12 +94,13 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
-- [ ] T3: PR 3 — M1b data correctness at the SQLite seam — state: in-review #227
+- [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
+- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
@@ -145,6 +146,57 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 9** — #228 is 19/19 green; BLOCKED was two more unresolved review
+  threads, not a check. Both were arithmetic in tick 8's own correction, and
+  both were right: the median of an even-length sample is `(118 + 129) / 2 =
+  123.5s`, not the 7th sorted value, and the eleven non-outlier runs span 38s,
+  not 30s. Recomputed rather than argued, in the section, in the tick 8 entry
+  above, and in the sentence T9.1 hands to whoever measures next. That is the
+  third round of wrong numbers in a section whose thesis is "do not diagnose by
+  inference" — so the raw twelve-run series is now printed alongside every
+  statistic derived from it, which is the only fix that survives the next
+  editor. Armed: CI watcher on #228 after the push.
+
+- **Tick 8** — #228 review returned five findings, all correct, all fixed in
+  392c268c. Two were the T9 section failing at its own stated purpose: it said
+  "the last six runs" over a five-row table and used "one in six" as the
+  evidence for calling the spike isolated. Re-measured rather than edited:
+  n=12, median 123.5s, exactly one run over 5 min, eleven spanning 38s. The
+  P1 had teeth -- `accessibility` is a REQUIRED status check, so T9.2's
+  advertised "biggest win" would have deleted the job publishing it and blocked
+  every subsequent merge; acceptance now requires keeping the context or
+  changing protection in the same change. And T9 had no AC-<LENS>-<n> forty
+  lines below the rule requiring them, now marked NOT YET WRITTEN with
+  /plan-cycle as the precondition.
+
+  Process note: the first push FAILED the gate and my `echo` printed regardless
+  -- the exit-code trap. Retry passed (transient E2E flake), known only because
+  the second attempt captured `$?` directly. Armed: CI watcher on #228.
+
+- **Tick 7** — **#227 MERGED** (master `cd358c20`), verified with `gh pr view`,
+  not from memory: CI 19/19, 0 unresolved threads, mergeStateStatus CLEAN.
+  Branch deleted. T3 ticked. T4, T5 and T8 are now unblocked and may run in
+  parallel.
+
+  Added **T9 / PR 7** at the owner's request: make the accessibility gate fast.
+  Measured before scoping, and the framing needed correcting -- the job builds
+  no Docker container. It is normally ~2 minutes (1m39s, 2m17s, 2m10s, 1m58s
+  across four runs) with ONE 11m37s outlier, while the unrelated `docker` job
+  is a steady ~1m20s. The real complaint is wall-clock: `accessibility` is
+  `needs: ui-e2e-tests`, itself `needs: [test, ui-unit-tests]`, so it is third
+  in a serial chain. Scoped as measure-first (T9.1), then the duplicated
+  uncached `playwright install --with-deps` paid twice (T9.2), then the
+  unexplained `needs:` edge (T9.3). Reducing what the suite covers is
+  explicitly out of scope.
+
+- **Tick 6** — push of ce4a0894 landed, local gate green, local == remote.
+  Armed: CI watcher on #227. Next wake expects CI settled; if green and threads
+  clear, merge #227 -> T3 `merged`, which unblocks T4, T5 and T8 to run in
+  parallel. Per review M15, PR 4 (T5) runs /plan-cycle FIRST so its lenses write
+  numbered AC-<LENS>-<n> into this spec before any code is written: a review
+  with no acceptance criteria can only report what it happens to notice, which
+  is exactly what this cycle's own coverage statements showed.
 
 - **Tick 5** — review cycle wf_3eafdf36-b0b returned: 7 lenses, all FINDINGS,
   none BLOCKED. 3 High, 15 Medium, 9 Low.
@@ -1834,6 +1886,124 @@ before restoring. A type gate nobody has watched fail is decoration (§11).
 
 **Explicitly not in scope:** widening beyond `core/db/`. Each additional package
 is its own decision with its own annotation cost.
+
+---
+
+## PR 7: Make the accessibility gate fast
+
+**Raised by the owner, 2026-08-07:** the accessibility check feels like it takes
+over ten minutes, which is too slow for a gate that runs on every push.
+
+**Measured before scoping, and the framing needs correcting.** The report was
+"more than 10 mins just to build the docker container for the accessibility
+test". There is no container build in that job. `.github/workflows/ci.yml`'s
+`accessibility` job checks out, sets up Node and Python, `pip install -r
+requirements.txt`, `npm ci`, `npx playwright install --with-deps chromium`, then
+runs `--project=accessibility`. The separate `docker` job takes ~1m20s
+consistently and the two are unrelated.
+
+What the last **twelve** completed runs actually show for `accessibility`
+(seconds, newest first):
+
+    108  101  697  99  137  130  118  132  118  130  102  129
+
+    n = 12    median = 123.5s (2.1 min)    runs over 5 min = 1
+    excluding the 697s outlier: n = 11, min 99s, max 137s, spread 38s
+
+**Corrected 2026-08-07 after review.** The first version of this section said
+"the last six runs" above a five-row table and then used "one run in six" as the
+evidence for calling the spike isolated. Both numbers were wrong, in a section
+whose entire point is not diagnosing by inference -- so it is restated here from
+a real twelve-run sample rather than quietly patched. The spike is 1 in 12, and
+the job's normal cost is tightly clustered around two minutes.
+
+**Corrected again 2026-08-07, same section, same failure mode.** The first
+correction stated `median = 129s` and a "30-second band". Both were also wrong:
+129 is the 7th of twelve sorted values, not the median of an even-length sample
+(`(118 + 129) / 2 = 123.5`), and the eleven non-outlier runs span `137 - 99 =
+38s`. Every statistic in this section is now computed rather than eyeballed, and
+the raw series is printed above so the next reader can check the arithmetic
+instead of trusting it. Two rounds of wrong numbers in a section arguing against
+diagnosis by inference is the point, not an aside.
+
+The `docker` job over the same period is a steady ~1m20s and is unrelated.
+
+Two separate things are therefore in scope, and conflating them would fix
+neither:
+
+1. **Wall-clock to feedback.** `accessibility` is `needs: ui-e2e-tests`, which is
+   itself `needs: [test, ui-unit-tests]` — third in a serial chain, so the
+   elapsed time an operator experiences is the whole chain, not the job. That is
+   the number the report is really about.
+2. **The 11m37s outlier.** One run in twelve. Until its cause is known, any
+   "optimisation" is guessing, and the honest possibility is that it was a slow
+   runner or an apt mirror and nothing in this repo caused it.
+
+### T9.1: Measure before changing anything · S
+
+Get the per-step breakdown for both a normal and the slow run (`gh api
+.../actions/runs/<id>/jobs`; the step timings did not come back cleanly through
+`gh run view --json`, so this may need the raw API or the logs). Attribute the
+time to steps, not to intuition. **No optimisation lands before this exists:**
+this repo has a recorded habit of diagnosing by inference and being wrong.
+
+Specifically answer: what did the 697s run spend its time on, and is
+`--fail-on-flaky-tests` retrying? At 1 in 12 with the other eleven spanning 38s
+(99s to 137s), a per-run cause (runner, apt mirror, a retry) is more likely than
+a workflow one -- but "more likely" is not a measurement.
+
+### T9.2: Stop paying for the same install twice · S · risk: low
+
+`npx playwright install --with-deps chromium` runs in BOTH `ui-e2e-tests`
+(`:242`) and `accessibility` (`:340`), uncached. npm is cached (`cache: 'npm'`)
+but the Playwright browser download and its apt `--with-deps` are not, and
+`pip install -r requirements.txt` has no pip cache either.
+
+Options, in increasing order of change: cache `~/.cache/ms-playwright` keyed on
+the Playwright version from `package-lock.json`; add `cache: 'pip'` to
+`setup-python`; or run the accessibility project inside the existing
+`ui-e2e-tests` job so the install is paid once. The last is the biggest win and
+the biggest change — it merges two gates, so their failures stop being
+separable, which is a real cost on a gate whose job is to name what broke.
+
+### T9.3: Reconsider the serial chain · S · risk: low
+
+`accessibility` waits for `ui-e2e-tests` for no stated reason: it starts and
+seeds its own server (see the comment at `:342-350` -- an earlier version of
+this line cited `:329-338`, which is the Python/Node install steps), so it has
+no data dependency on that job. If the `needs:` is only there to stage runner load, say
+so at the line; if it is not needed, removing it moves accessibility from third
+in a chain to parallel, which addresses the reported wall-clock directly and
+without touching the tests.
+
+**Acceptance:**
+
+1. A measured before/after of BOTH numbers -- job duration and wall-clock from
+   workflow start to accessibility completion -- over at least three runs each,
+   because a single comparison cannot distinguish an improvement from runner
+   variance. The baseline above is the "before".
+2. The suite still runs the same specs. A faster gate that covers less is not
+   the deliverable.
+3. **The `accessibility` status context must survive.** It is a REQUIRED status
+   check on `master` (verified: `lint, test-summary, ui-unit-tests,
+   ui-e2e-tests, claude-review, Analyze (python), Analyze (javascript),
+   dependency-review, docker, accessibility, conformance, secrets`). T9.2's
+   "biggest win" -- folding the accessibility project into `ui-e2e-tests` --
+   would delete the job that reports that context, and branch protection would
+   then wait forever for a check nothing publishes, blocking this PR and every
+   one after it. Either keep a job named `accessibility` that reports the
+   result, or change branch protection in the same change. Not one without the
+   other.
+
+**AC-<LENS>-<n> criteria: NOT YET WRITTEN.** Per the M15 rule recorded in this
+same plan, `/plan-cycle` runs on this task before any implementation, and its
+lenses write numbered criteria here. Treating PR 7 as implementation-ready
+before that would repeat exactly the gap M15 was added to close -- and it was
+raised against this section, which is a fair hit.
+
+**Explicitly NOT in scope:** reducing what the accessibility suite tests. WCAG
+2.2 AA in both themes and at phone width is this project's stated floor, and
+speeding the gate by lowering it would be the wrong trade.
 
 ---
 
