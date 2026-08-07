@@ -194,18 +194,80 @@ class TestTheIndexReachesExistingInstalls:
             reopened.close()
 
     def test_opening_twice_is_harmless(self, tmp_path):
-        """Idempotent: the upgrade runs on every open, not just the first."""
+        """Idempotent: the upgrade runs on every open, not just the first.
+
+        The DROP is what makes this test mean anything. Without it `create()`
+        has already installed the index via schema.sql, so the upgrade path
+        never executes and both opens merely observe what was always there --
+        measured: under a mutation that deleted the
+        `_ensure_release_download_index()` call from `open()` entirely, the
+        original version of this test stayed GREEN while its sibling went red.
+        Incidentally-passing, and it looked specific.
+        """
         path = str(tmp_path / 'twice')
         first = SQLiteAdapter()
         first.create(path)
+        first._get_conn().execute('DROP INDEX IF EXISTS idx_release_download')
+        assert 'idx_release_download' not in self._index_names(first)
         first.close()
-        for _ in range(2):
+
+        for attempt in (1, 2):
             adapter = SQLiteAdapter()
             adapter.open(path)
             try:
-                assert 'idx_release_download' in self._index_names(adapter)
+                assert 'idx_release_download' in self._index_names(adapter), (
+                    'open() #%d did not leave the index in place' % attempt
+                )
             finally:
                 adapter.close()
+
+    def test_the_lookup_actually_uses_the_index(self, tmp_path):
+        """The SQL predicate and the index expression must stay character-identical.
+
+        `idx_release_download` indexes
+        `CAST(json_extract(...) AS TEXT)`, and SQLite only uses an expression
+        index when the query's expression matches it EXACTLY. Two comments say
+        so; nothing enforced it, so the coupling could break silently and every
+        correctness test would stay green -- measured: dropping the CASTs from
+        the query alone falls back to a scan via `idx_documents_type`, still
+        correct, 0.050ms vs 0.014ms per lookup over 2,000 releases. On a
+        scheduled job over a real library that is the whole point of the index.
+        """
+        adapter = SQLiteAdapter()
+        adapter.create(str(tmp_path / 'planned'))
+        try:
+            adapter.insert(_release('a', 'transmission', 'HASH-AAA', 'tt0000001'))
+
+            # The real predicate, taken from the adapter rather than retyped --
+            # a hand-copied duplicate here would drift from the code it claims
+            # to pin and this test would then pass against a query nobody runs.
+            import inspect
+            source = inspect.getsource(SQLiteAdapter._query_index)
+            marker = "elif index_name == 'release_download':"
+            assert marker in source, 'the release_download branch moved; re-derive this test'
+            branch = source.split(marker, 1)[1].split('elif index_name ==', 1)[0]
+            assert "CAST(json_extract(data, '$.download_info.downloader') AS TEXT)" in branch, (
+                'the downloader predicate no longer CASTs; it can no longer '
+                'match the index expression in schema.sql'
+            )
+
+            plan = adapter._get_conn().execute(
+                """EXPLAIN QUERY PLAN
+                   SELECT _id, _rev, data FROM documents WHERE _t = 'release'
+                   AND CAST(json_extract(data, '$.download_info.downloader') AS TEXT) = ?
+                   AND CAST(json_extract(data, '$.download_info.id') AS TEXT) = ?""",
+                ('transmission', 'HASH-AAA'),
+            ).fetchall()
+
+            detail = ' '.join(str(row['detail']) for row in plan)
+            assert 'idx_release_download' in detail, (
+                'the release_download lookup no longer uses its index (plan: '
+                '%s). Correctness is unaffected, which is exactly why this '
+                'needs a test: it degrades to a full scan of every release '
+                'row on a scheduled job, silently.' % detail
+            )
+        finally:
+            adapter.close()
 
 
 class TestTheCallerStampsTheRightMovie:

@@ -28,6 +28,35 @@ def _strip_bytes_literal(value: str) -> str:
     return value
 
 
+def _resolve_saved_value(hook_result: Any, submitted: Any) -> Any:
+    """Pick between a `setting.save.<section>.<option>` hook's result and the
+    value the caller submitted.
+
+    This used to be `hook_result if hook_result else submitted`, which quietly
+    made it impossible for a hook to force a FALSY value: a guard returning `0`
+    was discarded and the caller's original `1` stored instead. That is not
+    hypothetical -- it is exactly what the auth_required lockout guard
+    (`Core.guardAuthRequired`) needs to do, and measured before this change the
+    guard returned 0 and config.ini still received 1.
+
+    Two "no result" shapes have to be told apart from a deliberate falsy one:
+
+      - `None`, the ordinary return of a handler that chose not to rewrite.
+      - `[]`, which is what `fireEvent(..., single=True)` returns when NOTHING
+        handles the event (`event.py`: `final = results[0] if results else []`).
+        Most options have no hook at all, so this is the common case -- treating
+        it as a value would write a literal empty list into config.ini for every
+        setting anyone saves.
+
+    Anything else wins, including `0` and `''`.
+    """
+    if hook_result is None:
+        return submitted
+    if isinstance(hook_result, list) and not hook_result:
+        return submitted
+    return hook_result
+
+
 def _coerce_value(value: Any, type_name: str) -> Any:
     """Use Pydantic's type coercion to convert config values."""
     # Handle bytes from config (Python 3 compatibility)
@@ -478,7 +507,7 @@ class Settings:
         new_value = fireEvent('setting.save.%s.%s' % (section, option), value, single=True)
         # Use plain string — .encode('unicode_escape') produces bytes which ConfigParser
         # serialises as b'...' literals (Python 3 bug)
-        self.set(section, option, new_value if new_value else value)
+        self.set(section, option, _resolve_saved_value(new_value, value))
         self.save()
 
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)

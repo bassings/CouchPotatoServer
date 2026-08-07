@@ -177,7 +177,6 @@ class SQLiteAdapter(DatabaseInterface):
         return False
 
     @_synchronised
-    @_synchronised
     def _ensure_release_download_index(self) -> None:
         """Idempotently add idx_release_download to an EXISTING database.
 
@@ -208,6 +207,7 @@ class SQLiteAdapter(DatabaseInterface):
             log.warning('Could not create idx_release_download; release lookups '
                         'will full-scan but remain correct: %s', exc)
 
+    @_synchronised
     def _ensure_unique_media_identifier_index(self) -> None:
         """Idempotently upgrade an existing install to the UNIQUE
         media_identifiers(provider, identifier) index (REG-004).

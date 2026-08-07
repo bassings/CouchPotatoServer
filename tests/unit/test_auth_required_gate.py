@@ -102,8 +102,6 @@ class TestAuthRequiredOn:
     @pytest.mark.parametrize('username,password', [
         ('admin', 'secret'),
         ('', 'secret'),      # the trap: password set, username blank
-        ('admin', ''),
-        ('', ''),
     ])
     def test_no_cookie_is_denied(self, settings, username, password):
         settings.update({'username': username, 'password': password, 'auth_required': 1})
@@ -111,6 +109,34 @@ class TestAuthRequiredOn:
         assert _current_user(_request()) is None, (
             'auth_required is ON but a request with no session cookie was '
             'served (username=%r password=%r)' % (username, password)
+        )
+
+    @pytest.mark.parametrize('username', ['admin', ''])
+    def test_auth_required_with_no_password_is_not_enforced(self, settings, username):
+        """EXPECTATION CHANGED, deliberately -- this used to assert denial.
+
+        These two cases (`auth_required=1`, `password=''`) were folded into
+        `test_no_cookie_is_denied` above, so the suite asserted that the
+        LOCKOUT was correct behaviour: every request denied, and `login_post`
+        refusing every login because it requires a configured password. There
+        was no way back in but hand-editing config.ini.
+
+        That is the third time on this branch a test has pinned a defect as
+        intended behaviour (the two `reindex()` tests did the same for a
+        guaranteed TypeError). Recorded rather than quietly re-parametrised,
+        because "an existing test failed after my change" is the moment to ask
+        which of the two is wrong -- and here it was the test.
+
+        `auth_is_required()` now refuses to enforce a requirement nothing can
+        satisfy, and `Core.guardAuthRequired` stops the value being stored in
+        the first place. See tests/unit/test_auth_required_lockout_guard.py.
+        """
+        settings.update({'username': username, 'password': '', 'auth_required': 1})
+
+        assert _current_user(_request()) is True, (
+            'auth_required is ON with NO password stored: every request is '
+            'denied and every login refused, so the operator is locked out of '
+            'their own server (username=%r)' % (username,)
         )
 
     def test_a_valid_cookie_is_accepted(self, settings):

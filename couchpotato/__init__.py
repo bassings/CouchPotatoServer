@@ -83,6 +83,25 @@ def auth_is_required() -> bool:
     if configured is None or configured == '':
         return _auth_required_from_password()
 
+    # A requirement nothing can satisfy is not enforced, whatever the setting
+    # says. `auth_required = 1` with no password stored denies every request
+    # AND refuses every login, leaving no way in but hand-editing config.ini --
+    # which is itself the documented recovery path, so it is the route most
+    # likely to be used wrong.
+    #
+    # `Core.guardAuthRequired` stops the settings UI and the wizard writing
+    # this state. This is the second, independent layer: it covers a hand-edit,
+    # a restored backup, and any future writer, so the lockout is unreachable
+    # by construction rather than by every write path remembering to ask.
+    #
+    # Deliberately NOT a silent fallback: without the log an operator who ticked
+    # the box sees an unprotected server and no explanation.
+    if not Env.setting('password'):
+        log.warning('"Require login" is on but no password is stored, so nothing '
+                    'could satisfy it. Serving WITHOUT authentication rather than '
+                    'locking you out. Set a password to turn it on properly.')
+        return False
+
     if isinstance(configured, str):
         # A STRING is the normal case on the startup path, not an edge case.
         # `runner.py` calls this before `loader.run()` has registered the
@@ -160,7 +179,21 @@ def require_auth(request: Request):
 
 def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
     """Create and configure the FastAPI application."""
-    app = FastAPI(docs_url=None, redoc_url=None)
+    # openapi_url=None as well as docs_url/redoc_url.
+    #
+    # Turning off the two doc UIs left the SCHEMA they render still served, and
+    # unauthenticated: measured on an instance with auth_required=1 and a
+    # password set, `GET /openapi.json` returned 200 and 26,655 bytes
+    # enumerating all 77 paths while `/wanted/` 302'd to the login page. No
+    # credential is disclosed (the api_key is not in the body -- checked with a
+    # realistic key, since a short one produces a false positive), so this is
+    # reconnaissance rather than access: a complete machine-readable map of the
+    # API from a server the operator believes is behind a login.
+    #
+    # Disabled rather than gated behind require_auth: nothing in this app reads
+    # the schema, so there is no functionality to preserve, and a route that
+    # does not exist cannot be left unprotected by the next change.
+    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
     # Rate limiting middleware
     from couchpotato.core.rate_limit import RateLimitMiddleware

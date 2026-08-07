@@ -85,6 +85,81 @@ def _walk(routes):
             yield from _walk(route.routes)
 
 
+#: Non-APIRoute entries that are allowed to exist, with the reason each is safe.
+#:
+#: `_walk` only yields APIRoute, so anything else -- a Mount, a WebSocket, a
+#: plain starlette Route, a sub-application -- was structurally INVISIBLE to
+#: every assertion in this file. That is not a theoretical hole: FastAPI mounts
+#: `/openapi.json` as a plain `Route`, and it was served 200 to an
+#: unauthenticated caller on an instance where `/wanted/` 302'd to the login
+#: page, while this file passed green. The spec calls this test the PR's
+#: highest-value criterion because it "fixes the class"; a filter that can only
+#: see one route class does not.
+NON_API_ROUTES = {
+    '/static': 'StaticFiles mount: the UI assets, no data and no user content. '
+               'Served before auth deliberately -- the login page needs its CSS.',
+}
+
+
+def _walk_all(routes):
+    """EVERY route reachable from `routes`, whatever its class.
+
+    Deliberately not filtered to APIRoute: the point is to see the ones the
+    other walk cannot.
+    """
+    for route in routes:
+        original = getattr(route, 'original_router', None)
+        if original is not None:
+            yield from _walk_all(getattr(original, 'routes', []) or [])
+            continue
+        yield route
+        if getattr(route, 'routes', None):
+            yield from _walk_all(route.routes)
+
+
+def test_every_non_apiroute_is_accounted_for(app):
+    """Close the class, not the instance.
+
+    `/openapi.json` is now disabled at source (`openapi_url=None` in
+    `create_app`), so the fix for the reported instance is not here. This is
+    the guard that makes the NEXT one visible: add a Mount, a WebSocket or a
+    sub-application and it must be justified in NON_API_ROUTES rather than
+    shipping public and green.
+    """
+    from fastapi.routing import APIRoute as _APIRoute
+
+    strays = sorted({
+        '%s  (%s)' % (getattr(r, 'path', '?'), type(r).__name__)
+        for r in _walk_all(app.routes)
+        if not isinstance(r, _APIRoute)
+        and getattr(r, 'path', None) not in NON_API_ROUTES
+    })
+
+    assert not strays, (
+        'routes that are not APIRoute and not in NON_API_ROUTES:\n  %s\n\n'
+        'Every assertion in this file filters on `isinstance(route, APIRoute)`, '
+        'so these are invisible to all of them -- they can be wide open while '
+        'the file passes. Either remove the route, protect it, or add it to '
+        'NON_API_ROUTES with the reason it is safe.' % '\n  '.join(strays)
+    )
+
+
+def test_the_openapi_schema_is_not_served(app):
+    """The reported instance, pinned so it cannot come back.
+
+    `docs_url=None, redoc_url=None` turns off the two doc UIs and leaves the
+    SCHEMA they render still served. Measured before the fix: 200, 26,655
+    bytes, all 77 paths, on an instance requiring a login for `/wanted/`.
+    """
+    paths = {getattr(r, 'path', None) for r in _walk_all(app.routes)}
+    assert '/openapi.json' not in paths, (
+        'the OpenAPI schema route is back. It hands an unauthenticated caller '
+        'a complete machine-readable map of every endpoint; pass '
+        'openapi_url=None to FastAPI() in create_app.'
+    )
+    assert app.openapi_url is None
+
+
 def _dependency_names(route) -> set:
     dependant = getattr(route, 'dependant', None)
     return {

@@ -55,6 +55,7 @@ class Core(Plugin):
         addEvent('app.load.after', self.dependencies)
 
         addEvent('setting.save.core.password', self.md5Password)
+        addEvent('setting.save.core.auth_required', self.guardAuthRequired)
         addEvent('setting.save.core.api_key', self.checkApikey)
 
         # Make sure we can close-down with ctrl+c properly
@@ -163,6 +164,45 @@ class Core(Plugin):
                       traceback.format_exc())
 
         return hash_password(md5(value)) if value else ''
+
+    def guardAuthRequired(self, value):
+        """Refuse to turn "Require login" on while no password is stored.
+
+        That combination is an unrecoverable lockout: `get_current_user` denies
+        every request (no cookie can be valid) and `login_post` refuses every
+        login, because it now requires a configured password -- deliberately,
+        since a blank password accepting any credentials was one of the four
+        bypasses this area closed. The only way back is shell access,
+        hand-editing config.ini and a restart, on exactly the population least
+        able to do that. It is one click from the settings UI and from the
+        first-run wizard, and the password field's copy says it cannot happen.
+
+        `md5Password` already closed the other entrance (clearing a password
+        turns the requirement off) and its comment names this failure mode;
+        `login_post`'s calls the state "one click away in the settings UI".
+        Neither of them guarded the direct route.
+
+        Returning 0 rather than raising: the setting simply does not take, the
+        checkbox reverts on reload, and the WARNING says why. Turning it OFF is
+        never blocked -- that is the direction that RESTORES access.
+
+        Note this only works because `Settings.saveView` now routes the hook
+        result through `_resolve_saved_value`. The previous
+        `new_value if new_value else value` discarded a falsy return, so this
+        guard would have been silently inert.
+        """
+        wants_auth = str(value).strip().lower() not in ('', '0', 'false', 'no', 'off')
+        if not wants_auth:
+            return 0
+
+        if not Env.setting('password'):
+            log.warning('Refused to turn "Require login" on: no password is set, '
+                        'so nothing could satisfy it and you would be locked out '
+                        'of your own server. Set a password first -- doing so '
+                        'turns "Require login" on for you.')
+            return 0
+
+        return 1
 
     def checkApikey(self, value):
         return value if value and len(value) > 3 else uuid4().hex
