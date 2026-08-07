@@ -83,48 +83,81 @@ def auth_is_required() -> bool:
     if configured is None or configured == '':
         return _auth_required_from_password()
 
-    # A requirement nothing can satisfy is not enforced, whatever the setting
-    # says. `auth_required = 1` with no password stored denies every request
-    # AND refuses every login, leaving no way in but hand-editing config.ini --
-    # which is itself the documented recovery path, so it is the route most
-    # likely to be used wrong.
+    # ORDER MATTERS: resolve what the setting MEANS before consulting the
+    # password.
+    #
+    # The first version of the lockout guard below checked the password first,
+    # so it fired for any value that was not None/'' -- including an explicit
+    # 0. That is the state every default install reaches: `runner.py`'s startup
+    # migration deliberately writes back `auth_required = 0` for an install
+    # with no password, so the value is greppable in config.ini. From the next
+    # request onward it logged '"Require login" is on but no password is
+    # stored' on EVERY page load, for the most common configuration this
+    # project ships. Nothing broke -- the return value was already correct --
+    # but the log asserted the opposite of the truth, on exactly the mechanism
+    # `runner.py`'s own comment says operators rely on. Same defect class this
+    # branch fixes three times elsewhere.
+    wants_auth = _parse_auth_required(configured)
+
+    if wants_auth is None:
+        # config.ini is the documented lock-out recovery path, so it gets
+        # hand-edited and typos here are expected. Reading an unrecognised
+        # value as "off" would silently make the server public; reading it as
+        # "on" would lock out an install with no password. Fall back to the
+        # same derivation used when the key is absent, which does neither.
+        log.error('Unrecognised auth_required value %r in config.ini; expected '
+                  '0 or 1. Falling back to "required only if a password is '
+                  'set". Fix the value to remove this warning.', configured)
+        return _auth_required_from_password()
+
+    if not wants_auth:
+        return False
+
+    # A requirement nothing can satisfy is not enforced. `auth_required = 1`
+    # with no password stored denies every request AND refuses every login,
+    # leaving no way in but hand-editing config.ini -- itself the documented
+    # recovery path, so the route most likely to be used wrong.
     #
     # `Core.guardAuthRequired` stops the settings UI and the wizard writing
     # this state. This is the second, independent layer: it covers a hand-edit,
-    # a restored backup, and any future writer, so the lockout is unreachable
-    # by construction rather than by every write path remembering to ask.
+    # a restored backup and any future writer, so the lockout is unreachable by
+    # construction rather than by every write path remembering to ask.
     #
-    # Deliberately NOT a silent fallback: without the log an operator who ticked
-    # the box sees an unprotected server and no explanation.
+    # Deliberately NOT silent: without the log an operator who ticked the box
+    # sees an unprotected server and no explanation.
     if not Env.setting('password'):
         log.warning('"Require login" is on but no password is stored, so nothing '
                     'could satisfy it. Serving WITHOUT authentication rather than '
                     'locking you out. Set a password to turn it on properly.')
         return False
 
+    return True
+
+
+def _parse_auth_required(configured):
+    """True, False, or None when the value is not recognisable.
+
+    A STRING is the normal case on the startup path, not an edge case:
+    `runner.py` calls `auth_is_required()` before `loader.run()` has registered
+    the option's type, so `Settings.getType` falls back to 'unicode', which
+    `_coerce_value` does not coerce -- the raw ConfigParser string arrives
+    here. `bool('0')` is True, so this parsing is the only thing keeping an
+    explicit `auth_required = 0` from turning auth ON.
+
+    `None` for "cannot tell" rather than collapsing into False: the caller
+    errs toward the password-derived answer, and a typo must not be silently
+    read as "off".
+    """
+    if isinstance(configured, bool):
+        return configured
+
     if isinstance(configured, str):
-        # A STRING is the normal case on the startup path, not an edge case.
-        # `runner.py` calls this before `loader.run()` has registered the
-        # option's type, so `Settings.getType` falls back to 'unicode', which
-        # `_coerce_value` does not coerce -- the raw ConfigParser string
-        # arrives here. `bool('0')` is True, so this branch is the only thing
-        # keeping an explicit `auth_required = 0` from turning auth ON.
         value = configured.strip().lower()
         if value in ('1', 'true', 'yes', 'on'):
             return True
         if value in ('0', 'false', 'no', 'off'):
             return False
-
-        # Neither. config.ini is the documented lock-out recovery path, so it
-        # gets hand-edited and typos here are expected. Reading an
-        # unrecognised value as "off" would silently make the server public;
-        # reading it as "on" would lock out an install with no password. Fall
-        # back to the same derivation used when the key is absent, which does
-        # neither.
-        log.error('Unrecognised auth_required value %r in config.ini; expected '
-                  '0 or 1. Falling back to "required only if a password is '
-                  'set". Fix the value to remove this warning.', configured)
-        return _auth_required_from_password()
+        return None
 
     return bool(configured)
 

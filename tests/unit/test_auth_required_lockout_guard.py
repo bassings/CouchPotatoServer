@@ -170,3 +170,67 @@ class TestSaveViewCanStoreAFalsyHookResult:
         from couchpotato.core.settings import _resolve_saved_value
 
         assert _resolve_saved_value('hashed', 'plaintext') == 'hashed'
+
+
+class TestTheGuardDoesNotLieAboutTheCommonCase:
+    """The warning must only fire when auth_required actually means ON.
+
+    Raised by claude-review on #227. The first version of the guard checked the
+    password BEFORE interpreting `configured`, so it fired for anything that was
+    not None/'' -- including an explicit 0.
+
+    That is the state every default install reaches: `runner.py`'s startup
+    migration writes back an explicit `auth_required = 0` for any install with
+    no password, deliberately, so the value is greppable in config.ini. From the
+    next request onward the guard logged '"Require login" is on but no password
+    is stored' on EVERY page load, for the single most common configuration this
+    project ships.
+
+    Nothing broke -- `auth_is_required()` still returned False -- but the log
+    asserted the opposite of the truth, on exactly the mechanism `runner.py`'s
+    own comment says operators depend on ("the log is where an operator checks
+    whether they made it"). It is the same defect class this PR calls out and
+    fixes three times elsewhere in its own diff.
+    """
+
+    @pytest.mark.parametrize('stored', [0, False, '0', 'false', 'no', 'off'])
+    def test_auth_off_with_no_password_logs_nothing(self, settings, caplog, stored):
+        from couchpotato import auth_is_required
+
+        settings['auth_required'] = stored
+        settings['password'] = ''
+
+        with caplog.at_level('WARNING'):
+            assert auth_is_required() is False
+
+        assert 'Require login' not in caplog.text, (
+            'auth_required is explicitly OFF (%r) and the guard warned that it '
+            'is on. Every default install logs this on every request.' % (stored,)
+        )
+
+    @pytest.mark.parametrize('stored', [1, True, '1', 'true', 'yes', 'on'])
+    def test_auth_on_with_no_password_still_warns(self, settings, caplog, stored):
+        """Anti-vacuity: silencing the false warning must not silence the real one."""
+        from couchpotato import auth_is_required
+
+        settings['auth_required'] = stored
+        settings['password'] = ''
+
+        with caplog.at_level('WARNING'):
+            assert auth_is_required() is False
+
+        assert 'Require login' in caplog.text, (
+            'auth_required is ON (%r) with no password and NOTHING was logged. '
+            'The operator sees an unprotected server and no explanation.' % (stored,)
+        )
+
+    def test_auth_on_with_a_password_logs_nothing(self, settings, caplog):
+        from couchpotato import auth_is_required
+
+        settings['auth_required'] = 1
+        settings['password'] = 'hashed'
+
+        with caplog.at_level('WARNING'):
+            assert auth_is_required() is True
+
+        assert 'Require login' not in caplog.text
