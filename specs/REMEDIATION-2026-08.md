@@ -1974,6 +1974,69 @@ Specifically answer: what did the 697s run spend its time on, and is
 (99s to 137s), a per-run cause (runner, apt mirror, a retry) is more likely than
 a workflow one -- but "more likely" is not a measurement.
 
+**Both questions are now answered below, and the guess above was half right:**
+the cause was per-run, but it was not a retry, and the 12-run sample it rests on
+is superseded by a 23-run one. Kept as written so the prediction can be scored
+against the measurement rather than quietly edited to match it.
+
+
+**T9.1 ANSWERED 2026-08-07 by the orchestrator.**
+
+#### Method
+
+`gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs` over the last 25
+CI runs, then `.../actions/jobs/<job_id>` for the step timings. n = 23 successful
+`accessibility` jobs (one skipped and one cancelled run excluded). This is a
+wider sample than the twelve-run one recorded earlier, and it supersedes it.
+
+#### The outlier is one step, and it is not the tests
+
+Job `92791614728` (697s) against a normal job `92806433719` (115s):
+
+| Step | Slow run | Normal run |
+|---|---|---|
+| Install Python dependencies | 17s | 27s |
+| Install Node dependencies | 8s | 8s |
+| **Install Playwright browsers** | **610s** | **22s** |
+| Run accessibility tests | 51s | 46s |
+| everything else | ~5s | ~9s |
+
+**The test suite took 51s on the slow run and 46s on the normal one.** The spike
+is entirely `npx playwright install --with-deps chromium`.
+
+#### Across all 23 runs
+
+| Step | n | min | median | max |
+|---|---|---|---|---|
+| job total | 23 | 99 | **115** | 697 |
+| Install Playwright browsers | 23 | 21 | 27 | **610** |
+| Run accessibility tests | 23 | 46 | **51** | 55 |
+| Install Python dependencies | 23 | 15 | 17 | 30 |
+
+Excluding the single stall, the Playwright install is 21-35s (median 26.5s).
+
+**The test step never misbehaved once in 23 runs: 46-55s, including on the run
+that took 697s.** So `--fail-on-flaky-tests` retrying is ruled out as the cause,
+which was the open question T9.1 was written to answer.
+
+#### What this changes about T9.2 and T9.3
+
+1. **Caching the Playwright browser download is now the highest-value change,
+   and for a reason the plan did not have.** It was scoped as "save ~25s on the
+   median". It also removes the only mechanism that has ever produced an
+   outlier: a 610s network or apt stall in a step that downloads a browser on
+   every single run. Median win is modest; tail win is the whole 10-minute
+   complaint.
+2. **The 697s run needs no further diagnosis.** It was a slow download, not the
+   repo, not the suite, not a retry. T9.1's question "is
+   `--fail-on-flaky-tests` retrying?" is answered: no.
+3. **The ~51s test step is the floor** for this job as it stands, and cutting it
+   means cutting coverage, which the plan explicitly rules out. So the job
+   cannot go much below ~60s even with perfect caching, and the remaining
+   complaint is wall-clock from the serial chain (T9.3), exactly as scoped.
+4. **The earlier twelve-run figures are superseded**: median 123.5s becomes 115s
+   at n=23. Same conclusion, better sample.
+
 ### T9.2: Stop paying for the same install twice · S · risk: low
 
 `npx playwright install --with-deps chromium` runs in BOTH `ui-e2e-tests`

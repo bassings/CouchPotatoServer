@@ -320,4 +320,62 @@ is rejected with a pointer to this list, per the harness exit condition.
 
 ## Spec gaps found at review
 
-<Filled by the review cycle: findings with no AC behind them.>
+Findings with no acceptance criterion behind them. Recorded because that list is
+how the harness improves rather than merely runs.
+
+**From tranche A (implementation), 2026-08-07. Each verified by the orchestrator
+against the repo, not taken from the report.**
+
+1. **`caplog.at_level('INFO')` captures nothing, repo-wide.** `logger.py:24`
+   calls `logging.addLevelName(21, 'INFO')`, which overwrites
+   `_nameToLevel['INFO']` from 20 to 21, so the string form sets the threshold
+   above every genuine INFO record. Verified: the name resolves to 20 before
+   importing `couchpotato.core.logger` and 21 after. This produces a false RED
+   that reads as "the code never logged" and cost the implementer a detour.
+   **No AC covered it**, yet AC-OPS-41, AC-OPS-44, AC-OPS-46, AC-OPS-47 and
+   AC-OPS-52 all assert on records at INFO or above, so most of the operability
+   set was one obvious idiom away from being unwritable. Closed mechanically by
+   a `check-traps` rule rather than a note (commit `9df829ad`).
+
+2. **AC-QA-21's prescribed assertion is vacuous against a correct
+   implementation.** It names a counting spy on `Settings.setProperty`, but
+   AC-DATA-3 forbids using `setProperty` (its bare `except Exception:` is the
+   defect), so the secret is written by a different function and the prescribed
+   spy can never fire in any configuration. A criterion that names its own
+   assertion mechanism can prescribe one that cannot fail. The behavioural
+   promise was kept by an `ast` guard that the bootstrap sits inside
+   `if auth_is_required():`.
+
+3. **AC-DATA-2 as worded contradicts D2.** "Four concurrent first-time logins
+   against a database with no secret" cannot leave one row when D2 and
+   AC-ARCH-6 forbid the request path from creating a secret: with no secret, a
+   login issues no cookie at all. Split into two executable halves (concurrent
+   `ensure_session_secret` against an empty store; concurrent real logins
+   against a bootstrapped one). **The planning cycle produced two criteria that
+   cannot both hold** and no lens caught it, because each owned only one.
+
+4. **AC-QA-19 contradicts D2 in the same way, and is still open.** It requires
+   that after the secret is deleted from under a running process "a fresh login
+   recovers a working session without a restart", which needs the login path to
+   regenerate — exactly what D2 forbids. Current behaviour: locked out until
+   restart, with an ERROR naming `config.ini`. **Whoever takes that tranche must
+   reopen the D2 wording rather than quietly satisfying one and dropping the
+   other.**
+
+5. **Tranche A introduces a live secret-disclosure hole that only a later
+   tranche closes.** Executed by the orchestrator against a real adapter:
+   `ensure_session_secret` creates one `property` row with `identifier =
+   session_secret`, and `db.all('id')` returns it verbatim, which is exactly
+   what `database.py:197-213` iterates. So `GET /api/<key>/database.list_documents`
+   would return the signing secret in cleartext, and it survives every `api_key`
+   rotation. AC-SEC-40 covers the fix, but **nothing in the plan said the
+   tranches could not be shipped independently.** The sequencing constraint is
+   now explicit: **AC-SEC-40 must land in the same PR, and this branch must not
+   reach `master` without it**, because a push to `master` auto-publishes a beta.
+
+6. **The plan assumed a pre-push hook that the implementer could not find.** It
+   reported "no git hooks installed" from `.git/hooks` (samples only) and used
+   `--no-verify`. Wrong: the hook is wired through
+   `core.hooksPath = .githooks`, which holds an executable `pre-push`. Harmless
+   here because the gate was run by hand, but a sub-agent concluding "there is
+   no gate" is one step from concluding "so I need not run one".
