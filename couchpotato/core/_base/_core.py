@@ -163,6 +163,37 @@ class Core(Plugin):
                       'Check Settings > Server > Require login. %s',
                       traceback.format_exc())
 
+        # End every existing session (D6/AC-SEC-38).
+        #
+        # Changing a password is usually a RESPONSE to something -- a shared
+        # laptop, a screenshot, a suspicion. Before this, every cookie issued
+        # under the old password kept working until its own expiry, so the one
+        # action the operator knows to take did not take anything away from
+        # whoever prompted it. Rotating the signing secret is what makes the
+        # change mean something, and the field's own description now says so.
+        #
+        # Only when a password is actually SET. Clearing it turns
+        # `auth_required` off two lines above, so every request is already
+        # served without a session and there is nothing to revoke -- and
+        # writing a secret row anyway would put one on installs that never
+        # enabled authentication, which AC-QA-21 and AC-SEC-46 both forbid.
+        #
+        # Guarded, and the guard direction matters: this method's RETURN VALUE
+        # is the stored password hash. An exception escaping here would abort
+        # the settings save after the `auth_required = 1` above had already
+        # been set in the parser, which is the "authentication on, no password
+        # stored" lockout that the rest of this file exists to prevent. A stale
+        # signing secret is recoverable by signing out; that state is not.
+        if value:
+            try:
+                from couchpotato import rotate_session_secret
+                rotate_session_secret()
+            except Exception:
+                log.error('Password saved, but the session signing secret '
+                          'could not be rotated -- sessions opened with the '
+                          'OLD password are still valid. Sign out to force a '
+                          'rotation, or restart. %s', traceback.format_exc())
+
         return hash_password(md5(value)) if value else ''
 
     def guardAuthRequired(self, value):
@@ -414,7 +445,8 @@ config = [{
                     'label': 'Password',
                     'description': 'Password for web interface login. Setting one turns '
                                    '"Require login" on; clearing it turns it off, so you '
-                                   'cannot lock yourself out.',
+                                   'cannot lock yourself out. Changing it signs you out '
+                                   'of every device, including this one.',
                 },
                 {
                     'name': 'port',

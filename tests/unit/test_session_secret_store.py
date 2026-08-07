@@ -423,11 +423,61 @@ class TestTheSecretIsCreatedOnceAtStartup:
             'the session secret is written from more than one file: %r'
             % sorted(str(path) for path in writers)
         )
-        calls = sources[REPO_ROOT / 'couchpotato' / '__init__.py'].count('_write_session_secret(')
-        assert calls == 2, (
-            'expected exactly one definition and one call site of '
-            '_write_session_secret, found %d occurrences' % calls
+        # Named, not counted. A bare count says nothing about WHERE the calls
+        # are, and the point of AC-ARCH-3 is that the three triggers -- startup
+        # bootstrap, logout and password change -- all funnel through this one
+        # writer rather than any of them writing the property row itself.
+        tree = ast.parse(sources[REPO_ROOT / 'couchpotato' / '__init__.py'])
+        callers = sorted(
+            node.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef)
+            and any(getattr(call.func, 'id', None) == '_write_session_secret'
+                    for call in ast.walk(node) if isinstance(call, ast.Call))
         )
+
+        assert callers == ['ensure_session_secret', 'rotate_session_secret'], callers
+
+    def test_no_other_module_writes_the_secret_property_row(self):
+        """The writer being alone is only half of it.
+
+        Anything that inserted or updated a `property` document with the secret
+        identifier directly would bypass the retry-on-conflict in
+        `_write_session_secret`, and a lost compare-and-swap there becomes a
+        SECOND row -- after which the lookup returns whichever SQLite hands
+        back first and sessions verify or not at random.
+
+        Scoped per FUNCTION, not per file. `couchpotato/core/database.py` names
+        the identifier -- that is how `database.document.update` REFUSES to
+        touch the row (AC-SEC-40) -- and separately calls `db.update` for
+        ordinary documents. A file-level grep calls that an offender forever,
+        which would end with the check being deleted or allowlisted into
+        uselessness. What actually matters is a function that knows the
+        identifier AND writes.
+        """
+        writes = {'insert', 'update', 'delete', 'setProperty'}
+        offenders = []
+
+        for path in sorted((REPO_ROOT / 'couchpotato').rglob('*.py')):
+            if path == REPO_ROOT / 'couchpotato' / '__init__.py':
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding='utf-8'))
+            except SyntaxError:
+                continue
+
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    continue
+                names = {inner.id for inner in ast.walk(node) if isinstance(inner, ast.Name)}
+                if 'SESSION_SECRET_PROPERTY' not in names:
+                    continue
+                called = {getattr(call.func, 'attr', None)
+                          for call in ast.walk(node) if isinstance(call, ast.Call)}
+                if called & writes:
+                    offenders.append('%s:%s' % (path.relative_to(REPO_ROOT), node.name))
+
+        assert offenders == [], offenders
 
 
 class TestVerificationNeverWrites:

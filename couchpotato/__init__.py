@@ -391,6 +391,41 @@ def ensure_session_secret(db=None) -> str:
         return secret
 
 
+def rotate_session_secret(db=None) -> str:
+    """Replace the signing secret, which ends every session on every device.
+
+    D1. A stateless signed cookie holds no per-session server state, so under
+    the settled "no new table" constraint this is the ONLY revocation there is:
+    logout previously called `response.delete_cookie(...)`, which asks the
+    browser to forget a value the thief already had. The browser is the one
+    party that was never the threat.
+
+    Whole-secret rotation is deliberately not per-device. That is correct for
+    one operator, and the sign-out control's copy has to say so rather than
+    implying "this browser only".
+
+    Under the same lock as `ensure_session_secret`, and for the same measured
+    reason: the property store has no uniqueness constraint on `identifier`, so
+    two writers that both find nothing both insert, and a second row makes the
+    lookup return whichever SQLite hands back first for the life of the
+    install.
+
+    Does NOT touch the `api_key`. Rotating that was the old revocation, and it
+    breaks the userscript, every script and every downloader at once -- which
+    is why in practice it never happened and a leaked cookie was valid forever.
+    """
+    db = get_db() if db is None else db
+
+    with _SESSION_SECRET_WRITE_LOCK:
+        secret = generate_session_secret()
+        _write_session_secret(secret, db=db)
+        log.info('Rotated the session signing secret: every browser session, '
+                 'on every device, has been signed out and must log in again. '
+                 'The api_key is unchanged, so scripts, the userscript and '
+                 'every downloader keep working.')
+        return secret
+
+
 def get_session_secret():
     """The signing secret, or None. Reads only -- it never creates one.
 
@@ -408,6 +443,65 @@ def get_session_secret():
         return None
 
     return secret
+
+
+def _server_terminates_tls() -> bool:
+    """Does THIS process speak TLS, as opposed to something in front of it?
+
+    The same pair `runner.py` hands to uvicorn, and for the same reason: both
+    or neither. Half a TLS configuration still serves plain HTTP.
+    """
+    return bool(Env.setting('ssl_cert') and Env.setting('ssl_key'))
+
+
+def session_cookie_attributes() -> dict:
+    """The ONE source of the session cookie's attributes, set and delete alike.
+
+    A `Set-Cookie` deletion only matches if its `Path` and `Domain` match the
+    cookie that was set. Two hand-written attribute lists agree right up until
+    somebody edits one of them, and the failure is silent: the browser keeps
+    the original cookie while the server believes it cleared it, which is
+    precisely what "logging out" used to amount to here.
+
+    `secure` comes from the SERVER'S OWN configuration (D4) and from nothing
+    else -- not `X-Forwarded-Proto`, not `X-Forwarded-Ssl`, not `Host`, not the
+    request URL's scheme. Those are attacker-settable on a plain-HTTP LAN box,
+    and the failure direction is not a weaker cookie, it is an UNDELIVERABLE
+    one: the browser drops a Secure cookie on http, the redirect to `/` bounces
+    straight back to `/login/`, and the operator is locked out of their own
+    server by a header a stranger sent. This project's production instance is
+    plain HTTP, and the parent plan already records one near-miss of that
+    shape.
+
+    Read per request rather than frozen at `create_app` time, which leaves one
+    narrow window: an operator who saves `ssl_cert` and `ssl_key` from the
+    settings UI and does NOT restart is still being served plain HTTP, and the
+    next login would set a cookie the browser drops. That is bounded and
+    self-healing -- the Server settings group already says "Needs restart
+    before changes take effect", and the restart both makes TLS real and makes
+    the cookie deliverable. Freezing the value at boot would trade it for a
+    worse failure: any call path that builds the app before settings are loaded
+    would pin the wrong answer for the life of the process.
+
+    `samesite='Lax'` written out, because the browser default is not specified
+    and differs between them. Lax rather than Strict: Strict withholds the
+    cookie on a top-level navigation from another origin, so a bookmark or a
+    link from anywhere else would land the operator on the login page. Lax
+    still keeps a cross-site POST -- the logout CSRF of AC-SEC-37 -- from
+    carrying it.
+
+    `path` is `web_base` rather than a hardcoded `/`: an install served at
+    `/couchpotato/` behind a shared host would otherwise send its session
+    cookie to every other application on that host. It still covers the new UI,
+    the legacy `/old/` redirect and the API routes, which all live under
+    `web_base` (DEF-004).
+    """
+    return {
+        'path': Env.get('web_base') or '/',
+        'httponly': True,
+        'samesite': 'Lax',
+        'secure': _server_terminates_tls(),
+    }
 
 
 def get_current_user(request: Request):
@@ -730,36 +824,71 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 # above fixes. Max-Age was never enforcement anyway -- a replay
                 # simply omits it.
                 #
-                # `secure` is deliberately NOT set here. This deployment is
-                # plain HTTP, and a Secure cookie on plain HTTP is undeliverable:
-                # the browser drops it, the redirect to `/` bounces straight
-                # back to `/login/`, and the operator is locked out of their own
-                # server by an upgrade.
-                #
-                # path='/' shares the session across the new UI, the old UI and
-                # the API routes (DEF-004).
+                # Every other attribute comes from `session_cookie_attributes`,
+                # which the logout deletion uses too so the two cannot drift.
                 response.set_cookie(
                     SESSION_COOKIE_NAME,
                     mint_session_token(secret, lifetime),
                     max_age=lifetime if remember_me else None,
-                    httponly=True,
-                    path='/',
+                    **session_cookie_attributes(),
                 )
 
         return response
 
-    @app.get(web_base + 'logout/')
-    @app.get(web_base + 'logout')
-    async def logout(request: Request):
-        response = RedirectResponse(url='%slogin/' % web_base, status_code=302)
-        # Delete cookie with path=/ to match the path set during login.
-        #
-        # This asks the BROWSER to forget the token; it does not yet revoke it
-        # server-side. Revocation is secret rotation (D1) and lands with the
-        # sign-out control, not in this tranche -- until then a token in
-        # someone else's hands stays valid until its signed expiry, which is at
-        # least bounded now where it previously was not.
-        response.delete_cookie(SESSION_COOKIE_NAME, path='/')
+    # POST, and authenticated. Both are required, and neither is ceremony.
+    #
+    # Logging out now ROTATES the shared signing secret (D1), which is the only
+    # revocation a stateless signed cookie permits without the new table the
+    # plan rules out -- and it ends every session on every device. Left as the
+    # public unauthenticated GET it used to be, that would have made
+    # `<img src="/logout/">` on any page the operator visited a remote,
+    # repeatable, unauthenticated way to sign them out everywhere. The old
+    # route was harmless as a GET only because it did nothing but clear one
+    # browser's own cookie.
+    #
+    # `require_auth` is the CSRF defence rather than a token (AC-SIMP-11): a
+    # caller who already holds a valid session gains nothing by making the
+    # victim discard theirs. `SameSite=Lax` is the second layer, keeping a
+    # cross-site POST from carrying the cookie at all.
+    #
+    # It stays reachable from an EXPIRED session in the only sense that
+    # matters: `require_auth` redirects to `/login/`, which is public, so a
+    # client whose session is broken lands on the form rather than on an error.
+    # That is asserted in tests/unit/test_session_revocation.py, because it is
+    # the assertion standing between this change and a lockout.
+    @app.post(web_base + 'logout/')
+    @app.post(web_base + 'logout')
+    async def logout(request: Request, user=Depends(require_auth)):
+        try:
+            rotate_session_secret()
+        except Exception:
+            # Do NOT clear the cookie and redirect to the login page here.
+            #
+            # That is what a successful sign-out looks like, and nothing was
+            # revoked: the token in somebody else's hands is still valid, and
+            # the one person who could act on that has just been shown the
+            # screen that says it is handled. Reporting the failure is worse UX
+            # and the only honest option -- and it costs nobody access, because
+            # the session that could not be revoked still works.
+            log.error('Sign-out FAILED: the session signing secret could not '
+                      'be rotated, so every existing session is STILL VALID on '
+                      'every device. Nothing has been signed out. Check that '
+                      'the database is writable and try again. %s',
+                      traceback.format_exc())
+            return Response(
+                content='Sign-out failed: existing sessions are still valid. '
+                        'See the server log.',
+                status_code=500,
+                media_type='text/plain',
+            )
+
+        # 303, not 302: this is the response to a POST, and 303 is the status
+        # that tells the browser to fetch the login page with GET.
+        response = RedirectResponse(url='%slogin/' % web_base, status_code=303)
+        # Asking the browser to drop its copy as well. Not the revocation --
+        # the rotation above is -- but without it the client keeps sending a
+        # dead cookie and every request logs a rejection.
+        response.delete_cookie(SESSION_COOKIE_NAME, **session_cookie_attributes())
         return response
 
     # Legacy /old/* catch-all — redirect to the new UI root. The dead views

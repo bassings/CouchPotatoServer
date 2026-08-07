@@ -98,6 +98,28 @@ def session_secret():
 
 
 @pytest.fixture
+def session_store(tmp_path):
+    """A real property store for the routes that WRITE the signing secret.
+
+    `stored_session_secret` doubles `Env.prop`, which is enough to READ a
+    secret, and every other test in this file only reads. Logout rotates, so it
+    needs somewhere to write -- and without this it picks up whatever another
+    module last left in `Env.get('db')`, which was a bare string.
+    """
+    from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
+
+    db = SQLiteAdapter()
+    db.create(str(tmp_path / 'session-store'))
+    previous = Env.get('db')
+    Env.set('db', db)
+    try:
+        yield db
+    finally:
+        Env.set('db', previous)
+        db.close()
+
+
+@pytest.fixture
 def authed_client(app, setup_env, session_secret):
     """Create an authenticated test client.
 
@@ -287,11 +309,21 @@ class TestAuthentication:
         assert resp.status_code == 302
         assert 'user' in resp.cookies or 'set-cookie' in resp.headers
 
-    def test_logout_clears_cookie(self, authed_client):
-        """Logout clears the auth cookie and redirects to login."""
-        resp = authed_client.get('/logout/', follow_redirects=False)
-        assert resp.status_code == 302
+    def test_logout_clears_cookie(self, authed_client, session_store):
+        """Logout clears the auth cookie and redirects to login.
+
+        POST, not GET: logout now rotates the shared signing secret, which ends
+        every session on every device, so answering a GET would make any
+        cross-site `<img src="/logout/">` a remote sign-out-everywhere button.
+        303 rather than 302 because this is the response to a POST. The
+        revocation itself is covered in tests/unit/test_session_revocation.py.
+        """
+        resp = authed_client.post('/logout/', follow_redirects=False)
+        assert resp.status_code == 303
         assert 'login' in resp.headers.get('location', '')
+
+    def test_logout_does_not_answer_a_get(self, authed_client):
+        assert authed_client.get('/logout/', follow_redirects=False).status_code == 405
 
     def test_getkey_with_correct_credentials(self, client, setup_env):
         """getkey endpoint returns API key with correct credentials.

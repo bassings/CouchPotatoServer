@@ -16,6 +16,55 @@ from couchpotato.core.helpers.variable import getImdb, tryInt, randomString
 log = CPLog(__name__)
 
 
+#: What `database.list_documents` shows in place of the signing secret.
+#:
+#: Redacted rather than dropped. An operator debugging a login problem needs to
+#: see that the row EXISTS -- and a second row claiming the same identifier,
+#: which is the failure `_write_session_secret` exists to prevent, has to stay
+#: visible from the API or nothing can report it.
+SESSION_SECRET_REDACTION = '<redacted: session signing secret>'
+
+SESSION_SECRET_REFUSAL = (
+    'Refused: that document holds the session signing secret. Sign out to '
+    'rotate it; changing it here would end every session with no way to '
+    'undo, and deleting it refuses every login until the process restarts.'
+)
+
+
+def _is_session_secret_document(document) -> bool:
+    """Is this the `property` row holding the session signing secret?
+
+    AC-SEC-40. The three `database.document.*` / `database.list_documents` API
+    views are reachable by anyone holding the `api_key` -- which is embedded in
+    every rendered page and handed to the userscript and to every third-party
+    script. Without this the `api_key` would buy the HMAC key that signs every
+    browser session, and unlike the `api_key` itself that secret SURVIVES an
+    `api_key` rotation, so the operator's one available remedy would not
+    actually remove the attacker's access.
+
+    Matched on the identifier rather than on the `_id`, because both a row that
+    IS the secret and a row that CLAIMS the identifier have to be caught: a
+    second `property` row with `identifier = session_secret` makes the lookup
+    return whichever SQLite hands back first, after which sessions verify or
+    not at random and no log line says why.
+
+    Imported inside the function, not at module scope: `couchpotato/__init__.py`
+    imports `couchpotato.environment`, which imports THIS module, before the
+    session constants further down that file exist. A top-level
+    `from couchpotato import SESSION_SECRET_PROPERTY` therefore fails at import
+    time with an ImportError that reads like a missing name. The identifier
+    still has exactly one definition in the tree (AC-ARCH-2); only the lookup
+    is deferred.
+    """
+    from couchpotato import SESSION_SECRET_PROPERTY
+
+    return (
+        isinstance(document, dict)
+        and document.get('_t') == 'property'
+        and document.get('identifier') == SESSION_SECRET_PROPERTY
+    )
+
+
 class Database:
 
     indexes = None
@@ -122,6 +171,15 @@ class Database:
                 }
 
             document = db.get('id', document_id.strip())
+
+            if _is_session_secret_document(document):
+                log.warning('Refused a database.document.delete targeting the '
+                            'session signing secret row.')
+                return {
+                    'success': False,
+                    'error': SESSION_SECRET_REFUSAL
+                }
+
             db.delete(document)
 
             return {
@@ -139,6 +197,39 @@ class Database:
                 'success': False,
                 'error': 'Request failed; see the server log for details'
             }
+
+    @staticmethod
+    def _refuses_session_secret_write(db, document):
+        """Would writing `document` touch the session signing secret? AC-SEC-40.
+
+        Two separate routes, both closed:
+
+        - the submitted payload CLAIMS the secret's identifier, which would
+          either overwrite the real row or plant a second one;
+        - the `_id` names the existing secret row, whatever the payload calls
+          itself -- overwriting it with an unrelated document destroys the
+          secret just as thoroughly.
+
+        Fails CLOSED on an unreadable store. `KeyError` is the adapter's
+        "no such document", which is the ordinary create-through-update case
+        and must stay allowed; anything else means we could not establish what
+        we are about to overwrite, and guessing in that direction costs every
+        live session.
+        """
+        if _is_session_secret_document(document):
+            return True
+
+        try:
+            existing = db.get('id', document['_id'])
+        except KeyError:
+            return False
+        except Exception:
+            log.error('Could not read the document being updated, so could not '
+                      'rule out the session signing secret. Refusing the write: '
+                      '%s', traceback.format_exc())
+            return True
+
+        return _is_session_secret_document(existing)
 
     @staticmethod
     def _validate_document_payload(raw_document):
@@ -174,6 +265,14 @@ class Database:
                     'error': error
                 }
 
+            if self._refuses_session_secret_write(db, document):
+                log.warning('Refused a database.document.update targeting the '
+                            'session signing secret row.')
+                return {
+                    'success': False,
+                    'error': SESSION_SECRET_REFUSAL
+                }
+
             d = db.update(document)
             document.update(d)
 
@@ -202,6 +301,15 @@ class Database:
         }
 
         for document in db.all('id'):
+            # Redact FIRST, before any filtering or grouping, so no later edit
+            # to this loop can route the raw row past it (AC-SEC-40). The copy
+            # matters: `db.all` hands back a freshly deserialised dict today,
+            # but mutating a document the adapter owns would be a corruption
+            # bug rather than a disclosure one, and this file must not trade
+            # the second for the first.
+            if _is_session_secret_document(document):
+                document = dict(document, value=SESSION_SECRET_REDACTION)
+
             key = document.get('_t', 'unknown')
 
             if kwargs.get('show') and key != kwargs.get('show'):

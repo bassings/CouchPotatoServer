@@ -1,0 +1,563 @@
+"""Ending a session actually ends it. AC-SEC-36, AC-SEC-37, AC-SEC-38.
+
+The defect this file pins is not that logout was missing -- it existed. It is
+that `response.delete_cookie(...)` asks the BROWSER to forget a value, and the
+browser is the one party that was never the threat. Anyone who already had the
+cookie kept it, and there was no server-side state to revoke.
+
+A stateless signed cookie holds no per-session record, so under the settled
+"no new table" constraint the only revocation available is rotating the shared
+signing secret (D1). That ends every session on every device, which is the
+correct behaviour for one operator and is what the control's copy must say.
+
+Rotation being that powerful is exactly why AC-SEC-37 exists. `logout` was a
+public unauthenticated GET, so under D1 a cross-site `<img src="/logout/">` on
+any page the operator visited would have terminated every session on every
+device, repeatedly, with nothing to see in the UI but a login page. It is now
+an authenticated POST: `SameSite=Lax` keeps a cross-site POST from carrying the
+cookie at all, and `require_auth` means the handler never runs without one.
+
+Everything here is driven through the real routes against a real
+`SQLiteAdapter` and the real property store. A test that asserted only on the
+`Set-Cookie` deletion header would pass against the defect.
+"""
+import os
+import socket
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+from fastapi.testclient import TestClient
+
+from couchpotato import (
+    SESSION_COOKIE_NAME,
+    SESSION_LIFETIME,
+    SESSION_SECRET_PROPERTY,
+    ensure_session_secret,
+    get_current_user,
+    mint_session_token,
+    rotate_session_secret,
+    verify_session_token,
+)
+from couchpotato.api import api, api_docs, api_docs_missing, api_locks, api_nonblock
+from couchpotato.core import event as event_module
+from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
+from couchpotato.core.event import fireEvent
+from couchpotato.core.helpers.variable import hash_password, md5
+from couchpotato.core.settings import Settings
+from couchpotato.environment import Env
+
+API_KEY = 'notarealapikey' + '0' * 18
+REPO_ROOT = Path(__file__).resolve().parents[2]
+
+PASSWORD = 'hunter2'
+#: bcrypt is deliberately slow, so it is paid once for the whole module rather
+#: than once per login. Stored in the form `login_post` actually compares
+#: against: bcrypt OVER the md5 of the plaintext, which is what the login path
+#: computes (see `Core.md5Password`).
+STORED_PASSWORD = hash_password(md5(PASSWORD))
+
+
+class FakeSettings(Settings):
+    """The REAL `getProperty` / `setProperty` over an in-memory config."""
+
+    def __init__(self, data):
+        from couchpotato.core.logger import CPLog
+        self.data = data
+        self.log = CPLog('test-settings')
+        self.file = None
+        self.p = None
+        self.directories_delimiter = '::'
+
+    def get(self, attr, default=None, section='core', type=None):
+        return self.data.get(attr, default)
+
+    def set(self, section, option, value):
+        self.data[option] = value
+
+    def addSection(self, section):
+        pass
+
+    def save(self):
+        pass
+
+
+@pytest.fixture
+def env(tmp_path):
+    """A real adapter, a real `Core` plugin on the real event bus, a real app.
+
+    `Core()` is instantiated for real rather than through `Core.__new__`, so
+    the `setting.save.core.password` wiring under test is the shipped wiring
+    and not something this file arranged. Two globals it touches are saved and
+    restored: the signal handlers (skipped by pretending to be the desktop
+    build) and the process-wide default socket timeout.
+    """
+    old_api = dict(api)
+    old_locks = dict(api_locks)
+    old_nonblock = dict(api_nonblock)
+    old_docs = dict(api_docs)
+    old_missing = list(api_docs_missing)
+    old_events = {name: list(handlers) for name, handlers in event_module.events.items()}
+    old_timeout = socket.getdefaulttimeout()
+
+    db = SQLiteAdapter()
+    db.create(str(tmp_path / 'db'))
+
+    settings = FakeSettings({
+        'username': '',
+        'password': STORED_PASSWORD,
+        'api_key': API_KEY,
+        'auth_required': 1,
+        'rate_limit_max': 0,
+        'cors_origins': '',
+        'ssl_cert': '',
+        'ssl_key': '',
+    })
+
+    Env.set('db', db)
+    Env.set('settings', settings)
+    Env.set('web_base', '/')
+    Env.set('api_base', '/api/%s/' % API_KEY)
+    Env.set('static_path', '/static/')
+    Env.set('app_dir', str(REPO_ROOT))
+    Env.set('data_dir', str(tmp_path))
+    Env.set('dev', False)
+    # Skips `Core.signalHandler`, which would replace this process's SIGINT and
+    # SIGTERM handlers for the rest of the pytest run.
+    Env.set('desktop', True)
+
+    from couchpotato.core._base._core import Core
+    Core()
+
+    secret = ensure_session_secret(db)
+
+    from couchpotato import create_app
+    app = create_app(API_KEY, '/')
+
+    yield type('EnvHandle', (), {
+        'db': db, 'settings': settings, 'secret': secret, 'app': app,
+        'tmp_path': tmp_path,
+    })
+
+    Env.set('desktop', False)
+    socket.setdefaulttimeout(old_timeout)
+    db.close()
+    api.clear()
+    api.update(old_api)
+    api_locks.clear()
+    api_locks.update(old_locks)
+    api_nonblock.clear()
+    api_nonblock.update(old_nonblock)
+    api_docs.clear()
+    api_docs.update(old_docs)
+    api_docs_missing.clear()
+    api_docs_missing.extend(old_missing)
+    event_module.events.clear()
+    event_module.events.update(old_events)
+
+
+def client(env):
+    return TestClient(env.app, follow_redirects=False)
+
+
+def log_in(env) -> tuple:
+    """A real POST /login/, returning (client, cookie value)."""
+    session = client(env)
+    response = session.post('/login/', data={'username': '', 'password': PASSWORD})
+
+    assert response.status_code == 302, response.text
+    token = session.cookies.get(SESSION_COOKIE_NAME)
+    assert token, 'login issued no session cookie: %r' % response.headers.get('set-cookie')
+    return session, token
+
+
+def replay(env, token):
+    """A FRESH client holding `token` -- the thief, not the browser that left."""
+    session = client(env)
+    session.cookies.set(SESSION_COOKIE_NAME, token)
+    return session
+
+
+def is_signed_in(session) -> bool:
+    response = session.get('/')
+    if response.status_code == 200:
+        return True
+    assert response.status_code == 302, response.status_code
+    assert 'login' in response.headers.get('location', '')
+    return False
+
+
+class TestLogoutRevokesRatherThanForgets:
+    """AC-SEC-36 / D1."""
+
+    def test_a_cookie_captured_before_logout_is_refused_after_it(self, env):
+        owner, token = log_in(env)
+        thief = replay(env, token)
+
+        assert is_signed_in(thief), (
+            'the captured cookie was not valid to begin with, so the assertion '
+            'below would pass without revoking anything'
+        )
+
+        assert owner.post('/logout/').status_code in (302, 303)
+
+        assert not is_signed_in(thief), (
+            'the cookie captured before logout still works. Logout asked the '
+            'browser to forget a value the thief already had; it revoked '
+            'nothing.'
+        )
+
+    def test_logging_out_ends_the_session_on_the_other_device_too(self, env):
+        """D1 is deliberately not "this browser only", and must be visibly so.
+
+        If this ever passes only for the browser that clicked, the sign-out
+        copy tranche C renders becomes a lie about the security property the
+        operator is relying on.
+        """
+        phone, _ = log_in(env)
+        laptop, _ = log_in(env)
+
+        phone.post('/logout/')
+
+        assert not is_signed_in(laptop)
+
+    def test_the_secret_actually_changed_rather_than_the_cookie_being_cleared(self, env):
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        owner, _ = log_in(env)
+
+        owner.post('/logout/')
+
+        after = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        assert after != before
+        assert len(bytes.fromhex(after)) == 32
+
+    def test_only_one_secret_row_survives_a_hundred_logout_cycles(self, env):
+        """AC-SEC-46: rotation must update the row, never accumulate rows.
+
+        A second row with the same identifier makes the lookup return whichever
+        SQLite hands back first, after which sessions verify or not at random.
+
+        The cookie is minted against the current secret rather than obtained by
+        a real password POST: bcrypt costs 166 ms a login here, so a hundred of
+        those would put 17 seconds into the unit suite to exercise a code path
+        that is not the one under test. Everything downstream of the cookie --
+        the route, `require_auth`, the rotation and the property store -- is
+        real.
+        """
+        for _ in range(100):
+            current = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+            session = replay(env, mint_session_token(current, SESSION_LIFETIME))
+            assert session.post('/logout/').status_code in (302, 303)
+
+        rows = [row for row in env.db._query_index('property', key=SESSION_SECRET_PROPERTY)
+                if row.get('identifier') == SESSION_SECRET_PROPERTY]
+        assert len(rows) == 1, 'logout accumulated %d secret rows' % len(rows)
+
+    def test_a_rotation_that_fails_does_not_report_a_successful_sign_out(self, env, monkeypatch):
+        """The failure mode that must not be smoothed over.
+
+        If the store is unwritable, the honest outcomes are "error" or
+        "still signed in". The tempting one -- log it, clear the cookie,
+        redirect to the login page -- is the worst available: the operator sees
+        exactly what a successful sign-out looks like while the token in
+        somebody else's hands stays valid. That is a door locked in appearance
+        only, which is the defect class this whole PR exists to close.
+        """
+        owner, token = log_in(env)
+
+        def explode(*args, **kwargs):
+            raise RuntimeError('property store is down')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', explode)
+
+        response = owner.post('/logout/')
+
+        assert response.status_code == 500, (
+            'a failed revocation answered %d, which the operator reads as '
+            '"signed out"' % response.status_code
+        )
+        assert 'set-cookie' not in response.headers, (
+            'the cookie was cleared even though nothing was revoked, so the '
+            'browser looks signed out while the token still works'
+        )
+        assert is_signed_in(replay(env, token))
+
+    def test_ending_sessions_costs_no_integration(self, env):
+        """AC-PROD-3: the whole point of not reusing the api_key as the cookie.
+
+        Rotating the api_key breaks the userscript, every script and every
+        downloader at once, which is why nobody ever did it and a leaked cookie
+        was valid forever.
+        """
+        owner, _ = log_in(env)
+        key_before = env.settings.get('api_key')
+
+        owner.post('/logout/')
+
+        assert env.settings.get('api_key') == key_before
+        api_response = client(env).get('/api/%s/app.available' % API_KEY)
+        assert api_response.status_code == 200, api_response.text
+
+
+class TestRevocationIsNotReachableWithoutASession:
+    """AC-SEC-37."""
+
+    def test_an_unauthenticated_logout_leaves_another_clients_session_valid(self, env):
+        victim, _ = log_in(env)
+        stranger = client(env)
+
+        response = stranger.post('/logout/')
+
+        assert response.status_code == 302
+        assert 'login' in response.headers.get('location', '')
+        assert is_signed_in(victim), (
+            'an unauthenticated POST to /logout/ terminated somebody else\'s '
+            'session. Under D1 that is every session on every device, and it '
+            'can be repeated indefinitely.'
+        )
+
+    def test_a_cross_site_image_get_cannot_revoke_anything(self, env):
+        """`<img src="/logout/">` is the concrete attack D1 would have opened.
+
+        A GET is what an image, a prefetch, a link preview and a mail client
+        all issue, and none of them can be talked out of it. The route no
+        longer answers one.
+        """
+        victim, _ = log_in(env)
+
+        response = client(env).get('/logout/')
+
+        assert response.status_code == 405, (
+            'GET /logout/ is answered, so any cross-site image tag revokes '
+            'every session on every device'
+        )
+        assert is_signed_in(victim)
+
+    def test_an_authenticated_cross_site_image_get_cannot_revoke_either(self, env):
+        """The same GET, this time carrying the operator's own cookie.
+
+        `SameSite=Lax` DOES send the cookie on a top-level navigation, so
+        "the browser will not send it" is not the whole defence and must not
+        be the only one.
+        """
+        victim, _ = log_in(env)
+
+        assert victim.get('/logout/').status_code == 405
+        assert is_signed_in(victim)
+
+    def test_a_client_with_a_broken_cookie_can_still_reach_the_login_page(self, env):
+        """The route back in, which is what makes this safe to enforce.
+
+        Requiring a session to log OUT is only acceptable while a client
+        holding an unusable session can still get to the form. This is the
+        assertion standing between AC-SEC-37 and a lockout.
+        """
+        stuck = client(env)
+        stuck.cookies.set(SESSION_COOKIE_NAME, 'not-a-token')
+
+        response = stuck.get('/login/')
+
+        assert response.status_code == 200
+        assert 'password' in response.text.lower()
+
+    def test_a_client_with_an_expired_cookie_can_still_reach_the_login_page(self, env):
+        import time as _time
+
+        stuck = client(env)
+        stuck.cookies.set(
+            SESSION_COOKIE_NAME,
+            mint_session_token(env.secret, SESSION_LIFETIME, now=_time.time() - SESSION_LIFETIME - 1),
+        )
+
+        response = stuck.get('/login/')
+
+        assert response.status_code == 200
+        assert 'password' in response.text.lower()
+
+    def test_a_client_whose_secret_was_rotated_away_can_still_reach_the_login_page(self, env):
+        owner, token = log_in(env)
+        rotate_session_secret(env.db)
+
+        response = owner.get('/login/')
+
+        assert response.status_code == 200
+        assert 'password' in response.text.lower()
+
+    def test_the_logout_route_carries_the_auth_dependency(self, env):
+        """Structural, so a future refactor cannot quietly drop `Depends`.
+
+        The behavioural tests above would still pass if `require_auth` were
+        replaced by an in-handler check that a later edit removed.
+        """
+        from fastapi.routing import APIRoute
+
+        logout_routes = [
+            route for route in env.app.routes
+            if isinstance(route, APIRoute) and route.path in ('/logout', '/logout/')
+        ]
+        assert logout_routes, 'no /logout route is served at all'
+
+        for route in logout_routes:
+            names = {getattr(d.call, '__name__', '') for d in route.dependant.dependencies}
+            assert 'require_auth' in names, route.path
+            assert route.methods == {'POST'}, (
+                '%s answers %r; a revocation that any GET can trigger is a '
+                'cross-site request forgery' % (route.path, route.methods)
+            )
+
+
+class TestChangingThePasswordEndsEverySession:
+    """AC-SEC-38 / D6."""
+
+    def test_a_cookie_issued_before_a_password_change_is_refused_after_it(self, env):
+        owner, token = log_in(env)
+        thief = replay(env, token)
+        assert is_signed_in(thief)
+
+        fireEvent('setting.save.core.password', 'a-new-password', single=True)
+
+        assert not is_signed_in(thief), (
+            'changing the password left every existing session valid. Someone '
+            'who has your cookie keeps it, which is the situation a password '
+            'change is usually a response to.'
+        )
+
+    def test_the_password_fields_description_states_that_consequence(self, env):
+        """AC-SEC-38's copy half, asserted next to the behaviour it describes.
+
+        Kept in the SAME test as a driven password change so the two cannot
+        drift: a description edited without the rotation, or a rotation
+        removed without the description, fails here.
+        """
+        from couchpotato.core._base._core import config
+
+        options = [option
+                   for section in config
+                   for group in section['groups']
+                   for option in group['options']]
+        password = [option for option in options if option['name'] == 'password'][0]
+        description = password['description'].lower()
+
+        owner, token = log_in(env)
+        fireEvent('setting.save.core.password', 'a-new-password', single=True)
+        assert not verify_session_token(token, env.settings.getProperty(SESSION_SECRET_PROPERTY))
+
+        assert 'sign' in description or 'log' in description, description
+        assert 'device' in description or 'everywhere' in description, (
+            'the password field does not tell the operator that changing it '
+            'signs them out on every device, which is what it now does: %r'
+            % password['description']
+        )
+
+    def test_clearing_the_password_does_not_grow_a_secret_row_on_a_fresh_install(self, env, tmp_path):
+        """The one case that must NOT rotate.
+
+        Clearing the password turns `auth_required` off, so every request is
+        already served without a session and there is nothing to revoke. Making
+        it write anyway would put a secret row on installs that never enabled
+        authentication, which AC-QA-21 and AC-SEC-46 both forbid.
+        """
+        empty = SQLiteAdapter()
+        empty.create(str(tmp_path / 'empty-db'))
+        Env.set('db', empty)
+        try:
+            fireEvent('setting.save.core.password', '', single=True)
+
+            rows = [row for row in empty._query_index('property', key=SESSION_SECRET_PROPERTY)
+                    if row.get('identifier') == SESSION_SECRET_PROPERTY]
+            assert rows == []
+        finally:
+            empty.close()
+            Env.set('db', env.db)
+
+    def test_a_failure_to_rotate_does_not_stop_the_password_being_hashed(self, env):
+        """Precedence: losing the password write is worse than a stale secret.
+
+        `md5Password` returns the stored hash. If rotation raised through it,
+        the settings save would fail and -- because the same hook writes
+        `auth_required` -- the operator could be left with authentication on
+        and no password stored, which is the recorded unrecoverable lockout.
+        """
+        from couchpotato.core._base._core import Core
+
+        core = Core.__new__(Core)
+        with patch('couchpotato.rotate_session_secret', side_effect=RuntimeError('store down')):
+            stored = core.md5Password('a-new-password')
+
+        assert stored.startswith(('$2a$', '$2b$', '$2y$')), stored
+
+
+class TestRotationTakesEffectImmediately:
+    """AC-ARCH-5: no stale cache, no restart."""
+
+    def test_the_very_next_verification_uses_the_new_secret(self, env):
+        old_token = mint_session_token(env.secret, SESSION_LIFETIME)
+        assert get_current_user(_request(old_token)) is True
+
+        new_secret = rotate_session_secret(env.db)
+
+        assert get_current_user(_request(old_token)) is None, (
+            'a cookie minted before the rotation still verifies in the same '
+            'process, so something is caching the old secret'
+        )
+        assert get_current_user(_request(mint_session_token(new_secret, SESSION_LIFETIME))) is True
+
+    def test_a_session_started_after_the_rotation_survives_the_next_request(self, env):
+        """Paired positive: rotation must not leave the install unable to log in."""
+        rotate_session_secret(env.db)
+
+        session, _ = log_in(env)
+
+        assert is_signed_in(session)
+        assert is_signed_in(session), 'the second request after logging in failed'
+
+    def test_ten_consecutive_requests_after_a_rotation_all_succeed(self, env):
+        """Guards against a rotation that half-lands and flaps."""
+        session, _ = log_in(env)
+        rotate_session_secret(env.db)
+        after, _ = log_in(env)
+
+        assert all(is_signed_in(after) for _ in range(10))
+        assert not is_signed_in(session)
+
+
+class TestExactlyOneFunctionWritesTheSecret:
+    """AC-ARCH-3, driven rather than grepped.
+
+    The grep half lives in `test_session_secret_store.py`; this is the spy that
+    proves all three triggers go through it.
+    """
+
+    def test_bootstrap_logout_and_password_change_all_go_through_the_writer(self, env, tmp_path, monkeypatch):
+        import couchpotato
+
+        real_writer = couchpotato._write_session_secret
+        calls = []
+
+        def spy(secret, db=None, attempts=3):
+            calls.append(secret)
+            return real_writer(secret, db=db, attempts=attempts)
+
+        monkeypatch.setattr(couchpotato, '_write_session_secret', spy)
+
+        fresh = SQLiteAdapter()
+        fresh.create(str(tmp_path / 'fresh-db'))
+        try:
+            ensure_session_secret(fresh)
+            assert len(calls) == 1, 'startup bootstrap did not use the writer'
+
+            owner, _ = log_in(env)
+            owner.post('/logout/')
+            assert len(calls) == 2, 'logout did not use the writer'
+
+            fireEvent('setting.save.core.password', 'a-new-password', single=True)
+            assert len(calls) == 3, 'the password change did not use the writer'
+        finally:
+            fresh.close()
+
+        assert len(set(calls)) == 3, 'two triggers wrote the same secret'
+
+
+def _request(cookie=None):
+    from types import SimpleNamespace
+    return SimpleNamespace(cookies=({SESSION_COOKIE_NAME: cookie} if cookie else {}))
