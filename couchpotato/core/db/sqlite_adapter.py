@@ -177,6 +177,37 @@ class SQLiteAdapter(DatabaseInterface):
         return False
 
     @_synchronised
+    @_synchronised
+    def _ensure_release_download_index(self) -> None:
+        """Idempotently add idx_release_download to an EXISTING database.
+
+        `open()` never runs schema.sql -- `_init_schema` is called from
+        `create()` -- so an index added there reaches fresh installs only, and
+        every database that already exists keeps doing a full scan of every
+        release row on a scheduled job. Same reason
+        `_ensure_unique_media_identifier_index` exists.
+
+        Simpler than that sibling: this index is additive, so
+        `CREATE INDEX IF NOT EXISTS` is the whole operation -- there is no
+        older index of the same name with different semantics to drop first,
+        and no unique constraint that can fail on existing data.
+
+        Never bricks startup: an index is an optimisation, and a database that
+        cannot create one still answers every query correctly, just slower.
+        """
+        conn = self._get_conn()
+        try:
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_release_download ON documents(
+                    CAST(json_extract(data, '$.download_info.downloader') AS TEXT),
+                    CAST(json_extract(data, '$.download_info.id') AS TEXT)
+                ) WHERE _t = 'release'
+            """)
+            conn.commit()
+        except sqlite3.Error as exc:
+            log.warning('Could not create idx_release_download; release lookups '
+                        'will full-scan but remain correct: %s', exc)
+
     def _ensure_unique_media_identifier_index(self) -> None:
         """Idempotently upgrade an existing install to the UNIQUE
         media_identifiers(provider, identifier) index (REG-004).
@@ -276,8 +307,10 @@ class SQLiteAdapter(DatabaseInterface):
         self._conn.execute("PRAGMA journal_mode = WAL")
         self._conn.execute("PRAGMA foreign_keys = ON")
         # Existing DBs never re-run schema.sql (open() doesn't call
-        # _init_schema), so self-upgrade the duplicate-media backstop here.
+        # _init_schema), so self-upgrade here. Every index added to schema.sql
+        # needs a line in this block or it reaches fresh installs only.
         self._ensure_unique_media_identifier_index()
+        self._ensure_release_download_index()
 
     @_synchronised
     def create(self, path: str) -> None:
@@ -770,12 +803,40 @@ class SQLiteAdapter(DatabaseInterface):
                 params.append(key)
 
         elif index_name == 'release_download':
+            # The key is HONOURED. It used to be ignored -- the branch filtered
+            # on the two fields merely EXISTING and left a comment saying "for
+            # now return all with download_info" -- and `get()` then returned
+            # the first row. Downstream, `renamer/scanner.py:197` stamps that
+            # release's imdb_id, quality and is_3d onto the finished download,
+            # and `folder_scanner.py:361` uses that imdb_id as the FIRST and
+            # highest-priority signal for which movie the files belong to,
+            # ahead of the CP tag and ahead of filename parsing. So a wrong row
+            # here does not fail to help, it OVERRIDES the right answer and the
+            # renamer files the download into the wrong movie's folder.
+            #
+            # Preferred key is a (downloader, id) pair. A combined
+            # "downloader-id" string is accepted for compatibility and split on
+            # the FIRST separator, which is unambiguous for every downloader in
+            # this tree (none has a `-` in its name) and FAILS CLOSED when it
+            # is not: an ambiguous split simply matches nothing, and the caller
+            # already logs "not found". Never an arbitrary row.
+            #
+            # CAST(... AS TEXT) on both sides because the id type is NOT
+            # uniform: hash downloaders store a string (deluge, transmission),
+            # while nzbget stores `nzb['NZBID']`, an int. The caller formats
+            # the key with %s, so comparing raw JSON values would test '123'
+            # against 123 and silently match nothing for every NZBGet install.
             sql = "SELECT _id, _rev, data FROM documents WHERE _t = 'release'"
             if key is not None:
-                # key is a combined downloader-id string
-                sql += """ AND json_extract(data, '$.download_info.downloader') IS NOT NULL
-                           AND json_extract(data, '$.download_info.id') IS NOT NULL"""
-                # We'd need to match on combined key; for now return all with download_info
+                if isinstance(key, (tuple, list)) and len(key) == 2:
+                    downloader, download_id = key
+                else:
+                    downloader, _, download_id = str(key).partition('-')
+
+                sql += """ AND CAST(json_extract(data, '$.download_info.downloader') AS TEXT) = ?
+                           AND CAST(json_extract(data, '$.download_info.id') AS TEXT) = ?"""
+                params.append(str(downloader))
+                params.append(str(download_id))
             else:
                 sql += " AND json_extract(data, '$.download_info') IS NOT NULL"
 

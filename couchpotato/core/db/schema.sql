@@ -41,6 +41,19 @@ CREATE INDEX IF NOT EXISTS idx_media_title ON documents(json_extract(data, '$.ti
 CREATE INDEX IF NOT EXISTS idx_media_parent ON documents(json_extract(data, '$.parent_id'))
     WHERE _t = 'media' AND json_extract(data, '$.parent_id') IS NOT NULL;
 
+-- Lookup by downloader + download id (ReleaseDownloadIndex).
+-- `renamer.check_snatched` runs this on a schedule for every snatched
+-- release; without an index it is a full scan of every release row.
+--
+-- CAST to TEXT on both columns because the id type is NOT uniform: hash-based
+-- downloaders store a string (deluge, transmission), while nzbget stores
+-- `nzb['NZBID']`, an int. The query casts both sides, so the index expression
+-- has to match that exactly or SQLite will not use it.
+CREATE INDEX IF NOT EXISTS idx_release_download ON documents(
+    CAST(json_extract(data, '$.download_info.downloader') AS TEXT),
+    CAST(json_extract(data, '$.download_info.id') AS TEXT)
+) WHERE _t = 'release';
+
 -- Category lookup (CategoryMediaIndex)
 CREATE INDEX IF NOT EXISTS idx_media_category ON documents(json_extract(data, '$.category_id'))
     WHERE _t = 'media' AND json_extract(data, '$.category_id') IS NOT NULL;
