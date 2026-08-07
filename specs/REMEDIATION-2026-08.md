@@ -128,6 +128,48 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
+- [ ] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: queued (no deps)
+
+      Review Medium on #229, confirmed by execution and then **attempted and
+      reverted**, which is why it is a task rather than a fix.
+
+      `Settings.getProperty` wraps its read in a blanket `except Exception:`
+      that logs at DEBUG and returns None (`core/settings.py:640-654`).
+      Measured against a store whose reads raise:
+
+          getProperty returned: None   <-- did NOT raise
+
+      So `Env.prop` never reports a broken store, the probe's `except` is
+      unreachable in production, and it answers "readable" for both "never had
+      a secret" and "the store just raised" -- the exact ambiguity it exists to
+      resolve. Its test passed only by monkeypatching `getProperty` wholesale,
+      bypassing the handler a real fault goes through.
+
+      **Not urgent.** The reviewer's own analysis, verified: `ensure_session_secret`
+      reads via `_session_secret_row` (the adapter directly), which DOES
+      propagate, and `login_post` catches it -- so fail-closed holds today,
+      just via an undocumented path rather than the one AC-SEC-33's write-up
+      names. The risk is fragility: consolidating the read paths would remove
+      that backstop silently.
+
+      **Why it is deferred rather than fixed.** Three attempts, each worse:
+      pointing the probe at the adapter made the probe and `get_session_secret`
+      read differently, so a login issued a cookie while the secret was
+      unreadable (caught by
+      `test_login_issues_no_cookie_when_the_secret_cannot_be_read`); pointing
+      both at the adapter broke 22 tests. Project rule 11 says the fourth
+      attempt is not the answer. All of it was reverted; the suite is green.
+
+      Two shapes to choose between, both from the review:
+      1. read through the adapter in BOTH the probe and `get_session_secret`,
+         and fix every test that injects a `getProperty` fault (there are at
+         least six, across three files);
+      2. delete the probe and document `ensure_session_secret`'s own exception
+         propagation as the AC-SEC-33 enforcement point.
+
+      Option 2 is smaller and matches what already happens. Either way it is
+      its own change on the authentication path, with its own review.
+
 - [ ] T11: a focus move that fails entirely tells only the developer console — state: queued (no deps)
 
       Raised in review of #230 and accepted as a follow-up rather than built

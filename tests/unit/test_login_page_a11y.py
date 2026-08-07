@@ -335,8 +335,14 @@ class TestNoNewColourAndNoNewMotion:
         # `re.I` as well as `re.S`: without it `<STYLE>` is not stripped, and
         # the hex inside it is then reported as a raw colour in the markup --
         # a false failure, and the shape CodeQL flags as `py/bad-tag-filter`.
-        markup = re.sub(r'<style\b.*?</style>', '', html, flags=re.S | re.I)
-        markup = re.sub(r'<script\b.*?</script>', '', markup, flags=re.S | re.I)
+        # `\s*` before the closing `>` as well as `re.I`: HTML permits
+        # `</script >`, and an end-tag pattern that misses it leaves the whole
+        # block in the markup -- so its hex would be reported as a raw colour.
+        # A false FAILURE here rather than a hole, but `py/bad-tag-filter`
+        # flags the shape either way, and it flagged this twice: once for case
+        # and once for whitespace, because the first fix only addressed case.
+        markup = re.sub(r'<style\b.*?</style\s*>', '', html, flags=re.S | re.I)
+        markup = re.sub(r'<script\b.*?</script\s*>', '', markup, flags=re.S | re.I)
         markup = re.sub(r'<meta[^>]*>', '', markup, flags=re.I)
 
         assert not re.search(r'#[0-9a-fA-F]{3,8}\b', markup), (
