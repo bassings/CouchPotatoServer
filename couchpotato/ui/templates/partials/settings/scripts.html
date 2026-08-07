@@ -552,10 +552,22 @@ function settingsPanel() {
       }
     },
 
-    toast(msg, type) {
+    toast(msg, type, duration = 3000) {
+      // `duration` is honoured, and the pending timer cancelled.
+      //
+      // This took a hardcoded 3000 and silently DROPPED any third argument, so
+      // the long refusal message added for the auth guard got the same 3s dwell
+      // as "Restarting..." -- the opposite of the intent, with no error to say
+      // so. The sibling toast() at :837 and the one in base.html both already
+      // accept a duration; this one did not, and the call site was modelled on
+      // them.
+      //
+      // clearTimeout for the same reason :837 does it: without it a stale timer
+      // from an earlier toast wipes a newer one early.
+      clearTimeout(this._settingsToastTimer);
       this.message = msg;
       this.messageType = type;
-      setTimeout(() => this.message = '', 3000);
+      this._settingsToastTimer = setTimeout(() => this.message = '', duration);
     },
 
     async browseDirectory(section, name, index = null) {

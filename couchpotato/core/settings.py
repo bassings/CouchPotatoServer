@@ -521,18 +521,58 @@ class Settings:
         # unrecoverable lockout. Returning a bare `{'success': True}` told the
         # settings client the submitted value had been accepted, so it kept `1`
         # in local state, cleared the dirty flag, left the checkbox ticked and
-        # announced "Saved" -- while the server remained public. The UI stated
-        # the opposite of the truth about whether authentication was on, which
-        # is the same defect class as the copy this branch already corrected on
-        # the username and password fields.
-        #
-        # `value` is echoed too so a client can tell "stored what I sent" from
-        # "stored something else" without re-deriving the comparison.
+        # announced "Saved" -- while the server remained public.
+        return self._save_result(section, option, stored, value)
+
+    def _save_result(self, section, option, stored, submitted):
+        """The saveView response body: what was stored, and whether it differs.
+
+        Two things this has to get right, both of which the first version got
+        wrong and both of which were introduced BY the fix above:
+
+        NEVER ECHO A SECRET. `getValues` masks `type == 'password'` options
+        before they reach a client, and this path had no such mask.
+        `Core.md5Password` returns `hash_password(md5(value))`, so a password
+        save put the full bcrypt string in the response body -- which the
+        settings client then wrote into `values.core.password` (bound to the
+        visible input) and, because of the type bug below, interpolated into an
+        on-screen toast. Measured: `'$2b$12$...'` in the response.
+
+        COMPARE LIKE WITH LIKE. Every form/query POST arrives as a string
+        (`dict(request.form())`, and the client explicitly does `String(value)`),
+        while hooks return native types -- `guardAuthRequired` returns `int` 1,
+        `checkApikey` returns a str, `md5Password` a hash. So `stored != value`
+        was `1 != '1'` for the ACCEPTED case and reported `changed` on every
+        successful "Require login" enable, every password save and every api-key
+        regeneration -- firing a refusal toast for a save that succeeded. That
+        is the same "UI states the opposite of what happened" defect the
+        `changed` flag exists to prevent, reintroduced by its own implementation.
+
+        Both sides are coerced through the option's registered type before
+        comparing, so `'1'` and `1` are the same answer.
+        """
+        option_type = self.getType(section, option)
+
+        def coerce(v):
+            try:
+                return _coerce_value(v, option_type)
+            except Exception:
+                # An uncoercible value is not a reason to fail the save that
+                # already happened; fall back to comparing what we have.
+                return v
+
+        changed = coerce(stored) != coerce(submitted)
+
+        if option_type == 'password':
+            # Report THAT it changed, never what to. The client only needs the
+            # boolean; echoing the value is what leaked the hash.
+            return {'success': True, 'changed': changed}
+
         return {
             'success': True,
             'value': stored,
-            'submitted': value,
-            'changed': stored != value,
+            'submitted': submitted,
+            'changed': changed,
         }
 
     # Meta option helpers

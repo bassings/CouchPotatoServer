@@ -22,6 +22,7 @@ pre-existing test for this path mocks the query and feeds `done_movies` in
 directly, which is exactly why it stayed green through the whole period the real
 lookup returned nothing.
 """
+import os
 import threading
 from unittest.mock import patch
 
@@ -57,15 +58,24 @@ def _run_cleanup(directories=None, scanned=()):
         if event == 'scanner.scan':
             # `scanned` are the imdb identifiers this scan FINDS. Driving
             # `on_found` is what populates `added_identifiers`, and the
-            # cleanup now refuses to run when that list is empty -- so a
-            # test that wants cleanup to happen has to make the scan
-            # actually find something, rather than relying on an empty
-            # directory to stand in for a real library.
+            # cleanup now refuses to run when any directory contributes
+            # nothing -- so a test that wants cleanup to happen has to make
+            # the scan actually find something, rather than relying on an
+            # empty directory to stand in for a real library.
+            #
+            # A DICT keyed by folder models the multi-directory case: the
+            # guard is per-directory, so a test that gave every directory the
+            # same result could not distinguish "one folder dropped" from
+            # "the whole library is gone" -- and a list-only harness made the
+            # multi-directory test assert nothing (it was really just
+            # re-testing "everything empty").
             on_found = kwargs.get('on_found')
+            folder = kwargs.get('folder')
+            found = scanned.get(folder, []) if isinstance(scanned, dict) else scanned
             if on_found:
-                for n, identifier in enumerate(scanned):
+                for n, identifier in enumerate(found):
                     on_found({'media': {'_id': identifier}, 'identifier': identifier},
-                             len(scanned), len(scanned) - n - 1)
+                             len(found), len(found) - n - 1)
         return []
 
     plugin = Manage.__new__(Manage)
@@ -217,4 +227,52 @@ class TestCleanupNeverRunsOnALibraryItCouldNotSee:
             'a scan that found NOTHING in an existing directory deleted '
             'movies. That is one scheduled scan during a mount gap costing '
             'the watch history, tags and review state of the whole library.'
+        )
+
+
+class TestCleanupNeedsEveryDirectoryToReportIn:
+    """One healthy folder must not vouch for a sibling that came back empty.
+
+    `library` is explicitly a multi-folder setting ("You can add multiple
+    folders separated by ::"), and the first version of this guard was a single
+    global `len(added_identifiers) > 0`. With `/mnt/nas/movies :: /srv/kids`,
+    the NAS dropping to an empty mountpoint while `/srv/kids` scanned fine left
+    that flag True -- so the cleanup ran and deleted every done movie on the NAS
+    half of the library, via `media.delete(delete_from='all')`.
+
+    The cleanup deletes across the WHOLE library and has no idea which folder a
+    missing movie belonged to, so a per-directory check is the only sound one.
+    """
+
+    def test_a_healthy_directory_does_not_excuse_an_empty_sibling(self, tmp_path):
+        nas = tmp_path / 'nas-dropped'      # exists, empty: the mount flap
+        kids = tmp_path / 'kids'            # scans fine
+        nas.mkdir()
+        kids.mkdir()
+
+        # ONLY /srv/kids reports finds. That is the whole scenario: a global
+        # "did we find anything" flag is True here, and was, which is why the
+        # cleanup ran and deleted the NAS half.
+        deleted = _run_cleanup(
+            directories=[str(nas), str(kids)],
+            scanned={os.path.normpath(str(kids)): ['tt-kids-1', 'tt-kids-2']},
+        )
+
+        assert deleted == [], (
+            'a dropped NAS alongside a healthy second folder still purged the '
+            'library: one directory scanning fine must not vouch for another '
+            'that returned nothing'
+        )
+
+    def test_every_directory_reporting_in_still_cleans_up(self, tmp_path):
+        """Anti-vacuity: the guard must not simply disable multi-folder cleanup."""
+        a = tmp_path / 'a'
+        b = tmp_path / 'b'
+        a.mkdir()
+        b.mkdir()
+
+        deleted = _run_cleanup(directories=[str(a), str(b)], scanned=['tt-found'])
+
+        assert 'terminal' in deleted, (
+            'both directories contributed and the cleanup still refused to run'
         )

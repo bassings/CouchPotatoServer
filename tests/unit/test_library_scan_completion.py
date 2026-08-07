@@ -61,20 +61,33 @@ def _run_update_library(tmp_path):
         return None
 
     class FakeDB:
-        def reindex(self, index_name):      # the REAL signature
-            raise AssertionError(
-                'reindex() was called; it is a documented no-op on SQLite and '
-                'the calls were meant to be deleted'
-            )
+        """`get_db()` still has to return SOMETHING -- `updateLibrary` calls it.
+
+        It no longer needs a `reindex` trap: T3.2 removed the call, so the trap
+        could never fire and reading it suggested a defect that is gone. Any
+        unexpected database use fails loudly as an AttributeError instead, which
+        is the honest version of the same protection.
+        """
 
     plugin = Manage.__new__(Manage)
     plugin._progress_lock = threading.Lock()
     plugin.in_progress = False
 
-    # cleanup=True on purpose: `db.reindex()` sits INSIDE the
-    # `if self.conf('cleanup') and full` block, so with cleanup off the broken
-    # call is never reached and these assertions pass without exercising
-    # anything. The option defaults ON, which is the path users are actually on.
+    # cleanup=True on purpose, but NOT for the reason first written here.
+    #
+    # The original comment said `db.reindex()` sits inside the
+    # `if self.conf('cleanup') and full` block, so cleanup had to be on for the
+    # broken call to be reached. T3.2 deleted that call, so there is no longer
+    # any reindex() in updateLibrary for cleanup to reach, and pointing the next
+    # reader at an already-fixed defect is exactly the stale-comment shape this
+    # branch keeps finding.
+    #
+    # It stays on because it is the shipped default and therefore the path users
+    # are on. What these two assertions actually pin is the completion timestamp
+    # at `manage.py`'s `Env.prop(last_update_key, ...)`, which sits OUTSIDE the
+    # cleanup block and so runs either way. The regression guard for the
+    # reindex-call deletion itself is the source scan in
+    # TestAdapterCompatSurface below.
     with patch.object(Manage, 'conf', lambda self, key, **kw: True), \
          patch.object(Manage, 'directories', lambda self: [str(library)]), \
          patch.object(Manage, 'isDisabled', lambda self: False), \

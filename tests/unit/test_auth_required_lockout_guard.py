@@ -267,13 +267,13 @@ class TestSaveViewReportsWhatItActuallyStored:
     corrected.
     """
 
-    def _save_view(self, hook_result, submitted):
+    def _save_view(self, hook_result, submitted, opt_type=None, option='auth_required'):
         """Drive `Settings.saveView` with a stubbed hook and capture the result."""
         import couchpotato.core.settings as settings_module
         from couchpotato.core.settings import Settings
 
         s = Settings.__new__(Settings)
-        s.types = {}
+        s.types = {'core': {option: opt_type}} if opt_type else {}
         s.options = {}
         s.directories_delimiter = '::'
         s.log = types.SimpleNamespace(warning=lambda *a, **k: None,
@@ -302,16 +302,21 @@ class TestSaveViewReportsWhatItActuallyStored:
                 lambda k, d=None: types.SimpleNamespace(
                     chroot2abs=lambda p: p) if k == 'softchroot' else original_get(k, d))
             try:
-                result = s.saveView(section='core', name='auth_required', value=submitted)
+                result = s.saveView(section='core', name=option, value=submitted)
             finally:
                 env_module.Env.get = original_get
         finally:
             settings_module.fireEvent = original_fire
 
-        return result, stored.get('auth_required')
+        return result, stored.get(option)
 
     def test_a_rewritten_value_is_reported_as_changed(self):
-        result, stored = self._save_view(hook_result=0, submitted=1)
+        # `'1'`, not `1`. Every form/query POST arrives as a STRING
+        # (`dict(request.form())`, and the client does `String(value)`), while
+        # the hook returns a native int. The first version of this test passed
+        # an int and so never exercised the cross-type comparison -- it stayed
+        # green while `changed` was True for accepted saves too.
+        result, stored = self._save_view(hook_result=0, submitted='1', opt_type='bool')
 
         assert stored == 0, 'the guard did not take effect at all'
         assert result['value'] == 0, (
@@ -320,15 +325,26 @@ class TestSaveViewReportsWhatItActuallyStored:
             'the server is public'
         )
         assert result['changed'] is True
-        assert result['submitted'] == 1
+        assert result['submitted'] == '1'   # echoed verbatim, as it arrived
 
     def test_an_accepted_value_is_not_reported_as_changed(self):
-        """Anti-vacuity: `changed` must not simply always be True."""
-        result, stored = self._save_view(hook_result=1, submitted=1)
+        """Anti-vacuity, and the case that was actually broken.
+
+        Submitted as the STRING the HTTP layer really delivers, against a hook
+        returning a native int. `stored != value` was `1 != '1'` -> True, so the
+        UI fired a refusal toast on every SUCCESSFUL "Require login" enable,
+        every password save and every api-key regeneration -- the same "states
+        the opposite of what happened" defect the flag exists to prevent,
+        reintroduced by its own implementation.
+        """
+        result, stored = self._save_view(hook_result=1, submitted='1', opt_type='bool')
 
         assert stored == 1
         assert result['value'] == 1
-        assert result['changed'] is False
+        assert result['changed'] is False, (
+            'an ACCEPTED save reported changed, because the string that arrived '
+            "over HTTP was compared against the hook's native int"
+        )
 
     def test_no_handler_still_reports_the_submitted_value(self):
         """`fireEvent(single=True)` returns [] with no handler -- the common case."""
@@ -337,3 +353,46 @@ class TestSaveViewReportsWhatItActuallyStored:
         assert stored == 'some-value'
         assert result['value'] == 'some-value'
         assert result['changed'] is False
+
+
+class TestASavedPasswordIsNeverEchoedBack:
+    """The response must not carry the credential it just stored.
+
+    `getValues` masks `type == 'password'` options before they reach a client.
+    The save response had no such mask, and `Core.md5Password` returns
+    `hash_password(md5(value))` -- so a password save put the full bcrypt string
+    in the body, which the settings client wrote into `values.core.password`
+    (bound to the visible input) and interpolated into an on-screen toast.
+
+    Measured before the fix: `'$2b$12$...'` present in the response.
+    """
+
+    def _save(self, option, submitted, hook_result, opt_type):
+        return TestSaveViewReportsWhatItActuallyStored._save_view(
+            TestSaveViewReportsWhatItActuallyStored(),
+            hook_result=hook_result, submitted=submitted,
+            opt_type=opt_type, option=option,
+        )
+
+    def test_a_password_save_returns_no_value_at_all(self):
+        result, stored = self._save('password', 'hunter2',
+                                    '$2b$12$abcdefghijklmnopqrstuv', 'password')
+
+        assert stored == '$2b$12$abcdefghijklmnopqrstuv', 'the hash was not stored'
+        assert 'value' not in result and 'submitted' not in result, (
+            'the save response echoed a password-typed option: %r' % (result,)
+        )
+        assert not any(str(v).startswith('$2b$') for v in result.values()), (
+            'a bcrypt hash reached the response body: %r' % (result,)
+        )
+
+    def test_a_password_save_still_reports_whether_it_changed(self):
+        """The boolean is all the client needs, and it must survive the mask."""
+        result, _ = self._save('password', 'hunter2', '$2b$12$xyz', 'password')
+        assert result['changed'] is True
+        assert result['success'] is True
+
+    def test_a_non_password_option_still_echoes_its_value(self):
+        """Anti-vacuity: the mask must be scoped to secrets."""
+        result, _ = self._save('url_base', '/cp', '/cp', 'unicode')
+        assert result['value'] == '/cp'
