@@ -325,6 +325,7 @@ is rejected with a pointer to this list, per the harness exit condition.
 
 ---
 
+
 ## Orchestrator decisions during implementation
 
 - **D9 — the core-to-web import edge in `_core.py` is ACCEPTED.** AC-SEC-38
@@ -354,6 +355,49 @@ is rejected with a pointer to this list, per the harness exit condition.
   now they cannot sign out at all until D8's control lands. **This branch must
   not reach `master` without D8**, for the same reason as AC-SEC-40: a push to
   `master` auto-publishes a beta.
+
+## D12 — the branch now has an unauthenticated database write, and it BLOCKS merge
+
+Introduced by tranche B, found by tranche C, verified by the orchestrator
+driving the real app rather than reading it:
+
+    auth_is_required(): False        (an install with no password: open)
+    rows before        : 0
+    POST /logout/      : 303         (caller presented no credentials)
+    rows after         : 1           _t=property identifier=session_secret
+
+With authentication off, `require_auth` passes everyone, so an unauthenticated
+caller reaches the rotation path and causes a write. It contradicts **AC-QA-21**
+("with `auth_required` off ... the property store is never written") and
+**AC-SEC-46** ("the change persists exactly one new document").
+
+It grants no access — such an install serves everything to everyone anyway — and
+is bounded to one row, so it is not urgent. It is still a defect this PR
+introduced, and the fix is one condition: with authentication off there is no
+session to revoke, so logout must write nothing.
+
+**Handled as NEW WORK with its own review, not as a touch-up.** Project rule 11:
+on a branch where a fix has itself introduced a defect twice, the next fix is
+suspect. This branch qualifies — tranche A created the secret-disclosure hole,
+tranche B closed it and created both the sign-out regression (D11) and this
+write. The tranche C implementer was right to refuse it: the fix sits in the
+revocation path whose ordering D6 also depends on, and slipping it into a UI
+tranche is how the shape gets muddled.
+
+**Frame check, since rule 11 also says to question the frame after three:** the
+frame is holding. Each tranche met its own goal and the "new defects" are
+consequences of partial implementation, every one surfaced by the discipline
+rather than by a user, on a branch that has shipped nothing. That is different
+from three failed attempts at a live bug. Revisit if tranche D introduces
+another.
+
+## D13 — `couchpotato/ui/__init__.py` is added to the allowed file set
+
+AC-SIMP-3's list did not include it, and D8 needs an `auth_required` flag in the
+template context so the sign-out control can be absent when authentication is
+off. A Jinja global would touch the same file. This is AC-SIMP-3's second
+amendment; per the amendment rule it is the last one, and any further file
+leaves for a follow-up PR.
 
 ## Spec gaps found at review
 
