@@ -147,6 +147,33 @@ happens to notice.
 
 ## Conductor log
 
+- **Tick 9** — #228 is 19/19 green; BLOCKED was two more unresolved review
+  threads, not a check. Both were arithmetic in tick 8's own correction, and
+  both were right: the median of an even-length sample is `(118 + 129) / 2 =
+  123.5s`, not the 7th sorted value, and the eleven non-outlier runs span 38s,
+  not 30s. Recomputed rather than argued, in the section, in the tick 8 entry
+  above, and in the sentence T9.1 hands to whoever measures next. That is the
+  third round of wrong numbers in a section whose thesis is "do not diagnose by
+  inference" — so the raw twelve-run series is now printed alongside every
+  statistic derived from it, which is the only fix that survives the next
+  editor. Armed: CI watcher on #228 after the push.
+
+- **Tick 8** — #228 review returned five findings, all correct, all fixed in
+  392c268c. Two were the T9 section failing at its own stated purpose: it said
+  "the last six runs" over a five-row table and used "one in six" as the
+  evidence for calling the spike isolated. Re-measured rather than edited:
+  n=12, median 123.5s, exactly one run over 5 min, eleven spanning 38s. The
+  P1 had teeth -- `accessibility` is a REQUIRED status check, so T9.2's
+  advertised "biggest win" would have deleted the job publishing it and blocked
+  every subsequent merge; acceptance now requires keeping the context or
+  changing protection in the same change. And T9 had no AC-<LENS>-<n> forty
+  lines below the rule requiring them, now marked NOT YET WRITTEN with
+  /plan-cycle as the precondition.
+
+  Process note: the first push FAILED the gate and my `echo` printed regardless
+  -- the exit-code trap. Retry passed (transient E2E flake), known only because
+  the second attempt captured `$?` directly. Armed: CI watcher on #228.
+
 - **Tick 7** — **#227 MERGED** (master `cd358c20`), verified with `gh pr view`,
   not from memory: CI 19/19, 0 unresolved threads, mergeStateStatus CLEAN.
   Branch deleted. T3 ticked. T4, T5 and T8 are now unblocked and may run in
@@ -1880,14 +1907,24 @@ What the last **twelve** completed runs actually show for `accessibility`
 
     108  101  697  99  137  130  118  132  118  130  102  129
 
-    n = 12    median = 129s (2.2 min)    runs over 5 min = 1
+    n = 12    median = 123.5s (2.1 min)    runs over 5 min = 1
+    excluding the 697s outlier: n = 11, min 99s, max 137s, spread 38s
 
 **Corrected 2026-08-07 after review.** The first version of this section said
 "the last six runs" above a five-row table and then used "one run in six" as the
 evidence for calling the spike isolated. Both numbers were wrong, in a section
 whose entire point is not diagnosing by inference -- so it is restated here from
 a real twelve-run sample rather than quietly patched. The spike is 1 in 12, and
-the job's normal cost is tightly clustered around 2.2 minutes.
+the job's normal cost is tightly clustered around two minutes.
+
+**Corrected again 2026-08-07, same section, same failure mode.** The first
+correction stated `median = 129s` and a "30-second band". Both were also wrong:
+129 is the 7th of twelve sorted values, not the median of an even-length sample
+(`(118 + 129) / 2 = 123.5`), and the eleven non-outlier runs span `137 - 99 =
+38s`. Every statistic in this section is now computed rather than eyeballed, and
+the raw series is printed above so the next reader can check the arithmetic
+instead of trusting it. Two rounds of wrong numbers in a section arguing against
+diagnosis by inference is the point, not an aside.
 
 The `docker` job over the same period is a steady ~1m20s and is unrelated.
 
@@ -1911,9 +1948,9 @@ time to steps, not to intuition. **No optimisation lands before this exists:**
 this repo has a recorded habit of diagnosing by inference and being wrong.
 
 Specifically answer: what did the 697s run spend its time on, and is
-`--fail-on-flaky-tests` retrying? At 1 in 12 with the other eleven inside a
-30-second band, a per-run cause (runner, apt mirror, a retry) is more likely
-than a workflow one -- but "more likely" is not a measurement.
+`--fail-on-flaky-tests` retrying? At 1 in 12 with the other eleven spanning 38s
+(99s to 137s), a per-run cause (runner, apt mirror, a retry) is more likely than
+a workflow one -- but "more likely" is not a measurement.
 
 ### T9.2: Stop paying for the same install twice · S · risk: low
 
