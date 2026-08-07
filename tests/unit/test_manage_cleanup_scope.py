@@ -33,7 +33,7 @@ MOVIES = [
 ]
 
 
-def _run_cleanup(directories=None):
+def _run_cleanup(directories=None, scanned=()):
     """Drive updateLibrary's cleanup and return the media ids it deleted.
 
     Deliberately does NOT swallow exceptions. An early failure would leave the
@@ -54,6 +54,18 @@ def _run_cleanup(directories=None):
             return (len(MOVIES), MOVIES)
         if event == 'media.delete':
             deleted.append(kwargs.get('media_id'))
+        if event == 'scanner.scan':
+            # `scanned` are the imdb identifiers this scan FINDS. Driving
+            # `on_found` is what populates `added_identifiers`, and the
+            # cleanup now refuses to run when that list is empty -- so a
+            # test that wants cleanup to happen has to make the scan
+            # actually find something, rather than relying on an empty
+            # directory to stand in for a real library.
+            on_found = kwargs.get('on_found')
+            if on_found:
+                for n, identifier in enumerate(scanned):
+                    on_found({'media': {'_id': identifier}, 'identifier': identifier},
+                             len(scanned), len(scanned) - n - 1)
         return []
 
     plugin = Manage.__new__(Manage)
@@ -93,14 +105,14 @@ class TestCleanupOnlyDeletesTerminalMovies:
         """
         library = tmp_path / 'library'
         library.mkdir()
-        assert 'terminal' in _run_cleanup(directories=[str(library)]), (
+        assert 'terminal' in _run_cleanup(directories=[str(library)], scanned=['tt-something-else']), (
             'the cleanup loop did not run: the rest of this file is vacuous'
         )
 
     def test_an_active_movie_with_a_done_release_is_not_deleted(self, tmp_path):
         library = tmp_path / 'library'
         library.mkdir()
-        assert 'upgrading' not in _run_cleanup(directories=[str(library)]), (
+        assert 'upgrading' not in _run_cleanup(directories=[str(library)], scanned=['tt-something-else']), (
             "'active' with a done release is the ordinary upgrade-hunt state, "
             'not an offline movie: deleting it destroys the library entry, '
             'watch state, tags and profile assignment'
@@ -109,7 +121,7 @@ class TestCleanupOnlyDeletesTerminalMovies:
     def test_a_movie_awaiting_review_is_not_deleted(self, tmp_path):
         library = tmp_path / 'library'
         library.mkdir()
-        assert 'reviewing' not in _run_cleanup(directories=[str(library)]), (
+        assert 'reviewing' not in _run_cleanup(directories=[str(library)], scanned=['tt-something-else']), (
             'a movie in the manual-review gate is not offline'
         )
 
@@ -146,7 +158,7 @@ class TestCleanupNeverRunsOnALibraryItCouldNotSee:
     def test_one_missing_directory_among_several_still_cancels_it(self, tmp_path):
         present = tmp_path / 'mounted'
         present.mkdir()
-        assert not _run_cleanup(directories=[str(present), str(tmp_path / 'gone')]), (
+        assert not _run_cleanup(directories=[str(present), str(tmp_path / 'gone')], scanned=['tt-found']), (
             'a partially-visible library is still a library this scan did not '
             'fully see; deleting on it is the same defect with extra steps'
         )
@@ -162,13 +174,47 @@ class TestCleanupNeverRunsOnALibraryItCouldNotSee:
     def test_a_fully_visible_library_still_cleans_up(self, tmp_path):
         """The guard must not buy safety by disabling the feature.
 
-        With every configured directory present, cleanup runs exactly as
-        before -- the seeded 'terminal' movie is not in `added_identifiers`
-        (nothing is scanned into it here) and is deleted.
+        REWRITTEN, and the original is worth naming: it asserted that a
+        directory which EXISTS AND IS EMPTY purges the terminal movie, i.e. it
+        enshrined the very defect the guard was meant to prevent. An unmounted
+        NFS mountpoint, a failed automount and a Docker bind mount with a
+        missing host path all look exactly like that, so the test certified the
+        dominant mount-failure shape as correct behaviour.
+
+        This is the fourth test on this branch found asserting a defect was
+        intended. The honest version has the scan actually FIND something --
+        which is what distinguishes "the library is visible" from "the library
+        is gone" -- and then checks that a movie the scan did not find is still
+        cleaned up.
         """
         present = tmp_path / 'mounted'
         present.mkdir()
-        assert 'terminal' in _run_cleanup(directories=[str(present)]), (
-            'the guard disabled cleanup even when the whole library was '
-            'visible: that is not a fix, it is a removal'
+
+        deleted = _run_cleanup(directories=[str(present)], scanned=['tt2', 'tt3'])
+
+        assert 'terminal' in deleted, (
+            'the guard disabled cleanup even though the scan found movies: '
+            'that is not a fix, it is a removal'
+        )
+
+    def test_an_existing_but_empty_directory_deletes_nothing(self, tmp_path):
+        """The dominant mount-failure shape, and the one the guard missed.
+
+        `os.path.isdir` returns True for an unmounted mountpoint, so
+        `library_fully_scanned` stayed True, the scan found nothing, and the
+        cleanup read "every movie is missing". Measured against the real
+        `updateLibrary` before the fix: directory missing deleted nothing,
+        directory existing-but-empty deleted every done movie.
+
+        `media.delete(delete_from='all')` takes the releases, the media
+        document, watch state, tags, profile and review state. The files
+        survive; the expensive tier does not.
+        """
+        empty = tmp_path / 'unmounted'
+        empty.mkdir()
+
+        assert _run_cleanup(directories=[str(empty)]) == [], (
+            'a scan that found NOTHING in an existing directory deleted '
+            'movies. That is one scheduled scan during a mount gap costing '
+            'the watch history, tags and review state of the whole library.'
         )

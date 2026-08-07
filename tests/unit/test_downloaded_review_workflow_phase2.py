@@ -357,10 +357,29 @@ class TestManageCleanupExemptsDownloadedMovies:
             if event == 'notify.frontend':
                 return None
             if event == 'scanner.scan':
-                # Reached only now that the harness supplies a REAL directory
-                # (see below). Returning nothing found is the point: it is what
-                # leaves `added_identifiers` empty so the cleanup has something
-                # to consider deleting.
+                # The scan must FIND something, and the reason changed.
+                #
+                # This used to return nothing on the grounds that an empty
+                # `added_identifiers` is what gives the cleanup something to
+                # consider deleting. That is exactly the state an unmounted NAS
+                # produces, and `updateLibrary` now refuses to clean up on it --
+                # a scan that found nothing is not evidence that nothing is
+                # there. Returning nothing here would make every assertion in
+                # this class vacuous again, for a new reason.
+                #
+                # So the scan reports one movie that is NOT any of the seeded
+                # ones: the library is demonstrably visible, and the seeded
+                # movies are still absent from it, which is the condition these
+                # tests are actually about.
+                on_found = kwargs.get('on_found')
+                if on_found:
+                    on_found({'media': {'_id': 'some-other'}, 'identifier': 'tt-visible'}, 1, 0)
+                return None
+            if event in ('release.add', 'movie.update'):
+                # Fired by `createAddToLibrary`'s callback for the movie the
+                # scan reports above. Not what this class measures, but the
+                # strict `raise` below would otherwise turn "the scan found
+                # something" into a harness error.
                 return None
             raise AssertionError('Unexpected fireEvent call: %r' % (event,))
 

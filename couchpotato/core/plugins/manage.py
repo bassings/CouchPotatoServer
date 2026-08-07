@@ -158,8 +158,46 @@ class Manage(Plugin):
                 if self.shuttingDown():
                     break
 
+            # A scan that FOUND NOTHING is not evidence that nothing is there.
+            #
+            # `library_fully_scanned` only disarms when `os.path.isdir` fails,
+            # and that misses the dominant mount-failure shape: an unmounted NFS
+            # mountpoint, a failed automount and a Docker bind mount with a
+            # missing host path all present as a directory that EXISTS and is
+            # EMPTY. `isdir` returns True, the scan finds nothing,
+            # `added_identifiers` is empty, and the cleanup below then reads
+            # "every movie is missing" and deletes all of them.
+            #
+            # Measured against this exact function: directory missing deleted
+            # nothing; directory existing-but-empty deleted every done movie.
+            # That is the scenario the guard was added for, in its most likely
+            # form, and the guard did not cover it.
+            #
+            # The cost of this check is real and accepted: a library whose files
+            # were all genuinely deleted stops being cleaned up automatically,
+            # leaving stale rows the user removes by hand. Weighed against
+            # `media.delete(delete_from='all')` destroying watch history, tags,
+            # profile and review state for every done movie -- unrecoverable
+            # without a backup, and nobody takes one before a scheduled scan --
+            # the inconvenient failure is the correct one to choose.
+            found_anything = len(added_identifiers) > 0
+            if self.conf('cleanup') and full and not self.shuttingDown() \
+                    and library_fully_scanned and not found_anything:
+                # NOT silent. The safety catch previously disarmed with no log
+                # line at all, so an operator could not tell that cleanup had
+                # stopped running, or why -- and a cleanup that quietly never
+                # runs looks identical to one with nothing to do.
+                log.warning('Skipping library cleanup: the scan completed but '
+                            'found no movies at all, in %s configured '
+                            'director%s. That is what an unmounted or empty '
+                            'library looks like, and deleting every movie on '
+                            'that basis is not recoverable. Nothing was '
+                            'removed.', len(directories),
+                            'y' if len(directories) == 1 else 'ies')
+
             # If cleanup option is enabled, remove offline files from database
-            if self.conf('cleanup') and full and not self.shuttingDown() and library_fully_scanned:
+            if self.conf('cleanup') and full and not self.shuttingDown() \
+                    and library_fully_scanned and found_anything:
 
                 # Get movies with done status
                 total_movies, done_movies = fireEvent('media.list', types = 'movie', status = 'done', release_status = 'done', status_or = True, single = True)
