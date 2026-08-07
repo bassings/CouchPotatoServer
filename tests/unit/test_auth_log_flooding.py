@@ -87,7 +87,7 @@ def at_info_or_above(log_path):
 
 
 @pytest.fixture
-def log_file(tmp_path):
+def log_file(tmp_path, request):
     """A real `RotatingFileHandler`, sized as production sizes it.
 
     Attached to the root logger at INFO by the INT, never the string: the name
@@ -95,8 +95,9 @@ def log_file(tmp_path):
     would silently drop every genuine INFO record.
     """
     path = str(tmp_path / 'CouchPotato.log')
-    handler = RotatingFileHandler(path, mode='a', maxBytes=500000, backupCount=10,
-                                  encoding='utf-8')
+    max_bytes, backups = getattr(request, 'param', (500000, 10))
+    handler = RotatingFileHandler(path, mode='a', maxBytes=max_bytes,
+                                  backupCount=backups, encoding='utf-8')
     handler.setFormatter(logging.Formatter('%(asctime)s %(levelname)s %(message)s',
                                            '%m-%d %H:%M:%S'))
     root = logging.getLogger()
@@ -201,6 +202,17 @@ class TestAnUnauthenticatedBurstCannotEvictTheRing:
             'above; the log ring is a stranger\'s to empty' % (BURST, len(emitted))
         )
 
+    # A ring the burst can actually exhaust. With production sizing
+    # (500,000 x 11 = 5.5MB) this test CANNOT FAIL: 1,000 unbounded records
+    # are ~533,043 bytes, under 10% of the ring, so the sentinel survives
+    # whether or not anything is bounded. Measured -- with
+    # `LOG_SUPPRESSION_WINDOW = 0`, i.e. suppression fully disabled, four
+    # tests in this class went red and this one PASSED.
+    #
+    # 20,000 x 3 = 60KB, so ~533KB of unbounded records evicts the sentinel
+    # many times over. Raising BURST past the ~10,300 records production
+    # sizing needs would work too, and would cost 10,300 real HTTP requests.
+    @pytest.mark.parametrize('log_file', [(20000, 2)], indirect=True)
     def test_the_lines_written_before_the_burst_are_still_there_afterwards(
             self, app_env, log_file):
         """The property that actually matters: eviction, not record count."""

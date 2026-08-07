@@ -362,18 +362,39 @@ class TestTheSecretIsCreatedOnceAtStartup:
         "before the first request" is the whole of D2: a bootstrap that ran
         lazily on a request path would put an unauthenticated caller's request
         in front of a database write.
+
+        Written by LINE and with comments excluded, and each pattern asserted
+        to match EXACTLY ONCE -- not with `str.find` over the raw file. That
+        was the shape this guard's sibling in `test_auth_required_gate.py`
+        shipped in, and it broke twice: once when a refactor moved the matching
+        literal to the top of the file so the ordering assertion became
+        permanently true, and once when the same edit put the other pattern
+        inside a docstring so the match found prose. Review of #229 caught this
+        one still written the old way, in the same PR that fixed the sibling.
         """
-        source = (REPO_ROOT / 'couchpotato' / 'runner.py').read_text(encoding='utf-8')
+        lines = (REPO_ROOT / 'couchpotato' / 'runner.py').read_text(
+            encoding='utf-8').splitlines()
 
-        bootstrap = source.find('ensure_session_secret(')
-        serve = source.find('_start_uvicorn_or_exit(application')
+        def line_of(needle):
+            # Excludes comments AND `def` lines: the CALL is what has to sit
+            # before the server starts, and `_start_uvicorn_or_exit(application`
+            # matches its own definition too. Tightening this guard is what
+            # surfaced that -- `str.find` had been matching the call purely
+            # because it happens to come first, so moving the definition above
+            # it would have re-targeted the assertion silently.
+            hits = [i for i, line in enumerate(lines)
+                    if needle in line
+                    and not line.strip().startswith('#')
+                    and not line.strip().startswith('def ')]
+            assert len(hits) == 1, (
+                'expected exactly one %r in runner.py, found %d at lines %s. '
+                'A pattern that matches more than once silently measures '
+                'whichever came first.' % (needle, len(hits), [h + 1 for h in hits])
+            )
+            return hits[0]
 
-        assert bootstrap != -1, (
-            'runner.py no longer bootstraps the session secret. Without it the '
-            'first login on an existing install finds no secret and fails '
-            'closed, and the operator is locked out of their own server.'
-        )
-        assert serve != -1, '_start_uvicorn_or_exit call not found in runner.py'
+        bootstrap = line_of('ensure_session_secret(')
+        serve = line_of('_start_uvicorn_or_exit(application')
         assert bootstrap < serve, (
             'the secret bootstrap now runs AFTER the server starts serving, so '
             'the first requests race the write it was moved out of the request '
