@@ -21,6 +21,51 @@ from urllib3 import disable_warnings
 from couchpotato.core.softchroot import SoftChrootInitError
 
 
+def log_authentication_posture():
+    """State, once, what this instance will actually enforce. AC-OPS-47.
+
+    Only the DISABLED direction used to log. With authentication on, the sole
+    statement of posture was `ensure_session_secret`'s first-creation INFO,
+    which AC-OPS-41 deliberately silences from the second boot onward -- so a
+    restarted instance said nothing about its own authentication at all.
+
+    At 3am the first two questions are "is this instance actually requiring a
+    login" and "why is the browser not keeping the cookie", and both were
+    answerable only by inferring from an ABSENT warning plus a `config.ini`
+    grep.
+
+    `secure` belongs on this line because it is DERIVED, not configured (D4):
+    half a TLS pair silently produces a non-Secure cookie, and the reverse
+    produces an undeliverable one whose only symptom is a login loop. Without a
+    startup value there is nothing to compare that loop against.
+
+    A named function rather than an inline block so it can be driven by a test
+    without starting a server.
+    """
+    from couchpotato import auth_is_required, session_cookie_attributes
+    from couchpotato.core.logger import CPLog
+
+    # `log` is created inside the startup functions in this module rather than
+    # at import time, so this function makes its own.
+    log = CPLog(__name__)
+
+    if not auth_is_required():
+        # WARNING, not INFO: an unauthenticated instance is a decision, and the
+        # log is where an operator checks whether they made it.
+        log.warning('Serving with authentication DISABLED -- anyone who can '
+                    'reach this port has full control of the library. Set a '
+                    'password and turn on "Require login" in Settings.')
+        return
+
+    secure = session_cookie_attributes().get('secure')
+    log.info('Serving with authentication ENABLED. Sessions are signed tokens, '
+             'not the api_key, and the session cookie is %s. %s',
+             'marked Secure' if secure else 'NOT marked Secure',
+             'The browser will only send it over https.' if secure else
+             'This server does not terminate TLS (no ssl_cert and ssl_key), '
+             'so a Secure cookie would be undeliverable.')
+
+
 def resolve_auth_required_setting():
     """Decide `auth_required` once, at startup, and write the answer down.
 
@@ -367,12 +412,7 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
     from couchpotato import auth_is_required
     resolve_auth_required_setting()
 
-    if not auth_is_required():
-        # WARNING, not INFO: an unauthenticated instance is a decision, and the
-        # log is where an operator checks whether they made it.
-        log.warning('Serving with authentication DISABLED -- anyone who can '
-                    'reach this port has full control of the library. Set a '
-                    'password and turn on "Require login" in Settings.')
+    log_authentication_posture()
 
     # Create FastAPI app
     from couchpotato import create_app
