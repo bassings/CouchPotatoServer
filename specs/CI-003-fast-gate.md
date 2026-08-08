@@ -402,12 +402,7 @@ criteria this spec asserted confidently and got wrong.
 
 ## AFTER: measured on PR #232, same method and same population as the baseline
 
-**Superseded by the n=9 medians in `specs/REMEDIATION-2026-08.md`'s tick 35** —
-these were the first three runs and the medians below have been recomputed
-over every completed run on the branch. Kept because the per-run rows are
-the raw evidence AC-OPS-2 asks for.
-
-Three completed runs on the branch. Re-fetchable with
+All completed runs on the branch, n = 9. Re-fetchable with
 `gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs`.
 
 | run ID | head | wall → a11y verdict | a11y job | wall → LAST required | Playwright install |
@@ -415,16 +410,31 @@ Three completed runs on the branch. Re-fetchable with
 | 31245156602 | `61ecfdb4` | 136 | 134 | 526 | 22s (cold, key created) |
 | 31246082532 | `54d72536` | 141 | 139 | 506 | 11s |
 | 31247191287 | `1a69eb28` | 123 | 120 | 528 | 11s |
+| 31248177649 | `0326f10e` | 134 | 131 | 518 | 16s |
+| 31249578434 | `5402831a` | 157 | 155 | 504 | 22s |
+| 31251551836 | `e4c83631` | 149 | 146 | 504 | 14s |
+| 31252142750 | `a61b9e75` | 132 | 130 | 503 | 12s |
+| 31252446413 | `efd686d1` | 164 | 148 | 541 | 20s |
+| 31253405094 | `68a5bd4e` | 138 | 136 | 511 | 14s |
 
-    median wall → a11y verdict : 136s   (before 666s)   -80%
-    median a11y job duration   : 134s   (before 139s)   unchanged
-    median wall → last required: 511s   (before 666s)   -23%
+    n = 9   wall → a11y verdict : median 138s  (123-164)   before 666s   -79%
+            a11y job duration   : median 136s  (120-155)   before 139s   unchanged
+            wall → last required: median 511s  (503-541)   before 666s   -23%
 
-**AC-QA-60 PASS.** 136s against a 300s threshold, and the after-median beats the
+**This table replaced a three-run one, and the reason is worth recording.** The
+first version quoted three-run medians; a later correction updated only the
+`last required` row to the n=9 value and left the other two at their three-run
+figures, under a note claiming all three had been recomputed. That is the fifth
+stale-figure defect review caught on this change, all the same shape: a number
+that was true when written, in a document that kept being extended. **The rule
+that would have prevented all five is not "re-measure at merge" — it is quote a
+figure in exactly ONE place and reference it everywhere else.**
+
+**AC-QA-60 PASS.** 138s (median, n=9) against a 300s threshold, and the after-median beats the
 before-median by 530s — far more than the 71s before-spread that constraint 3
 requires it to clear.
 
-**AC-QA-61 PASS.** 134s against a 145s cap. The job itself did not get faster,
+**AC-QA-61 PASS.** 136s (median, n=9) against a 145s cap. The job itself did not get faster,
 which is the point: the speedup is entirely queueing that was removed, not work
 that stopped being done.
 
@@ -487,7 +497,8 @@ properties asserted programmatically before pushing rather than eyeballed.
 Both pushes used `--no-verify` deliberately: the local gate correctly refuses a
 commit whose entire purpose is to fail.
 
-**AC-A11Y-1, -3, -4, -6, -7, -9 PASS. AC-A11Y-5 remains UNVERIFIABLE until CI
+**AC-A11Y-1, -2, -3, -4, -6, -7, -9 PASS** (-2 closed after merge, evidence
+above). **AC-A11Y-5 remains UNVERIFIABLE until CI
 runs exist.** Two things it established that I had not:
 
 - **My AC-A11Y-1 evidence was right for the wrong reason.** `--list` reports
