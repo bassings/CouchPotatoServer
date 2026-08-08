@@ -584,15 +584,25 @@ class QualityPlugin(Plugin):
         non-3D copy at the same rung are never comparable, whichever rung
         each sits at.
         """
+        # Both operands MUST be dicts carrying their own is_3d. A bare
+        # identifier string is refused rather than assumed non-3D, and that
+        # is not pedantry: a release document stores `quality` and `is_3d` as
+        # SIBLING fields, so the natural call site is `existing['quality']` --
+        # a string. Defaulting its is_3d to False made a 2D 1080p incoming
+        # copy look better than an existing 3D 720p one, measured returning
+        # True before this guard. On the code path that deletes from the
+        # library, missing metadata is "refuse", never "assume the convenient
+        # value".
+        if not isinstance(incoming, dict) or not isinstance(existing, dict):
+            return False
+
         incoming_rank = self.rankQuality(incoming)
         existing_rank = self.rankQuality(existing)
 
         if incoming_rank is None or existing_rank is None:
             return False
 
-        incoming_is_3d = bool(incoming.get('is_3d')) if isinstance(incoming, dict) else False
-        existing_is_3d = bool(existing.get('is_3d')) if isinstance(existing, dict) else False
-        if incoming_is_3d != existing_is_3d:
+        if bool(incoming.get('is_3d')) != bool(existing.get('is_3d')):
             return False
 
         return incoming_rank < existing_rank

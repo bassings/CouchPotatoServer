@@ -84,6 +84,55 @@ class TestRankQualityOrder:
         assert plugin.rankQuality('brrip') > plugin.rankQuality('720p')
 
 
+    def test_the_full_order_matches_a_literal_snapshot(self, monkeypatch):
+        """The derived check above catches a rung being ADDED. It is blind to
+        one being REORDERED, because `expected` moves with the source.
+
+        Measured: swapping `tc` and `ts` in `QualityPlugin.qualities` left all
+        20 tests in this file green, while the replacement gate would then
+        consider the wrong copy better. That is the incidentally-passing shape
+        CLAUDE.md rule 11 is about, and on a delete path it is the shape that
+        removes the wrong file.
+
+        So the order is ALSO pinned literally. The two together are the guard:
+        derived catches additions, literal catches reordering, neither alone
+        is sufficient. Changing this list is meant to be a deliberate act with
+        a reason in the commit message.
+        """
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.order == [
+            '2160p', 'bd50', '1080p', '720p', 'brrip', 'dvdr',
+            'dvdrip', 'scr', 'r5', 'tc', 'ts', 'cam',
+        ]
+
+
+class TestBareIdentifiersAreRefusedNotAssumedNon3D:
+    """A release document stores `quality` and `is_3d` as SIBLING fields, so
+    the natural call site is `existing['quality']` -- a bare string carrying
+    no 3D information at all.
+
+    Defaulting that to non-3D made a 2D 1080p incoming copy compare better
+    than an existing 3D 720p copy: measured returning True before the guard.
+    On the path that deletes from the library, absent metadata must mean
+    refuse, never "assume the convenient value".
+    """
+
+    def test_a_string_existing_is_refused(self, monkeypatch):
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.isBetterQuality({'identifier': '1080p'}, '720p') is False
+
+    def test_a_string_incoming_is_refused(self, monkeypatch):
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.isBetterQuality('2160p', {'identifier': '720p'}) is False
+
+    def test_two_dicts_still_compare_normally(self, monkeypatch):
+        """The control: refusing strings must not disable the feature."""
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.isBetterQuality(
+            {'identifier': '2160p'}, {'identifier': '720p'}
+        ) is True
+
+
 class TestRankQualityUnknown:
     """AC-QA-2: unknown input ranks None, never 0 -- 0 is the BEST rank, so
     returning it for "unknown" would let an unrecognised quality masquerade
