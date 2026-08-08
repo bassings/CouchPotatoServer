@@ -22,7 +22,7 @@ This disables certificate validation (no hostname check, no CA verification)
 for **every** `urllib`/`http.client`-based HTTPS call made anywhere in the
 process for the lifetime of the app — not just CouchPotato's own requests.
 It's a leftover Python-2.7.9 workaround (the version guard is dead code on
-Python 3.10+, which is the supported floor per `CLAUDE.md`). A
+Python 3.10+; the project now ships and tests 3.14 only, per `CLAUDE.md`). A
 man-in-the-middle can intercept any HTTPS call CouchPotato or a library it
 loads makes (provider APIs, notifications, update checks, etc.) and the app
 will not notice.

@@ -4,7 +4,7 @@ This guide covers migrating from the legacy Python 2 version to the modernized P
 
 ## Requirements
 
-- **Python 3.10+** (3.12+ recommended)
+- **Python 3.14** — the version the Docker image ships and the only one CI tests. Older interpreters are untested.
 - All dependencies installed from `requirements.txt`
 
 ## Before You Start

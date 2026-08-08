@@ -101,15 +101,76 @@ def test_dockerfile_builder_and_runtime_stages_agree():
     )
 
 
-def test_ci_matrix_tests_the_dockerfile_version():
-    """production's interpreter (Dockerfile) must be a CI-tested interpreter."""
+def test_ci_matrix_tests_exactly_the_dockerfile_version():
+    """CI tests the production interpreter, and ONLY it.
+
+    Strengthened from membership to equality when the matrix was locked to a
+    single version (2026-08-09). Membership was the right check while five
+    legs ran; with one leg it would be satisfied by a matrix that had drifted
+    to `['3.12', '3.14']` and quietly reintroduced 15.6 runner-minutes a push.
+
+    Equality also makes the pairing explicit in the other direction: bumping
+    the Dockerfile without bumping CI fails here, so production can never ship
+    an interpreter no test has run. Re-broadening the matrix is then a
+    deliberate act that has to change this test and say why.
+    """
     dockerfile_version = dockerfile_versions()[0]
     matrix_versions = ci_matrix_python_versions()
-    assert dockerfile_version in matrix_versions, (
-        f"Dockerfile ships Python {dockerfile_version}, but ci.yml's test "
-        f"matrix ({matrix_versions}) does not include it — CI is not testing "
-        f"the interpreter that ships in production. Add {dockerfile_version!r} "
-        f"to `strategy.matrix.python-version` in {CI_WORKFLOW}."
+    assert matrix_versions == [dockerfile_version], (
+        f"Dockerfile ships Python {dockerfile_version} but ci.yml's test "
+        f"matrix is {matrix_versions}. CI must test exactly the interpreter "
+        f"production runs: set `strategy.matrix.python-version` to "
+        f"['{dockerfile_version}'] in {CI_WORKFLOW}. If you are deliberately "
+        f"re-broadening the matrix, update this test and record why -- the "
+        f"four extra legs were dropped because 59 consecutive CI runs showed "
+        f"no leg ever failing and no two legs ever disagreeing."
+    )
+
+
+def test_every_workflow_job_uses_the_dockerfile_python():
+    """Not just the `test` matrix, and not just ci.yml -- EVERY setup-python
+    in EVERY workflow.
+
+    This is the guard that would have caught the drift it was written for.
+    When the matrix was narrowed to the production interpreter, five jobs were
+    still pinned to 3.12 by a separate `python-version:` field, including
+    `ui-e2e-tests` and `accessibility` -- which START THE APPLICATION. So the
+    two browser gates were exercising an interpreter the project had just
+    declared unsupported, while the matrix guard passed because it only looked
+    at the matrix.
+
+    Checking one place and calling it "CI tests what production ships" is the
+    failure here; the claim is only as strong as its weakest job.
+    """
+    dockerfile_version = dockerfile_versions()[0]
+
+    wrong = []
+    # BOTH extensions: GitHub Actions accepts .yaml as well as .yml, and a
+    # guard that silently skips half the possible filenames is the same
+    # too-narrow-scope defect this test was widened to fix.
+    workflow_files = sorted(
+        set(CI_WORKFLOW.parent.glob("*.yml")) | set(CI_WORKFLOW.parent.glob("*.yaml"))
+    )
+    assert workflow_files, "no workflow files found -- the glob is wrong"
+    for path in workflow_files:
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps", []) or []:
+                if not isinstance(step, dict):
+                    continue
+                if not str(step.get("uses", "")).startswith("actions/setup-python"):
+                    continue
+                version = str((step.get("with") or {}).get("python-version", ""))
+                if version.startswith("${{"):
+                    continue  # driven by the matrix, covered by the test above
+                if version != dockerfile_version:
+                    wrong.append(f"{path.name}:{job_name}={version}")
+
+    assert not wrong, (
+        f"Dockerfile ships Python {dockerfile_version} but these workflow jobs "
+        f"pin a different interpreter: {sorted(wrong)}. Any job that starts the "
+        f"application or runs its tests must use the production interpreter, or "
+        f"the gate is testing something nobody ships."
     )
 
 
