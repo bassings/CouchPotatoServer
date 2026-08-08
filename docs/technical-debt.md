@@ -725,7 +725,10 @@ scope and a reviewer can read the dedent directly against the original.
 5. `diskcache` was replaced with `SQLiteCache` (CVE-2025-69872 — pickle RCE,
    lib abandoned).
 6. Branch protection check names must match exactly — matrix jobs report as
-   `test (3.10)`, not `test`.
+   `test (3.14)`, not `test`. (The matrix is a single version as of
+   2026-08-09, but it is still a matrix, so the leg name still carries the
+   version. No matrix leg is a required context; `test-summary` is, and it
+   `needs: [test]`.)
 7. Dependabot PRs may need `--admin` merge if they predate CI changes.
 8. Docker image is **Alpine**-based: use `apk`/`su-exec`/`adduser` in the
    Dockerfile, not `apt`/`gosu`/`useradd`. The entrypoint is `#!/bin/sh` (no

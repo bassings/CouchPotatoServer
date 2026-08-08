@@ -4,7 +4,7 @@
 [![Docker](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/docker.yml)
 [![Lint](https://github.com/bassings/CouchPotatoServer/actions/workflows/lint.yml/badge.svg)](https://github.com/bassings/CouchPotatoServer/actions/workflows/lint.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.14](https://img.shields.io/badge/python-3.14-blue.svg)](https://www.python.org/downloads/)
 
 Automatic NZB and torrent downloader for movies. Maintain a watchlist and CouchPotato will search for releases, then send them to SABnzbd, NZBGet, or your torrent client.
 
@@ -12,7 +12,7 @@ This is a **Python 3 fork** of the [archived original](https://github.com/CouchP
 
 ## What's New in v3.0.0
 
-- **Python 3.10+** (tested on 3.10 through 3.14)
+- **Python 3.14** — the interpreter the Docker image ships and the only one CI tests. Older versions are untested and unsupported; running from source on 3.13 or below may work but nothing verifies it.
 - **Complete Python 2 to 3 migration** — every module updated, all legacy `unicode`/`bytes` issues resolved
 - **457 tests** covering database operations, web framework, settings, events, concurrency, security, and performance
 - **Security hardened** — rate limiting (300 req/min), API key validation, input sanitisation, directory traversal protection
@@ -140,7 +140,7 @@ Reference docs are in [`docs/reference/`](docs/reference/):
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Please ensure compatibility with Python 3.10+ and include tests where practical.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines. Target Python 3.14 (what production runs and what CI tests) and include tests where practical.
 
 ## License
 

@@ -43,7 +43,7 @@ and `implementer` (delegated work). Invoke them by name rather than composing a
 persona from memory; `AGENTS.md` is the review rubric they apply.
 
 - **Repo:** https://github.com/bassings/CouchPotatoServer — default branch `master`
-- **Stack:** Python 3.10+, FastAPI/Uvicorn, htmx + Tailwind + Alpine.js UI, SQLite, Docker
+- **Stack:** Python 3.14 (the version production ships and the only one CI tests), FastAPI/Uvicorn, htmx + Tailwind + Alpine.js UI, SQLite, Docker
 - **Entry point:** `CouchPotato.py`
 - **Production:** http://homemedia.maeewing.com:5050 · image `ghcr.io/bassings/couchpotatoserver:latest` (Alpine, `python:3.14-alpine`)
 - **Dev container port:** 5051 (`docker-compose.dev.yml`)

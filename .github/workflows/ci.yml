@@ -153,7 +153,25 @@ jobs:
       actions: write
     strategy:
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13', '3.14']
+        # EXACTLY the interpreter production ships (Dockerfile's
+        # python:3.14-alpine). Kept as a matrix of one so the job name
+        # stays `test (3.14)` -- it is a required status check, and a
+        # renamed context blocks every PR waiting for a check nothing
+        # publishes.
+        #
+        # Was 3.10-3.14. Dropped 2026-08-09 on measurement, not taste:
+        # across 59 CI runs no leg ever failed, and no run ever had legs
+        # disagree. There is no `requires-python` anywhere, prod is
+        # pinned to 3.14-alpine and the only dev venv is 3.14.6, so the
+        # other four legs tested configurations nobody runs -- 15.6
+        # runner-minutes per push, on the critical path, since
+        # ui-e2e-tests/test-summary/docker all `needs: test` and waited
+        # on the SLOWEST leg (3.10).
+        #
+        # test_ci_matrix_tests_the_dockerfile_version enforces that this
+        # list is exactly [Dockerfile version]; re-broadening it is a
+        # deliberate act that must change that test too.
+        python-version: ['3.14']
       fail-fast: false
 
     steps:

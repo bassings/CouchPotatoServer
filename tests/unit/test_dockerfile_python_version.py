@@ -101,15 +101,29 @@ def test_dockerfile_builder_and_runtime_stages_agree():
     )
 
 
-def test_ci_matrix_tests_the_dockerfile_version():
-    """production's interpreter (Dockerfile) must be a CI-tested interpreter."""
+def test_ci_matrix_tests_exactly_the_dockerfile_version():
+    """CI tests the production interpreter, and ONLY it.
+
+    Strengthened from membership to equality when the matrix was locked to a
+    single version (2026-08-09). Membership was the right check while five
+    legs ran; with one leg it would be satisfied by a matrix that had drifted
+    to `['3.12', '3.14']` and quietly reintroduced 15.6 runner-minutes a push.
+
+    Equality also makes the pairing explicit in the other direction: bumping
+    the Dockerfile without bumping CI fails here, so production can never ship
+    an interpreter no test has run. Re-broadening the matrix is then a
+    deliberate act that has to change this test and say why.
+    """
     dockerfile_version = dockerfile_versions()[0]
     matrix_versions = ci_matrix_python_versions()
-    assert dockerfile_version in matrix_versions, (
-        f"Dockerfile ships Python {dockerfile_version}, but ci.yml's test "
-        f"matrix ({matrix_versions}) does not include it — CI is not testing "
-        f"the interpreter that ships in production. Add {dockerfile_version!r} "
-        f"to `strategy.matrix.python-version` in {CI_WORKFLOW}."
+    assert matrix_versions == [dockerfile_version], (
+        f"Dockerfile ships Python {dockerfile_version} but ci.yml's test "
+        f"matrix is {matrix_versions}. CI must test exactly the interpreter "
+        f"production runs: set `strategy.matrix.python-version` to "
+        f"['{dockerfile_version}'] in {CI_WORKFLOW}. If you are deliberately "
+        f"re-broadening the matrix, update this test and record why -- the "
+        f"four extra legs were dropped because 59 consecutive CI runs showed "
+        f"no leg ever failing and no two legs ever disagreeing."
     )
 
 
