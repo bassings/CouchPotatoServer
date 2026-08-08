@@ -1411,17 +1411,31 @@ TEMPLATE_SUFFIXES = (".html",)
 # `\s*`. This repo has now been round that loop on this same query more than
 # once, so it is written in the general form rather than patched per report.
 #
-# `\b` is what keeps it honest: `</scriptfoo>` has no word boundary after
-# "script" and is correctly NOT a closer, while `</script bar>` is.
+# The terminator is `(?=[\s/>])`, NOT `\b`. `\b` is a word boundary, and `-` is
+# a non-word character, so it matched hyphenated custom elements -- both
+# measured as false REDs before this fix:
+#
+#   * `<script-loader>...</script-loader>` was treated as a script block and its
+#     contents parsed as JavaScript;
+#   * a `"</script-loader>"` STRING inside a real block closed that block early,
+#     reporting a SyntaxError at the wrong line.
+#
+# HTML5 terminates a tag name with whitespace, `/` or `>` and nothing else,
+# which is what this now says.
 SCRIPT_TAG_RE = re.compile(
-    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script\b[^>]*>""",
+    r"""<script(?=[\s/>])((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script(?=[\s/>])[^>]*>""",
     re.IGNORECASE | re.DOTALL,
 )
+
+# HTML comments are stripped before extraction, newlines preserved so later
+# line numbers stay true. A commented-out `<script>` block is not code, and
+# parsing one reported a SyntaxError against a block the browser never runs.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
 # Counts `<script` openers so an UNTERMINATED one cannot vanish: without this a
 # missing `</script>` means the block is not scanned, not flagged, and not
 # listed as skipped -- an extraction failure that is invisible in the very
 # output added to make extraction failures visible.
-SCRIPT_OPEN_RE = re.compile(r"<script\b", re.IGNORECASE)
+SCRIPT_OPEN_RE = re.compile(r"<script(?=[\s/>])", re.IGNORECASE)
 # Attributes are TOKENISED, not pattern-matched out of the raw tag text, and
 # both shortcuts this replaces were live defects:
 #
@@ -1502,6 +1516,9 @@ def _iter_script_blocks(text: str):
     `src=`, non-JS `type=`, empty body).
     """
 
+    # Comments blanked (newlines kept) before anything else looks at the text,
+    # so a commented-out <script> is neither parsed nor counted as an opener.
+    text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
     for m in SCRIPT_TAG_RE.finditer(text):
 
         attrs, body = _parse_attrs(m.group(1)), m.group(2)
@@ -1573,11 +1590,31 @@ def check_html_template(path: Path, text: str):
     missing `node` is a hard, named failure per block (AC-QA-74), same shape
     as the PyYAML branch above, not a silent skip.
 
-    WHAT THIS RULE STILL DOES NOT SEE (AC-OPS-13): JS inside Alpine/htmx
-    attributes (`x-data`, `@click`, `hx-on:`) and JS in static `.js` files —
-    only the inline `<script>` body. *Does it parse*, not *does it match a
-    style guide*: a dropped operator is a syntax error only where ASI cannot
-    paper over it, so this catches #230's class, not every dropped token.
+    WHAT THIS RULE STILL DOES NOT SEE (AC-OPS-13). Stated so the rule is not
+    over-trusted as "template JS is now gated", which it is not:
+
+    * **JS in Alpine/htmx ATTRIBUTES** (`x-data`, `@click`, `hx-on:`) and in
+      static `.js` files — only the inline `<script>` body is parsed. This is
+      not a corner: the densest accessibility-critical inline JS in this repo
+      lives there, including `partials/movie_detail.html`'s trailer focus trap
+      (~:318-326) and the restore-picker focus return (~:206). Breaking those
+      yields ZERO findings.
+    * **Top-level `return`.** `node --check` reads stdin as a CommonJS module,
+      whose wrapper makes a top-level `return` legal; a browser rejects it.
+      Measured: `<script>return 1;</script>` passes. Fixing it needs the Script
+      grammar via `vm.Script`, which means `node -e` — banned by AC-SEC-1 as an
+      execution surface. The narrower risk was preferred to the broader one.
+    * **A `{% %}` that splits one expression**, and a `{{ }}` eating a nested
+      block literal — both pinned as KNOWN limits by tests rather than fixed;
+      no substitution handles them without rendering the template.
+    * **An unterminated `<script>` FOLLOWED by a terminated one**: the first
+      swallows the second, and the result is reported as a SyntaxError at the
+      swallowed boundary rather than as `skip-unterminated`. It fails closed
+      and names the file and line, so it is a misleading diagnosis, not a hole.
+
+    *Does it parse*, not *does it match a style guide*: a dropped operator is a
+    syntax error only where ASI cannot paper over it, so this catches #230's
+    class, not every dropped token.
     """
     node = shutil.which("node")
     for line, kind, body in _iter_script_blocks(text):

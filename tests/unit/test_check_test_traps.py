@@ -2377,6 +2377,55 @@ def test_whitespace_before_the_end_tag_bracket_does_not_produce_a_false_green(tm
     assert findings[0][0] == 2, "wrong line for closer %r: %r" % (closer, findings)
 
 
+def test_a_hyphenated_custom_element_is_not_a_script_block(tmp_path):
+    """`\\b` is a word boundary and `-` is a non-word character, so
+    `<script-loader>` matched. Two measured false REDs from one cause:
+
+      * the custom element's contents were parsed as JavaScript;
+      * a `"</script-loader>"` STRING inside a real block closed that block
+        early, reporting a SyntaxError at the wrong line.
+
+    HTML5 terminates a tag name with whitespace, `/` or `>` and nothing else.
+    The second assertion is the sharper one: it fails on the LINE NUMBER, so a
+    fix that merely stops the early close but keeps mis-parsing would not pass.
+    """
+    element = tmp_path / "custom.html"
+    element.write_text("<script-loader>\nnot js at all (;\n</script-loader>\n")
+    assert findings_for(element) == [], "a hyphenated custom element was parsed as JS"
+
+    early_close = tmp_path / "string_closer.html"
+    early_close.write_text(
+        '<script>\nconst a = "</script-loader>";\nconst broken = (;\n</script>\n'
+    )
+    findings = findings_for(early_close)
+    assert findings and findings[0][0] == 3, (
+        "expected the real error at line 3, got %r -- the block was closed early "
+        "by a string" % findings
+    )
+
+
+def test_a_commented_out_script_element_is_not_parsed(tmp_path):
+    """A `<script>` inside `<!-- -->` is not code the browser ever runs, so
+    reporting a SyntaxError in one is a false RED in a gate with no override.
+
+    The control is the point: an ADJACENT real block must still be checked, or
+    the fix has simply stopped scanning files that contain a comment.
+    """
+    commented = tmp_path / "commented.html"
+    commented.write_text("<div>\n<!--\n<script>\nconst broken = (;\n</script>\n-->\n</div>\n")
+    assert findings_for(commented) == [], "a commented-out script block was parsed"
+
+    both = tmp_path / "both.html"
+    both.write_text(
+        "<!--\n<script>\nignored (;\n</script>\n-->\n<script>\nconst broken = (;\n</script>\n"
+    )
+    findings = findings_for(both)
+    assert findings and findings[0][0] == 7, (
+        "the real block after a comment must still be checked, at its own line; got %r"
+        % findings
+    )
+
+
 def test_a_data_src_attribute_does_not_hide_a_block_from_the_parser(tmp_path):
     """Second false green of the same family as the `</script >` closer.
 
@@ -2676,10 +2725,20 @@ def test_no_per_file_allowlist_in_the_rule_itself():
     # defect -- and the cheapest way to make it green would have been deleting
     # the comment, which is the wrong direction entirely.
     #
-    # `ast.unparse` drops comments and normalises the rest, so what remains is
-    # code plus string literals -- which is exactly the surface a real per-file
-    # allowlist would have to live in.
-    code = ast.unparse(ast.parse(textwrap.dedent(src)))
+    # `ast.unparse` drops comments; docstrings are stripped explicitly below.
+    # Both are documentation, and the AC-SIMP-7 criterion is about the
+    # MECHANISM special-casing a file. What remains is code plus operative
+    # string literals -- exactly the surface a real allowlist has to live in.
+    tree = ast.parse(textwrap.dedent(src))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            body[0] = ast.Expr(value=ast.Constant(value=""))
+    code = ast.unparse(ast.fix_missing_locations(tree))
     for banned in (".html", "ALLOWLIST", "movie_detail", "suggestions", "wanted", "base.html"):
         assert banned not in code, f"per-file special-casing found: {banned!r}"
 
