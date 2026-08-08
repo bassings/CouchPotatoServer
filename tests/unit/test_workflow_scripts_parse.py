@@ -145,12 +145,43 @@ FORBIDDEN_GLOBALS = ('process.', 'require(', '__dirname', '__filename',
                      'globalThis.process')
 
 
+def _strip_line_comment(line: str) -> str:
+    """Drop a `//` comment, but only one that is not inside a string.
+
+    `line.split('//', 1)[0]` truncates at the FIRST `//` wherever it appears --
+    including inside a string literal. A URL is the obvious case, and
+    `.claude/workflows/review-cycle.js` carries several `https://` strings, so
+    a forbidden global appearing after one on the same line would have been
+    sliced away and the check would pass a script it should reject.
+
+    That is the same "comment stripping that ignores quotes" bug class
+    `scripts/check_test_traps.py` is explicitly guarded against for shell
+    comments; this checker had not been given the equivalent treatment.
+    """
+    quote = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == '\\':
+                i += 2
+                continue
+            if ch == quote:
+                quote = None
+        elif ch in ('"', "'", '`'):
+            quote = ch
+        elif ch == '/' and line[i + 1:i + 2] == '/':
+            return line[:i]
+        i += 1
+    return line
+
+
 @pytest.mark.parametrize('script', SCRIPTS, ids=lambda p: p.name)
 def test_the_workflow_script_uses_no_node_only_globals(script):
     text = script.read_text(encoding='utf-8')
     hits = []
     for lineno, line in enumerate(text.splitlines(), start=1):
-        code = line.split('//', 1)[0]
+        code = _strip_line_comment(line)
         if code.lstrip().startswith(('*', '#:')):
             continue
         for bad in FORBIDDEN_GLOBALS:
@@ -168,3 +199,23 @@ def test_the_workflow_script_uses_no_node_only_globals(script):
         'worktree as well as the main checkout.'
         % (script.name, '\n  '.join(hits))
     )
+
+
+class TestTheCommentStripperRespectsQuotes:
+    """The stripper is the thing that decides what the guard above SEES."""
+
+    def test_a_url_does_not_hide_a_later_global(self):
+        line = "const doc = 'https://example.com/x'; const p = process.cwd()"
+
+        assert 'process.' in _strip_line_comment(line), (
+            'the `//` inside a URL truncated the line, so a forbidden global '
+            'after it was invisible to the check')
+
+    def test_a_real_comment_is_still_stripped(self):
+        """The counterweight: a stripper that strips nothing is no better."""
+        assert 'process.' not in _strip_line_comment('const a = 1  // process.cwd()')
+
+    def test_an_escaped_quote_does_not_unbalance_it(self):
+        line = "const s = 'it\\'s fine'  // process.cwd()"
+
+        assert 'process.' not in _strip_line_comment(line), line

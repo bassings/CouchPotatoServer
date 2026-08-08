@@ -117,7 +117,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return False
         return True
 
-    def _refusal(self, request, path: str, retry_after: int):
+    def _refusal(self, request, path: str, retry_after: int, auth_route: bool):
         """The 429, as a page when a person is reading it and JSON otherwise.
 
         This response is produced BEFORE the route runs, so the login route can
@@ -131,7 +131,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         headers = {'Retry-After': str(retry_after)}
 
-        if self._is_auth_route(path, request.method) and 'text/html' in request.headers.get('accept', ''):
+        # `auth_route` is PASSED IN rather than recomputed: `dispatch` has
+        # already decided it, and two independent computations of the same
+        # thing are two places for the answer to diverge.
+        if auth_route and 'text/html' in request.headers.get('accept', ''):
             try:
                 from couchpotato import render_login_page
 
@@ -218,5 +221,5 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         retry_after = self._is_rate_limited(client_ip)
         if retry_after is not None:
-            return self._refusal(request, path, retry_after)
+            return self._refusal(request, path, retry_after, auth_route)
         return await call_next(request)
