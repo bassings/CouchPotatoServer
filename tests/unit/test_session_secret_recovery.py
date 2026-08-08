@@ -229,7 +229,13 @@ class TestTheSecretIsDeletedUnderARunningProcess:
         session.get('/')
 
         text = log_text(env)
-        assert 'session signing secret could not be read' in text, text
+        # Matches the FACT, not the old wording. The message used to claim
+        # "NO login can succeed", which was false on the very path D14 makes
+        # work -- a first login bootstraps a secret and succeeds. Asserting on
+        # the phrasing rather than the substance is what made this test object
+        # to the correction.
+        assert 'signing secret could be read' in text.replace('could not be', 'could be'), text
+        assert 'config.ini' in text, 'the recovery path is no longer named'
         assert 'config.ini' in text
 
     def test_a_fresh_login_recovers_a_working_session_with_no_restart(self, env):

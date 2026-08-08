@@ -282,11 +282,18 @@ def reset_session_secret_state():
 #: reached a log call. Verified before renaming that no secret VALUE is passed
 #: as a log argument anywhere in this module, so the alert was name-driven --
 #: but the name was wrong on its own terms regardless.
+#: Deliberately does NOT say "no login can succeed". It used to, and that was
+#: false on the one path D14 exists to make work: a first login on an install
+#: with no secret yet reaches this same code, bootstraps one, and succeeds --
+#: while the log told the operator the opposite. A log line that contradicts
+#: what just happened is worse than none, because it sends them diagnosing a
+#: failure that did not occur.
 _SIGNING_STORE_UNREADABLE_ADVICE = (
-    'The session signing secret could not be read, so NO login can succeed and '
-    'every browser session is refused. The api_key and the /api/ routes are '
-    'unaffected. To recover: set "auth_required = 0" in the [core] section of '
-    'config.ini and restart, then check the database is readable.'
+    'No session signing secret could be read. Existing browser sessions are '
+    'refused; a fresh login will create one if the database is writable. The '
+    'api_key and the /api/ routes are unaffected. If logins keep failing, '
+    'check the database is readable and writable -- or set '
+    '"auth_required = 0" in the [core] section of config.ini and restart.'
 )
 
 
@@ -773,8 +780,16 @@ def _cross_origin_post(request) -> bool:
     # A malicious sibling cannot forge this header. The attack shape is a
     # plain cross-site form POST, which cannot set custom headers at all, and
     # a `fetch` that tried would trigger a CORS preflight it cannot satisfy.
-    known = {h for h in (request.headers.get('host'),
-                         request.headers.get('x-forwarded-host')) if h}
+    # `X-Forwarded-Host` is split on commas: a chain of proxies APPENDS to it,
+    # so a two-hop deployment sends `media.example.com, inner.local` and a
+    # whole-string compare matches neither -- refusing a legitimate sign-out on
+    # exactly the topology this header exists to describe.
+    known = set()
+    for header in ('host', 'x-forwarded-host'):
+        value = request.headers.get(header)
+        if not value:
+            continue
+        known.update(part.strip() for part in value.split(',') if part.strip())
     if not known:
         return False
 
