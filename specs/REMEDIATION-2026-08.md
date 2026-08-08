@@ -264,7 +264,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       The path should never execute — but "should never" is what the original
       bug said too.
 
-- [ ] T12: JS inside a Jinja template gets no lint pass — state: building · bundled into `specs/CI-003-fast-gate.md` as Part B, implemented as rule 8 of `scripts/check_test_traps.py`
+- [x] T12: JS inside a Jinja template gets no lint pass — state: merged #232 · bundled into `specs/CI-003-fast-gate.md` as Part B, implemented as rule 8 of `scripts/check_test_traps.py`
 
       Two things this task's original write-up got wrong, both corrected in the
       spec: it claimed ESLint covers `couchpotato/ui/static`, and **there is no
@@ -287,7 +287,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       lines, per the standing preference for enforced checks over remembered
       ones.
 
-- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: building · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
+- [x] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: merged #232 · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
 
       **The owner was right and three rounds of my own "corrections" were
       measuring the wrong thing.** Every earlier version of this task reported
@@ -356,6 +356,38 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 35** — **#232 merged (`f97b3ab2`), T9 and T12 ticked. Plan 7 of 16.**
+
+  Final CI run confirms the result on a fourth data point: a11y verdict 138s,
+  last required check 511s, against a 666s baseline on both.
+
+  **The honest summary of this PR is the ratio, not the speedup.** Rule 8 —
+  the gate written to prevent false greens — shipped **three false greens of
+  its own** (`</script >` unmatched, `data-src=` classified external, the
+  legacy `<!-- //-->` idiom eating a body), three false REDs, and two vacuous
+  guards including one written specifically to prevent vacuity. Every one was
+  found by review or CodeQL. None by my own testing, despite mutation-proving
+  each guard as I went.
+
+  What that says about the mutation discipline: proving a guard fires on the
+  defect you thought of says nothing about the defects you did not. The
+  probes that found these were adversarial inputs from someone who had not
+  written the code.
+
+  Two process lessons worth carrying, both now written into the spec:
+
+  1. **A line budget set at planning must be RE-OPENED when review finds
+     defects whose fixes do not fit it** — never silently breached, and never
+     used as an argument against fixing them. AC-SIMP-5 ran to +58 against a
+     cap of 30, AC-SIMP-8 to +287 against 120.
+  2. **A figure asserted once goes stale.** I recorded "+36" and pointed at a
+     PR body that never restated the real number, inside a document whose
+     stated principle is not to assert what you have not measured. Re-measure
+     at merge, not at the time of writing.
+
+  T16 (the residual ~8.5 minutes to mergeable) is the owner's call and is
+  recorded with the measurement behind it.
 
 - **Tick 34** — PR #232 open, T9 measured and closed on evidence, 16 review
   threads worked to 0.
