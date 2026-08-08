@@ -422,13 +422,17 @@ happens to notice.
 - **Tick 34** — PR #232 open, T9 measured and closed on evidence, 16 review
   threads worked to 0.
 
-  **T9's acceptance criteria closed on measurement.** Three runs, same method
-  and population as the baseline: wall→a11y verdict 666s → **136s** (−80%,
-  threshold 300s); a11y job duration 139s → 134s (unchanged, cap 145s);
-  wall→last required 666s → **526s** (−21%). The job did not get faster, which
-  is the point — the win is queueing removed, not work skipped. AC-QA-62 closed
-  with a hit on the PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the
-  cold run that created it.
+  **T9's acceptance criteria closed on measurement.** Figures deliberately NOT
+  restated here — they live in one place, the n=9 table in
+  `specs/CI-003-fast-gate.md`'s AFTER section, and this entry references it.
+  Restating them inline is what produced five separate stale-figure findings on
+  this change, including one where a note claiming three medians had been
+  recomputed sat above a table where only one had.
+
+  What this tick established: the job duration did not change, so the win is
+  queueing removed rather than work skipped. AC-QA-62 closed with a hit on the
+  PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the cold run that
+  created it.
 
   **The review found more in my work than the work found in the codebase, and
   two of them were false GREENS** — the gate exiting 0 with a real syntax error
