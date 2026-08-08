@@ -2349,7 +2349,14 @@ def test_a_commented_script_mention_is_not_reported_as_unterminated(tmp_path):
     )
 
 
-@pytest.mark.parametrize("closer", ["</script>", "</script >", "</script\t>", "</script\n>"])
+@pytest.mark.parametrize("closer", [
+    "</script>",
+    "</script >",
+    "</script\t>",
+    "</script\n>",
+    "</script\t\n bar>",   # CodeQL alert #95: end tags may carry ignored attributes
+    "</SCRIPT>",           # end tags are case-insensitive
+])
 def test_whitespace_before_the_end_tag_bracket_does_not_produce_a_false_green(tmp_path, closer):
     """The worst outcome this rule can have, and it shipped for one commit.
 

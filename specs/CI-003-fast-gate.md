@@ -400,6 +400,48 @@ criteria this spec asserted confidently and got wrong.
   only while nobody set it. Now stripped in the checker, with a test whose
   control first proves the mechanism fires against a bare `node --check`.
 
+## AFTER: measured on PR #232, same method and same population as the baseline
+
+Three completed runs on the branch. Re-fetchable with
+`gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs`.
+
+| run ID | head | wall → a11y verdict | a11y job | wall → LAST required | Playwright install |
+|---|---|---:|---:|---:|---:|
+| 31245156602 | `61ecfdb4` | 136 | 134 | 526 | 22s (cold, key created) |
+| 31246082532 | `54d72536` | 141 | 139 | 506 | 11s |
+| 31247191287 | `1a69eb28` | 123 | 120 | 528 | 11s |
+
+    median wall → a11y verdict : 136s   (before 666s)   -80%
+    median a11y job duration   : 134s   (before 139s)   unchanged
+    median wall → last required: 526s   (before 666s)   -21%
+
+**AC-QA-60 PASS.** 136s against a 300s threshold, and the after-median beats the
+before-median by 530s — far more than the 71s before-spread that constraint 3
+requires it to clear.
+
+**AC-QA-61 PASS.** 134s against a 145s cap. The job itself did not get faster,
+which is the point: the speedup is entirely queueing that was removed, not work
+that stopped being done.
+
+**AC-QA-62 PASS.** Run `31247191287` shows a hit on the **primary** key, not a
+restore-key fallback:
+
+    Cache hit for: Linux-playwright-5ecb56c0490ec23ccd3968f22152cf76969fdcd83376a8024f12f925f783da23
+    Cache Size: ~269 MB (282207202 B)
+    Cache restored from key: Linux-playwright-5ecb56c0…
+
+and that run was green. **AC-QA-64 PASS**: run `31245156602`, whose key did not
+yet exist, was green and installed the browser (22s), so a miss neither fails
+the job nor leaves it without a browser.
+
+**The install step went 22s cold → 11s warm.** Modest, as predicted; its value
+is the tail it removes, not the median it saves.
+
+**M7 confirmed by measurement, not projection.** The last required check moved
+666s → 526s, a 21% cut — against the accessibility verdict's 80%. The gate is
+still ~8.8 minutes to mergeable. That is exactly what T16 is for, and it is why
+this section reports both numbers.
+
 ## The accessibility lens, run separately after the review cycle missed it
 
 The review cycle escalated E1: **no `lens-accessibility` ran on a change that

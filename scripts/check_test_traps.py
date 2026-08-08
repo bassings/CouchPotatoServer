@@ -1397,15 +1397,24 @@ TEMPLATE_SUFFIXES = (".html",)
 # the body -- turning correct code into a SyntaxError at a line number pointing
 # at the tag. A blocking gate that is red on valid input is how people learn to
 # reach for --no-verify, so quoted runs are consumed whole.
-# `</script\s*>`, not `</script>`: HTML permits whitespace before an end tag's
-# `>`, and CodeQL's bad-HTML-filtering-regexp query flagged exactly this. It is
-# not cosmetic. A block closed with `</script >` failed to match, so it was
-# never parsed, reported only as "skip-unterminated", and THE GATE PASSED GREEN
-# WITH A SYNTAX ERROR INSIDE IT -- a false green in the rule whose whole purpose
-# is preventing one. Measured before the fix on `<script>const broken = (;
-# </script >`: exit 0.
+# The end tag is `</script\b[^>]*>`, and every part of that is load-bearing.
+#
+# HTML end tags may carry whitespace AND ignored attributes before the `>`, so
+# `</script>` and even `</script\s*>` are both too narrow. This is not
+# cosmetic: a block whose closer did not match was never parsed, was reported
+# only as "skip-unterminated", and THE GATE EXITED 0 WITH A SYNTAX ERROR INSIDE
+# IT -- a false green in the rule whose whole purpose is preventing false
+# greens. Measured on `<script>const broken = (;</script >`: exit 0.
+#
+# CodeQL's py/bad-tag-filter found it, twice in a row: alert #94 for
+# `</script >`, then #95 for `</script\t\n bar>` once the first was narrowed to
+# `\s*`. This repo has now been round that loop on this same query more than
+# once, so it is written in the general form rather than patched per report.
+#
+# `\b` is what keeps it honest: `</scriptfoo>` has no word boundary after
+# "script" and is correctly NOT a closer, while `</script bar>` is.
 SCRIPT_TAG_RE = re.compile(
-    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script\s*>""",
+    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script\b[^>]*>""",
     re.IGNORECASE | re.DOTALL,
 )
 # Counts `<script` openers so an UNTERMINATED one cannot vanish: without this a
