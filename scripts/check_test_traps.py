@@ -103,6 +103,11 @@ Checks performed:
      redirect target is not meaningfully worse than the status quo, so this is
      a documented trade-off, not a bug to route around.
 
+  8. **A template's inline ``<script>`` does not parse.** A dropped ``+`` in
+     ``suggestions.html`` broke a whole Alpine component and only four E2E
+     tests going red caught it (PR #230) — nothing else looks at template JS.
+     See ``check_html_template``.
+
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
 
@@ -134,6 +139,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +166,9 @@ DEFAULT_ROOTS = [
     # could not see it. `test_default_roots_all_exist_and_are_covered` fails
     # if any entry here stops existing.
     REPO_ROOT / "docker-entrypoint.sh",
+    REPO_ROOT / "couchpotato" / "ui" / "templates",
+    # login.html: the one template outside couchpotato/ui/templates/.
+    REPO_ROOT / "couchpotato" / "templates" / "login.html",
 ]
 
 # ── Rule 1: jsdom layout-zero properties ────────────────────────────────────
@@ -1372,6 +1381,109 @@ def _is_python_test(path: Path) -> bool:
     return path.suffix == ".py" and path.name.startswith("test_")
 
 
+# ── Rule 8: template <script> blocks must parse as JavaScript ──────────────
+
+TEMPLATE_SUFFIXES = (".html",)
+
+SCRIPT_TAG_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+SCRIPT_TYPE_RE = re.compile(r"""type\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+JINJA_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
+
+# `type=` values that ARE JavaScript — anything else is template DATA, not code.
+JS_SCRIPT_TYPES = {"", "text/javascript", "application/javascript", "module"}
+
+# Tallied by check_html_template, printed by main() (AC-QA-71): a rule that
+# silently stopped discovering blocks must not report "passed" the same as
+# one that scanned 17.
+TEMPLATE_SCRIPT_STATS = {"parsed": 0, "skipped": []}
+
+
+def _mask_jinja(body: str) -> str:
+    """Replace `{{ }}`/`{% %}`/`{# #}` with a bare identifier, never skip.
+
+    Skipping would permanently exempt every Jinja-bearing block, including
+    the accessibility-critical ones this rule most needs to see (decision 2,
+    AC-A11Y-7). Newlines inside a tag are preserved so a later finding's line
+    number is unaffected.
+    """
+    return JINJA_TAG_RE.sub(lambda m: "__JINJA__" + "\n" * m.group(0).count("\n"), body)
+
+
+def _iter_script_blocks(text: str):
+    """Yield (html_line, kind, body) per `<script>` — html_line is where the
+    body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
+    `src=`, non-JS `type=`, empty body).
+    """
+    for m in SCRIPT_TAG_RE.finditer(text):
+        attrs, body = m.group(1), m.group(2)
+        line = text.count("\n", 0, m.start(2)) + 1
+        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
+            yield (line, "skip-src", body)
+            continue
+        if not body.strip():
+            yield (line, "skip-empty", body)
+            continue
+        type_match = SCRIPT_TYPE_RE.search(attrs)
+        script_type = type_match.group(1).lower() if type_match else ""
+        if script_type not in JS_SCRIPT_TYPES:
+            yield (line, f"skip-type:{script_type}", body)
+            continue
+        yield (line, "module" if script_type == "module" else "classic", body)
+
+
+def _node_check(body: str, *, module: bool):
+    """Run `node --check -` on stdin — list argv, never a shell. Returns
+    (ok, line_in_body, message, ran); ran=False means the parser itself
+    could not run (AC-QA-75: "the check could not run", not a fake syntax
+    error).
+    """
+    args = ["node", "--input-type=module", "--check", "-"] if module else ["node", "--check", "-"]
+    try:
+        result = subprocess.run(args, input=body, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (False, 0, f"{type(exc).__name__}: {exc}", False)
+    if result.returncode == 0:
+        return (True, 0, "", True)
+    line_match = re.search(r"\[stdin\]:(\d+)", result.stderr)
+    msg_match = re.search(r"^(\S*Error:.*)$", result.stderr, re.MULTILINE)
+    if not (line_match and msg_match):
+        return (False, 0, result.stderr.strip()[:300] or "no output from node", False)
+    return (False, int(line_match.group(1)), msg_match.group(1), True)
+
+
+def check_html_template(path: Path, text: str):
+    """Rule 8: inline `<script>` in Jinja templates must parse as JS.
+
+    Masks Jinja tags, feeds each classic/module body to `node --check -` on
+    stdin: parses without executing (AC-SEC-1), no temp file (AC-SEC-3). A
+    missing `node` is a hard, named failure per block (AC-QA-74), same shape
+    as the PyYAML branch above, not a silent skip.
+
+    WHAT THIS RULE STILL DOES NOT SEE (AC-OPS-13): JS inside Alpine/htmx
+    attributes (`x-data`, `@click`, `hx-on:`) and JS in static `.js` files —
+    only the inline `<script>` body. *Does it parse*, not *does it match a
+    style guide*: a dropped operator is a syntax error only where ASI cannot
+    paper over it, so this catches #230's class, not every dropped token.
+    """
+    node = shutil.which("node")
+    for line, kind, body in _iter_script_blocks(text):
+        if kind.startswith("skip"):
+            TEMPLATE_SCRIPT_STATS["skipped"].append((path, line, kind))
+            continue
+        TEMPLATE_SCRIPT_STATS["parsed"] += 1
+        if node is None:
+            yield (line, "cannot check this <script>: `node` is not installed "
+                   "(install from nodejs.org) — this gate must not skip silently.")
+            continue
+        ok, body_line, message, ran = _node_check(_mask_jinja(body), module=(kind == "module"))
+        if ok:
+            continue
+        if not ran:
+            yield (line, f"the check could not run for this <script> block: {message}")
+            continue
+        yield (line + body_line - 1, message)
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -1395,6 +1507,8 @@ def check_file(path: Path):
         yield from check_workflow(path, text)
     elif path.name.endswith(SHELL_SUFFIXES) or is_hook:
         yield from check_shell_script(path, text)
+    elif path.suffix in TEMPLATE_SUFFIXES:
+        yield from check_html_template(path, text)
 
 
 def iter_files(roots: list[Path]) -> list[Path]:
@@ -1435,6 +1549,12 @@ def main(argv: list[str]) -> int:
     for path, line_no, message in check_orphaned_test_files(require_git=require_git):
         print(f"{path}:{line_no}: {message}")
         total += 1
+
+    parsed, skipped = TEMPLATE_SCRIPT_STATS["parsed"], TEMPLATE_SCRIPT_STATS["skipped"]
+    if parsed or skipped:
+        print(f"template scripts: {parsed} parsed, {len(skipped)} skipped")
+        for spath, sline, reason in skipped:
+            print(f"  skipped {spath}:{sline}: {reason}")
 
     if total:
         print(

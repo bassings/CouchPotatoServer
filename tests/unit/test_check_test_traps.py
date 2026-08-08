@@ -26,6 +26,7 @@ which is what makes it usable as a blocking gate.
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -34,6 +35,14 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
+
+# AC-QA-74: pytest cases needing `node` skip visibly rather than going red,
+# so scripts/test-local.sh's node-less Alpine container stays clean.
+requires_node = pytest.mark.skipif(
+    shutil.which("node") is None,
+    reason="node is not installed; required for check_test_traps' template "
+    "inline-script rule (CI-003 Part B, AC-QA-74).",
+)
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_test_traps  # noqa: E402
@@ -1627,6 +1636,7 @@ def test_checker_is_clean_on_tests_e2e_under_rule_6():
 # ── Whole-tree behaviour ────────────────────────────────────────────────────
 
 
+@requires_node  # DEFAULT_ROOTS now includes the template roots rule 8 scans.
 def test_checker_is_clean_on_the_real_tree():
     """It has to be green on the repo to be a blocking gate.
 
@@ -1675,6 +1685,9 @@ def test_default_roots_all_exist_and_are_covered():
         REPO_ROOT / ".githooks" / "pre-push",
         REPO_ROOT / ".github" / "workflows" / "ci.yml",
         REPO_ROOT / "Makefile",
+        # nested, AC-A11Y-6's representative for rule 8's template root
+        REPO_ROOT / "couchpotato" / "ui" / "templates" / "partials" / "movie_detail.html",
+        REPO_ROOT / "couchpotato" / "templates" / "login.html",  # AC-QA-78
     ):
         assert str(expected) in scanned_str, f"{expected} was not scanned"
 
@@ -1722,11 +1735,19 @@ class TestRule5WithoutGit:
 
     @staticmethod
     def _path_without_git(tmp_path):
-        """A PATH with no `git` on it, so the lookup raises FileNotFoundError."""
+        """A PATH with no `git` on it, so the lookup raises FileNotFoundError.
+
+        Keeps `node` reachable: this class is isolating rule 5's git-missing
+        behaviour, and losing node too would fail these tests via rule 8
+        (CI-003 Part B) for an unrelated reason.
+        """
         empty_bin = tmp_path / 'empty-bin'
         empty_bin.mkdir()
-        return str(empty_bin)
+        node_path = shutil.which("node")
+        node_dir = str(Path(node_path).parent) if node_path else ""
+        return os.pathsep.join(p for p in (str(empty_bin), node_dir) if p)
 
+    @requires_node
     def test_a_missing_git_skips_the_rule_rather_than_crashing(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(CHECKER)],
@@ -2070,3 +2091,384 @@ class TestCaplogInfoLevelTrap:
             "should be deleted"
         )
         assert logging.INFO == 20
+
+
+# ── Rule 8: template <script> blocks must parse as JavaScript ──────────────
+#
+# CI-003 Part B (specs/CI-003-fast-gate.md). The #230 defect: a dropped `+`
+# in couchpotato/ui/templates/suggestions.html broke a whole Alpine component
+# and only four E2E tests going red caught it — nothing else looks at
+# template JS at all. See scripts/check_test_traps.py's check_html_template.
+
+TEMPLATES_ROOT = REPO_ROOT / "couchpotato" / "ui" / "templates"
+LOGIN_HTML = REPO_ROOT / "couchpotato" / "templates" / "login.html"
+
+
+@requires_node
+def test_flags_a_genuine_syntax_error_in_a_classic_script_block(tmp_path):
+    path = tmp_path / "bad.html"
+    path.write_text("<script>\nfunction f() {\n  const bad = (;\n}\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "a real JS syntax error was not flagged"
+    line_no, message = findings[0]
+    assert line_no == 3, (line_no, findings)
+    assert "Error" in message
+
+
+@requires_node
+def test_valid_classic_script_is_clean(tmp_path):
+    path = tmp_path / "good.html"
+    path.write_text("<script>\nfunction f() {\n  return 1;\n}\n</script>\n")
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_finding_line_is_the_html_line_not_a_block_offset(tmp_path):
+    """AC-QA-76: prints the line IN THE .HTML FILE, proved on a block that
+    opens well down the file (the real wanted.html/movie_detail.html shape)."""
+    padding = "\n".join(f"<!-- padding {i} -->" for i in range(1, 50))  # 49 lines
+    text = padding + "\n<script>\nconst ok = 1;\nconst bad = (;\n</script>\n"
+    path = tmp_path / "deep.html"
+    path.write_text(text)
+    findings = findings_for(path)
+    assert findings, findings
+    # 49 padding lines + "<script>" on 50 + "const ok" on 51 -> error on 52.
+    assert findings[0][0] == 52, (findings, text.split("\n")[51])
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "rel, needle",
+    [
+        # The spec's own examples (AC-QA-76): both scripts open well down
+        # the file (wanted.html:191, movie_detail.html:363), so a
+        # line-mapping bug invisible on a shallow fixture cannot hide here.
+        ("wanted.html", "selectedIds: new Set(),\n"),
+        ("partials/movie_detail.html", "saving: false,\n"),
+    ],
+)
+def test_line_mapping_matches_the_real_html_line_on_a_deep_file(tmp_path, rel, needle):
+    original = (TEMPLATES_ROOT / rel).read_text(encoding="utf-8")
+    assert needle in original, f"fixture text moved in {rel}; update this test"
+    expected_line = original[: original.index(needle)].count("\n") + 1
+    mutated = original.replace(needle, needle.rstrip("\n").rstrip(",") + "(;\n", 1)
+    path = tmp_path / Path(rel).name
+    path.write_text(mutated)
+    findings = findings_for(path)
+    assert findings, f"{rel}: the mutated line was not flagged"
+    line_no, _ = findings[0]
+    assert line_no == expected_line, (rel, line_no, expected_line)
+
+
+@requires_node
+def test_two_broken_blocks_yield_two_findings_not_one(tmp_path):
+    path = tmp_path / "two.html"
+    path.write_text(
+        "<script>\nconst a = (;\n</script>\n"
+        "<p>x</p>\n"
+        "<script>\nconst b = (;\n</script>\n"
+    )
+    assert len(findings_for(path)) == 2, findings_for(path)
+
+
+@requires_node
+def test_a_clean_first_block_does_not_short_circuit_a_broken_second(tmp_path):
+    """A per-file short-circuit (stop at the first block) must not pass this."""
+    path = tmp_path / "second_broken.html"
+    path.write_text(
+        "<script>\nconst a = 1;\n</script>\n"
+        "<script>\nconst b = (;\n</script>\n"
+    )
+    findings = findings_for(path)
+    assert len(findings) == 1, findings
+
+
+@requires_node
+def test_reintroducing_the_230_defect_is_flagged(tmp_path):
+    """Prove it against the REAL defect (project rule 10), on a copy so the
+    tracked template is never touched (AC-SIMP-9)."""
+    original = (TEMPLATES_ROOT / "suggestions.html").read_text(encoding="utf-8")
+    needle = "console.warn('[suggestions] focus did not reach ' + ref +\n"
+    assert needle in original, "the #230 line moved; update this fixture"
+    mutated = original.replace(needle, needle.replace(" +\n", "\n"), 1)
+    path = tmp_path / "suggestions.html"
+    path.write_text(mutated)
+    findings = findings_for(path)
+    assert findings, "the exact #230 defect (a dropped `+`) was not flagged"
+    line_no, message = findings[0]
+    assert line_no == 226, (line_no, findings)
+    assert "Error" in message
+
+
+@requires_node
+def test_the_real_suggestions_html_is_clean_today():
+    assert findings_for(TEMPLATES_ROOT / "suggestions.html") == []
+
+
+@requires_node
+def test_movie_detail_html_parses_clean_via_jinja_substitution_not_exclusion():
+    """AC-QA-70: a naive extract-and-parse fails on this file at block line 5
+    (`newProfile: '{{ movie.get(...) }}'`) — it must be masked, not excluded."""
+    findings = findings_for(TEMPLATES_ROOT / "partials" / "movie_detail.html")
+    assert findings == [], findings
+
+
+@requires_node
+def test_a_jinja_bearing_block_with_a_syntax_error_is_flagged(tmp_path):
+    """AC-A11Y-7, direction 1: masking must not become a blanket silencer."""
+    path = tmp_path / "jinja_bad.html"
+    path.write_text(
+        "<script>\n"
+        "const url = '{{ web_base }}partial/{{ movie_id }}' + window.loc;\n"
+        "const bad = (;\n"
+        "</script>\n"
+    )
+    findings = findings_for(path)
+    assert findings, "a syntax error alongside masked Jinja was not flagged"
+
+
+@requires_node
+def test_jinja_if_endif_wrapping_valid_js_is_not_flagged(tmp_path):
+    """AC-A11Y-7, direction 2: valid JS wrapped in a Jinja control tag must
+    not be reported, or the substitution has become a blanket silencer."""
+    path = tmp_path / "jinja_if.html"
+    path.write_text(
+        "<script>\n"
+        "{% if debug %}\n"
+        "console.log('debug mode');\n"
+        "{% endif %}\n"
+        "function ready() { return true; }\n"
+        "</script>\n"
+    )
+    assert findings_for(path) == []
+
+
+def test_external_script_with_empty_body_is_not_flagged(tmp_path):
+    path = tmp_path / "ext.html"
+    path.write_text('<script src="/static/x.js"></script>\n')
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_module_script_with_top_level_import_export_is_not_flagged(tmp_path):
+    """AC-QA-72b — the real case is base.html:47. Node 22+ auto-detects
+    module syntax for a FILE but not for `--check -` on stdin (measured), so
+    this pins the intended handling rather than the interpreter's default."""
+    body = "import { x } from './x.js';\nexport const y = x + 1;\n"
+    path = tmp_path / "mod.html"
+    path.write_text(f'<script type="module">\n{body}</script>\n')
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_the_same_import_export_as_a_classic_script_is_flagged(tmp_path):
+    body = "import { x } from './x.js';\nexport const y = x + 1;\n"
+    path = tmp_path / "classic_mod.html"
+    path.write_text(f"<script>\n{body}</script>\n")
+    findings = findings_for(path)
+    assert findings, "import/export outside a module script must be a syntax error"
+
+
+def test_non_js_script_type_is_not_parsed_as_js(tmp_path):
+    path = tmp_path / "data.html"
+    path.write_text('<script type="application/json">\n{ this is not JSON either }\n</script>\n')
+    assert findings_for(path) == []
+
+
+def test_discovers_at_least_15_nonempty_script_bodies_by_directory_walk():
+    """AC-QA-71's positive anchor: discovery must be a real walk, not a list,
+    so extraction stopping silently is itself detectable."""
+    total = 0
+    for root in (TEMPLATES_ROOT, LOGIN_HTML.parent):
+        for path in root.rglob("*.html"):
+            for _line, _kind, body in check_test_traps._iter_script_blocks(
+                path.read_text(encoding="utf-8")
+            ):
+                if body.strip():
+                    total += 1
+    assert total >= 15, f"only {total} non-empty <script> bodies discovered"
+
+
+@requires_node
+def test_a_brand_new_template_is_discovered_by_the_walk_not_a_list(tmp_path):
+    """No hardcoded file list: a template check_test_traps.py has never seen
+    is still scanned and its broken block still flagged."""
+    nested = tmp_path / "some" / "new" / "widget.html"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("<script>\nconst x = (;\n</script>\n")
+    assert nested in check_test_traps.iter_files([tmp_path])
+    assert findings_for(nested), "a new template's broken script was not flagged"
+
+
+@requires_node
+def test_output_reports_parsed_and_skipped_block_counts(tmp_path):
+    (tmp_path / "a.html").write_text(
+        '<script src="/x.js"></script>\n'
+        "<script>\nconst ok = 1;\n</script>\n"
+    )
+    result = run_checker(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "template scripts: 1 parsed, 1 skipped" in result.stdout, result.stdout
+    assert f"skipped {tmp_path / 'a.html'}:1" in result.stdout, result.stdout
+
+
+def test_one_parser_invocation_per_nonempty_block_not_per_line(tmp_path, monkeypatch):
+    """AC-QA-79: bounded at one `node` call per block, whatever its length."""
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(check_test_traps.subprocess, "run", fake_run)
+    path = tmp_path / "many_lines.html"
+    body_lines = "\n".join(f"const x{i} = {i};" for i in range(200))
+    path.write_text(
+        f"<script>\n{body_lines}\n</script>\n<script src='/x.js'></script>\n<script>\nconst y = 1;\n</script>\n"
+    )
+    list(findings_for(path))
+    assert len(calls) == 2, f"expected one call per non-src block (2), got {len(calls)}"
+
+
+def test_missing_node_is_a_hard_named_failure_not_a_silent_skip(tmp_path, monkeypatch):
+    """AC-QA-74. Simulated regardless of whether this machine has node, so the
+    guard is proven even where it can never fire for real."""
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: None)
+    path = tmp_path / "any.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "a missing node produced no finding at all — a silent skip"
+    assert "node" in findings[0][1].lower()
+
+
+def test_missing_node_fails_the_cli_and_never_prints_passed(tmp_path):
+    """The CLI-level half of AC-QA-74, with `node` actually removed from
+    PATH — the same shape `make check-traps`/CI would hit."""
+    (tmp_path / "t.html").write_text("<script>\nconst x = 1;\n</script>\n")
+    env = dict(os.environ)
+    node_path = shutil.which("node")
+    if node_path:
+        # shutil.which returns a PATH entry joined with the name, unresolved —
+        # so the matching directory to drop is the plain parent, NOT the
+        # symlink-resolved one (node is a symlink into ../Cellar/... on
+        # Homebrew, which is never itself a PATH entry).
+        node_dir = str(Path(node_path).parent)
+        env["PATH"] = os.pathsep.join(
+            p for p in env.get("PATH", "").split(os.pathsep) if p and p != node_dir
+        )
+    result = subprocess.run(
+        [sys.executable, str(CHECKER), str(tmp_path)],
+        capture_output=True, text=True, cwd=REPO_ROOT, env=env,
+    )
+    assert result.returncode != 0
+    assert "node" in (result.stdout + result.stderr).lower()
+    assert "test-trap check passed" not in result.stdout
+
+
+def test_unrelated_parser_failure_is_reported_as_could_not_run(tmp_path, monkeypatch):
+    """AC-QA-75: a non-syntax-error parser failure must say "could not run",
+    never be misread as a syntax error at a fabricated line."""
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        check_test_traps.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 2, stdout="", stderr="node: fatal crash\n"),
+    )
+    path = tmp_path / "x.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings, findings
+    message = findings[0][1]
+    assert "could not run" in message
+    assert "SyntaxError" not in message
+
+
+def test_a_killed_parser_is_reported_as_could_not_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=10)
+
+    monkeypatch.setattr(check_test_traps.subprocess, "run", raise_timeout)
+    path = tmp_path / "x.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings and "could not run" in findings[0][1], findings
+
+
+@requires_node
+def test_the_check_parses_without_executing(tmp_path):
+    """AC-SEC-1's own fixture: a body that touches a file must be reported as
+    parsing fine, AND the file must not exist — `node --check` parses only."""
+    marker = tmp_path / "pwned"
+    path = tmp_path / "exploit.html"
+    path.write_text(
+        "<script>\n"
+        f"require('child_process').execSync('touch {marker}');\n"
+        "</script>\n"
+    )
+    findings = findings_for(path)
+    assert findings == [], f"a syntactically valid block was flagged: {findings}"
+    assert not marker.exists(), "node --check EXECUTED the body instead of only parsing it"
+
+
+def test_no_temp_file_is_used_for_the_script_body():
+    """AC-SEC-3: the body is fed on stdin only — grep the actual source for
+    `tempfile`/a hard-coded `/tmp` path, not just an assertion about behaviour."""
+    import inspect
+
+    src = "".join(
+        inspect.getsource(fn)
+        for fn in (
+            check_test_traps._node_check,
+            check_test_traps.check_html_template,
+            check_test_traps._iter_script_blocks,
+        )
+    )
+    assert "tempfile" not in src
+    assert "/tmp" not in src
+    assert "NamedTemporaryFile" not in src
+
+
+def test_no_per_file_allowlist_in_the_rule_itself():
+    """AC-SIMP-7: no template filename may be special-cased by the mechanism
+    (as opposed to being cited in a comment as evidence, this file's own
+    convention — e.g. docker-entrypoint.sh above)."""
+    import inspect
+
+    src = "".join(
+        inspect.getsource(fn)
+        for fn in (
+            check_test_traps._iter_script_blocks,
+            check_test_traps._mask_jinja,
+            check_test_traps._node_check,
+            check_test_traps.check_html_template,
+        )
+    )
+    for banned in (".html", "ALLOWLIST", "movie_detail", "suggestions", "wanted", "base.html"):
+        assert banned not in src, f"per-file special-casing found: {banned!r}"
+
+
+def test_login_html_is_in_scope_and_clean():
+    """AC-QA-78: login.html sits outside couchpotato/ui/templates/, so it
+    must be a deliberate root, not silently excluded."""
+    scanned = {str(p) for p in check_test_traps.iter_files(check_test_traps.DEFAULT_ROOTS)}
+    assert str(LOGIN_HTML) in scanned, "login.html is not in DEFAULT_ROOTS' scan"
+
+
+@requires_node
+def test_login_html_parses_clean():
+    assert findings_for(LOGIN_HTML) == []
+
+
+def test_every_template_with_a_non_src_inline_script_is_scanned():
+    """AC-A11Y-6: enumerate the real tree at runtime and fail if any file
+    with an inline <script> is not covered by DEFAULT_ROOTS' walk."""
+    scanned = {str(p) for p in check_test_traps.iter_files(check_test_traps.DEFAULT_ROOTS)}
+    missing = []
+    for path in TEMPLATES_ROOT.rglob("*.html"):
+        text = path.read_text(encoding="utf-8")
+        for _line, kind, body in check_test_traps._iter_script_blocks(text):
+            if kind != "skip-src" and body.strip() and str(path) not in scanned:
+                missing.append(str(path))
+    assert not missing, f"templates with inline <script> not scanned: {missing}"
