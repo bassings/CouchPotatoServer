@@ -761,3 +761,74 @@ class TestASiblingAppCannotSignTheOperatorOut:
 
         assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before
 
+
+
+class TestTheOriginCheckDoesNotBreakSignOutBehindAProxy:
+    """The false-POSITIVE direction of the cross-origin refusal.
+
+    nginx's default `proxy_pass` sets `Host` to the UPSTREAM address unless
+    the config overrides it, so on an install at `https://media.example.com`
+    proxied to `127.0.0.1:5050` the app sees:
+
+        Origin: https://media.example.com   ->  media.example.com
+        Host:   127.0.0.1:5050
+
+    Comparing those verbatim refuses every legitimate sign-out, forever. And
+    because D1 makes secret rotation the ONLY revocation this design has --
+    there is no session table -- that operator has no working sign-out at all.
+
+    The asymmetry decides it. A false refusal costs the operator their only
+    revocation mechanism, permanently and silently. A false accept costs a
+    repeatable annoyance from an app that already shares their host. The
+    spec's own rule is that nothing here may produce a lockout.
+
+    So `X-Forwarded-Host` counts as this app's identity too. A malicious
+    sibling cannot forge it: the attack shape is a plain cross-site form POST,
+    which cannot set custom headers, and a `fetch` that did would trigger a
+    CORS preflight it cannot satisfy.
+    """
+
+    def test_a_proxied_sign_out_is_not_refused(self, env):
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        client, _ = log_in(env)
+
+        response = client.post('/logout/', headers={
+            'origin': 'https://media.example.com',
+            'x-forwarded-host': 'media.example.com',
+        })
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) != before, (
+            'a legitimate sign-out from behind a reverse proxy was refused, so '
+            'this operator has no working revocation at all'
+        )
+        assert response.status_code in (302, 303), response.status_code
+
+    def test_a_sibling_app_is_still_refused_behind_a_proxy(self, env):
+        """The counterweight: forwarding headers must not become a bypass."""
+        before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
+        client, _ = log_in(env)
+
+        response = client.post('/logout/', headers={
+            'origin': 'http://localhost:9117',
+            'x-forwarded-host': 'media.example.com',
+        })
+
+        assert env.settings.getProperty(SESSION_SECRET_PROPERTY) == before, (
+            'a sibling app on another port signed the operator out despite the '
+            'forwarded host naming a different origin'
+        )
+        assert response.status_code == 403
+
+    def test_a_refusal_is_logged_with_both_values(self, env, caplog):
+        """A 403 nobody can diagnose is how this becomes a silent lockout."""
+        import logging
+
+        client, _ = log_in(env)
+
+        with caplog.at_level(logging.WARNING):
+            client.post('/logout/', headers={'origin': 'http://localhost:9117'})
+
+        text = ' '.join(r.getMessage() for r in caplog.records).lower()
+        assert 'localhost:9117' in text, (
+            'the refusal logged nothing naming the mismatch, so an operator '
+            'whose proxy breaks this has nothing to go on: %s' % text[-400:])

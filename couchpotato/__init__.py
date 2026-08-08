@@ -755,11 +755,30 @@ def _cross_origin_post(request) -> bool:
         if not stated:
             return False
 
-    host = request.headers.get('host')
-    if not host:
+    # `X-Forwarded-Host` counts as this app's identity too, and that is a
+    # deliberate trade rather than laxity.
+    #
+    # nginx's default `proxy_pass` rewrites `Host` to the UPSTREAM address
+    # unless the config overrides it. On an install at
+    # `https://media.example.com` proxied to `127.0.0.1:5050` the app sees
+    # `Origin: https://media.example.com` against `Host: 127.0.0.1:5050`, and
+    # comparing those verbatim refuses every legitimate sign-out forever --
+    # while D1 makes secret rotation the ONLY revocation this design has.
+    #
+    # The asymmetry decides it: a false refusal costs the operator their only
+    # revocation mechanism, permanently and silently; a false accept costs a
+    # repeatable annoyance from an app that already shares their host. The
+    # spec's rule is that nothing here may produce a lockout.
+    #
+    # A malicious sibling cannot forge this header. The attack shape is a
+    # plain cross-site form POST, which cannot set custom headers at all, and
+    # a `fetch` that tried would trigger a CORS preflight it cannot satisfy.
+    known = {h for h in (request.headers.get('host'),
+                         request.headers.get('x-forwarded-host')) if h}
+    if not known:
         return False
 
-    return urlparse(stated).netloc != host
+    return urlparse(stated).netloc not in known
 
 
 def session_cookie_attributes() -> dict:
@@ -1428,6 +1447,17 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             # scopes to a site rather than an origin. Refuse before rotating:
             # otherwise any app sharing the host can sign the operator out at
             # will, and keep doing it.
+            # WARNING, and it names both values. A bare 403 is how this
+            # becomes a silent lockout: an operator whose proxy strips or
+            # rewrites these headers would see sign-out fail with nothing
+            # anywhere to explain it.
+            log.warning('Refused a sign-out whose Origin/Referer (%s) does not '
+                        'match this server (Host %s, X-Forwarded-Host %s). If '
+                        'this is your own reverse proxy, set it to forward the '
+                        'original host.',
+                        request.headers.get('origin') or request.headers.get('referer'),
+                        request.headers.get('host'),
+                        request.headers.get('x-forwarded-host'))
             raise HTTPException(status_code=403, detail='Cross-origin sign-out refused')
 
         # NOTHING TO REVOKE, SO NOTHING IS WRITTEN.
