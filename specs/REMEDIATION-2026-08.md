@@ -409,7 +409,9 @@ happens to notice.
      against a cap of 30, AC-SIMP-8 to **+311** against 120. The `+287` first
      recorded here was taken mid-branch and was stale by merge — in the very
      paragraph telling the next reader to re-measure at merge.
-  2. **A figure asserted once goes stale.** I recorded "+36" and pointed at a
+  2. **A figure asserted once goes stale.** I recorded "+36" (in `907c7f51`,
+     measured mid-branch and true at the time; the merge commit `f97b3ab2`
+     makes it +58) and pointed at a
      PR body that never restated the real number, inside a document whose
      stated principle is not to assert what you have not measured. Re-measure
      at merge, not at the time of writing.
