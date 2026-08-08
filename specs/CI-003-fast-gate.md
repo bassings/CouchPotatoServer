@@ -289,6 +289,39 @@ Vetoes NOT applied, and why:
 
 ---
 
+## Spec gaps and AC conflicts found at implementation
+
+Recorded per the harness contract: a finding with no AC behind it is a spec bug,
+and so is an AC that cannot be satisfied alongside another.
+
+- **AC-SIMP-5 (≤30 net added lines in `ci.yml`) conflicts with AC-OPS-8 and
+  AC-SIMP-6.** Measured at implementation: net **+36**. The functional change is
+  14 lines (one `setup-node` step, two `actions/cache` steps, one deleted
+  `needs:`); the other 22 are comments that AC-OPS-8 explicitly requires (the
+  cache step must carry its symptom and its check) and that AC-SIMP-6 requires
+  for the removed `needs:` edge (the evidence it carried no data dependency).
+
+  Not resolved by trimming, because the surrounding file's idiom is heavily
+  commented — the `secrets` job carries a ~30-line block explaining a single
+  `docker run` — and CLAUDE.md's maintainability rule says to match the
+  surrounding style. Cutting the runbook notes to hit a line count would satisfy
+  the letter of AC-SIMP-5 by deleting the thing AC-OPS-8 asks for.
+
+  **Resolution taken:** the cap is breached by 6 lines, deliberately and on the
+  record, with the duplicated cache comment reduced to a cross-reference on the
+  second occurrence. Flagged for the review cycle to arbitrate rather than
+  decided silently. The lesson for the next planning cycle is that a net-line
+  budget on a file whose house style is long explanatory comments should count
+  **code** lines, not total lines.
+
+- **AC-SEC-7 caught a real defect in the first implementation of Part A.** I
+  wrote `actions/cache@v4` while the repo already pins `actions/cache@v6` at
+  `ci.yml:168` — older, not "the same or newer", so the criterion as written was
+  violated. Fixed to `@v6`. Worth noting the criterion earned its place: nothing
+  else in the gate would have caught a silently downgraded action.
+
+---
+
 ## Constraints that already have teeth
 
 Recorded here because they are hard failure modes discovered during planning,

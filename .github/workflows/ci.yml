@@ -26,6 +26,15 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # node: check_test_traps.py rule 8 parses each template's inline <script>
+    # with `node --check` on stdin -- runtime only, no npm install. The rule
+    # fails HARD without it (AC-QA-74: skipping silently is worse than no
+    # gate), so this step and that rule land together.
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
@@ -238,6 +247,20 @@ jobs:
     - name: Install Node dependencies
       run: npm ci
 
+    # Tail fix, not a median one: this step is normally ~27s, but it is the
+    # ONLY step here that has ever stalled (610s of a 697s job, run
+    # 92791614728). SYMPTOM that this stopped working: the job back at several
+    # minutes with "Install Playwright browsers" dominating. CHECK: the
+    # cache-hit line in this job's log, or `gh cache list`.
+    - name: Cache Playwright browsers
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+    # Deliberately NOT gated on cache-hit: a partial, stale or tampered cache
+    # is repaired by running the install anyway, and a cache miss can never
+    # leave the suite running against no browser.
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
 
@@ -313,7 +336,13 @@ jobs:
     permissions:
       contents: read
       actions: write
-    needs: ui-e2e-tests
+    # NO `needs:` -- deliberately. Was `needs: ui-e2e-tests`, added 2026-02-16
+    # in 40539241 with no stated reason and no data dependency: since T1.7 this
+    # job starts, seeds and tears down its OWN server on its own runner, so
+    # there was no shared state for the edge to sequence. It cost the whole
+    # complaint: median offsets from workflow start over 10 runs were
+    # accessibility 516->654s for a job taking 138s -- 516 of 656s queueing.
+    # Keep the name `accessibility`: it is a REQUIRED status check on master.
     steps:
     - uses: actions/checkout@v7
     
@@ -335,6 +364,13 @@ jobs:
     
     - name: Install Node dependencies
       run: npm ci
+
+    # Same cache as ui-e2e-tests; see the runbook note at that step.
+    - name: Cache Playwright browsers
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
