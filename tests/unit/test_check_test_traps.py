@@ -24,16 +24,32 @@ independently of the current tree) and also assert it is clean on the real tree,
 which is what makes it usable as a blocking gate.
 """
 
+import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
+
+# AC-QA-74: pytest cases needing `node` skip visibly rather than going red,
+# so scripts/test-local.sh's node-less Alpine container stays clean.
+# Resolved ONCE at import. A live `shutil.which` call is unsafe here: the
+# missing-node tests monkeypatch the shared `shutil` module object, so a
+# later call would see their patch and skip the very test doing the patching.
+_NODE_ON_THIS_MACHINE = shutil.which("node") is not None
+
+requires_node = pytest.mark.skipif(
+    not _NODE_ON_THIS_MACHINE,
+    reason="node is not installed; required for check_test_traps' template "
+    "inline-script rule (CI-003 Part B, AC-QA-74).",
+)
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import check_test_traps  # noqa: E402
@@ -53,6 +69,24 @@ def run_checker(*args):
 
 
 def findings_for(path: Path):
+    """Run the checker over one file.
+
+    Skips, visibly, when the file would reach rule 8 and this machine has no
+    `node`. Tagging the ~15 affected tests with `@requires_node` individually
+    was the obvious fix and the wrong one: the next html test added without the
+    decorator silently reintroduces the problem, and this file grows. Verified
+    by removing node from PATH — 12 tests failed before this guard, 0 after,
+    which is what `scripts/test-local.sh` (Alpine, no node) would have hit.
+
+    Keyed on `_NODE_ON_THIS_MACHINE`, resolved ONCE at import, not on a live
+    `shutil.which` call. `monkeypatch.setattr(check_test_traps.shutil, "which",
+    ...)` patches the shared `shutil` MODULE object, so a live call here sees
+    the patch too — which made `test_missing_node_is_a_hard_named_failure`
+    silently SKIP instead of asserting. Caught by running with `-rs` and
+    reading a "node is not installed" skip on a machine that has node.
+    """
+    if path.suffix == ".html" and not _NODE_ON_THIS_MACHINE:
+        pytest.skip("node is not installed; rule 8 cannot parse template scripts here")
     return list(check_test_traps.check_file(path))
 
 
@@ -1627,6 +1661,7 @@ def test_checker_is_clean_on_tests_e2e_under_rule_6():
 # ── Whole-tree behaviour ────────────────────────────────────────────────────
 
 
+@requires_node  # DEFAULT_ROOTS now includes the template roots rule 8 scans.
 def test_checker_is_clean_on_the_real_tree():
     """It has to be green on the repo to be a blocking gate.
 
@@ -1675,6 +1710,9 @@ def test_default_roots_all_exist_and_are_covered():
         REPO_ROOT / ".githooks" / "pre-push",
         REPO_ROOT / ".github" / "workflows" / "ci.yml",
         REPO_ROOT / "Makefile",
+        # nested, AC-A11Y-6's representative for rule 8's template root
+        REPO_ROOT / "couchpotato" / "ui" / "templates" / "partials" / "movie_detail.html",
+        REPO_ROOT / "couchpotato" / "templates" / "login.html",  # AC-QA-78
     ):
         assert str(expected) in scanned_str, f"{expected} was not scanned"
 
@@ -1722,11 +1760,19 @@ class TestRule5WithoutGit:
 
     @staticmethod
     def _path_without_git(tmp_path):
-        """A PATH with no `git` on it, so the lookup raises FileNotFoundError."""
+        """A PATH with no `git` on it, so the lookup raises FileNotFoundError.
+
+        Keeps `node` reachable: this class is isolating rule 5's git-missing
+        behaviour, and losing node too would fail these tests via rule 8
+        (CI-003 Part B) for an unrelated reason.
+        """
         empty_bin = tmp_path / 'empty-bin'
         empty_bin.mkdir()
-        return str(empty_bin)
+        node_path = shutil.which("node")
+        node_dir = str(Path(node_path).parent) if node_path else ""
+        return os.pathsep.join(p for p in (str(empty_bin), node_dir) if p)
 
+    @requires_node
     def test_a_missing_git_skips_the_rule_rather_than_crashing(self, tmp_path):
         result = subprocess.run(
             [sys.executable, str(CHECKER)],
@@ -2070,3 +2116,746 @@ class TestCaplogInfoLevelTrap:
             "should be deleted"
         )
         assert logging.INFO == 20
+
+
+# ── Rule 8: template <script> blocks must parse as JavaScript ──────────────
+#
+# CI-003 Part B (specs/CI-003-fast-gate.md). The #230 defect: a dropped `+`
+# in couchpotato/ui/templates/suggestions.html broke a whole Alpine component
+# and only four E2E tests going red caught it — nothing else looks at
+# template JS at all. See scripts/check_test_traps.py's check_html_template.
+
+TEMPLATES_ROOT = REPO_ROOT / "couchpotato" / "ui" / "templates"
+# BOTH live Jinja render roots (couchpotato/__init__.py:48-51). Reviewing the
+# first version of this rule found the second root covered by a hardcoded
+# `login.html` rather than a walk, so a new template dropped beside it was
+# never scanned and the gate exited 0. Enumerating both here is what makes
+# test_every_template_with_a_non_src_inline_script_is_scanned able to see it.
+TEMPLATE_ROOTS = (TEMPLATES_ROOT, REPO_ROOT / "couchpotato" / "templates")
+LOGIN_HTML = REPO_ROOT / "couchpotato" / "templates" / "login.html"
+
+
+@requires_node
+def test_flags_a_genuine_syntax_error_in_a_classic_script_block(tmp_path):
+    path = tmp_path / "bad.html"
+    path.write_text("<script>\nfunction f() {\n  const bad = (;\n}\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "a real JS syntax error was not flagged"
+    line_no, message = findings[0]
+    assert line_no == 3, (line_no, findings)
+    assert "Error" in message
+
+
+@requires_node
+def test_valid_classic_script_is_clean(tmp_path):
+    path = tmp_path / "good.html"
+    path.write_text("<script>\nfunction f() {\n  return 1;\n}\n</script>\n")
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_finding_line_is_the_html_line_not_a_block_offset(tmp_path):
+    """AC-QA-76: prints the line IN THE .HTML FILE, proved on a block that
+    opens well down the file (the real wanted.html/movie_detail.html shape)."""
+    padding = "\n".join(f"<!-- padding {i} -->" for i in range(1, 50))  # 49 lines
+    text = padding + "\n<script>\nconst ok = 1;\nconst bad = (;\n</script>\n"
+    path = tmp_path / "deep.html"
+    path.write_text(text)
+    findings = findings_for(path)
+    assert findings, findings
+    # 49 padding lines + "<script>" on 50 + "const ok" on 51 -> error on 52.
+    assert findings[0][0] == 52, (findings, text.split("\n")[51])
+
+
+@requires_node
+@pytest.mark.parametrize(
+    "rel, needle",
+    [
+        # The spec's own examples (AC-QA-76): both scripts open well down
+        # the file (wanted.html:191, movie_detail.html:363), so a
+        # line-mapping bug invisible on a shallow fixture cannot hide here.
+        ("wanted.html", "selectedIds: new Set(),\n"),
+        ("partials/movie_detail.html", "saving: false,\n"),
+    ],
+)
+def test_line_mapping_matches_the_real_html_line_on_a_deep_file(tmp_path, rel, needle):
+    original = (TEMPLATES_ROOT / rel).read_text(encoding="utf-8")
+    assert needle in original, f"fixture text moved in {rel}; update this test"
+    expected_line = original[: original.index(needle)].count("\n") + 1
+    mutated = original.replace(needle, needle.rstrip("\n").rstrip(",") + "(;\n", 1)
+    path = tmp_path / Path(rel).name
+    path.write_text(mutated)
+    findings = findings_for(path)
+    assert findings, f"{rel}: the mutated line was not flagged"
+    line_no, _ = findings[0]
+    assert line_no == expected_line, (rel, line_no, expected_line)
+
+
+@requires_node
+def test_two_broken_blocks_yield_two_findings_not_one(tmp_path):
+    path = tmp_path / "two.html"
+    path.write_text(
+        "<script>\nconst a = (;\n</script>\n"
+        "<p>x</p>\n"
+        "<script>\nconst b = (;\n</script>\n"
+    )
+    assert len(findings_for(path)) == 2, findings_for(path)
+
+
+@requires_node
+def test_a_clean_first_block_does_not_short_circuit_a_broken_second(tmp_path):
+    """A per-file short-circuit (stop at the first block) must not pass this."""
+    path = tmp_path / "second_broken.html"
+    path.write_text(
+        "<script>\nconst a = 1;\n</script>\n"
+        "<script>\nconst b = (;\n</script>\n"
+    )
+    findings = findings_for(path)
+    assert len(findings) == 1, findings
+
+
+@requires_node
+def test_reintroducing_the_230_defect_is_flagged(tmp_path):
+    """Prove it against the REAL defect (project rule 10), on a copy so the
+    tracked template is never touched (AC-SIMP-9)."""
+    original = (TEMPLATES_ROOT / "suggestions.html").read_text(encoding="utf-8")
+    needle = "console.warn('[suggestions] focus did not reach ' + ref +\n"
+    assert needle in original, "the #230 line moved; update this fixture"
+    mutated = original.replace(needle, needle.replace(" +\n", "\n"), 1)
+    path = tmp_path / "suggestions.html"
+    path.write_text(mutated)
+    findings = findings_for(path)
+    assert findings, "the exact #230 defect (a dropped `+`) was not flagged"
+    line_no, message = findings[0]
+    # Computed, not hardcoded. `226` was a magic number: the needle check above
+    # catches the line MOVING, but an unrelated insertion earlier in the file
+    # leaves the needle intact and silently staleness the constant, failing
+    # later with no signal about why. Same pattern as the deep-file test.
+    expected_line = mutated[: mutated.index(needle.replace(" +\n", "\n"))].count("\n") + 1
+    assert line_no == expected_line, (line_no, expected_line, findings)
+    assert "Error" in message
+
+
+@requires_node
+def test_the_real_suggestions_html_is_clean_today():
+    assert findings_for(TEMPLATES_ROOT / "suggestions.html") == []
+
+
+@requires_node
+def test_movie_detail_html_parses_clean_via_jinja_substitution_not_exclusion():
+    """AC-QA-70: a naive extract-and-parse fails on this file at block line 5
+    (`newProfile: '{{ movie.get(...) }}'`) — it must be masked, not excluded."""
+    findings = findings_for(TEMPLATES_ROOT / "partials" / "movie_detail.html")
+    assert findings == [], findings
+
+
+@requires_node
+def test_a_jinja_bearing_block_with_a_syntax_error_is_flagged(tmp_path):
+    """AC-A11Y-7, direction 1: masking must not become a blanket silencer."""
+    path = tmp_path / "jinja_bad.html"
+    path.write_text(
+        "<script>\n"
+        "const url = '{{ web_base }}partial/{{ movie_id }}' + window.loc;\n"
+        "const bad = (;\n"
+        "</script>\n"
+    )
+    findings = findings_for(path)
+    assert findings, "a syntax error alongside masked Jinja was not flagged"
+
+
+@requires_node
+def test_jinja_if_endif_wrapping_valid_js_is_not_flagged(tmp_path):
+    """AC-A11Y-7, direction 2: valid JS wrapped in a Jinja control tag must
+    not be reported, or the substitution has become a blanket silencer."""
+    path = tmp_path / "jinja_if.html"
+    path.write_text(
+        "<script>\n"
+        "{% if debug %}\n"
+        "console.log('debug mode');\n"
+        "{% endif %}\n"
+        "function ready() { return true; }\n"
+        "</script>\n"
+    )
+    assert findings_for(path) == []
+
+
+def test_a_jinja_control_tag_in_expression_position_is_not_a_false_red(tmp_path):
+    """The M2 regression: a conditional object property is ordinary template
+    code and rendered valid JS on every branch, but the first version of the
+    mask substituted the identifier `__JINJA__` -- legal only where a VALUE
+    is legal -- and reported a SyntaxError against correct code.
+
+    A blocking gate that is red on valid input is how a team learns to reach
+    for --no-verify, and this rule deliberately has no override.
+    """
+    path = tmp_path / "expr_position.html"
+    path.write_text(
+        "<script>\n"
+        "const cfg = {\n"
+        "  a: 1,\n"
+        "  {% if feature %}\n"
+        "  b: 2,\n"
+        "  {% endif %}\n"
+        "};\n"
+        "</script>\n"
+    )
+    assert findings_for(path) == []
+
+
+def test_a_jinja_tag_splitting_one_expression_is_a_KNOWN_false_red(tmp_path):
+    """The limit of masking, pinned so it is known rather than discovered.
+
+    No substitution makes this parse without rendering the template, which is
+    far beyond a parse gate. The test exists so that if someone later teaches
+    the mask to handle it, this fails and the docstring gets updated -- and so
+    that nobody reports it as a fresh bug.
+    """
+    path = tmp_path / "split_expr.html"
+    path.write_text(
+        "<script>\n"
+        "fetchAll({% if debug %} 'verbose' {% else %} 'quiet' {% endif %});\n"
+        "</script>\n"
+    )
+    assert findings_for(path), (
+        "the split-expression false RED is documented as a known limit; if it "
+        "now passes, the mask improved and _mask_jinja's docstring is stale"
+    )
+
+
+def test_a_greater_than_inside_an_attribute_value_does_not_split_the_tag(tmp_path):
+    """The M3 regression: `[^>]*` stopped at the first `>`, so ` b">` was
+    prepended to the body and valid JS was reported as a SyntaxError at a
+    line number pointing at the tag rather than at any fault."""
+    path = tmp_path / "attr_gt.html"
+    path.write_text('<script data-cfg="a > b">\nconst y = 1;\n</script>\n')
+    assert findings_for(path) == []
+
+
+def test_an_unterminated_script_is_reported_as_skipped_not_silently_dropped(tmp_path):
+    """The M3 false-NEGATIVE half: a missing `</script>` meant the block was
+    not scanned, not flagged, and absent from the skipped list -- an
+    extraction failure invisible in the very output added to surface
+    extraction failures."""
+    path = tmp_path / "unterminated.html"
+    path.write_text("<script>\nconst ok = 1;\n")
+    kinds = [kind for _line, kind, _body in
+             check_test_traps._iter_script_blocks(path.read_text())]
+    assert "skip-unterminated" in kinds, (
+        "an unterminated <script> vanished instead of being reported: %s" % kinds
+    )
+
+
+def test_main_is_safely_callable_twice_in_one_interpreter(tmp_path):
+    """Rule 8's counters are module-global; nothing reset them.
+
+    One process per CLI invocation masks it today, but the counters exist to
+    answer "did the rule stop discovering blocks?", and a second call
+    reporting the first call's totals is precisely the wrong answer to that
+    question. Asserted by calling main() twice over the same tree and
+    requiring identical counts, so a regression shows up as drift rather than
+    as a number nobody checks.
+    """
+    template = tmp_path / "page.html"
+    template.write_text("<script>\nconst a = 1;\n</script>\n")
+
+    check_test_traps.main([str(tmp_path)])
+    first = (check_test_traps.TEMPLATE_SCRIPT_STATS["parsed"],
+             len(check_test_traps.TEMPLATE_SCRIPT_STATS["skipped"]))
+    check_test_traps.main([str(tmp_path)])
+    second = (check_test_traps.TEMPLATE_SCRIPT_STATS["parsed"],
+              len(check_test_traps.TEMPLATE_SCRIPT_STATS["skipped"]))
+
+    assert first == second == (1, 0), (
+        "counts accumulated across calls: first=%r second=%r" % (first, second)
+    )
+
+
+def test_a_commented_script_mention_is_not_reported_as_unterminated(tmp_path):
+    """The skipped list must be CORRECT, not merely present.
+
+    The first version of the unterminated check took a positional slice of
+    leftover `<script` openers, which is only equivalent to "the unmatched
+    ones" when the unmatched openers come last. They do not: `base.html` says
+    `// <script>` in a comment at :238, so the count was off by one and the
+    slice blamed :511 -- a real, terminated, correctly-parsed block. Four such
+    false lines printed on every green run, in the channel added precisely so
+    a real extraction failure could not hide.
+
+    Both halves asserted together, because either alone passes trivially: the
+    commented mention must NOT be reported, and the genuinely unterminated
+    block after it MUST be, at its own line.
+    """
+    path = tmp_path / "mixed.html"
+    path.write_text(
+        "<script>\n"
+        "// <script> mentioned inside a comment\n"
+        "const a = 1;\n"
+        "</script>\n"
+        "<script>\n"
+        "const b = 2;\n"
+    )
+    skips = [(line, kind) for line, kind, _body in
+             check_test_traps._iter_script_blocks(path.read_text())
+             if kind == "skip-unterminated"]
+    assert skips == [(5, "skip-unterminated")], (
+        "expected exactly the genuinely unterminated block at line 5, got %r" % skips
+    )
+
+
+@pytest.mark.parametrize("closer", [
+    "</script>",
+    "</script >",
+    "</script\t>",
+    "</script\n>",
+    "</script\t\n bar>",   # CodeQL alert #95: end tags may carry ignored attributes
+    "</SCRIPT>",           # end tags are case-insensitive
+])
+def test_whitespace_before_the_end_tag_bracket_does_not_produce_a_false_green(tmp_path, closer):
+    """The worst outcome this rule can have, and it shipped for one commit.
+
+    HTML permits whitespace before an end tag's `>`. `</script>` alone did not
+    match `</script >`, so the block was never parsed, was reported merely as
+    "skip-unterminated", and THE GATE EXITED 0 with a genuine syntax error
+    inside it. A false green in the rule whose entire purpose is preventing
+    false greens.
+
+    Found by CodeQL's bad-HTML-filtering-regexp query, which is the second time
+    that query has caught this exact class in this repo -- so it is pinned here
+    rather than trusted to a comment.
+    """
+    path = tmp_path / "closer.html"
+    path.write_text("<script>\nconst broken = (;\n%s\n" % closer)
+    findings = findings_for(path)
+    assert findings, "a syntax error was NOT reported with closer %r" % closer
+    assert findings[0][0] == 2, "wrong line for closer %r: %r" % (closer, findings)
+
+
+def test_a_hyphenated_custom_element_is_not_a_script_block(tmp_path):
+    """`\\b` is a word boundary and `-` is a non-word character, so
+    `<script-loader>` matched. Two measured false REDs from one cause:
+
+      * the custom element's contents were parsed as JavaScript;
+      * a `"</script-loader>"` STRING inside a real block closed that block
+        early, reporting a SyntaxError at the wrong line.
+
+    HTML5 terminates a tag name with whitespace, `/` or `>` and nothing else.
+    The second assertion is the sharper one: it fails on the LINE NUMBER, so a
+    fix that merely stops the early close but keeps mis-parsing would not pass.
+    """
+    element = tmp_path / "custom.html"
+    element.write_text("<script-loader>\nnot js at all (;\n</script-loader>\n")
+    assert findings_for(element) == [], "a hyphenated custom element was parsed as JS"
+
+    early_close = tmp_path / "string_closer.html"
+    early_close.write_text(
+        '<script>\nconst a = "</script-loader>";\nconst broken = (;\n</script>\n'
+    )
+    findings = findings_for(early_close)
+    assert findings and findings[0][0] == 3, (
+        "expected the real error at line 3, got %r -- the block was closed early "
+        "by a string" % findings
+    )
+
+
+def test_the_legacy_hide_js_comment_idiom_does_not_hide_a_syntax_error(tmp_path):
+    """Third false green of the same family, and the most historically likely.
+
+    The 2011-era "hide JS from ancient browsers" idiom puts `<!--` and `//-->`
+    INSIDE the script body. Blanking HTML comments before extraction ate the
+    whole body, so the block arrived as `skip-empty` and the gate exited 0 on a
+    real syntax error. This repo is a fork of a codebase from exactly that era.
+
+    Comment spans are now computed rather than blanked: an opener inside a
+    comment is still skipped, but a body is handed to the parser verbatim --
+    `<!--` is legal comment syntax inside a script (Annex B), so node reads it
+    the way a browser does.
+    """
+    path = tmp_path / "legacy_hide.html"
+    path.write_text("<script>\n<!--\nconst broken = (;\n//-->\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "the legacy <!-- --> idiom hid a syntax error from the gate"
+    assert findings[0][0] == 3, "expected the real error at line 3, got %r" % findings
+
+
+def test_a_commented_out_script_element_is_not_parsed(tmp_path):
+    """A `<script>` inside `<!-- -->` is not code the browser ever runs, so
+    reporting a SyntaxError in one is a false RED in a gate with no override.
+
+    The control is the point: an ADJACENT real block must still be checked, or
+    the fix has simply stopped scanning files that contain a comment.
+    """
+    commented = tmp_path / "commented.html"
+    commented.write_text("<div>\n<!--\n<script>\nconst broken = (;\n</script>\n-->\n</div>\n")
+    assert findings_for(commented) == [], "a commented-out script block was parsed"
+
+    both = tmp_path / "both.html"
+    both.write_text(
+        "<!--\n<script>\nignored (;\n</script>\n-->\n<script>\nconst broken = (;\n</script>\n"
+    )
+    findings = findings_for(both)
+    assert findings and findings[0][0] == 7, (
+        "the real block after a comment must still be checked, at its own line; got %r"
+        % findings
+    )
+
+
+def test_a_data_src_attribute_does_not_hide_a_block_from_the_parser(tmp_path):
+    """Second false green of the same family as the `</script >` closer.
+
+    `\\bsrc\\s*=` also matches `data-src=`, because `-` is a non-word character
+    so `\\b` matches inside it. A block carrying `data-src` was classified as
+    external and never parsed -- so a real syntax error inside one exited 0.
+
+    The control matters: a genuine `src=` must still skip, or the fix has
+    simply disabled the external-script exemption.
+    """
+    hidden = tmp_path / "datasrc.html"
+    hidden.write_text('<script data-src="x">\nconst broken = (;\n</script>\n')
+    assert findings_for(hidden), "a data-src attribute hid a syntax error from the gate"
+
+    external = tmp_path / "realsrc.html"
+    external.write_text('<script src="/static/x.js"></script>\n')
+    assert findings_for(external) == [], "a genuine external script is no longer exempt"
+
+
+def test_an_unquoted_type_attribute_is_classified_correctly(tmp_path):
+    """HTML permits unquoted attribute values, so `type=application/json` was
+    read as an empty type and the JSON parsed as JavaScript -- a false RED on a
+    data block, in a gate with no override.
+
+    Both directions: the data block must be exempt, and an unquoted
+    `type=module` must still be parsed as a module rather than skipped.
+    """
+    data = tmp_path / "unquoted_json.html"
+    data.write_text('<script type=application/json>\n{"a": 1}\n</script>\n')
+    assert findings_for(data) == [], "an unquoted non-JS type was parsed as JavaScript"
+
+    module = tmp_path / "unquoted_module.html"
+    module.write_text("<script type=module>\nexport const a = 1;\n</script>\n")
+    assert findings_for(module) == [], "an unquoted type=module was misclassified"
+    kinds = [k for _l, k, _b in
+             check_test_traps._iter_script_blocks(module.read_text())]
+    assert kinds == ["module"], "expected the block parsed AS a module, got %r" % kinds
+
+
+def test_a_nested_block_literal_is_a_KNOWN_false_red(tmp_path):
+    """A second unmaskable case, pinned rather than left to be rediscovered.
+
+    `{{` opens a Jinja interpolation as far as the mask is concerned, so a
+    nested block in a function body is eaten whole:
+
+        function f() {{ return 1; }}   ->   function f() __JINJA__
+
+    Same family as the split-expression limit above. Recorded so the next
+    person to hit it finds a decision instead of filing a bug, and so that
+    teaching the mask to handle it makes this fail loudly.
+    """
+    path = tmp_path / "nested_block.html"
+    path.write_text("<script>\nfunction f() {{ return 1; }}\n</script>\n")
+    assert findings_for(path), (
+        "the nested-block-literal false RED is a documented known limit; if it "
+        "now passes, the mask improved and _mask_jinja's docstring is stale"
+    )
+
+
+def test_node_options_in_the_environment_cannot_make_the_checker_execute(tmp_path, monkeypatch):
+    """SB-2 / AC-SEC-1's headline property, enforced by the code that claims it.
+
+    `node` honours NODE_OPTIONS on every invocation, and it accepts
+    `--require`. Without stripping it, "parses without executing" would be a
+    property of whoever happened to set the environment, not of this checker.
+
+    The control matters as much as the assertion: the same NODE_OPTIONS is
+    first shown to DO fire against a bare `node --check`, so a green result
+    below cannot be the mechanism silently not working.
+    """
+    if not _NODE_ON_THIS_MACHINE:
+        pytest.skip("node is not installed; the control below cannot run")
+    marker = tmp_path / "executed"
+    payload = tmp_path / "payload.js"
+    payload.write_text("require('fs').writeFileSync(%r, 'x');\n" % str(marker))
+    node_options = f"--require {payload}"
+
+    control = subprocess.run(
+        ["node", "--check", "-"], input="const a = 1;\n", text=True,
+        capture_output=True, env={**os.environ, "NODE_OPTIONS": node_options},
+    )
+    if control.returncode != 0 or not marker.exists():
+        pytest.skip("NODE_OPTIONS --require did not fire on this node; test would prove nothing")
+    marker.unlink()
+
+    path = tmp_path / "plain.html"
+    path.write_text("<script>\nconst a = 1;\n</script>\n")
+    monkeypatch.setenv("NODE_OPTIONS", node_options)
+    assert findings_for(path) == []
+    assert not marker.exists(), "NODE_OPTIONS executed code during a parse-only check"
+
+
+def test_external_script_with_empty_body_is_not_flagged(tmp_path):
+    path = tmp_path / "ext.html"
+    path.write_text('<script src="/static/x.js"></script>\n')
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_module_script_with_top_level_import_export_is_not_flagged(tmp_path):
+    """AC-QA-72b — the real case is base.html:47. Node 22+ auto-detects
+    module syntax for a FILE but not for `--check -` on stdin (measured), so
+    this pins the intended handling rather than the interpreter's default."""
+    body = "import { x } from './x.js';\nexport const y = x + 1;\n"
+    path = tmp_path / "mod.html"
+    path.write_text(f'<script type="module">\n{body}</script>\n')
+    assert findings_for(path) == []
+
+
+@requires_node
+def test_the_same_import_export_as_a_classic_script_is_flagged(tmp_path):
+    body = "import { x } from './x.js';\nexport const y = x + 1;\n"
+    path = tmp_path / "classic_mod.html"
+    path.write_text(f"<script>\n{body}</script>\n")
+    findings = findings_for(path)
+    assert findings, "import/export outside a module script must be a syntax error"
+
+
+def test_non_js_script_type_is_not_parsed_as_js(tmp_path):
+    path = tmp_path / "data.html"
+    path.write_text('<script type="application/json">\n{ this is not JSON either }\n</script>\n')
+    assert findings_for(path) == []
+
+
+def test_discovers_at_least_15_nonempty_script_bodies_by_directory_walk():
+    """AC-QA-71's positive anchor: discovery must be a real walk, not a list,
+    so extraction stopping silently is itself detectable."""
+    total = 0
+    for root in (TEMPLATES_ROOT, LOGIN_HTML.parent):
+        for path in root.rglob("*.html"):
+            for _line, _kind, body in check_test_traps._iter_script_blocks(
+                path.read_text(encoding="utf-8")
+            ):
+                if body.strip():
+                    total += 1
+    assert total >= 15, f"only {total} non-empty <script> bodies discovered"
+
+
+@requires_node
+def test_a_brand_new_template_is_discovered_by_the_walk_not_a_list(tmp_path):
+    """No hardcoded file list: a template check_test_traps.py has never seen
+    is still scanned and its broken block still flagged."""
+    nested = tmp_path / "some" / "new" / "widget.html"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("<script>\nconst x = (;\n</script>\n")
+    assert nested in check_test_traps.iter_files([tmp_path])
+    assert findings_for(nested), "a new template's broken script was not flagged"
+
+
+@requires_node
+def test_output_reports_parsed_and_skipped_block_counts(tmp_path):
+    (tmp_path / "a.html").write_text(
+        '<script src="/x.js"></script>\n'
+        "<script>\nconst ok = 1;\n</script>\n"
+    )
+    result = run_checker(tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "template scripts: 1 parsed, 1 skipped" in result.stdout, result.stdout
+    assert f"skipped {tmp_path / 'a.html'}:1" in result.stdout, result.stdout
+
+
+def test_one_parser_invocation_per_nonempty_block_not_per_line(tmp_path, monkeypatch):
+    """AC-QA-79: bounded at one `node` call per block, whatever its length."""
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append(args)
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(check_test_traps.subprocess, "run", fake_run)
+    path = tmp_path / "many_lines.html"
+    body_lines = "\n".join(f"const x{i} = {i};" for i in range(200))
+    path.write_text(
+        f"<script>\n{body_lines}\n</script>\n<script src='/x.js'></script>\n<script>\nconst y = 1;\n</script>\n"
+    )
+    list(findings_for(path))
+    assert len(calls) == 2, f"expected one call per non-src block (2), got {len(calls)}"
+
+
+def test_missing_node_is_a_hard_named_failure_not_a_silent_skip(tmp_path, monkeypatch):
+    """AC-QA-74. Simulated regardless of whether this machine has node, so the
+    guard is proven even where it can never fire for real."""
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: None)
+    path = tmp_path / "any.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "a missing node produced no finding at all — a silent skip"
+    assert "node" in findings[0][1].lower()
+
+
+def test_missing_node_fails_the_cli_and_never_prints_passed(tmp_path):
+    """The CLI-level half of AC-QA-74, with `node` actually removed from
+    PATH — the same shape `make check-traps`/CI would hit."""
+    (tmp_path / "t.html").write_text("<script>\nconst x = 1;\n</script>\n")
+    env = dict(os.environ)
+    node_path = shutil.which("node")
+    if node_path:
+        # shutil.which returns a PATH entry joined with the name, unresolved —
+        # so the matching directory to drop is the plain parent, NOT the
+        # symlink-resolved one (node is a symlink into ../Cellar/... on
+        # Homebrew, which is never itself a PATH entry).
+        node_dir = str(Path(node_path).parent)
+        env["PATH"] = os.pathsep.join(
+            p for p in env.get("PATH", "").split(os.pathsep) if p and p != node_dir
+        )
+    result = subprocess.run(
+        [sys.executable, str(CHECKER), str(tmp_path)],
+        capture_output=True, text=True, cwd=REPO_ROOT, env=env,
+    )
+    assert result.returncode != 0
+    assert "node" in (result.stdout + result.stderr).lower()
+    assert "test-trap check passed" not in result.stdout
+
+
+def test_unrelated_parser_failure_is_reported_as_could_not_run(tmp_path, monkeypatch):
+    """AC-QA-75: a non-syntax-error parser failure must say "could not run",
+    never be misread as a syntax error at a fabricated line."""
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+    monkeypatch.setattr(
+        check_test_traps.subprocess, "run",
+        lambda *a, **k: subprocess.CompletedProcess(a, 2, stdout="", stderr="node: fatal crash\n"),
+    )
+    path = tmp_path / "x.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings, findings
+    message = findings[0][1]
+    assert "could not run" in message
+    assert "SyntaxError" not in message
+
+
+def test_a_killed_parser_is_reported_as_could_not_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(check_test_traps.shutil, "which", lambda name: "/usr/bin/node")
+
+    def raise_timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args, timeout=10)
+
+    monkeypatch.setattr(check_test_traps.subprocess, "run", raise_timeout)
+    path = tmp_path / "x.html"
+    path.write_text("<script>\nconst x = 1;\n</script>\n")
+    findings = findings_for(path)
+    assert findings and "could not run" in findings[0][1], findings
+
+
+@requires_node
+def test_the_check_parses_without_executing(tmp_path):
+    """AC-SEC-1's own fixture: a body that touches a file must be reported as
+    parsing fine, AND the file must not exist — `node --check` parses only."""
+    marker = tmp_path / "pwned"
+    path = tmp_path / "exploit.html"
+    path.write_text(
+        "<script>\n"
+        f"require('child_process').execSync('touch {marker}');\n"
+        "</script>\n"
+    )
+    findings = findings_for(path)
+    assert findings == [], f"a syntactically valid block was flagged: {findings}"
+    assert not marker.exists(), "node --check EXECUTED the body instead of only parsing it"
+
+
+def test_no_temp_file_is_used_for_the_script_body():
+    """AC-SEC-3: the body is fed on stdin only — grep the actual source for
+    `tempfile`/a hard-coded `/tmp` path, not just an assertion about behaviour."""
+    import inspect
+
+    src = "".join(
+        inspect.getsource(fn)
+        for fn in (
+            check_test_traps._node_check,
+            check_test_traps.check_html_template,
+            check_test_traps._iter_script_blocks,
+        )
+    )
+    assert "tempfile" not in src
+    assert "/tmp" not in src
+    assert "NamedTemporaryFile" not in src
+
+
+def test_no_per_file_allowlist_in_the_rule_itself():
+    """AC-SIMP-7: no template filename may be special-cased by the mechanism
+    (as opposed to being cited in a comment as evidence, this file's own
+    convention — e.g. docker-entrypoint.sh above)."""
+    import inspect
+
+    src = "".join(
+        inspect.getsource(fn)
+        for fn in (
+            check_test_traps._iter_script_blocks,
+            check_test_traps._mask_jinja,
+            check_test_traps._node_check,
+            check_test_traps.check_html_template,
+        )
+    )
+    # Match the MECHANISM, not the prose. This file's convention is to cite the
+    # exact file that proved a bug as evidence (`docker-entrypoint.sh` in
+    # DEFAULT_ROOTS above; `base.html:238` in the unterminated-block comment).
+    # Matching raw source made this guard punish the evidence rather than the
+    # defect -- and the cheapest way to make it green would have been deleting
+    # the comment, which is the wrong direction entirely.
+    #
+    # `ast.unparse` drops comments; docstrings are stripped explicitly below.
+    # Both are documentation, and the AC-SIMP-7 criterion is about the
+    # MECHANISM special-casing a file. What remains is code plus operative
+    # string literals -- exactly the surface a real allowlist has to live in.
+    tree = ast.parse(textwrap.dedent(src))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                and isinstance(first.value.value, str)):
+            body[0] = ast.Expr(value=ast.Constant(value=""))
+    code = ast.unparse(ast.fix_missing_locations(tree))
+    for banned in (".html", "ALLOWLIST", "movie_detail", "suggestions", "wanted", "base.html"):
+        assert banned not in code, f"per-file special-casing found: {banned!r}"
+
+
+def test_login_html_is_in_scope_and_clean():
+    """AC-QA-78: login.html sits outside couchpotato/ui/templates/, so it
+    must be a deliberate root, not silently excluded."""
+    scanned = {str(p) for p in check_test_traps.iter_files(check_test_traps.DEFAULT_ROOTS)}
+    assert str(LOGIN_HTML) in scanned, "login.html is not in DEFAULT_ROOTS' scan"
+
+
+@requires_node
+def test_login_html_parses_clean():
+    assert findings_for(LOGIN_HTML) == []
+
+
+def test_every_template_with_a_non_src_inline_script_is_scanned():
+    """AC-A11Y-6: enumerate the real tree at runtime and fail if any file
+    with an inline <script> is not covered by DEFAULT_ROOTS' walk."""
+    scanned = {str(p) for p in check_test_traps.iter_files(check_test_traps.DEFAULT_ROOTS)}
+    missing = []
+    for root in TEMPLATE_ROOTS:
+        for path in root.rglob("*.html"):
+            text = path.read_text(encoding="utf-8")
+            for _line, kind, body in check_test_traps._iter_script_blocks(text):
+                if kind != "skip-src" and body.strip() and str(path) not in scanned:
+                    missing.append(str(path))
+    assert not missing, f"templates with inline <script> not scanned: {missing}"
+
+
+def test_a_new_template_in_either_render_root_is_covered_by_the_walk(tmp_path):
+    """The M1 regression, pinned as a test rather than as a fixed filename.
+
+    `iter_files` walking a directory is already covered elsewhere; what was
+    broken was DEFAULT_ROOTS naming `couchpotato/templates/login.html`
+    instead of its directory, so the walk stopped at whatever happened to be
+    there the day the rule was written. Asserting on DEFAULT_ROOTS' shape is
+    what catches a regression to a filename, because a file entry can never
+    cover a sibling.
+    """
+    for root in TEMPLATE_ROOTS:
+        assert root in check_test_traps.DEFAULT_ROOTS, (
+            "%s is a live Jinja render root but is not in DEFAULT_ROOTS" % root
+        )
+        assert root.is_dir(), "%s must be entered as a DIRECTORY, not a file" % root

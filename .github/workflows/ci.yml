@@ -26,6 +26,15 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # node: check_test_traps.py rule 8 parses each template's inline <script>
+    # with `node --check` on stdin -- runtime only, no npm install. The rule
+    # fails HARD without it (AC-QA-74: skipping silently is worse than no
+    # gate), so this step and that rule land together.
+    - name: Set up Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: '24'
+
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
@@ -238,6 +247,42 @@ jobs:
     - name: Install Node dependencies
       run: npm ci
 
+    # Tail fix, not a median one: this step is normally ~27s, but it is the
+    # ONLY step here that has ever stalled (610s of a 697s job, run
+    # 92791614728). SYMPTOM that this stopped working: the job back at several
+    # minutes with "Install Playwright browsers" dominating. CHECK: the
+    # cache-hit line in this job's log, or `gh cache list`.
+    #
+    # DO NOT ADD `restore-keys:`. A prefix fallback restores an older chromium
+    # generation, and the install below then adds a second one beside it
+    # rather than replacing it.
+    #
+    # What actually protects this cache, stated precisely because the first
+    # version of this comment got it wrong and review disproved it by
+    # experiment: `playwright install` repairs a MISSING cache but TRUSTS a
+    # present INSTALLATION_COMPLETE marker verbatim -- planting that marker in
+    # an empty directory makes the install skip the download entirely. So the
+    # integrity boundary is GitHub's cache scoping (fork-PR caches are not
+    # restorable by default-branch runs) plus the exact-match key below. It is
+    # NOT the unconditional install.
+    #
+    # Quota: 6.60 GB of the 10 GB per-repo limit is already in use across 272
+    # entries (measured 2026-08-08), and eviction is silent LRU. Keep this key
+    # a function of OS + resolved Playwright version only, never per-commit or
+    # per-branch, or it will quietly evict the pip and npm caches.
+    #
+    # ui-e2e-tests and accessibility now start together and race for this same
+    # key on a cold cache: both miss, both install, one save wins and the other
+    # logs a benign "already exists" conflict. Correct, just noisy once per
+    # dependency bump.
+    - name: Cache Playwright browsers
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
+
+    # Deliberately NOT gated on cache-hit: a cache miss must never leave the
+    # suite running against no browser.
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
 
@@ -313,7 +358,13 @@ jobs:
     permissions:
       contents: read
       actions: write
-    needs: ui-e2e-tests
+    # NO `needs:` -- deliberately. Was `needs: ui-e2e-tests`, added 2026-02-16
+    # in 40539241 with no stated reason and no data dependency: since T1.7 this
+    # job starts, seeds and tears down its OWN server on its own runner, so
+    # there was no shared state for the edge to sequence. It cost the whole
+    # complaint: median offsets from workflow start over 10 runs were
+    # accessibility 516->654s for a job taking 138s -- 516 of 656s queueing.
+    # Keep the name `accessibility`: it is a REQUIRED status check on master.
     steps:
     - uses: actions/checkout@v7
     
@@ -335,6 +386,13 @@ jobs:
     
     - name: Install Node dependencies
       run: npm ci
+
+    # Same cache as ui-e2e-tests; see the runbook note at that step.
+    - name: Cache Playwright browsers
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/ms-playwright
+        key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium

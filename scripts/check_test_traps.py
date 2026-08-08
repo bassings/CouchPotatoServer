@@ -103,6 +103,11 @@ Checks performed:
      redirect target is not meaningfully worse than the status quo, so this is
      a documented trade-off, not a bug to route around.
 
+  8. **A template's inline ``<script>`` does not parse.** A dropped ``+`` in
+     ``suggestions.html`` broke a whole Alpine component and only four E2E
+     tests going red caught it (PR #230) — nothing else looks at template JS.
+     See ``check_html_template``.
+
 Correctness notes for the checks themselves — each was a live bug found in
 review, and each has a regression test:
 
@@ -134,6 +139,7 @@ from __future__ import annotations
 import ast
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +166,16 @@ DEFAULT_ROOTS = [
     # could not see it. `test_default_roots_all_exist_and_are_covered` fails
     # if any entry here stops existing.
     REPO_ROOT / "docker-entrypoint.sh",
+    REPO_ROOT / "couchpotato" / "ui" / "templates",
+    # The OTHER live Jinja render root (couchpotato/__init__.py:48-51). The
+    # DIRECTORY, not `login.html`: it held only that file when this rule was
+    # written, so naming the file looked equivalent -- and it silently was
+    # not. Review proved it by executing: a new template dropped in beside
+    # login.html with `const broken = (;` in a <script> block was never
+    # scanned and the gate exited 0. Naming a file here means the walk stops
+    # at today's contents, which is the same "glob evaluated once" failure
+    # the comment above warns about, in a different shape.
+    REPO_ROOT / "couchpotato" / "templates",
 ]
 
 # ── Rule 1: jsdom layout-zero properties ────────────────────────────────────
@@ -1372,6 +1388,277 @@ def _is_python_test(path: Path) -> bool:
     return path.suffix == ".py" and path.name.startswith("test_")
 
 
+# ── Rule 8: template <script> blocks must parse as JavaScript ──────────────
+
+TEMPLATE_SUFFIXES = (".html",)
+
+# Attribute values may legally contain `>`. A plain `[^>]*` stops at the first
+# one, so `<script data-cfg="a > b">` splits mid-tag and ` b">` is prepended to
+# the body -- turning correct code into a SyntaxError at a line number pointing
+# at the tag. A blocking gate that is red on valid input is how people learn to
+# reach for --no-verify, so quoted runs are consumed whole.
+# The end tag is `</script\b[^>]*>`, and every part of that is load-bearing.
+#
+# HTML end tags may carry whitespace AND ignored attributes before the `>`, so
+# `</script>` and even `</script\s*>` are both too narrow. This is not
+# cosmetic: a block whose closer did not match was never parsed, was reported
+# only as "skip-unterminated", and THE GATE EXITED 0 WITH A SYNTAX ERROR INSIDE
+# IT -- a false green in the rule whose whole purpose is preventing false
+# greens. Measured on `<script>const broken = (;</script >`: exit 0.
+#
+# CodeQL's py/bad-tag-filter found it, twice in a row: alert #94 for
+# `</script >`, then #95 for `</script\t\n bar>` once the first was narrowed to
+# `\s*`. This repo has now been round that loop on this same query more than
+# once, so it is written in the general form rather than patched per report.
+#
+# The terminator is `(?=[\s/>])`, NOT `\b`. `\b` is a word boundary, and `-` is
+# a non-word character, so it matched hyphenated custom elements -- both
+# measured as false REDs before this fix:
+#
+#   * `<script-loader>...</script-loader>` was treated as a script block and its
+#     contents parsed as JavaScript;
+#   * a `"</script-loader>"` STRING inside a real block closed that block early,
+#     reporting a SyntaxError at the wrong line.
+#
+# HTML5 terminates a tag name with whitespace, `/` or `>` and nothing else,
+# which is what this now says.
+SCRIPT_TAG_RE = re.compile(
+    r"""<script(?=[\s/>])((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script(?=[\s/>])[^>]*>""",
+    re.IGNORECASE | re.DOTALL,
+)
+
+# HTML comments are stripped before extraction, newlines preserved so later
+# line numbers stay true. A commented-out `<script>` block is not code, and
+# parsing one reported a SyntaxError against a block the browser never runs.
+HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+# Counts `<script` openers so an UNTERMINATED one cannot vanish: without this a
+# missing `</script>` means the block is not scanned, not flagged, and not
+# listed as skipped -- an extraction failure that is invisible in the very
+# output added to make extraction failures visible.
+SCRIPT_OPEN_RE = re.compile(r"<script(?=[\s/>])", re.IGNORECASE)
+# Attributes are TOKENISED, not pattern-matched out of the raw tag text, and
+# both shortcuts this replaces were live defects:
+#
+#   * `\bsrc\s*=` also matched `data-src=`, because `-` is a non-word character
+#     so `\b` matches inside it. A block carrying `data-src` was classified
+#     external and never parsed -- measured: a real SyntaxError inside one
+#     exited 0. Same false-green family as the `</script >` closer.
+#   * a `type` pattern requiring quotes missed `type=application/json`, which
+#     HTML permits unquoted, so a JSON data block was parsed as JavaScript and
+#     reported as a SyntaxError. A false RED in a gate with no override.
+ATTR_RE = re.compile(
+    r"""(?:^|\s)([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
+)
+
+
+def _parse_attrs(attrs: str) -> dict:
+    """`{name_lower: value_lower_unquoted}`; a bare attribute maps to ``""``."""
+    out = {}
+    for name, raw in ATTR_RE.findall(attrs):
+        value = raw[1:-1] if raw[:1] in ('"', "'") and raw[-1:] == raw[:1] else raw
+        out[name.lower()] = value.strip().lower()
+    return out
+JINJA_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
+
+# `type=` values that ARE JavaScript — anything else is template DATA, not code.
+JS_SCRIPT_TYPES = {"", "text/javascript", "application/javascript", "module"}
+
+# Tallied by check_html_template, printed by main() (AC-QA-71): a rule that
+# silently stopped discovering blocks must not report "passed" the same as
+# one that scanned 17.
+TEMPLATE_SCRIPT_STATS = {"parsed": 0, "skipped": []}
+
+
+def _mask_jinja(body: str) -> str:
+    """Replace `{{ }}`/`{% %}`/`{# #}`, never skip.
+
+    Skipping would permanently exempt every Jinja-bearing block, including
+    the accessibility-critical ones this rule most needs to see (decision 2,
+    AC-A11Y-7). Newlines inside a tag are preserved so a later finding's line
+    number is unaffected.
+
+    The two tag families mask DIFFERENTLY, and the reason is a false-RED class
+    review caught in the first version, which masked everything to the bare
+    identifier `__JINJA__`:
+
+        const cfg = { a: 1, {% if f %} b: 2, {% endif %} };
+
+    became `{ a: 1, __JINJA__ b: 2, __JINJA__ }` -- a SyntaxError reported
+    against template code that renders valid JavaScript on every branch. An
+    identifier is only legal where a VALUE is legal, and `{% %}` is control
+    flow that appears wherever the author likes. A block comment is legal
+    everywhere, so control tags and comment tags become one:
+
+      - `{% %}` and `{# #}` -> `/*...*/`, carrying no content (a `*/` inside a
+        Jinja comment would otherwise close the mask early).
+      - `{{ }}` -> `__JINJA__`, because an interpolation IS in value position
+        and a comment there would leave a hole.
+
+    Still not covered, and deliberately: a `{% %}` splitting one expression
+    into alternatives, e.g. `f({% if d %} 'a' {% else %} 'b' {% endif %})`,
+    masks to two adjacent string literals and is a genuine false RED. No
+    substitution fixes that without rendering the template, which is far
+    beyond a parse gate. It is pinned by a test so the limit is known rather
+    than discovered.
+    """
+    def _sub(m):
+        newlines = "\n" * m.group(0).count("\n")
+        if m.group(0).startswith("{{"):
+            return "__JINJA__" + newlines
+        return "/*" + newlines + "*/"
+
+    return JINJA_TAG_RE.sub(_sub, body)
+
+
+def _iter_script_blocks(text: str):
+    """Yield (html_line, kind, body) per `<script>` — html_line is where the
+    body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
+    `src=`, non-JS `type=`, empty body).
+    """
+
+    # Comment spans are COMPUTED, not blanked out of the text, and that is a
+    # false-green fix rather than a refactor. Blanking first meant a body
+    # containing the legacy "hide JS from ancient browsers" idiom --
+    #
+    #     <script>
+    #     <!--
+    #     const broken = (;
+    #     //-->
+    #     </script>
+    #
+    # -- had its whole body eaten by `<!--...-->` before extraction, arrived as
+    # `skip-empty`, and the gate exited 0 on a real syntax error. Measured.
+    # This repo is a fork of a 2011-era codebase, so that idiom is not
+    # hypothetical.
+    #
+    # An opener INSIDE a comment span is still skipped, which is all the
+    # original blanking was for. The body is passed to the parser verbatim:
+    # `<!--` and `-->` are legal comment syntax inside a script (Annex B), so
+    # node reads that block the way a browser does.
+    comment_spans = [m.span() for m in HTML_COMMENT_RE.finditer(text)]
+
+    def _inside_comment(index: int) -> bool:
+        return any(start <= index < end for start, end in comment_spans)
+
+    for m in SCRIPT_TAG_RE.finditer(text):
+        if _inside_comment(m.start()):
+            continue
+        attrs, body = _parse_attrs(m.group(1)), m.group(2)
+        line = text.count("\n", 0, m.start(2)) + 1
+        if "src" in attrs:
+            yield (line, "skip-src", body)
+            continue
+        if not body.strip():
+            yield (line, "skip-empty", body)
+            continue
+        script_type = attrs.get("type", "")
+        if script_type not in JS_SCRIPT_TYPES:
+            yield (line, f"skip-type:{script_type}", body)
+            continue
+        yield (line, "module" if script_type == "module" else "classic", body)
+
+    # Every `<script` opener NOT inside a matched element lost its body to a
+    # missing or malformed `</script>`. Report it, so an extraction failure is
+    # not indistinguishable from a file with no scripts at all.
+    #
+    # By span containment, NOT by count. The first version took a positional
+    # slice of the leftovers, which is only equivalent when the unmatched
+    # openers happen to come last -- and they do not. `base.html` contains the
+    # literal `// <script>` inside a JS comment at :238, so the count was off
+    # by one and the slice named the LAST opener (:511, a real, terminated,
+    # correctly-parsed block) as unterminated. That put four false lines into
+    # the operator-facing channel added specifically so an extraction failure
+    # could not hide, on every green run -- noise in the one place that must
+    # stay trustworthy.
+    element_spans = [m.span() for m in SCRIPT_TAG_RE.finditer(text)]
+    for opener in SCRIPT_OPEN_RE.finditer(text):
+        if _inside_comment(opener.start()):
+            continue
+        if any(start <= opener.start() < end for start, end in element_spans):
+            continue
+        yield (text.count("\n", 0, opener.start()) + 1, "skip-unterminated", "")
+
+
+def _node_check(body: str, *, module: bool):
+    """Run `node --check -` on stdin — list argv, never a shell. Returns
+    (ok, line_in_body, message, ran); ran=False means the parser itself
+    could not run (AC-QA-75: "the check could not run", not a fake syntax
+    error).
+    """
+    args = ["node", "--input-type=module", "--check", "-"] if module else ["node", "--check", "-"]
+    # NODE_OPTIONS is honoured by every node invocation and can carry
+    # `--require`, so "parses without executing" would otherwise be a property
+    # of the ambient environment rather than of this checker. Dropped here so
+    # the guarantee is enforced by the code that claims it.
+    env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
+    try:
+        result = subprocess.run(
+            args, input=body, capture_output=True, text=True, timeout=10, env=env
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return (False, 0, f"{type(exc).__name__}: {exc}", False)
+    if result.returncode == 0:
+        return (True, 0, "", True)
+    line_match = re.search(r"\[stdin\]:(\d+)", result.stderr)
+    msg_match = re.search(r"^(\S*Error:.*)$", result.stderr, re.MULTILINE)
+    if not (line_match and msg_match):
+        return (False, 0, result.stderr.strip()[:300] or "no output from node", False)
+    return (False, int(line_match.group(1)), msg_match.group(1), True)
+
+
+def check_html_template(path: Path, text: str):
+    """Rule 8: inline `<script>` in Jinja templates must parse as JS.
+
+    Masks Jinja tags, feeds each classic/module body to `node --check -` on
+    stdin: parses without executing (AC-SEC-1), no temp file (AC-SEC-3). A
+    missing `node` is a hard, named failure per block (AC-QA-74), same shape
+    as the PyYAML branch above, not a silent skip.
+
+    WHAT THIS RULE STILL DOES NOT SEE (AC-OPS-13). Stated so the rule is not
+    over-trusted as "template JS is now gated", which it is not:
+
+    * **JS in Alpine/htmx ATTRIBUTES** (`x-data`, `@click`, `hx-on:`) and in
+      static `.js` files — only the inline `<script>` body is parsed. This is
+      not a corner: the densest accessibility-critical inline JS in this repo
+      lives there, including `partials/movie_detail.html`'s trailer focus trap
+      (~:318-326) and the restore-picker focus return (~:206). Breaking those
+      yields ZERO findings.
+    * **Top-level `return`.** `node --check` reads stdin as a CommonJS module,
+      whose wrapper makes a top-level `return` legal; a browser rejects it.
+      Measured: `<script>return 1;</script>` passes. Fixing it needs the Script
+      grammar via `vm.Script`, which means `node -e` — banned by AC-SEC-1 as an
+      execution surface. The narrower risk was preferred to the broader one.
+    * **A `{% %}` that splits one expression**, and a `{{ }}` eating a nested
+      block literal — both pinned as KNOWN limits by tests rather than fixed;
+      no substitution handles them without rendering the template.
+    * **An unterminated `<script>` FOLLOWED by a terminated one**: the first
+      swallows the second, and the result is reported as a SyntaxError at the
+      swallowed boundary rather than as `skip-unterminated`. It fails closed
+      and names the file and line, so it is a misleading diagnosis, not a hole.
+
+    *Does it parse*, not *does it match a style guide*: a dropped operator is a
+    syntax error only where ASI cannot paper over it, so this catches #230's
+    class, not every dropped token.
+    """
+    node = shutil.which("node")
+    for line, kind, body in _iter_script_blocks(text):
+        if kind.startswith("skip"):
+            TEMPLATE_SCRIPT_STATS["skipped"].append((path, line, kind))
+            continue
+        TEMPLATE_SCRIPT_STATS["parsed"] += 1
+        if node is None:
+            yield (line, "cannot check this <script>: `node` is not installed "
+                   "(install from nodejs.org) — this gate must not skip silently.")
+            continue
+        ok, body_line, message, ran = _node_check(_mask_jinja(body), module=(kind == "module"))
+        if ok:
+            continue
+        if not ran:
+            yield (line, f"the check could not run for this <script> block: {message}")
+            continue
+        yield (line + body_line - 1, message)
+
+
 def check_file(path: Path):
     """Yield (line_no, message) for every trap found in ``path``."""
     is_hook = path.parent.name == ".githooks"
@@ -1395,6 +1682,8 @@ def check_file(path: Path):
         yield from check_workflow(path, text)
     elif path.name.endswith(SHELL_SUFFIXES) or is_hook:
         yield from check_shell_script(path, text)
+    elif path.suffix in TEMPLATE_SUFFIXES:
+        yield from check_html_template(path, text)
 
 
 def iter_files(roots: list[Path]) -> list[Path]:
@@ -1418,6 +1707,14 @@ def main(argv: list[str]) -> int:
     # it; the container run (scripts/test-local.sh, which has no git) does
     # not. So the authoritative gates cannot skip a rule quietly, while the
     # supplementary one still runs the other six rules instead of crashing.
+    # Rule 8's counters are module-global, so a second main() in the same
+    # interpreter would report the FIRST run's totals added to its own. The
+    # CLI is one process per invocation today, which masks it -- but the
+    # counters exist to make "the rule stopped discovering blocks" visible,
+    # and a stale count is exactly the wrong answer for that question.
+    TEMPLATE_SCRIPT_STATS["parsed"] = 0
+    TEMPLATE_SCRIPT_STATS["skipped"] = []
+
     require_git = "--require-git" in argv
     argv = [a for a in argv if a != "--require-git"]
     roots = [Path(p) for p in argv] if argv else DEFAULT_ROOTS
@@ -1435,6 +1732,20 @@ def main(argv: list[str]) -> int:
     for path, line_no, message in check_orphaned_test_files(require_git=require_git):
         print(f"{path}:{line_no}: {message}")
         total += 1
+
+    parsed, skipped = TEMPLATE_SCRIPT_STATS["parsed"], TEMPLATE_SCRIPT_STATS["skipped"]
+    if parsed or skipped:
+        print(f"template scripts: {parsed} parsed, {len(skipped)} skipped")
+        for spath, sline, reason in skipped:
+            # Repo-relative: the DEFAULT_ROOTS invocation the Makefile and CI
+            # actually run produced absolute paths on every green run, which
+            # puts the developer's home directory into CI logs and makes the
+            # output differ from every finding line above it.
+            try:
+                spath = Path(spath).relative_to(REPO_ROOT)
+            except ValueError:
+                pass
+            print(f"  skipped {spath}:{sline}: {reason}")
 
     if total:
         print(

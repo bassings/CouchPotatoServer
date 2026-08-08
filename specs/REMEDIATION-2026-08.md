@@ -97,7 +97,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [x] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: merged #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs; ~25 review findings across six rounds, all fixed or recorded as T11-T15
-- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
+- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo (the `qualities` list order, `isHigher`'s profile fallthrough at `quality/main.py:530-548`, the unconditional skip at `renamer/main.py:154-157`). Needs `/plan-cycle` next
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
@@ -128,6 +128,28 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three call sites, each now asserted. Not fixed by retrying the test:
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
+
+- [ ] T16: `ui-e2e-tests` inherits the position `accessibility` just vacated — state: queued (needs: T9) · **owner decision taken 2026-08-08: ship T9 first, decide this once T9's real numbers land**
+
+      Raised by the review of T9 (finding M7) and confirmed by measurement, not
+      inference. Across 15 successful PR runs, `accessibility` was the LAST
+      required check to report in 15 of 15. T9 moves the accessibility verdict
+      from 666s to ~140s, but `ui-e2e-tests` keeps
+      `needs: [test, ui-unit-tests]` (`ci.yml:218`) and is itself a required
+      context, so it takes over as last at ~514s.
+
+      **So T9 takes the gate from ~11 minutes to ~8.5, not to ~2.5.** Reporting
+      only the 79% cut to the accessibility verdict would tick AC-QA-60 while
+      the owner still waits eight and a half minutes to merge, and would
+      produce the same complaint again against a task already marked done.
+
+      Removing this edge would land the gate at ~270s (~4.5 min). **It is not
+      the same call as the accessibility edge**: that one had no reason at all,
+      whereas this one plausibly exists to stop an expensive E2E job burning
+      runner minutes on a branch whose unit tests have already failed. That is
+      a cost trade, and the owner owns it.
+
+      Decide with T9's measured after-numbers in hand, not these projections.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
@@ -242,7 +264,16 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       The path should never execute — but "should never" is what the original
       bug said too.
 
-- [ ] T12: JS inside a Jinja template gets no lint pass — state: queued (no deps)
+- [ ] T12: JS inside a Jinja template gets no lint pass — state: building · bundled into `specs/CI-003-fast-gate.md` as Part B, implemented as rule 8 of `scripts/check_test_traps.py`
+
+      Two things this task's original write-up got wrong, both corrected in the
+      spec: it claimed ESLint covers `couchpotato/ui/static`, and **there is no
+      ESLint in this repo at all** (no config, no devDependency; vitest's
+      include is `tests/unit/**` only). And a dropped `+` is a syntax error only
+      where ASI cannot terminate the expression — verified with `node --check`,
+      `console.warn('a'\n'b');` is red but `var x = 'a'\n'b';` parses clean. The
+      rule catches the #230 defect and a large class like it, not every dropped
+      operator, and the PR must not claim otherwise.
 
       Found by breaking it: a missing `+` in a multi-line string inside
       `suggestions.html`'s `<script>` block made the whole Alpine component
@@ -256,7 +287,30 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       lines, per the standing preference for enforced checks over remembered
       ones.
 
-- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued · the PLAN merged as #228; `ci.yml` is untouched, so the gate is still slow and the deliverable is outstanding. Needs /plan-cycle for its ACs before implementation
+- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: building · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
+
+      **The owner was right and three rounds of my own "corrections" were
+      measuring the wrong thing.** Every earlier version of this task reported
+      the accessibility JOB duration (median 139s) and concluded the report of
+      "more than ten minutes" needed correcting. Nobody had measured the wait.
+      Wall-clock from workflow start to the accessibility verdict:
+
+          632 637 648 649 653 656 656 664 671 678 678 682
+          n = 12   median = 656s = 10 min 56s
+
+      Accurate to within seconds. A second independent sample during the
+      planning cycle returned 666s at n=13, so the figure is stable.
+
+      Median offsets from workflow start (n=10): test 0→238s, ui-e2e-tests
+      246→514s, accessibility 516→654s while itself taking 138s. **516 of the
+      656 seconds is queueing behind `needs: ui-e2e-tests`** — an edge added
+      2026-02-16 in `40539241` with no stated reason, and with no data
+      dependency since T1.7 gave the job its own seeded server.
+
+      So the priority inverted: the browser cache this plan originally
+      headlined is worth ~27s (4%) and the edge is worth ~516s (79%). The cache
+      is retained as the TAIL fix — it is the only step here that has ever
+      stalled (610s of a 697s job).
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
@@ -302,6 +356,101 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 34** — PR #232 open, T9 measured and closed on evidence, 16 review
+  threads worked to 0.
+
+  **T9's acceptance criteria closed on measurement.** Three runs, same method
+  and population as the baseline: wall→a11y verdict 666s → **136s** (−80%,
+  threshold 300s); a11y job duration 139s → 134s (unchanged, cap 145s);
+  wall→last required 666s → **526s** (−21%). The job did not get faster, which
+  is the point — the win is queueing removed, not work skipped. AC-QA-62 closed
+  with a hit on the PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the
+  cold run that created it.
+
+  **The review found more in my work than the work found in the codebase, and
+  two of them were false GREENS** — the gate exiting 0 with a real syntax error
+  in the file, which is the exact failure rule 8 exists to prevent:
+  `</script>` not matching `</script >` (CodeQL, twice: narrowing to `\s*`
+  earned a second alert for `</script\t\n bar>`, so it is now the general
+  `</script\b[^>]*>`), and `\bsrc\s*=` matching `data-src=` because `-` is a
+  non-word character. Plus three false REDs: a Jinja control tag in expression
+  position, a `>` inside an attribute value, and `<script-loader>` matching
+  because `\b` is not an HTML5 tag-name terminator.
+
+  **I got one finding wrong twice, in opposite directions, and that is the
+  lesson worth keeping.** A reviewer said an unterminated `<script>` followed
+  by a terminated one merges into a bogus block. I dismissed it (my test used a
+  semicolon, forcing a SyntaxError), then reproduced their exact case, declared
+  it a confirmed false green, and wrote a linear opener/closer scan to fix it.
+  **That fix was a regression.** Per HTML5 `<script>` content is RAW TEXT
+  terminated only by `</script`; stdlib `HTMLParser` sees ONE start tag there,
+  so a browser parses the file identically and fails at runtime, not at parse.
+  Exit 0 was correct. The scan also broke the real `base.html:238` pattern
+  (`// <script>` in a comment). Reverted. I had conflated "the gate passes"
+  with "the gate is wrong", and only a spec-following parser settled it.
+
+  **Two of my own guards were vacuous.** The `--fail-on-flaky-tests` guard
+  matched the whole multi-line `run:` block, and `ui-e2e-tests` already carries
+  two `--project=` lines — so a third without the flag would pass. And the
+  Alpine container run would have gone red: removing `node` from PATH produced
+  12 failures. The fix for THAT had its own bug — keying on a live
+  `shutil.which` meant `monkeypatch.setattr(check_test_traps.shutil, ...)`
+  patched the shared module, so `test_missing_node_is_a_hard_named_failure`
+  skipped instead of asserting. Caught by reading `-rs` output.
+
+  Also: a push was rejected by the pre-push hook for stale `.e2e-w0-data`, left
+  by a `make verify` that timed out and was backgrounded while another started.
+  Two gate runs must not overlap, and a gate run whose files change under it is
+  not evidence.
+
+- **Tick 33** — T9 + T12 built on `ci/fast-gate-and-template-js`. Part B (the
+  template-script parse rule) delegated to the implementer; Part A (`ci.yml`)
+  done by the orchestrator, because it carries the branch-protection trap and a
+  conflict in that file would have been expensive.
+
+  **The measurement that reframed the task is in T9's entry above: the owner's
+  "over ten minutes" was accurate, and three earlier rounds of correction had
+  each measured the job rather than the wait.** That is the third time a
+  section of this plan arguing against diagnosis by inference has itself been
+  wrong by inference. The pattern is specific enough to name: when a report is
+  about *elapsed time*, measure elapsed time, not the duration of the component
+  you suspect.
+
+  Verified against the repo rather than the implementer's report, all
+  independently re-run: the #230 defect reintroduced turns the gate red at the
+  real `suggestions.html:226` (SHA-256 `a25f14c5…` → `c6815626…` → `a25f14c5…`,
+  byte-identical restore); a syntax error inside a Jinja-bearing block is
+  reported at real line 367, so the placeholder substitution has not become a
+  blanket silencer; `partials/movie_detail.html` is parsed rather than excluded
+  and no template filename appears in the checker's operative code; the
+  accessibility test listing is byte-identical between master and the branch
+  (40 tests, 3 spec files); `git diff master -- couchpotato/` is empty.
+
+  New guard `tests/unit/test_ci_required_contexts.py`, mutation-proven in three
+  directions (rename the job, gate its run step behind `if:`, drop
+  `--fail-on-flaky-tests`), each red, file byte-identical after restore. It
+  replaces a hand-written comment at `ci.yml:88-92` that asked the next person
+  to remember the same thing — CLAUDE.md rule 9.
+
+  **Two findings against my own work, recorded rather than quietly fixed.**
+  AC-SEC-7 caught me pinning `actions/cache@v4` when the repo already pins
+  `@v6` — a silent action downgrade nothing else in the gate would have seen.
+  And AC-SIMP-5's 30-line cap on `ci.yml` is breached by 6, entirely by
+  comments AC-OPS-8 and AC-SIMP-6 require; recorded in the spec as an AC-vs-AC
+  conflict for the review cycle to arbitrate. The generalisable lesson: a
+  net-line budget on a file whose house style is long explanatory comments
+  should count code lines, not total lines.
+
+  Armed: `make verify` running to completion before any push. Next wake expects
+  a green gate, then `/review-cycle`, then the PR.
+
+- **Tick 32** — #229 merged (`aac4c31c`), T4 ticked, bookkeeping PR #231 merged
+  (`9eb66da7`). Plan stands at 5 of 15. T5's spec extracted to
+  `specs/FEAT-009B-UPGRADE-REPLACEMENT.md`; T9 + T12 taken through
+  `/plan-cycle`, which returned 49 criteria and found six defects in the
+  drafted spec's own prose — including an assertion that ESLint covers this
+  repo, which it has never done.
 
 - **Tick 31** — **PR #229 raised** for T4 after `make verify` went green
   (exit 0, captured to a log rather than through a pipe). Five implementation
