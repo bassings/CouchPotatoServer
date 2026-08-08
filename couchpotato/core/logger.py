@@ -243,6 +243,28 @@ class PrivacyFilter(logging.Filter):
                          flags=re.IGNORECASE)
         msg = _HOME_PREFIX_RE.sub('<home>', msg)
 
+        # The TRACEBACK too, and it needs materialising here to reach it.
+        #
+        # Stdlib formats `record.exc_info` inside `Formatter.format()`, which
+        # runs AFTER filters -- so every frame's absolute source path reached
+        # the file untouched, and the api_key scrubbing below was bypassed for
+        # the same reason. Measured with this filter attached:
+        #
+        #     traceback reached the log      : True
+        #     absolute repo path in the log  : True
+        #     redaction marker <home> present: False
+        #
+        # `Formatter.format()` reuses `record.exc_text` when it is already
+        # set, so rendering it here and scrubbing it is what makes the
+        # redaction actually apply. Two live call sites pass `exc_info=True`
+        # (`couchpotato/ui/__init__.py:441` and `:466`), and without this the
+        # whole point of the redaction is lost: an operator pastes
+        # couchpotato.log into an issue and their home directory is in it.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = _HOME_PREFIX_RE.sub('<home>', record.exc_text)
+
         for replace in _REPLACE_PRIVATE_BARE_EXACT:
             msg = re.sub(r'\b%s=[^\s&,;)\]}\'"]+' % replace,
                          lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,

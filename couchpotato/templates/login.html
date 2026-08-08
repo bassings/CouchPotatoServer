@@ -218,7 +218,10 @@ tailwind.config = {
                 Only on the error tone: a field that is permanently
                 `aria-invalid` announces a mistake to someone who has not made
                 one, and says nothing when they have. -#}
-            {% if message_tone == 'error' %}aria-describedby="login-message" aria-invalid="true"{% endif %}
+            {#- `aria-describedby` on any message, but `aria-invalid` ONLY on a
+                rejected credential. See `credential_rejected` in
+                `render_login_page`. -#}
+            {% if message_text %}aria-describedby="login-message"{% endif %}{% if credential_rejected %} aria-invalid="true"{% endif %}
             class="w-full h-10 px-3 rounded-lg bg-cp-surface border border-cp-border text-cp-text placeholder-cp-muted focus:ring-2 focus:ring-cp-accent focus:border-cp-accent"
           >
         </div>

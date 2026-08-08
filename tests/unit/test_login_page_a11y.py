@@ -465,3 +465,48 @@ class TestTheNoticeIsAssociatedWithWhereFocusLands:
         username = self._attrs_of(client.get('/login/').text, 'username')
 
         assert 'aria-describedby' not in username, username
+
+
+class TestOnlyARejectedCredentialMarksTheFieldInvalid:
+    """`aria-invalid` gated on TONE, not on what actually happened.
+
+    Two reasons carry tone `error` while their rendered text says the password
+    was not the problem:
+
+    - `session_not_created`: "Your password was correct, but the server could
+      not start a session... This is a server problem, not your password."
+    - `rate_limited`: "...the limit counts every attempt, right or wrong, so
+      it says nothing about what you entered."
+
+    Both render with `mode='signin'` and `tone='error'`, so the password field
+    was marked `aria-invalid="true"` and a screen reader announced the field as
+    invalid -- directly contradicting the sentence beside it. The one thing an
+    `aria-invalid` field tells a user is "fix this value", and in both cases
+    there is nothing to fix.
+    """
+
+    def _password_attrs(self, html):
+        field = html[html.index('id="password"'):]
+        return field[:field.index('>')]
+
+    def test_a_rejected_credential_still_marks_the_field(self, client):
+        html = client.post('/login/', data={'username': '', 'password': 'wrong'}).text
+
+        assert 'aria-invalid="true"' in self._password_attrs(html), (
+            'a genuinely rejected password no longer marks the field invalid')
+
+    @pytest.mark.parametrize('reason', ['rate_limited', 'session_not_created'])
+    def test_an_error_that_is_not_about_the_password_does_not(self, reason):
+        """Rendered directly: the gate under test is the TEMPLATE's, and the
+        routing that produces each reason is already covered by the copy
+        suite's reachability guard."""
+        from couchpotato import render_login_page
+
+        html = render_login_page(
+            reason=reason,
+            message_values={'wait': '30 seconds'},
+        ).body.decode('utf-8')
+
+        assert 'aria-invalid' not in self._password_attrs(html), (
+            'the %r page announces the password field as invalid while its own '
+            'copy says the password was not the problem' % reason)

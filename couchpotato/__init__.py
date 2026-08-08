@@ -1037,6 +1037,15 @@ def render_login_page(reason=None, username='', status_code: int = 200,
             message_role='alert' if tone == 'error' else 'status',
             username_value=username,
             focus_field=focus_field,
+            # `aria-invalid` belongs to a REJECTED CREDENTIAL, not to an error
+            # tone. `rate_limited` and `session_not_created` are both errors
+            # whose own copy says the password was not the problem -- "it says
+            # nothing about what you entered", "This is a server problem, not
+            # your password" -- and marking the field invalid told a screen
+            # reader the opposite of the sentence beside it. The one thing
+            # aria-invalid says is "fix this value"; in both cases there is
+            # nothing to fix.
+            credential_rejected=reason in ('rejected', 'empty_password'),
         ),
         status_code=status_code,
     )
