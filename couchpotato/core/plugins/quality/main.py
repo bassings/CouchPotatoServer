@@ -595,6 +595,14 @@ class QualityPlugin(Plugin):
         # value".
         if not isinstance(incoming, dict) or not isinstance(existing, dict):
             return False
+        # And the key must be PRESENT, not merely falsy. A dict carrying
+        # `identifier` but no `is_3d` is a caller that has not supplied the
+        # metadata, which is the same situation as the bare string above --
+        # release documents store the two as siblings, so building the dict
+        # from `r['quality']` alone loses it silently. Same rule: absent
+        # metadata refuses.
+        if 'is_3d' not in incoming or 'is_3d' not in existing:
+            return False
 
         incoming_rank = self.rankQuality(incoming)
         existing_rank = self.rankQuality(existing)

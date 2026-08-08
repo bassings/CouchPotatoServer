@@ -17,7 +17,6 @@ pass a naive assertion.
 See specs/FEAT-009B-UPGRADE-REPLACEMENT.md, "Decisions taken after
 planning" D2, and the T5.1 entry under "Proposed shape".
 """
-import tempfile
 import shutil
 
 import pytest
@@ -125,11 +124,28 @@ class TestBareIdentifiersAreRefusedNotAssumedNon3D:
         plugin = _make_plugin(monkeypatch)
         assert plugin.isBetterQuality('2160p', {'identifier': '720p'}) is False
 
-    def test_two_dicts_still_compare_normally(self, monkeypatch):
-        """The control: refusing strings must not disable the feature."""
+    def test_a_dict_without_is_3d_is_also_refused(self, monkeypatch):
+        """Absent is not the same as False, and both real call sites supply it.
+
+        `quality.guess` always sets `is_3d` (quality/main.py:369 defaults it to
+        False), and a release document stores it explicitly. So a dict carrying
+        `identifier` and no `is_3d` is a caller that built the dict by hand and
+        dropped the field -- most likely from `r['quality']` alone, since the
+        release doc holds the two as siblings. Same rule as the bare string:
+        absent metadata refuses.
+        """
         plugin = _make_plugin(monkeypatch)
         assert plugin.isBetterQuality(
             {'identifier': '2160p'}, {'identifier': '720p'}
+        ) is False
+
+    def test_two_full_dicts_still_compare_normally(self, monkeypatch):
+        """The control: refusing incomplete operands must not disable the
+        feature. This is the shape a real caller passes."""
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.isBetterQuality(
+            {'identifier': '2160p', 'is_3d': False},
+            {'identifier': '720p', 'is_3d': False},
         ) is True
 
 
