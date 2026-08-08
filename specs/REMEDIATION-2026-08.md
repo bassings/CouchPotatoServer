@@ -359,8 +359,19 @@ happens to notice.
 
 - **Tick 35** — **#232 merged (`f97b3ab2`), T9 and T12 ticked. Plan 7 of 16.**
 
-  Final CI run confirms the result on a fourth data point: a11y verdict 138s,
-  last required check 511s, against a 666s baseline on both.
+  **All three figures re-derived as medians over the same population**, after
+  review caught the first version quoting a single run's 511s beside two
+  medians as if they were the same kind of number. Every completed run on the
+  branch, n = 9, same `gh api` method as the baseline:
+
+  | | before (n=15) | after (n=9) | range |
+  |---|---:|---:|---|
+  | wall to a11y verdict | 666s | **138s** | 123-164 |
+  | a11y job duration | 139s | 136s | 120-155 |
+  | wall to last required check | 666s | **511s** | 503-541 |
+
+  The a11y job duration is unchanged, which is the load-bearing detail: the win
+  is queueing removed, not work skipped.
 
   **The honest summary of this PR is the ratio, not the speedup — and the
   first version of this paragraph undercounted it, which review also caught.**
