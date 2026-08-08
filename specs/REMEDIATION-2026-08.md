@@ -129,6 +129,28 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
+- [ ] T16: `ui-e2e-tests` inherits the position `accessibility` just vacated — state: queued (needs: T9) · **owner decision taken 2026-08-08: ship T9 first, decide this once T9's real numbers land**
+
+      Raised by the review of T9 (finding M7) and confirmed by measurement, not
+      inference. Across 15 successful PR runs, `accessibility` was the LAST
+      required check to report in 15 of 15. T9 moves the accessibility verdict
+      from 666s to ~140s, but `ui-e2e-tests` keeps
+      `needs: [test, ui-unit-tests]` (`ci.yml:218`) and is itself a required
+      context, so it takes over as last at ~514s.
+
+      **So T9 takes the gate from ~11 minutes to ~8.5, not to ~2.5.** Reporting
+      only the 79% cut to the accessibility verdict would tick AC-QA-60 while
+      the owner still waits eight and a half minutes to merge, and would
+      produce the same complaint again against a task already marked done.
+
+      Removing this edge would land the gate at ~270s (~4.5 min). **It is not
+      the same call as the accessibility edge**: that one had no reason at all,
+      whereas this one plausibly exists to stop an expensive E2E job burning
+      runner minutes on a branch whose unit tests have already failed. That is
+      a cost trade, and the owner owns it.
+
+      Decide with T9's measured after-numbers in hand, not these projections.
+
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
       Non-blocking review nit on #229, verified and deferred rather than done.
