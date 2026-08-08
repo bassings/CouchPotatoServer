@@ -42,6 +42,69 @@ Per-step timings over **23** successful `accessibility` jobs
 | Run accessibility tests | 23 | 46 | **51** | 55 |
 | Install Python dependencies | 23 | 15 | 17 | 30 |
 
+#### Re-measured with the population stated, after review found the first version unfalsifiable
+
+The block below records bare numbers with no run IDs, and review showed why
+that is not good enough: re-deriving the baseline from the 7 most recent
+**master** runs gives a median of 505s, not 656s — a 150s disagreement — because
+the sample was PR runs and the spec never said so. Anyone checking the claimed
+win later would have concluded the baseline was overstated.
+
+Population, stated so it can be re-run:
+
+    gh api "repos/bassings/CouchPotatoServer/actions/workflows/ci.yml/runs\
+    ?event=pull_request&status=success&per_page=15"
+
+| run ID | wall → a11y verdict | a11y job | wall → LAST required check |
+|---|---:|---:|---:|
+| 31237901328 | 634 | 130 | 634 |
+| 31237171875 | 652 | 142 | 652 |
+| 31236213865 | 658 | 137 | 658 |
+| 31235243017 | 681 | 155 | 681 |
+| 31234494316 | 666 | 127 | 666 |
+| 31233602129 | 673 | 139 | 673 |
+| 31232607693 | 667 | 130 | 667 |
+| 31229947903 | 640 | 123 | 640 |
+| 31228369334 | 655 | 139 | 655 |
+| 31226201179 | 680 | 139 | 680 |
+| 31224285719 | 684 | 147 | 684 |
+| 31221242129 | 666 | 151 | 666 |
+| 31220266132 | 656 | 141 | 656 |
+| 31217493027 | 670 | 140 | 670 |
+| 31213372680 | 705 | 162 | 705 |
+
+    n = 15   wall → a11y verdict:  median 666  (634–705)
+             a11y job duration:    median 139  (123–162)
+             wall → last required: median 666  (634–705)
+
+#### The third column is the finding that matters, and it was not in the plan
+
+**`accessibility` is currently the LAST required check to report, in all 15 of
+15 runs.** So today the two numbers are the same, and after this change they
+come apart:
+
+| | today | after this change |
+|---|---:|---:|
+| accessibility verdict lands | 666s | **~140s** (−79%) |
+| PR becomes mergeable | 666s | **~514s** (−23%) |
+
+The second row is the owner's actual complaint. `ui-e2e-tests` keeps
+`needs: [test, ui-unit-tests]` (`ci.yml:218`) and is itself a required context,
+so it inherits the position `accessibility` just vacated and finishes around
++514s. **This change takes the gate from ~11 minutes to ~8.5 minutes, not to
+~2.5.** Reporting only the 79% figure would tick AC-QA-60 while the owner still
+waits eight and a half minutes — and would very likely produce the same
+complaint again against a task already marked done.
+
+The residual has the same shape as the edge just removed: `ci.yml:277-282`
+records that the E2E fixture starts and seeds its own server per Playwright
+worker, which was the entire argument for dropping the accessibility edge. It
+is worth roughly another 245s. It is **not** taken in this change, because
+unlike the accessibility edge it has a plausible reason to exist — it stops an
+expensive E2E job burning runner minutes on a branch whose unit tests already
+failed — and that trade is the owner's to make, not mine. Recorded as a named
+follow-up rather than silently absorbed or silently dropped.
+
 #### The number the owner actually experiences, measured 2026-08-08
 
 **Every earlier version of this section measured the wrong thing, including the
@@ -289,6 +352,54 @@ Vetoes NOT applied, and why:
 
 ---
 
+## Corrections forced by the review cycle
+
+Recorded rather than quietly applied, because several are corrections to
+criteria this spec asserted confidently and got wrong.
+
+- **AC-SEC-6 was FALSE as written and its comment in `ci.yml` asserted the
+  opposite of the truth.** The criterion claimed "a partial, stale or tampered
+  cache is repaired by running the install anyway". Review disproved it by
+  experiment: planting an empty `chromium-1234/INSTALLATION_COMPLETE` marker
+  makes `playwright install` skip the download entirely
+  (`downloadBrowserWithProgressBar` returns early on the marker, with no
+  checksum or signature check). The real integrity boundary is GitHub's cache
+  scoping plus the exact-match `hashFiles('package-lock.json')` key. The comment
+  now says that, and adds "do not add `restore-keys:`" — which is what would
+  actually break it. Not a live vulnerability: it needs push access to `master`.
+
+- **AC-OPS-7's quota clause was never checked.** Now measured: 6.60 GB of the
+  10 GB per-repo limit already in use across 272 entries, eviction is silent
+  LRU. The key is OS + resolved Playwright version with no per-commit or
+  per-branch component, so entry count is bounded by dependency bumps.
+
+- **AC-QA-71 FAILED on a live render root.** `couchpotato/templates/` is a real
+  `FileSystemLoader` root and DEFAULT_ROOTS pinned `login.html` by name rather
+  than walking the directory, so a new template beside it was never scanned and
+  the gate exited 0. My own AC-A11Y-6 enumeration test could not catch this: it
+  rglobbed only `couchpotato/ui/templates`, so it passed for a reason unrelated
+  to what it claimed to guard. Fixed at the root and at the test, plus a new
+  test asserting DEFAULT_ROOTS holds both roots **as directories**, which is
+  what a regression to a filename trips over.
+
+- **Two false-RED classes existed in a blocking gate with no override.** A Jinja
+  control tag in expression position (`{ a: 1, {% if f %} b: 2, {% endif %} }`)
+  and a `>` inside a script tag's attribute value both turned correct template
+  code red. Both fixed and pinned; the control-tag mask is now a block comment
+  rather than a bare identifier. One residual case — a `{% %}` splitting a
+  single expression into alternatives — cannot be fixed without rendering the
+  template and is pinned by a test as a **known** limit rather than left to be
+  rediscovered as a bug.
+
+- **An unterminated `<script>` was silently unscanned** and absent from the
+  skipped list, i.e. an extraction failure invisible in the output added to make
+  extraction failures visible. Now reported as `skip-unterminated`.
+
+- **AC-SEC-1's headline property was environment-dependent.** `node` honours
+  `NODE_OPTIONS`, which accepts `--require`, so "parses without executing" held
+  only while nobody set it. Now stripped in the checker, with a test whose
+  control first proves the mechanism fires against a bare `node --check`.
+
 ## Spec gaps and AC conflicts found at implementation
 
 Recorded per the harness contract: a finding with no AC behind it is a spec bug,
@@ -307,12 +418,24 @@ and so is an AC that cannot be satisfied alongside another.
   surrounding style. Cutting the runbook notes to hit a line count would satisfy
   the letter of AC-SIMP-5 by deleting the thing AC-OPS-8 asks for.
 
-  **Resolution taken:** the cap is breached by 6 lines, deliberately and on the
-  record, with the duplicated cache comment reduced to a cross-reference on the
-  second occurrence. Flagged for the review cycle to arbitrate rather than
-  decided silently. The lesson for the next planning cycle is that a net-line
-  budget on a file whose house style is long explanatory comments should count
-  **code** lines, not total lines.
+  **Resolution taken:** the cap is breached deliberately and on the record.
+  **The review cycle arbitrated it (C4): operability outranks simplicity by
+  precedence, and lens-simplicity's veto is spent at planning — keep the
+  comments, record AC-SIMP-5 as an accepted deviation.** Final figure after the
+  review's own M4/L1/L2 comment corrections were folded in: see the PR body.
+
+- **AC-SIMP-8 (≤120 net lines in `check_test_traps.py`) is also breached, and
+  for the same structural reason.** The budget was set against a version of the
+  rule that had three defects in it; fixing a false-RED class, a second false-RED
+  class, a silent extraction failure and an environment-dependent security
+  property cannot be done inside a budget calibrated on the defective version.
+  Both AC-SIMP budgets were written before anyone had executed the code.
+
+  The generalisable lesson for the next planning cycle, which is the whole point
+  of recording this: **a net-line budget on a file whose house style is long
+  explanatory comments should count code lines, not total lines** — and a budget
+  set at planning should be re-opened, not silently breached, when review finds
+  defects whose fixes do not fit it.
 
 - **AC-SEC-7 caught a real defect in the first implementation of Part A.** I
   wrote `actions/cache@v4` while the repo already pins `actions/cache@v6` at

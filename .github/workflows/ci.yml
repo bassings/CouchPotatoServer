@@ -252,15 +252,37 @@ jobs:
     # 92791614728). SYMPTOM that this stopped working: the job back at several
     # minutes with "Install Playwright browsers" dominating. CHECK: the
     # cache-hit line in this job's log, or `gh cache list`.
+    #
+    # DO NOT ADD `restore-keys:`. A prefix fallback restores an older chromium
+    # generation, and the install below then adds a second one beside it
+    # rather than replacing it.
+    #
+    # What actually protects this cache, stated precisely because the first
+    # version of this comment got it wrong and review disproved it by
+    # experiment: `playwright install` repairs a MISSING cache but TRUSTS a
+    # present INSTALLATION_COMPLETE marker verbatim -- planting that marker in
+    # an empty directory makes the install skip the download entirely. So the
+    # integrity boundary is GitHub's cache scoping (fork-PR caches are not
+    # restorable by default-branch runs) plus the exact-match key below. It is
+    # NOT the unconditional install.
+    #
+    # Quota: 6.60 GB of the 10 GB per-repo limit is already in use across 272
+    # entries (measured 2026-08-08), and eviction is silent LRU. Keep this key
+    # a function of OS + resolved Playwright version only, never per-commit or
+    # per-branch, or it will quietly evict the pip and npm caches.
+    #
+    # ui-e2e-tests and accessibility now start together and race for this same
+    # key on a cold cache: both miss, both install, one save wins and the other
+    # logs a benign "already exists" conflict. Correct, just noisy once per
+    # dependency bump.
     - name: Cache Playwright browsers
       uses: actions/cache@v6
       with:
         path: ~/.cache/ms-playwright
         key: ${{ runner.os }}-playwright-${{ hashFiles('package-lock.json') }}
 
-    # Deliberately NOT gated on cache-hit: a partial, stale or tampered cache
-    # is repaired by running the install anyway, and a cache miss can never
-    # leave the suite running against no browser.
+    # Deliberately NOT gated on cache-hit: a cache miss must never leave the
+    # suite running against no browser.
     - name: Install Playwright browsers
       run: npx playwright install --with-deps chromium
 

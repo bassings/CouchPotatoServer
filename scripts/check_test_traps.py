@@ -167,8 +167,15 @@ DEFAULT_ROOTS = [
     # if any entry here stops existing.
     REPO_ROOT / "docker-entrypoint.sh",
     REPO_ROOT / "couchpotato" / "ui" / "templates",
-    # login.html: the one template outside couchpotato/ui/templates/.
-    REPO_ROOT / "couchpotato" / "templates" / "login.html",
+    # The OTHER live Jinja render root (couchpotato/__init__.py:48-51). The
+    # DIRECTORY, not `login.html`: it held only that file when this rule was
+    # written, so naming the file looked equivalent -- and it silently was
+    # not. Review proved it by executing: a new template dropped in beside
+    # login.html with `const broken = (;` in a <script> block was never
+    # scanned and the gate exited 0. Naming a file here means the walk stops
+    # at today's contents, which is the same "glob evaluated once" failure
+    # the comment above warns about, in a different shape.
+    REPO_ROOT / "couchpotato" / "templates",
 ]
 
 # ── Rule 1: jsdom layout-zero properties ────────────────────────────────────
@@ -1385,7 +1392,20 @@ def _is_python_test(path: Path) -> bool:
 
 TEMPLATE_SUFFIXES = (".html",)
 
-SCRIPT_TAG_RE = re.compile(r"<script\b([^>]*)>(.*?)</script>", re.IGNORECASE | re.DOTALL)
+# Attribute values may legally contain `>`. A plain `[^>]*` stops at the first
+# one, so `<script data-cfg="a > b">` splits mid-tag and ` b">` is prepended to
+# the body -- turning correct code into a SyntaxError at a line number pointing
+# at the tag. A blocking gate that is red on valid input is how people learn to
+# reach for --no-verify, so quoted runs are consumed whole.
+SCRIPT_TAG_RE = re.compile(
+    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script>""",
+    re.IGNORECASE | re.DOTALL,
+)
+# Counts `<script` openers so an UNTERMINATED one cannot vanish: without this a
+# missing `</script>` means the block is not scanned, not flagged, and not
+# listed as skipped -- an extraction failure that is invisible in the very
+# output added to make extraction failures visible.
+SCRIPT_OPEN_RE = re.compile(r"<script\b", re.IGNORECASE)
 SCRIPT_TYPE_RE = re.compile(r"""type\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
 JINJA_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
 
@@ -1399,14 +1419,44 @@ TEMPLATE_SCRIPT_STATS = {"parsed": 0, "skipped": []}
 
 
 def _mask_jinja(body: str) -> str:
-    """Replace `{{ }}`/`{% %}`/`{# #}` with a bare identifier, never skip.
+    """Replace `{{ }}`/`{% %}`/`{# #}`, never skip.
 
     Skipping would permanently exempt every Jinja-bearing block, including
     the accessibility-critical ones this rule most needs to see (decision 2,
     AC-A11Y-7). Newlines inside a tag are preserved so a later finding's line
     number is unaffected.
+
+    The two tag families mask DIFFERENTLY, and the reason is a false-RED class
+    review caught in the first version, which masked everything to the bare
+    identifier `__JINJA__`:
+
+        const cfg = { a: 1, {% if f %} b: 2, {% endif %} };
+
+    became `{ a: 1, __JINJA__ b: 2, __JINJA__ }` -- a SyntaxError reported
+    against template code that renders valid JavaScript on every branch. An
+    identifier is only legal where a VALUE is legal, and `{% %}` is control
+    flow that appears wherever the author likes. A block comment is legal
+    everywhere, so control tags and comment tags become one:
+
+      - `{% %}` and `{# #}` -> `/*...*/`, carrying no content (a `*/` inside a
+        Jinja comment would otherwise close the mask early).
+      - `{{ }}` -> `__JINJA__`, because an interpolation IS in value position
+        and a comment there would leave a hole.
+
+    Still not covered, and deliberately: a `{% %}` splitting one expression
+    into alternatives, e.g. `f({% if d %} 'a' {% else %} 'b' {% endif %})`,
+    masks to two adjacent string literals and is a genuine false RED. No
+    substitution fixes that without rendering the template, which is far
+    beyond a parse gate. It is pinned by a test so the limit is known rather
+    than discovered.
     """
-    return JINJA_TAG_RE.sub(lambda m: "__JINJA__" + "\n" * m.group(0).count("\n"), body)
+    def _sub(m):
+        newlines = "\n" * m.group(0).count("\n")
+        if m.group(0).startswith("{{"):
+            return "__JINJA__" + newlines
+        return "/*" + newlines + "*/"
+
+    return JINJA_TAG_RE.sub(_sub, body)
 
 
 def _iter_script_blocks(text: str):
@@ -1414,7 +1464,9 @@ def _iter_script_blocks(text: str):
     body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
     `src=`, non-JS `type=`, empty body).
     """
+    matched = 0
     for m in SCRIPT_TAG_RE.finditer(text):
+        matched += 1
         attrs, body = m.group(1), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
         if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
@@ -1430,6 +1482,12 @@ def _iter_script_blocks(text: str):
             continue
         yield (line, "module" if script_type == "module" else "classic", body)
 
+    # Every `<script` opener that produced no block lost its body to a missing
+    # or malformed `</script>`. Report it as a skip rather than letting it be
+    # indistinguishable from a file with no scripts at all.
+    for opener in list(SCRIPT_OPEN_RE.finditer(text))[matched:]:
+        yield (text.count("\n", 0, opener.start()) + 1, "skip-unterminated", "")
+
 
 def _node_check(body: str, *, module: bool):
     """Run `node --check -` on stdin — list argv, never a shell. Returns
@@ -1438,8 +1496,15 @@ def _node_check(body: str, *, module: bool):
     error).
     """
     args = ["node", "--input-type=module", "--check", "-"] if module else ["node", "--check", "-"]
+    # NODE_OPTIONS is honoured by every node invocation and can carry
+    # `--require`, so "parses without executing" would otherwise be a property
+    # of the ambient environment rather than of this checker. Dropped here so
+    # the guarantee is enforced by the code that claims it.
+    env = {k: v for k, v in os.environ.items() if k != "NODE_OPTIONS"}
     try:
-        result = subprocess.run(args, input=body, capture_output=True, text=True, timeout=10)
+        result = subprocess.run(
+            args, input=body, capture_output=True, text=True, timeout=10, env=env
+        )
     except (OSError, subprocess.SubprocessError) as exc:
         return (False, 0, f"{type(exc).__name__}: {exc}", False)
     if result.returncode == 0:
@@ -1554,6 +1619,14 @@ def main(argv: list[str]) -> int:
     if parsed or skipped:
         print(f"template scripts: {parsed} parsed, {len(skipped)} skipped")
         for spath, sline, reason in skipped:
+            # Repo-relative: the DEFAULT_ROOTS invocation the Makefile and CI
+            # actually run produced absolute paths on every green run, which
+            # puts the developer's home directory into CI logs and makes the
+            # output differ from every finding line above it.
+            try:
+                spath = Path(spath).relative_to(REPO_ROOT)
+            except ValueError:
+                pass
             print(f"  skipped {spath}:{sline}: {reason}")
 
     if total:
