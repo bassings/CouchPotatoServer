@@ -402,6 +402,11 @@ criteria this spec asserted confidently and got wrong.
 
 ## AFTER: measured on PR #232, same method and same population as the baseline
 
+**Superseded by the n=9 medians in `specs/REMEDIATION-2026-08.md`'s tick 35** —
+these were the first three runs and the medians below have been recomputed
+over every completed run on the branch. Kept because the per-run rows are
+the raw evidence AC-OPS-2 asks for.
+
 Three completed runs on the branch. Re-fetchable with
 `gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs`.
 
@@ -413,7 +418,7 @@ Three completed runs on the branch. Re-fetchable with
 
     median wall → a11y verdict : 136s   (before 666s)   -80%
     median a11y job duration   : 134s   (before 139s)   unchanged
-    median wall → last required: 526s   (before 666s)   -21%
+    median wall → last required: 511s   (before 666s)   -23%
 
 **AC-QA-60 PASS.** 136s against a 300s threshold, and the after-median beats the
 before-median by 530s — far more than the 71s before-spread that constraint 3
@@ -438,8 +443,8 @@ the job nor leaves it without a browser.
 is the tail it removes, not the median it saves.
 
 **M7 confirmed by measurement, not projection.** The last required check moved
-666s → 526s, a 21% cut — against the accessibility verdict's 80%. The gate is
-still ~8.8 minutes to mergeable. That is exactly what T16 is for, and it is why
+666s → **511s**, a 23% cut — against the accessibility verdict's 80%. The gate
+is still ~8.5 minutes to mergeable. That is exactly what T16 is for, and it is why
 this section reports both numbers.
 
 ## The accessibility lens, run separately after the review cycle missed it
