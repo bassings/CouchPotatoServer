@@ -38,7 +38,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: '3.12'
+        python-version: '3.14'
 
     - name: Install ruff
       run: pip install 'ruff==0.16.1'
@@ -76,7 +76,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: '3.12'
+        python-version: '3.14'
 
     - name: Run UI conformance check
       run: python scripts/check_conformance.py
@@ -137,7 +137,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: '3.12'
+        python-version: '3.14'
 
     - name: Install ruff
       run: pip install 'ruff==0.16.1'
@@ -168,7 +168,7 @@ jobs:
         # ui-e2e-tests/test-summary/docker all `needs: test` and waited
         # on the SLOWEST leg (3.10).
         #
-        # test_ci_matrix_tests_the_dockerfile_version enforces that this
+        # test_ci_matrix_tests_exactly_the_dockerfile_version enforces that this
         # list is exactly [Dockerfile version]; re-broadening it is a
         # deliberate act that must change that test too.
         python-version: ['3.14']
@@ -255,7 +255,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: '3.12'
+        python-version: '3.14'
     
     - name: Install Python dependencies
       run: |
@@ -395,7 +395,7 @@ jobs:
     - name: Set up Python
       uses: actions/setup-python@v7
       with:
-        python-version: '3.12'
+        python-version: '3.14'
     
     - name: Install Python dependencies
       run: |

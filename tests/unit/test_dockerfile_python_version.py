@@ -127,6 +127,44 @@ def test_ci_matrix_tests_exactly_the_dockerfile_version():
     )
 
 
+def test_every_ci_job_uses_the_dockerfile_python():
+    """Not just the `test` matrix -- EVERY setup-python in ci.yml.
+
+    This is the guard that would have caught the drift it was written for.
+    When the matrix was narrowed to the production interpreter, five jobs were
+    still pinned to 3.12 by a separate `python-version:` field, including
+    `ui-e2e-tests` and `accessibility` -- which START THE APPLICATION. So the
+    two browser gates were exercising an interpreter the project had just
+    declared unsupported, while the matrix guard passed because it only looked
+    at the matrix.
+
+    Checking one place and calling it "CI tests what production ships" is the
+    failure here; the claim is only as strong as its weakest job.
+    """
+    dockerfile_version = dockerfile_versions()[0]
+    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
+
+    wrong = []
+    for job_name, job in workflow["jobs"].items():
+        for step in job.get("steps", []) or []:
+            if not isinstance(step, dict):
+                continue
+            if not str(step.get("uses", "")).startswith("actions/setup-python"):
+                continue
+            version = str((step.get("with") or {}).get("python-version", ""))
+            if version.startswith("${{"):
+                continue  # driven by the matrix, covered by the test above
+            if version != dockerfile_version:
+                wrong.append(f"{job_name}={version}")
+
+    assert not wrong, (
+        f"Dockerfile ships Python {dockerfile_version} but these ci.yml jobs "
+        f"pin a different interpreter: {sorted(wrong)}. Jobs that start the "
+        f"application (ui-e2e-tests, accessibility) must run the production "
+        f"interpreter or the gate is testing something nobody ships."
+    )
+
+
 def test_local_docker_runner_defaults_to_the_dockerfile_version():
     """`./scripts/test-local.sh` with no argument should reproduce production,
     not an arbitrary older interpreter a developer has to remember to pass."""
