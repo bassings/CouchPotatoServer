@@ -88,6 +88,18 @@ Every PR follows the same loop:
 ---
 ## Tasks
 
+status: blocked-on-human: finish the last two #229 review findings (the CAS
+test that does not exercise a stale re-read, and the `Env`-leaking fixture in
+`test_session_revocation.py`), or leave #229 where it is? Everything is
+committed and pushed; the gate is green and CodeQL is clean. Two thread
+replies are also queued behind the GitHub API rate limit.
+
+Also waiting on the owner, neither blocking: rotate the two leaked API keys
+(CouchPotato and Jackett), and decide whether to clear the 38 stale worktrees
+under `.claude/worktrees/` (587 MB) that make any local CodeQL scan analyse
+stale copies of the tree.
+
+
 Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 -> in-review #N -> merged`. The box is ticked only at `merged`, and only from
 `gh pr view`, never from memory.
