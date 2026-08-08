@@ -6,6 +6,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog
+from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
 from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
@@ -69,44 +70,52 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             release_download: Specific release download dict to process
             async_call: Whether this was called asynchronously
         """
-        if self.renaming_started:
-            log.info('Renamer is already running, skipping')
-            return
-
-        if not self.conf('from') and not base_folder:
-            return
-
-        self.renaming_started = True
-        # Reset per-scan state: the "no RAR extractor tool" warning is emitted
-        # at most once across the whole scan, not once per group (scan may call
-        # extractFiles once per movie folder via _processGroup).
-        self._warned_no_tool = False
-        scan_folder = base_folder or sp(self.conf('from'))
+        # Check-and-set must be atomic, or two threads can both pass the
+        # check before either sets the flag. The lock is only held for this
+        # instant, not the whole scan (which can take minutes) -- a second
+        # caller is refused promptly rather than blocked for that long.
+        with media_lock('renamer-scan'):
+            if self.renaming_started:
+                log.info('Renamer is already running, skipping')
+                return
+            self.renaming_started = True
 
         try:
-            if not os.path.isdir(scan_folder):
-                log.warning('Scan folder %s does not exist', scan_folder)
+            if not self.conf('from') and not base_folder:
                 return
 
-            groups = fireEvent('scanner.scan', folder=scan_folder,
-                              simple=not bool(release_download),
-                              single=True) or {}
+            # Reset per-scan state: the "no RAR extractor tool" warning is
+            # emitted at most once across the whole scan, not once per group
+            # (scan may call extractFiles once per movie folder via
+            # _processGroup).
+            self._warned_no_tool = False
+            scan_folder = base_folder or sp(self.conf('from'))
 
-            log.info('Renamer found %d groups to process in %s', len(groups), scan_folder)
-            for group_identifier, group in groups.items():
-                if self.shuttingDown():
-                    break
+            try:
+                if not os.path.isdir(scan_folder):
+                    log.warning('Scan folder %s does not exist', scan_folder)
+                    return
 
-                try:
-                    self._processGroup(group, media_folder, release_download)
-                except Exception:
-                    log.error('Error processing group %s: %s',
-                             group_identifier, traceback.format_exc())
+                groups = fireEvent('scanner.scan', folder=scan_folder,
+                                  simple=not bool(release_download),
+                                  single=True) or {}
 
-        except Exception:
-            log.error('Failed during renamer scan: %s', traceback.format_exc())
+                log.info('Renamer found %d groups to process in %s', len(groups), scan_folder)
+                for group_identifier, group in groups.items():
+                    if self.shuttingDown():
+                        break
+
+                    try:
+                        self._processGroup(group, media_folder, release_download)
+                    except Exception:
+                        log.error('Error processing group %s: %s',
+                                 group_identifier, traceback.format_exc())
+
+            except Exception:
+                log.error('Failed during renamer scan: %s', traceback.format_exc())
         finally:
-            self.renaming_started = False
+            with media_lock('renamer-scan'):
+                self.renaming_started = False
 
 
 
