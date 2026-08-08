@@ -394,7 +394,7 @@ tailwind.config = {
   <button @click="sidebarCollapsed = !sidebarCollapsed" 
           class="p-4 border-t border-cp-border text-cp-muted hover:text-cp-text transition-colors" 
           :aria-expanded="(!sidebarCollapsed).toString()"
-          >
+          :aria-label="sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'">
     <svg aria-hidden="true" class="w-4 h-4 transition-transform" :class="sidebarCollapsed ? 'rotate-180' : ''" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5">
       <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5"></path>
     </svg>
