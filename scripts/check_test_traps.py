@@ -1683,6 +1683,14 @@ def main(argv: list[str]) -> int:
     # it; the container run (scripts/test-local.sh, which has no git) does
     # not. So the authoritative gates cannot skip a rule quietly, while the
     # supplementary one still runs the other six rules instead of crashing.
+    # Rule 8's counters are module-global, so a second main() in the same
+    # interpreter would report the FIRST run's totals added to its own. The
+    # CLI is one process per invocation today, which masks it -- but the
+    # counters exist to make "the rule stopped discovering blocks" visible,
+    # and a stale count is exactly the wrong answer for that question.
+    TEMPLATE_SCRIPT_STATS["parsed"] = 0
+    TEMPLATE_SCRIPT_STATS["skipped"] = []
+
     require_git = "--require-git" in argv
     argv = [a for a in argv if a != "--require-git"]
     roots = [Path(p) for p in argv] if argv else DEFAULT_ROOTS

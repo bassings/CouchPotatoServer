@@ -2340,6 +2340,31 @@ def test_an_unterminated_script_is_reported_as_skipped_not_silently_dropped(tmp_
     )
 
 
+def test_main_is_safely_callable_twice_in_one_interpreter(tmp_path):
+    """Rule 8's counters are module-global; nothing reset them.
+
+    One process per CLI invocation masks it today, but the counters exist to
+    answer "did the rule stop discovering blocks?", and a second call
+    reporting the first call's totals is precisely the wrong answer to that
+    question. Asserted by calling main() twice over the same tree and
+    requiring identical counts, so a regression shows up as drift rather than
+    as a number nobody checks.
+    """
+    template = tmp_path / "page.html"
+    template.write_text("<script>\nconst a = 1;\n</script>\n")
+
+    check_test_traps.main([str(tmp_path)])
+    first = (check_test_traps.TEMPLATE_SCRIPT_STATS["parsed"],
+             len(check_test_traps.TEMPLATE_SCRIPT_STATS["skipped"]))
+    check_test_traps.main([str(tmp_path)])
+    second = (check_test_traps.TEMPLATE_SCRIPT_STATS["parsed"],
+              len(check_test_traps.TEMPLATE_SCRIPT_STATS["skipped"]))
+
+    assert first == second == (1, 0), (
+        "counts accumulated across calls: first=%r second=%r" % (first, second)
+    )
+
+
 def test_a_commented_script_mention_is_not_reported_as_unterminated(tmp_path):
     """The skipped list must be CORRECT, not merely present.
 
