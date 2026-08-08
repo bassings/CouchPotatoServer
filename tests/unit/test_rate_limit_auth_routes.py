@@ -546,3 +546,38 @@ class TestTheLocalhostExemptionDoesNotCoverAuthRoutes:
         assert 429 not in codes, (
             'the UI\'s own same-host XHR is now throttled, so fragment loads '
             'and the log poll break: %s' % codes)
+
+
+class TestTheCounterIsSerialised:
+    """The limiter's read-modify-write must stay inside the lock.
+
+    `_is_rate_limited` reads the timestamp list, decides, and appends -- and
+    FastAPI runs sync handlers in a threadpool, so two requests racing that
+    sequence without a lock could each see `len < max` and both be admitted.
+    The window would then hold `max + 1` entries and the limit would be off by
+    one per race, which for a credential route is a real weakening.
+
+    It is correct today because the whole sequence sits in `with self._lock`.
+    Asserted STRUCTURALLY rather than by spawning threads: a race test that
+    passes proves only that the race did not happen to occur on this run, and
+    would be exactly the intermittent-red this suite has already been
+    corrected for once.
+    """
+
+    def test_the_read_modify_write_is_inside_the_lock(self):
+        import inspect
+        import textwrap
+
+        from couchpotato.core.rate_limit import RateLimitMiddleware
+
+        source = textwrap.dedent(inspect.getsource(RateLimitMiddleware._is_rate_limited))
+        body = source[source.index('now = time.time()'):]
+        lock_at = body.index('with self._lock:')
+
+        for statement in ('self._requests.get(ip', 'self._requests.setdefault(ip',
+                          'self._cleanup_old(ip'):
+            assert body.index(statement) > lock_at, (
+                '%r happens OUTSIDE `with self._lock:`, so two threadpool '
+                'requests can both read a count below the limit and both be '
+                'admitted -- the limit is then off by one per race, on a '
+                'credential route.' % statement)
