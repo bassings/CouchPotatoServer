@@ -111,6 +111,16 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
     trusting either outcome — a `sed` that silently matched nothing produces a
     passing test against code you believe you reverted, which is a false green
     that looks exactly like success.
+
+    **And landing is not enough: confirm the mutation created the CONDITION the
+    guard is meant to catch.** These fail identically — a green run — and the
+    natural reading of both is "the guard is broken". Measured 2026-08-08:
+    proving the accessibility gate blocks a WCAG failure, the `aria-label` was
+    stripped from a sidebar button and CI stayed green. The edit had landed
+    perfectly; that button carries a visible text label, so it kept its
+    accessible name and axe was right. The gate was correct and the probe was
+    not hostile. Ask what makes the input actually violate the thing, and
+    assert those properties before trusting a green.
 11. **After three failed fixes, question the frame, not the fix.** Each attempt
     surfacing a new defect elsewhere means the shape is wrong. Stop, say so, and
     re-open the approach instead of trying a fourth. On any branch where a fix
