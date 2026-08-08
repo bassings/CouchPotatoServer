@@ -302,6 +302,19 @@ class TestOnlyOneSecretRowEverExists:
         def flaky_update(doc):
             calls['n'] += 1
             if calls['n'] == 1:
+                # A REAL competing write, not just a raised exception. Raising
+                # on call count alone leaves the row untouched, so the retry
+                # succeeds whether it re-read or reused a stale copy -- and
+                # this test passed with `existing = _session_secret_row(db)`
+                # hoisted OUT of the retry loop, which is precisely the defect
+                # it claims to catch. Measured: 9 passed with the read hoisted.
+                #
+                # Bumping the row's `_rev` here means a hoisted read retries
+                # against a stale revision and keeps conflicting.
+                from couchpotato import _session_secret_row
+                competitor = _session_secret_row(env.db)
+                competitor['value'] = 'written-by-someone-else'
+                real_update(competitor)
                 raise ConflictError(doc.get('_id'))
             return real_update(doc)
 

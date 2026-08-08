@@ -23,6 +23,7 @@ Everything here is driven through the real routes against a real
 """
 import os
 import socket
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -46,6 +47,10 @@ from couchpotato.core.event import fireEvent
 from couchpotato.core.helpers.variable import hash_password, md5
 from couchpotato.core.settings import Settings
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from env_helper import env_restored  # noqa: E402
 
 API_KEY = 'notarealapikey' + '0' * 18
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -122,46 +127,56 @@ def _build_env(tmp_path, settings_overrides=None, bootstrap_secret=True):
     values.update(settings_overrides or {})
     settings = FakeSettings(values)
 
-    Env.set('db', db)
-    Env.set('settings', settings)
-    Env.set('web_base', '/')
-    Env.set('api_base', '/api/%s/' % API_KEY)
-    Env.set('static_path', '/static/')
-    Env.set('app_dir', str(REPO_ROOT))
-    Env.set('data_dir', str(tmp_path))
-    Env.set('dev', False)
-    # Skips `Core.signalHandler`, which would replace this process's SIGINT and
-    # SIGTERM handlers for the rest of the pytest run.
-    Env.set('desktop', True)
+    # `env_restored()` like the five sibling modules this PR added
+    # (`test_hostile_session_cookies`, `test_session_rejection_logging`,
+    # `test_session_secret_recovery`, `test_session_upgrade_path`,
+    # `test_auth_required_migration`). Without it this fixture restored the
+    # api registry, the event bus, the socket timeout and `desktop`, but left
+    # `Env._db` pointing at an adapter it had just CLOSED, plus `_settings`,
+    # `web_base`, `api_base`, `data_dir`, `app_dir` and `dev` at this test's
+    # values -- which is the positional leakage already recorded as debt on
+    # this plan.
+    with env_restored():
+        Env.set('db', db)
+        Env.set('settings', settings)
+        Env.set('web_base', '/')
+        Env.set('api_base', '/api/%s/' % API_KEY)
+        Env.set('static_path', '/static/')
+        Env.set('app_dir', str(REPO_ROOT))
+        Env.set('data_dir', str(tmp_path))
+        Env.set('dev', False)
+        # Skips `Core.signalHandler`, which would replace this process's SIGINT and
+        # SIGTERM handlers for the rest of the pytest run.
+        Env.set('desktop', True)
 
-    from couchpotato.core._base._core import Core
-    Core()
+        from couchpotato.core._base._core import Core
+        Core()
 
-    secret = ensure_session_secret(db) if bootstrap_secret else None
+        secret = ensure_session_secret(db) if bootstrap_secret else None
 
-    from couchpotato import create_app
-    app = create_app(API_KEY, '/')
+        from couchpotato import create_app
+        app = create_app(API_KEY, '/')
 
-    yield type('EnvHandle', (), {
-        'db': db, 'settings': settings, 'secret': secret, 'app': app,
-        'tmp_path': tmp_path,
-    })
+        yield type('EnvHandle', (), {
+            'db': db, 'settings': settings, 'secret': secret, 'app': app,
+            'tmp_path': tmp_path,
+        })
 
-    Env.set('desktop', False)
-    socket.setdefaulttimeout(old_timeout)
-    db.close()
-    api.clear()
-    api.update(old_api)
-    api_locks.clear()
-    api_locks.update(old_locks)
-    api_nonblock.clear()
-    api_nonblock.update(old_nonblock)
-    api_docs.clear()
-    api_docs.update(old_docs)
-    api_docs_missing.clear()
-    api_docs_missing.extend(old_missing)
-    event_module.events.clear()
-    event_module.events.update(old_events)
+        Env.set('desktop', False)
+        socket.setdefaulttimeout(old_timeout)
+        db.close()
+        api.clear()
+        api.update(old_api)
+        api_locks.clear()
+        api_locks.update(old_locks)
+        api_nonblock.clear()
+        api_nonblock.update(old_nonblock)
+        api_docs.clear()
+        api_docs.update(old_docs)
+        api_docs_missing.clear()
+        api_docs_missing.extend(old_missing)
+        event_module.events.clear()
+        event_module.events.update(old_events)
 
 
 @pytest.fixture
