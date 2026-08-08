@@ -287,7 +287,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       lines, per the standing preference for enforced checks over remembered
       ones.
 
-- [x] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: merged #232 · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
+- [x] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: merged #232 · **AC-A11Y-2 closed after merge** by a real red/green pair on CI (`b42a5845` run 31255505196 = failure, `2e545adc` run 31255866860 = success); it was UNVERIFIABLE when the box was first ticked, which review rightly flagged · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
 
       **The owner was right and three rounds of my own "corrections" were
       measuring the wrong thing.** Every earlier version of this task reported
@@ -362,13 +362,27 @@ happens to notice.
   Final CI run confirms the result on a fourth data point: a11y verdict 138s,
   last required check 511s, against a 666s baseline on both.
 
-  **The honest summary of this PR is the ratio, not the speedup.** Rule 8 —
-  the gate written to prevent false greens — shipped **three false greens of
-  its own** (`</script >` unmatched, `data-src=` classified external, the
-  legacy `<!-- //-->` idiom eating a body), three false REDs, and two vacuous
-  guards including one written specifically to prevent vacuity. Every one was
-  found by review or CodeQL. None by my own testing, despite mutation-proving
-  each guard as I went.
+  **The honest summary of this PR is the ratio, not the speedup — and the
+  first version of this paragraph undercounted it, which review also caught.**
+  Recounted against the spec rather than from memory, rule 8 (the gate written
+  to prevent false greens) shipped:
+
+  - **four false GREENS** — `</script >` unmatched; `data-src=` classified
+    external; the legacy `<!-- //-->` idiom eating a whole body; and a live
+    Jinja render root covered by a hardcoded filename instead of a walk, so a
+    new template with a broken script exited 0.
+  - **five false REDS** — a Jinja control tag in expression position; a `>`
+    inside an attribute value; `<script-loader>` matching because `\b` is not
+    an HTML5 tag-name terminator; a commented-out `<script>` being parsed; and
+    an unquoted `type=application/json` parsed as JavaScript.
+  - **three vacuous or wrong guards** — the `--fail-on-flaky-tests` check
+    matching a whole multi-line block; the AC-A11Y-6 enumeration test passing
+    for a reason unrelated to what it claimed to guard; and the
+    `skip-unterminated` attribution printing four false lines on every green
+    run.
+
+  Every one found by review or CodeQL. **None by my own testing**, despite
+  mutation-proving each guard as I went.
 
   What that says about the mutation discipline: proving a guard fires on the
   defect you thought of says nothing about the defects you did not. The
@@ -379,8 +393,11 @@ happens to notice.
 
   1. **A line budget set at planning must be RE-OPENED when review finds
      defects whose fixes do not fit it** — never silently breached, and never
-     used as an argument against fixing them. AC-SIMP-5 ran to +58 against a
-     cap of 30, AC-SIMP-8 to +287 against 120.
+     used as an argument against fixing them. Measured at the merge commit
+     (`git diff --numstat f97b3ab2^ f97b3ab2`): AC-SIMP-5 ran to **+58**
+     against a cap of 30, AC-SIMP-8 to **+311** against 120. The `+287` first
+     recorded here was taken mid-branch and was stale by merge — in the very
+     paragraph telling the next reader to re-measure at merge.
   2. **A figure asserted once goes stale.** I recorded "+36" and pointed at a
      PR body that never restated the real number, inside a document whose
      stated principle is not to assert what you have not measured. Re-measure

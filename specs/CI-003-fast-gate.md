@@ -448,7 +448,41 @@ The review cycle escalated E1: **no `lens-accessibility` ran on a change that
 edits the accessibility gate**, so no AC-A11Y criterion had a verdict from
 anyone. Run afterwards rather than waved through. Verdict: FINDINGS.
 
-**AC-A11Y-1, -3, -4, -6, -7, -9 PASS. AC-A11Y-2 and -5 UNVERIFIABLE until CI
+### AC-A11Y-2 — CLOSED after merge, both directions, on real CI builds
+
+Raised in review of the plan tick: T9 was ticked while this criterion was still
+UNVERIFIABLE. A required gate nobody has watched fail is not a gate, so it was
+proven rather than carried forward.
+
+| direction | commit | run | `accessibility` |
+|---|---|---|---|
+| WCAG failure introduced | `b42a5845` | 31255505196 | **failure** |
+| reverted | `2e545adc` | 31255866860 | **success** |
+
+The red run's log names it: `button-name: Ensure buttons have discernible text`.
+
+**The first attempt failed and the gate was right — I was wrong.** Removing the
+`aria-label` from the sidebar theme toggle produced a GREEN run, and my first
+reading was "the gate has a hole". It does not: that button carries a visible
+`<span x-text="darkMode ? 'Light mode' : 'Dark mode'">`, so it keeps an
+accessible name from its content, the `aria-label` was redundant, and axe was
+correct to report nothing.
+
+**The lesson is one step past CLAUDE.md rule 10, and it is worth adding there.**
+"Confirm the mutation applied" was satisfied — the edit landed exactly as
+intended, confirmed in the diff. What was NOT confirmed is that it **created
+the condition the test is supposed to catch**. A hostile input that is not
+actually hostile produces a green run indistinguishable from a broken gate, and
+the natural next move is to file a bug against working code.
+
+Retargeted at the collapse-sidebar button one element below — genuinely
+icon-only: one `aria-hidden` svg, no text child, no `x-text` — with those three
+properties asserted programmatically before pushing rather than eyeballed.
+
+Both pushes used `--no-verify` deliberately: the local gate correctly refuses a
+commit whose entire purpose is to fail.
+
+**AC-A11Y-1, -3, -4, -6, -7, -9 PASS. AC-A11Y-5 remains UNVERIFIABLE until CI
 runs exist.** Two things it established that I had not:
 
 - **My AC-A11Y-1 evidence was right for the wrong reason.** `--list` reports
