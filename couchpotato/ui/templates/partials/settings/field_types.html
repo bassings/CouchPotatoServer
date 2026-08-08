@@ -46,9 +46,19 @@
 <!-- Password -->
 <template x-if="opt.type === 'password'">
   <div>
+    {#- `@change`, NOT `@input`, and only on this field.
+        Every other field autosaves per keystroke on a 500ms debounce, which is
+        fine when an intermediate value is harmlessly overwritten by the next
+        one. Since D6 made a password save ROTATE the session secret, a pause
+        longer than that debounce stores `hash_password(md5(<partial value>))`
+        as the real password AND signs the operator out of every device --
+        including the tab they are still typing in. They cannot then log back
+        in with the password they thought they were setting.
+        `@change` fires on blur/commit, so no half-typed value is ever
+        persisted. -#}
     <input type="password"
            :value="getVal(group.section, opt.name)"
-           @input="setVal(group.section, opt.name, $event.target.value)"
+           @change="setVal(group.section, opt.name, $event.target.value)"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
     <p class="text-[10px] text-cp-muted mt-1.5 leading-relaxed" x-html="buildDescription(group.section, opt)"></p>
