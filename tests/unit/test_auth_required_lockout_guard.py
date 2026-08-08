@@ -31,11 +31,16 @@ So it FAILS CLOSED and logs the remedy at ERROR. The state is only reachable by
 hand-editing config.ini or restoring a backup -- both require filesystem
 access, which is exactly what fixing it needs.
 """
+import sys
 import types
+from pathlib import Path
 
 import pytest
 
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import session_cookie, stored_session_secret  # noqa: E402
 
 
 @pytest.fixture
@@ -105,9 +110,10 @@ class TestTheEnforcementPointFailsClosed:
         settings['auth_required'] = 1
         settings['password'] = 'hashed'
 
-        assert auth_is_required() is True
-        assert get_current_user(_request()) is None
-        assert get_current_user(_request('THEKEY')) == 'THEKEY'
+        with stored_session_secret():
+            assert auth_is_required() is True
+            assert get_current_user(_request()) is None
+            assert get_current_user(_request(session_cookie())) is True
 
 
 class TestTheSavePathRefusesTheLockout:

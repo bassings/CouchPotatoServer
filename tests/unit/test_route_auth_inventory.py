@@ -38,14 +38,33 @@ from couchpotato.environment import Env
 PUBLIC_ROUTES = {
     '/login': 'the login form itself; requiring a session to log in cannot work',
     '/login/': 'trailing-slash variant of the above',
-    '/logout': 'must work from an expired or broken session, which is exactly when it is used',
-    '/logout/': 'trailing-slash variant of the above',
+    # `/logout` and `/logout/` were here, with the reason "must work from an
+    # expired or broken session, which is exactly when it is used". That reason
+    # was true of a route that only cleared the caller's OWN cookie. It stopped
+    # being true when logout started rotating the shared signing secret (D1),
+    # which ends every session on every device: as a public GET that made
+    # `<img src="/logout/">` on any page the operator visited a remote,
+    # repeatable sign-out-everywhere. It is now an authenticated POST, asserted
+    # below and in tests/unit/test_session_revocation.py. The "expired session"
+    # need it was protecting is met by `/login/`, which is still public and is
+    # where `require_auth` sends anyone whose cookie no longer works.
     '/robots.txt': 'crawler directive, carries no data',
     '/api/{route:path}': 'authenticated by api_key inside callApiHandler, not by session. '
                          'A session dependency here would break every script and the userscript.',
-    '/getkey': 'PRE-EXISTING, and slated for deletion later in this PR (AC-SEC-5). Listed so '
-               'the inventory is honest about what ships today rather than passing by '
-               'omission; this entry goes when the route does.',
+    # CORRECTED (AC-SEC-47). This entry used to read "slated for deletion later
+    # in this PR (AC-SEC-5)", which was wrong on both counts by the time anyone
+    # read it: AC-SEC-5 belongs to a different spec, and no criterion in
+    # specs/PR2B-SESSION-COOKIE.md deletes this route. It stays, and it is not
+    # a leftover -- the userscript's add-via-URL flow trades a username and
+    # password for the api_key here, so removing it breaks a live integration.
+    # A comment promising a deletion that is not scheduled is worse than no
+    # comment: the next reader treats the route as already handled.
+    '/getkey': 'PRE-EXISTING and STAYING: it exchanges a username and password for the '
+               'api_key, which the userscript needs. Public because a caller who has no '
+               'key cannot authenticate with one. It is a credential-guessing target with '
+               'a better prize than the login form, so D14 added it to '
+               '_ALWAYS_LIMITED_ROUTES (AC-SEC-42), and the key it returns is enumerated '
+               'in tests/unit/test_api_key_exposure_inventory.py (AC-SEC-47).',
     '/getkey/': 'trailing-slash variant of the above',
     '/old': 'legacy UI redirect; retirement tracked in specs/UI-MIGRATION.md',
     '/old/': 'trailing-slash variant of the above',
@@ -226,3 +245,25 @@ def test_the_allowlist_has_no_entries_for_routes_that_no_longer_exist(app):
 def test_every_allowlist_entry_carries_a_reason():
     empty = sorted(p for p, reason in PUBLIC_ROUTES.items() if not reason.strip())
     assert not empty, 'PUBLIC_ROUTES entries with no stated reason: %s' % empty
+
+
+def test_logout_is_protected_rather_than_merely_absent_from_the_allowlist(app):
+    """Removing an entry from PUBLIC_ROUTES is not the same as protecting it.
+
+    `test_every_route_is_authenticated_or_explicitly_public` would also go
+    green if `/logout/` were deleted, or if it were re-listed here with a
+    plausible-sounding reason. It rotates the shared signing secret, so an
+    unauthenticated caller reaching it signs the operator out on every device,
+    repeatedly, from a cross-site image tag.
+    """
+    routes = [r for r in _walk(app.routes) if r.path in ('/logout', '/logout/')]
+
+    assert {r.path for r in routes} == {'/logout', '/logout/'}, (
+        'the logout route is gone; revocation is now unreachable'
+    )
+    for route in routes:
+        assert 'require_auth' in _dependency_names(route), route.path
+        assert route.methods == {'POST'}, (
+            '%s answers %r -- a GET makes revocation a cross-site request '
+            'forgery' % (route.path, sorted(route.methods))
+        )

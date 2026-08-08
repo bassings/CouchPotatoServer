@@ -3,11 +3,29 @@
 Uses a sliding window counter per client IP.
 Default: 60 requests/minute.
 """
+import math
 import time
 import threading
+import traceback
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+
+from couchpotato.core.logger import CPLog, log_suppressed
+
+log = CPLog(__name__)
+
+
+def _wait_phrase(seconds: int) -> str:
+    """`'1 second'` / `'45 seconds'` / `'2 minutes'`.
+
+    Rendered here rather than in the copy so the message can say WHEN without
+    the copy having to know about pluralisation, and so "1 seconds" cannot
+    reach a page.
+    """
+    if seconds >= 120:
+        return '%d minutes' % int(math.ceil(seconds / 60.0))
+    return '%d second%s' % (seconds, '' if seconds == 1 else 's')
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -30,38 +48,178 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if not self._requests[ip]:
                 del self._requests[ip]
 
-    def _is_rate_limited(self, ip: str) -> bool:
-        """Check if IP is rate limited and record the request if not."""
+    def _is_rate_limited(self, ip: str):
+        """Seconds to wait if `ip` is over the limit, else None (and recorded).
+
+        Returns the wait rather than a bare bool so the refusal can tell the
+        person WHEN to try again. A slot frees when the oldest request still
+        inside the window falls out of it.
+        """
         now = time.time()
         with self._lock:
             self._cleanup_old(ip, now)
             timestamps = self._requests.get(ip, [])
             if len(timestamps) >= self.max_requests:
-                return True
+                return max(1, int(math.ceil(min(timestamps) + self.window_seconds - now)))
             self._requests.setdefault(ip, []).append(now)
-            return False
+            return None
 
     _EXEMPT_PREFIXES = ('/static/', '/favicon.ico', '/file.cache/')
 
+    #: Routes the HTML exemption below must never cover, whatever the caller
+    #: says it accepts.
+    #:
+    #: The exemption used to key on `Accept: text/html`, which is the header
+    #: EVERY BROWSER SENDS -- so it exempted precisely the shape an online
+    #: password-guessing attack takes and throttled only the shape that does
+    #: not. Measured with `rate_limit_max = 5`: twelve consecutive
+    #: `POST /login/` with `Accept: text/html` all returned 302 and none
+    #: returned 429, while `Accept: application/json` was limited from the
+    #: sixth. `login_post` also runs bcrypt, so it is the most expensive route
+    #: in the tree to hammer.
+    #:
+    #: The exemption itself STAYS. Deleting it would throttle ordinary browsing
+    #: -- the UI loads partials and `logs.html` polls every ten seconds -- and
+    #: locking the operator out of their own LAN server is a worse defect than
+    #: the one being fixed. Only the key changes, from the header to the path.
+    _ALWAYS_LIMITED_ROUTES = ('/login', '/logout', '/getkey')
+
+    #: Routes where only a state-changing method is a credential ATTEMPT.
+    #:
+    #: `GET /login/` renders the form. Counting it against the limit meant the
+    #: browser's initial page load spent a slot -- with `rate_limit_max=1` the
+    #: correct-password POST that followed was refused for the whole window --
+    #: and more generally, refreshing the form silently reduced how many times
+    #: you could try your own password.
+    #:
+    #: `/getkey` is deliberately absent: it RETURNS the api_key for a username
+    #: and password, so a GET of it is a credential check and exempting it by
+    #: method would reopen the door AC-SEC-42 closed.
+    _READ_ONLY_EXEMPT_ROUTES = ('/login', '/logout')
+    _READ_ONLY_METHODS = ('GET', 'HEAD', 'OPTIONS')
+
+    def _is_auth_route(self, path: str, method: str = 'POST') -> bool:
+        """Is this request a credential ATTEMPT worth counting?
+
+        Matched on the LAST SEGMENT, not with `startswith`. Every route is
+        served under `web_base`, so on an install at `/couchpotato/` a prefix
+        test would miss `/couchpotato/login/` and leave exactly the route this
+        exists to protect unthrottled -- on the installs most likely to be
+        behind a shared, reachable host.
+
+        The METHOD matters too: see `_READ_ONLY_EXEMPT_ROUTES`.
+        """
+        segment = '/' + path.rstrip('/').rsplit('/', 1)[-1]
+        if segment not in self._ALWAYS_LIMITED_ROUTES:
+            return False
+        if (segment in self._READ_ONLY_EXEMPT_ROUTES
+                and (method or '').upper() in self._READ_ONLY_METHODS):
+            return False
+        return True
+
+    def _refusal(self, request, path: str, retry_after: int, auth_route: bool):
+        """The 429, as a page when a person is reading it and JSON otherwise.
+
+        This response is produced BEFORE the route runs, so the login route can
+        never render it -- which is why AC-A11Y-4's rate-limited case has to be
+        met here. Without it, somebody guessing at their own password receives
+        a JSON blob with nothing about what happened or when to retry.
+
+        Deliberately says nothing about whether the username or the password
+        was the wrong one: the limit counts attempts, and a message that
+        distinguished them would confirm a username to whoever tripped it.
+        """
+        headers = {'Retry-After': str(retry_after)}
+
+        # `auth_route` is PASSED IN rather than recomputed: `dispatch` has
+        # already decided it, and two independent computations of the same
+        # thing are two places for the answer to diverge.
+        if auth_route and 'text/html' in request.headers.get('accept', ''):
+            try:
+                from couchpotato import render_login_page
+
+                # A throttled SIGN-OUT is not a failed sign-in. Rendering the
+                # sign-in page with "too many sign-in attempts" shows the
+                # operator a form they did not ask for, blames them for
+                # attempts they did not make, and -- because it looks like the
+                # login page -- reads as a completed sign-out while every
+                # session on every device is still valid. `signout_failed` is
+                # the mode the sign-out 500 path already uses for exactly this.
+                signing_out = path.rstrip('/').rsplit('/', 1)[-1] == 'logout'
+
+                response = render_login_page(
+                    reason='rate_limited_signout' if signing_out else 'rate_limited',
+                    status_code=429,
+                    mode='signout_failed' if signing_out else 'signin',
+                    message_values={'wait': _wait_phrase(retry_after)})
+                response.headers['Retry-After'] = str(retry_after)
+                return response
+            except Exception:
+                # Falling back to JSON is worse for the reader but it is still
+                # a 429; raising here would turn a refusal into a 500 with a
+                # traceback, on the one path an attacker controls. Bounded,
+                # because this is reachable without credentials.
+                # `traceback.format_exc()` as an ARG, not `exc_info=True`:
+                # `log_suppressed` is `(log_method, key, message, *args,
+                # window=..., now=None)` and forwards `*args` to the logger so
+                # `PrivacyFilter` can scrub them. It has no `exc_info`, so
+                # passing one raised `TypeError` INSIDE the except that exists
+                # to contain the failure -- turning a render error into exactly
+                # the 500-with-unbounded-traceback the comment above forbids,
+                # on the one path an unauthenticated caller controls, with
+                # nothing in the application log.
+                log_suppressed(log.error, 'rate_limit_page_render_failed',
+                               'Could not render the rate-limited page; sending '
+                               'JSON instead. The refusal itself is unaffected. %s',
+                               traceback.format_exc())
+
+        return JSONResponse(
+            content={'success': False, 'error': 'Rate limit exceeded'},
+            status_code=429,
+            headers=headers,
+        )
+
     async def dispatch(self, request, call_next):
-        # Don't rate-limit static assets, cached files, or page navigations
         path = request.scope.get('path', '')
+        auth_route = self._is_auth_route(path, request.method)
+
+        # Don't rate-limit static assets or cached files.
         if any(path.startswith(p) for p in self._EXEMPT_PREFIXES):
             return await call_next(request)
 
-        # Don't rate-limit HTML page loads (non-API browser navigation)
-        accept = request.headers.get('accept', '')
-        if 'text/html' in accept and '/api/' not in path:
-            return await call_next(request)
+        # Don't rate-limit HTML page loads (non-API browser navigation) --
+        # unless the page load is a credential check.
+        if not auth_route:
+            accept = request.headers.get('accept', '')
+            if 'text/html' in accept and '/api/' not in path:
+                return await call_next(request)
 
         client_ip = request.client.host if request.client else '127.0.0.1'
 
-        # Exempt localhost requests (UI runs on same host)
-        if client_ip in self._LOCALHOST_IPS:
+        # Exempt localhost -- but NOT the credential routes.
+        #
+        # The exemption exists because the UI runs on the same host and would
+        # otherwise be throttled while loading partials and polling logs.
+        # Applying it to `/login`, `/logout` and `/getkey` as well made the
+        # whole throttle a function of deployment topology: nothing here
+        # configures uvicorn's `proxy_headers` or `forwarded_allow_ips`, so
+        # `request.client.host` is the TCP peer -- and on the ordinary
+        # self-hosted shape (nginx, Caddy or Traefik on the SAME host, or a
+        # proxy container talking to a port-mapped app) every remote request
+        # arrives as 127.0.0.1.
+        #
+        # Measured before this change, driving the real app with
+        # `client=('127.0.0.1', 40000)`: 15 consecutive `POST /login/`, not one
+        # 429. Password guessing was unthrottled for the entire internet with
+        # bcrypt's ~166ms the only brake -- which made AC-SEC-42 inert on the
+        # deployment this project actually documents.
+        #
+        # The existing suite could not see it: Starlette's `TestClient` reports
+        # a client host of `testclient`, so no test ever reached this branch.
+        if client_ip in self._LOCALHOST_IPS and not auth_route:
             return await call_next(request)
-        if self._is_rate_limited(client_ip):
-            return JSONResponse(
-                content={'success': False, 'error': 'Rate limit exceeded'},
-                status_code=429,
-            )
+
+        retry_after = self._is_rate_limited(client_ip)
+        if retry_after is not None:
+            return self._refusal(request, path, retry_after, auth_route)
         return await call_next(request)

@@ -62,6 +62,10 @@ _jinja.filters['to_num'] = _to_num
 
 def _ctx(extra=None):
     """Common template context."""
+    # Function-local: `couchpotato/__init__.py` imports THIS module from inside
+    # `create_app`, so a module-level import here closes the cycle.
+    from couchpotato import auth_is_required
+
     api_key = Env.setting('api_key')
     web_base = Env.get('web_base') or '/'
     ctx = {
@@ -69,6 +73,10 @@ def _ctx(extra=None):
         'api_base': '%sapi/%s' % (web_base, api_key),
         'web_base': web_base,
         'new_base': web_base,
+        # D8: the shell renders a sign-out control only where there is a
+        # session to end. An install with no login would otherwise show a
+        # button that signs the operator out of nothing.
+        'auth_required': auth_is_required(),
     }
     if extra:
         ctx.update(extra)

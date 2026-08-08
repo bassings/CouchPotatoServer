@@ -11,13 +11,25 @@ export const meta = {
 
 // ---- repo-specific trigger globs (from AGENTS.md "Multi-lens harness" section) ----
 const UI_GLOBS = ['couchpotato/ui/**', 'couchpotato/templates/**', '**/*.html', 'couchpotato/static/**', 'tests/e2e/**']
-// Resolved from the running environment, never hardcoded. The previous
-// version embedded one contributor's macOS checkout and username, so the
-// path did not exist for anyone else -- reviewers could not run the pytest
-// or mutation checks the prompt asks for, and the gate lost its verification
-// evidence. It also sent a private filesystem path to every spawned agent.
-const MAIN_REPO = process.cwd()
-const MAIN_PYTHON = `${MAIN_REPO}/.venv/bin/python`
+// Resolved by the AGENT, never hardcoded and never computed here.
+//
+// Two wrong versions preceded this one, and both broke the gate:
+//
+//   1. A hardcoded path embedding one contributor's macOS checkout and
+//      username. It did not exist for anyone else, so reviewers could not run
+//      the pytest or mutation checks the prompt asks for, and it leaked a
+//      private filesystem path to every spawned agent.
+//   2. `process.cwd()`. The workflow runtime is a SANDBOX, not Node -- it
+//      provides agent/parallel/pipeline/log/phase/args/budget/workflow and
+//      nothing else. It parses, so the parse test passed it, and it failed
+//      with "process is not defined" only when the gate was invoked:
+//      precisely the moment it was needed.
+//
+// So the shell resolves it. `git rev-parse --git-common-dir` points at the
+// MAIN repository's .git even when run from a linked worktree, which is what
+// the lenses need: they run in worktrees, which have no .venv of their own.
+const RESOLVE_MAIN_REPO =
+  'MAIN_REPO="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"'
 
 const DATA_GLOBS = ['couchpotato/core/db/**', 'couchpotato/core/database.py', '**/schema.sql', 'couchpotato/core/plugins/renamer/**', 'couchpotato/core/plugins/scanner/**', 'couchpotato/core/plugins/release/**']
 // `couchpotato/api.py`, NOT `couchpotato/core/api.py`. The latter does not
@@ -161,9 +173,12 @@ const lensPrompt = (lens) =>
   `${specClause}\n\n` +
   (lens === 'lens-qa' ? qaBudget : '') +
   `You are in an isolated git worktree: mutation experiments (break the guard, watch the test fail, restore) are safe here, ` +
-  `but there is no .venv in this worktree. To run Python tests use the main repo's interpreter by absolute path: ` +
-  `${MAIN_PYTHON} -m pytest ... from this worktree's root. ` +
-  `Never modify anything under ${MAIN_REPO} or its .venv.\n\n` +
+  `but there is no .venv in this worktree. Resolve the MAIN repository first, then use its interpreter:\n` +
+  `    ${RESOLVE_MAIN_REPO}\n` +
+  `    PYTHONPATH=.:libs "$MAIN_REPO/.venv/bin/python" -m pytest ...   # run from THIS worktree's root\n` +
+  `(\`--git-common-dir\` resolves the main checkout even from a linked worktree; \`--show-toplevel\` would give you ` +
+  `this worktree and there is no interpreter there.) ` +
+  `Never modify anything under "$MAIN_REPO" or its .venv: it is the shared checkout and other work is live in it.\n\n` +
   `Your final structured output maps the AGENT-HARNESS.md output contract onto the schema fields: verdict, coverage ` +
   `(could_not_check is mandatory and must be honest, not "nothing"), ac_verdicts, findings (each with file:line in location). ` +
   `You are licensed to return CLEAN with empty findings. Australian English, no em dashes.`

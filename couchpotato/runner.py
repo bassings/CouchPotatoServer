@@ -21,6 +21,133 @@ from urllib3 import disable_warnings
 from couchpotato.core.softchroot import SoftChrootInitError
 
 
+def log_authentication_posture():
+    """State, once, what this instance will actually enforce. AC-OPS-47.
+
+    Only the DISABLED direction used to log. With authentication on, the sole
+    statement of posture was `ensure_session_secret`'s first-creation INFO,
+    which AC-OPS-41 deliberately silences from the second boot onward -- so a
+    restarted instance said nothing about its own authentication at all.
+
+    At 3am the first two questions are "is this instance actually requiring a
+    login" and "why is the browser not keeping the cookie", and both were
+    answerable only by inferring from an ABSENT warning plus a `config.ini`
+    grep.
+
+    `secure` belongs on this line because it is DERIVED, not configured (D4):
+    half a TLS pair silently produces a non-Secure cookie, and the reverse
+    produces an undeliverable one whose only symptom is a login loop. Without a
+    startup value there is nothing to compare that loop against.
+
+    A named function rather than an inline block so it can be driven by a test
+    without starting a server.
+    """
+    from couchpotato import auth_is_required, session_cookie_attributes
+    from couchpotato.core.logger import CPLog
+
+    # `log` is created inside the startup functions in this module rather than
+    # at import time, so this function makes its own.
+    log = CPLog(__name__)
+
+    if not auth_is_required():
+        # WARNING, not INFO: an unauthenticated instance is a decision, and the
+        # log is where an operator checks whether they made it.
+        log.warning('Serving with authentication DISABLED -- anyone who can '
+                    'reach this port has full control of the library. Set a '
+                    'password and turn on "Require login" in Settings.')
+        return
+
+    secure = session_cookie_attributes().get('secure')
+    log.info('Serving with authentication ENABLED. Sessions are signed tokens, '
+             'not the api_key, and the session cookie is %s. %s',
+             'marked Secure' if secure else 'NOT marked Secure',
+             'The browser will only send it over https.' if secure else
+             'This server does not terminate TLS (no ssl_cert and ssl_key), '
+             'so a Secure cookie would be undeliverable.')
+
+
+def resolve_auth_required_setting():
+    """Decide `auth_required` once, at startup, and write the answer down.
+
+    Returns the value it wrote, or None if it wrote nothing.
+
+    ABSENT means "this `config.ini` predates the setting", which is every
+    upgraded install. Deriving from `bool(password)` is what keeps an install
+    that had bothered to set one protected instead of falling open on upgrade.
+    Writing the resolved value back means that from the second boot onward it is
+    an explicit 0 or 1 the operator can find with `grep` -- and that matters
+    because grepping `config.ini` is the documented lockout recovery: a setting
+    that exists only as an inference cannot be recovered from.
+
+    An EXPLICIT value is never touched, in either direction. An operator who
+    turned authentication off on a box that still has a password stored made a
+    decision, and a boot is not the place to reverse it.
+
+    Extracted from `runner()` for AC-ARCH-10 so it can be driven against a
+    settings double with no server, no database and no loader. **Its CALL SITE
+    must stay above `loader.run()`** -- `registerDefaults` materialises the
+    registered default of 0 into the config, after which "absent" is never true
+    again and every upgraded install with a password quietly becomes public.
+    An executed test cannot see that, so the source-order guard in
+    `tests/unit/test_auth_required_gate.py` stays as well.
+    """
+    # Function-local. `runner.py` has no module-level `Env` -- `runCouchPotato`
+    # takes it as a PARAMETER (`CouchPotato.py:99` passes the same class this
+    # imports), and `log` is built after `setup_logging`. Importing here keeps
+    # this callable on its own, which is the whole point of extracting it.
+    from couchpotato.core.logger import CPLog
+    from couchpotato.environment import Env
+
+    log = CPLog(__name__)
+
+    configured = Env.setting('auth_required', default=None)
+    if configured not in (None, ''):
+        return None
+
+    resolved = 1 if Env.setting('password') else 0
+
+    try:
+        Env.setting('auth_required', value=resolved)
+    except Exception:
+        # KEEP THE RESOLVED VALUE IN MEMORY. `Env.setting(value=)` sets the
+        # parser BEFORE it saves, so the correct answer is already there when
+        # the save raises -- and it must stay.
+        #
+        # An earlier version removed it, reasoning that absent means the next
+        # boot re-derives. Traced end to end in review, that was a security
+        # hole: `loader.run()` runs after this and calls `registerDefaults` for
+        # the `core` section, and `Settings.setDefault` sets any option
+        # `has_option()` reports absent -- which it now was -- to the
+        # registered default of **0**. `loader.run()` then fires
+        # `settings.save`, persisting `auth_required = 0`.
+        #
+        # So on a box with a password and a temporarily unwritable config
+        # directory (an ordinary bind-mounted Docker volume) authentication
+        # turned itself OFF, `log_authentication_posture()` had already logged
+        # "ENABLED", and once the fault cleared the 0 reached disk and the
+        # install stayed public. Measured before the fix:
+        #
+        #     after a FAILED write, present : False
+        #     after registerDefaults, value : 0      <- auth OFF
+        #
+        # Keeping the value makes `setDefault` a no-op, enforces the DERIVED
+        # answer for this run, and lets the trailing save persist the correct
+        # value if the fault clears. `config.ini` itself is untouched either
+        # way -- `Settings.save()` writes a sibling temp file and renames it
+        # (AC-DATA-12) -- so nothing is lost by keeping it.
+        log.error('Could not write the resolved auth_required value to the '
+                  'settings file. Authentication for THIS run is enforced '
+                  'from the value derived above (%s), which is kept in memory '
+                  'so a failed write cannot turn authentication off. Check '
+                  'that the config directory is writable. %s',
+                  resolved, traceback.format_exc())
+        return None
+
+    log.info('auth_required was not set; resolved to %s from the stored '
+             'password and written to the settings file', resolved)
+    return resolved
+
+
 def _port_argument(value):
     """argparse `type=` for `--port`: an int in the valid TCP port range.
 
@@ -269,33 +396,35 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.warning('%s %s %s line:%s', category.__name__, message, filename, lineno)
     warnings.showwarning = customwarn
 
-    # Resolve `auth_required` ONCE, at startup, and write it back.
+    # Resolve `auth_required` ONCE, at startup, and write it back. The body
+    # lives in `resolve_auth_required_setting` above so it can be executed by a
+    # test rather than only string-searched (M2, AC-ARCH-10).
     #
-    # Absent means "config.ini predates this setting". Deriving from
-    # `bool(password)` keeps installs that had bothered to set a password
-    # protected instead of falling open on upgrade. Writing the resolved value
-    # back means that after the first boot it is an explicit 0 or 1 the
-    # operator can find with `grep` -- which matters because grepping
-    # config.ini is the documented lock-out recovery path, and a setting that
-    # only exists as an inference cannot be recovered from.
+    # THIS CALL'S POSITION IS PART OF THE BEHAVIOUR. It must stay above
+    # `loader.run()`: `registerDefaults` materialises the registered default of
+    # 0 into the config, after which the "absent" check never fires again and
+    # every upgraded install that had a password set comes up PUBLIC -- with no
+    # failing test, no log line, and a diff that looks like tidying. An
+    # executed unit test cannot pin an ordering, so
+    # `tests/unit/test_auth_required_gate.py` guards it by source order.
     from couchpotato import auth_is_required
-    if Env.setting('auth_required', default=None) in (None, ''):
-        resolved = 1 if Env.setting('password') else 0
-        Env.setting('auth_required', value=resolved)
-        log.info('auth_required was not set; resolved to %s from the stored '
-                 'password and written to the settings file', resolved)
-
-    if not auth_is_required():
-        # WARNING, not INFO: an unauthenticated instance is a decision, and the
-        # log is where an operator checks whether they made it.
-        log.warning('Serving with authentication DISABLED -- anyone who can '
-                    'reach this port has full control of the library. Set a '
-                    'password and turn on "Require login" in Settings.')
+    resolve_auth_required_setting()
 
     # Create FastAPI app
     from couchpotato import create_app
     web_base = ('/' + Env.setting('url_base').lstrip('/') + '/') if Env.setting('url_base') else '/'
     Env.set('web_base', web_base)
+
+    # AFTER `web_base` is set, and that ordering is load-bearing rather than
+    # tidy: the posture line reports the derived `secure` value, which comes
+    # from `session_cookie_attributes()`, which reads `Env.get('web_base')`.
+    # Called any earlier the server dies on boot with
+    # `AttributeError: type object 'Env' has no attribute '_web_base'`.
+    # It did: the first version of this call sat above, and every unit test
+    # passed because they monkeypatched `session_cookie_attributes` -- mocking
+    # the one thing that breaks. Only the E2E, which starts a real server,
+    # caught it.
+    log_authentication_posture()
 
     api_key = Env.setting('api_key')
     if not api_key:
@@ -371,6 +500,29 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
             log.info('Reordered %d of %d quality profiles best-first.', n_fixed, n_checked)
     except Exception as e:
         log.warning('Profile quality order fix skipped: %s', e)
+
+    # Create the session signing secret ONCE, here, before the first request is
+    # served (D2). Not on a request path: the property store has no uniqueness
+    # constraint on `identifier`, so concurrent first-time creates produce
+    # duplicate rows and lost writes (measured on `Settings.setProperty`: four
+    # concurrent creates gave two rows), and a per-request property read takes
+    # the adapter's process-wide RLock.
+    #
+    # Skipped when authentication is off, so an install that never enabled it
+    # never grows the row.
+    #
+    # A failure here is logged rather than fatal: the process still serves the
+    # login page and `config.ini` is still editable, which is the documented
+    # way back in. Exiting would take away the page that explains the problem.
+    if auth_is_required():
+        from couchpotato import ensure_session_secret
+        try:
+            ensure_session_secret(db)
+        except Exception:
+            log.error('Could not create or read the session signing secret, so '
+                      'NO login can succeed. To recover: set "auth_required = 0" '
+                      'in the [core] section of config.ini and restart, then '
+                      'check the database is writable. %s', traceback.format_exc())
 
     fireEventAsync('app.load')
 

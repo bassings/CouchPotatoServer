@@ -12,9 +12,14 @@ from unittest.mock import patch, MagicMock
 
 from fastapi.testclient import TestClient
 
+from pathlib import Path
+
 from couchpotato import get_current_user
 from couchpotato.api import addApiView, addNonBlockApiView, api, api_locks, api_nonblock, api_docs, api_docs_missing, callApiHandler
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import authenticate, stored_session_secret  # noqa: E402
 
 
 # --- Fixtures ---
@@ -86,13 +91,46 @@ def client(app):
 
 
 @pytest.fixture
-def authed_client(app, setup_env):
-    """Create an authenticated test client."""
+def session_secret():
+    """A signing secret in the property store for the duration of a test."""
+    with stored_session_secret() as secret:
+        yield secret
+
+
+@pytest.fixture
+def session_store(tmp_path):
+    """A real property store for the routes that WRITE the signing secret.
+
+    `stored_session_secret` doubles `Env.prop`, which is enough to READ a
+    secret, and every other test in this file only reads. Logout rotates, so it
+    needs somewhere to write -- and without this it picks up whatever another
+    module last left in `Env.get('db')`, which was a bare string.
+    """
+    from couchpotato.core.db.sqlite_adapter import SQLiteAdapter
+
+    db = SQLiteAdapter()
+    db.create(str(tmp_path / 'session-store'))
+    previous = Env.get('db')
+    Env.set('db', db)
+    try:
+        yield db
+    finally:
+        Env.set('db', previous)
+        db.close()
+
+
+@pytest.fixture
+def authed_client(app, setup_env, session_secret):
+    """Create an authenticated test client.
+
+    The cookie is a signed session token minted by the one test helper
+    (AC-ARCH-14), not the api_key -- handing the browser the api_key was the
+    defect PR 2b removes.
+    """
     setup_env['username'] = 'admin'
     setup_env['password'] = 'secret'
     client = TestClient(app)
-    # Set auth cookie
-    client.cookies.set('user', 'testkey123')
+    authenticate(client, session_secret)
     return client
 
 
@@ -223,8 +261,21 @@ class TestAuthentication:
 
         assert user is None
 
-    def test_auth_accepts_api_key_user_cookie(self, app, setup_env):
-        """The login cookie value is accepted only when it matches the API key."""
+    def test_auth_accepts_a_signed_session_cookie(self, app, setup_env, session_secret):
+        """A cookie carrying a signature we issued is accepted."""
+        setup_env['username'] = 'admin'
+        setup_env['password'] = 'secret'
+        client = TestClient(app)
+        authenticate(client, session_secret)
+
+        resp = client.get('/', follow_redirects=False)
+
+        assert resp.status_code == 200
+
+    def test_auth_rejects_the_api_key_as_a_user_cookie(self, app, setup_env, session_secret):
+        """The cookie used to BE the api_key. It is refused from the first
+        request after upgrade (D5): no compatibility window, because a
+        fallback would mean the api_key still authenticates the browser."""
         setup_env['username'] = 'admin'
         setup_env['password'] = 'secret'
         client = TestClient(app)
@@ -232,7 +283,8 @@ class TestAuthentication:
 
         resp = client.get('/', follow_redirects=False)
 
-        assert resp.status_code == 200
+        assert resp.status_code in (302, 307)
+        assert 'login' in resp.headers.get('location', '')
 
     def test_login_page_renders(self, app, setup_env):
         """Login page renders when credentials are set."""
@@ -244,7 +296,7 @@ class TestAuthentication:
             assert resp.status_code == 200
             assert 'login' in resp.text.lower() or 'password' in resp.text.lower()
 
-    def test_login_with_correct_credentials(self, app, setup_env):
+    def test_login_with_correct_credentials(self, app, setup_env, session_secret):
         """Successful login sets a cookie and redirects."""
         from couchpotato.core.helpers.variable import md5
         setup_env['username'] = 'admin'
@@ -257,11 +309,21 @@ class TestAuthentication:
         assert resp.status_code == 302
         assert 'user' in resp.cookies or 'set-cookie' in resp.headers
 
-    def test_logout_clears_cookie(self, authed_client):
-        """Logout clears the auth cookie and redirects to login."""
-        resp = authed_client.get('/logout/', follow_redirects=False)
-        assert resp.status_code == 302
+    def test_logout_clears_cookie(self, authed_client, session_store):
+        """Logout clears the auth cookie and redirects to login.
+
+        POST, not GET: logout now rotates the shared signing secret, which ends
+        every session on every device, so answering a GET would make any
+        cross-site `<img src="/logout/">` a remote sign-out-everywhere button.
+        303 rather than 302 because this is the response to a POST. The
+        revocation itself is covered in tests/unit/test_session_revocation.py.
+        """
+        resp = authed_client.post('/logout/', follow_redirects=False)
+        assert resp.status_code == 303
         assert 'login' in resp.headers.get('location', '')
+
+    def test_logout_does_not_answer_a_get(self, authed_client):
+        assert authed_client.get('/logout/', follow_redirects=False).status_code == 405
 
     def test_getkey_with_correct_credentials(self, client, setup_env):
         """getkey endpoint returns API key with correct credentials.

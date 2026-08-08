@@ -1972,3 +1972,101 @@ class TestRule2FilterAlternatives:
         script.write_text('#!/bin/bash\nset -euo pipefail\npytest tests/ | tail -1\n')
 
         assert findings_for(script) == []
+
+
+class TestCaplogInfoLevelTrap:
+    """`caplog.at_level("INFO")` captures nothing, and looks like a missing log.
+
+    `couchpotato/core/logger.py:24` calls `logging.addLevelName(21, 'INFO')` to
+    register the INFO2 level. That overwrites `logging._nameToLevel['INFO']`
+    from 20 to 21, so pytest resolving the STRING "INFO" sets the capture
+    threshold to 21 and drops every genuine `log.info()` record, which is
+    emitted at 20.
+
+    Measured on this tree:
+
+        before importing couchpotato.core.logger : INFO -> 20
+        after                                    : INFO -> 21
+
+    The failure mode is a false RED, not a false green, which is why it is worth
+    a guard rather than a paragraph: the test author sees "no log line was
+    captured", concludes the code never logged, and either deletes a correct
+    assertion or adds a log call that was already there. It cost the PR 2b
+    implementer exactly that detour. `'ERROR'` and `'WARNING'` are unaffected,
+    which is why no existing test has ever tripped over it.
+
+    The int form (`logging.INFO`) bypasses the name lookup and works.
+    """
+
+    def _py_test(self, tmp_path, body: str) -> Path:
+        path = tmp_path / "test_sample.py"
+        path.write_text(body, encoding="utf-8")
+        return path
+
+    def test_at_level_with_the_info_string_is_flagged(self, tmp_path):
+        path = self._py_test(
+            tmp_path,
+            "def test_thing(caplog):\n"
+            "    with caplog.at_level('INFO'):\n"
+            "        do_something()\n",
+        )
+        assert any('INFO' in m for m in messages_for(path)), (
+            "caplog.at_level('INFO') was not flagged; it silently captures "
+            "nothing because logger.py remaps the INFO name to 21"
+        )
+
+    def test_set_level_with_the_info_string_is_flagged(self, tmp_path):
+        path = self._py_test(
+            tmp_path,
+            "def test_thing(caplog):\n"
+            "    caplog.set_level(\"INFO\")\n",
+        )
+        assert any('INFO' in m for m in messages_for(path)), (
+            'caplog.set_level("INFO") was not flagged'
+        )
+
+    def test_the_int_form_is_left_alone(self, tmp_path):
+        """The fix must not be flagged, or the guard just teaches people to
+        suppress it."""
+        path = self._py_test(
+            tmp_path,
+            "import logging\n"
+            "def test_thing(caplog):\n"
+            "    with caplog.at_level(logging.INFO):\n"
+            "        do_something()\n",
+        )
+        assert not messages_for(path), (
+            'the int form logging.INFO is correct and must not be flagged: %s'
+            % messages_for(path)
+        )
+
+    def test_other_level_strings_are_left_alone(self, tmp_path):
+        """Only INFO is remapped. Flagging ERROR would be noise."""
+        path = self._py_test(
+            tmp_path,
+            "def test_thing(caplog):\n"
+            "    with caplog.at_level('ERROR'):\n"
+            "        do_something()\n"
+            "    caplog.set_level('WARNING')\n",
+        )
+        assert not messages_for(path), (
+            'ERROR and WARNING are not remapped and must not be flagged: %s'
+            % messages_for(path)
+        )
+
+    def test_the_premise_still_holds(self):
+        """Pins WHY the rule exists, so it cannot outlive its reason.
+
+        If logger.py stops remapping INFO, this guard is obsolete and should be
+        deleted rather than kept out of habit.
+        """
+        import logging
+
+        import couchpotato.core.logger  # noqa: F401
+
+        assert logging.getLevelName('INFO') == 21, (
+            "logger.py no longer remaps the INFO name to 21, so "
+            "caplog.at_level('INFO') is safe again and this whole guard "
+            "should be deleted"
+        )
+        assert logging.INFO == 20

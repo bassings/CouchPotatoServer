@@ -32,11 +32,16 @@ password-protected installs stay protected and the value is greppable
 afterwards -- which matters because grepping `config.ini` is the documented
 lock-out recovery path.
 """
+import sys
 import types
+from pathlib import Path
 
 import pytest
 
 from couchpotato.environment import Env
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session_helper import session_cookie, stored_session_secret  # noqa: E402
 
 
 @pytest.fixture
@@ -89,6 +94,18 @@ def settings():
 
 def _request(cookie=None):
     return types.SimpleNamespace(cookies=({'user': cookie} if cookie else {}))
+
+
+@pytest.fixture
+def session():
+    """A signing secret in the property store, and a valid cookie for it.
+
+    The cookie used to BE `api_key`, so these tests could write 'THEKEY' and
+    have it accepted. It is now an HMAC-signed token, minted by the one test
+    helper (AC-ARCH-14) rather than constructed here.
+    """
+    with stored_session_secret():
+        yield session_cookie()
 
 
 def _current_user(request):
@@ -147,17 +164,26 @@ class TestAuthRequiredOn:
             'and can delete the library (username=%r)' % (username,)
         )
 
-    def test_a_valid_cookie_is_accepted(self, settings):
+    def test_a_valid_cookie_is_accepted(self, settings, session):
         settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
 
-        assert _current_user(_request('THEKEY')) == 'THEKEY'
+        assert _current_user(_request(session)) is True
 
-    def test_a_wrong_cookie_is_denied(self, settings):
+    def test_a_wrong_cookie_is_denied(self, settings, session):
         settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
 
         assert _current_user(_request('not-the-key')) is None
 
-    def test_a_blank_username_does_not_disable_auth(self, settings):
+    def test_the_api_key_is_no_longer_a_valid_cookie(self, settings, session):
+        """D5: no compatibility window. Every browser that logged in before
+        this change holds exactly this value, and it stops working on the
+        first request after upgrade -- the way back in is the login page with
+        the password the operator already has."""
+        settings.update({'username': 'admin', 'password': 'secret', 'auth_required': 1})
+
+        assert _current_user(_request('THEKEY')) is None
+
+    def test_a_blank_username_does_not_disable_auth(self, settings, session):
         """The whole point. This combination was PUBLIC before."""
         settings.update({'username': '', 'password': 'secret', 'auth_required': 1})
 
@@ -165,7 +191,7 @@ class TestAuthRequiredOn:
             'a blank username disabled authentication even with auth_required '
             'ON -- the exact trap the old `if username and password` gate set'
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY', (
+        assert _current_user(_request(session)) is True, (
             'a blank username must mean "any username is accepted", not '
             '"nobody can log in"'
         )
@@ -395,7 +421,32 @@ class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
     So the ordering is pinned. A source-order assertion is a blunt instrument,
     but the alternative is a comment, and this repo has already learned what
     comments are worth when the code stops matching them.
+
+    **What it pins is the CALL SITE**, and that changed under it once already.
+    The block became a module-level function (M2, AC-ARCH-10), which moved the
+    `Env.setting('auth_required', value=` literal to the top of the file --
+    where it precedes everything and the ordering assertion is satisfied no
+    matter where the function is actually CALLED. The same edit put the words
+    "loader.run()" inside that function's docstring, so `str.find` matched the
+    prose rather than the statement. Both halves of the guard were measuring
+    text that has nothing to do with the ordering.
+
+    Hence: lines, not character offsets; the CALL, not the definition; and each
+    pattern asserted to match exactly once, because a pattern that matches
+    twice silently measures whichever came first.
     """
+
+    @staticmethod
+    def _statement_lines(source, prefix):
+        """Line numbers of real statements starting with `prefix`.
+
+        Comment lines are excluded, so a prohibition written in prose next to
+        the code cannot be mistaken for the code.
+        """
+        return [
+            number for number, line in enumerate(source.splitlines(), start=1)
+            if line.strip().startswith(prefix) and not line.strip().startswith('#')
+        ]
 
     def test_the_migration_precedes_loader_run(self):
         from pathlib import Path
@@ -403,19 +454,41 @@ class TestTheStartupMigrationRunsBeforeDefaultsAreMaterialised:
         source = (Path(__file__).resolve().parents[2] /
                   'couchpotato' / 'runner.py').read_text(encoding='utf-8')
 
-        migration = source.find("Env.setting('auth_required', value=")
-        loader_run = source.find('loader.run()')
+        calls = self._statement_lines(source, 'resolve_auth_required_setting()')
+        loader_runs = self._statement_lines(source, 'loader.run()')
 
-        assert migration != -1, (
-            'the auth_required startup migration is gone from runner.py; if '
-            'that was deliberate, this guard needs to go with it'
+        assert len(calls) == 1, (
+            'expected exactly one call to resolve_auth_required_setting(), '
+            'found %d at lines %s. Zero means the startup migration is gone; '
+            'more than one means this assertion is measuring whichever comes '
+            'first.' % (len(calls), calls)
         )
-        assert loader_run != -1, 'loader.run() not found in runner.py'
-        assert migration < loader_run, (
-            'the auth_required migration now runs AFTER loader.run(). '
-            'registerDefaults will have written auth_required = 0 by then, so '
-            'the "absent" check skips and every upgraded install that had a '
-            'password set becomes PUBLIC.'
+        assert len(loader_runs) == 1, (
+            'expected exactly one loader.run() statement, found %d at lines %s'
+            % (len(loader_runs), loader_runs)
+        )
+        assert calls[0] < loader_runs[0], (
+            'the auth_required migration now runs AFTER loader.run() (line %d '
+            'vs %d). registerDefaults will have written auth_required = 0 by '
+            'then, so the "absent" check skips and every upgraded install that '
+            'had a password set becomes PUBLIC.' % (calls[0], loader_runs[0])
+        )
+
+    def test_the_migration_still_writes_the_setting_back(self):
+        """The other half. An ordering assertion is satisfied perfectly by a
+        migration that no longer writes anything."""
+        from pathlib import Path
+
+        source = (Path(__file__).resolve().parents[2] /
+                  'couchpotato' / 'runner.py').read_text(encoding='utf-8')
+
+        writes = self._statement_lines(source, "Env.setting('auth_required', value=")
+
+        assert len(writes) == 1, (
+            'expected exactly one write-back of auth_required in runner.py, '
+            'found %d at lines %s. Zero means an install that predates the '
+            'setting never gets an explicit value written down, and grepping '
+            'config.ini is the documented lockout recovery.' % (len(writes), writes)
         )
 
 
@@ -480,16 +553,16 @@ class TestAuthRequiredArrivesAsAStringAtStartup:
         )
 
     @pytest.mark.parametrize('stored', ['1', 'true', 'True', 'yes', 'on', ' 1 '])
-    def test_a_truthy_string_turns_auth_on(self, settings, stored):
+    def test_a_truthy_string_turns_auth_on(self, settings, session, stored):
         settings['auth_required'] = stored
         settings['password'] = 'hashed'
 
         assert _current_user(_request()) is None, (
             'auth_required was the string %r and the server stayed PUBLIC' % (stored,)
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY'
+        assert _current_user(_request(session)) is True
 
-    def test_an_unrecognised_string_with_a_password_stays_shut(self, settings):
+    def test_an_unrecognised_string_with_a_password_stays_shut(self, settings, session):
         """Garbage in config.ini must not open the server.
 
         A hand-edited config.ini is the documented lock-out recovery path, so
@@ -504,7 +577,7 @@ class TestAuthRequiredArrivesAsAStringAtStartup:
         assert _current_user(_request()) is None, (
             'a typo in auth_required made the server public'
         )
-        assert _current_user(_request('THEKEY')) == 'THEKEY', (
+        assert _current_user(_request(session)) is True, (
             'the password can still satisfy the gate'
         )
 

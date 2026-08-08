@@ -393,9 +393,67 @@ def _bind_to_loopback(data_dir):
     return True
 
 
-def seed(data_dir):
+def _enable_authentication(data_dir, plaintext):
+    """Store `plaintext` as the login password and turn "Require login" on.
+
+    AC-QA-27. Every instance this script seeds has had NO password, so
+    `auth_is_required()` resolves False, `get_current_user` accepts everybody
+    and `GET /login/` answers 307 to `/`. Measured on the tip: the login page
+    could not be reached by navigation at all, the sign-out control never
+    rendered (it is behind `{% if auth_required %}`), and
+    `navigation.spec.ts`'s login block passed silently while asserting nothing.
+
+    Written in the form `login_post` actually compares against -- bcrypt OVER
+    the md5 of the plaintext, which is what the browser path computes (see
+    `Core.md5Password`). Storing the plaintext, or a bare bcrypt of it, would
+    produce an instance where the correct password is refused.
+
+    `auth_required` is written EXPLICITLY rather than left to be derived. It is
+    the value the operator greps for, `runner.py` writes it back at startup
+    anyway, and a seeded instance whose authentication state is inferred is one
+    whose test would still pass if the inference broke.
+
+    Guarded by the same `.e2e*` naming check as `_bind_to_loopback`, and for a
+    stronger version of the same reason: `_is_safe_seed_target` deliberately
+    accepts a developer's own `.config`, and writing a password into a real
+    local instance would lock them out of their own library behind a password
+    from a test script. It refuses, loudly, rather than doing that.
+    """
+    import configparser
+
+    from couchpotato.core.helpers.variable import hash_password, md5
+
+    basename = os.path.basename(os.path.realpath(os.path.abspath(data_dir)).rstrip(os.sep))
+    if not basename.startswith('.e2e'):
+        raise ValueError(
+            'refusing to set a password in %r: it is not a .e2e* data dir, and '
+            'writing one into a real instance would lock its owner out behind '
+            'a credential from a test script' % data_dir
+        )
+
+    config_file = os.path.join(data_dir, 'config.ini')
+    parser = configparser.RawConfigParser()
+    if os.path.exists(config_file):
+        parser.read(config_file, encoding='utf-8')
+    if not parser.has_section('core'):
+        parser.add_section('core')
+    parser.set('core', 'password', hash_password(md5(plaintext)))
+    parser.set('core', 'auth_required', '1')
+
+    os.makedirs(data_dir, exist_ok=True)
+    tmp = config_file + '.tmp'
+    with open(tmp, 'w', encoding='utf-8') as handle:
+        parser.write(handle)
+    os.replace(tmp, config_file)
+    print('  auth: password set and auth_required = 1')
+    return True
+
+
+def seed(data_dir, password=None):
     """Seed the profile, movie, and releases. Returns a summary dict."""
     _bind_to_loopback(data_dir)
+    if password:
+        _enable_authentication(data_dir, password)
     db = _open_adapter(data_dir)
     try:
         now = time.time()
@@ -562,6 +620,13 @@ def main(argv=None):
              'opened at <data_dir>/database_v2/couchpotato.db, matching '
              'couchpotato/runner.py exactly.',
     )
+    parser.add_argument(
+        '--password', default=None,
+        help='Set this login password and turn "Require login" on, so the '
+             'seeded instance actually enforces authentication (AC-QA-27). '
+             'Refused unless --data_dir is a .e2e* directory. Omit it and the '
+             'instance is seeded open, as every other E2E worker is.',
+    )
     args = parser.parse_args(argv)
 
     if not _is_safe_seed_target(args.data_dir):
@@ -576,7 +641,7 @@ def main(argv=None):
         return 1
 
     try:
-        result = seed(args.data_dir)
+        result = seed(args.data_dir, password=args.password)
     except Exception as exc:  # noqa: BLE001 -- report and exit non-zero, don't traceback-spam CI
         print('ERROR: failed to seed E2E data: %s' % exc, file=sys.stderr)
         return 1

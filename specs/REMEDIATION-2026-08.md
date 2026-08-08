@@ -88,6 +88,7 @@ Every PR follows the same loop:
 ---
 ## Tasks
 
+
 Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 -> in-review #N -> merged`. The box is ticked only at `merged`, and only from
 `gh pr view`, never from memory.
@@ -95,12 +96,167 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
-- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: queued (needs: T3)
+- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: awaiting-ci #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs, review cycle 7 fixed / 4 deferred
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
-- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued
+- [x] T10: `tests/e2e/suggestions.spec.ts:99` failed only inside a FULL run — state: merged #230
+
+      **Root cause, and I had it wrong first.** I recorded that this was not
+      caused by the PR 2b branch, on three structural grounds: the spec is
+      untouched by it, the rate limiter returns early for localhost, and both
+      sign-out controls sit inside `{% if auth_required %}` while E2E seeds no
+      password. Every one of those is true. The conclusion was still wrong,
+      because the mechanism was TIMING, not logic:
+
+          full chromium project on master       136/136 pass
+          full chromium project on the branch   136 + 1 failed
+
+      PR 2b adds an `auth_is_required()` call to the common template context,
+      so every partial render does slightly more work. That was enough to lose
+      a latent race.
+
+      **The race was real and in the app.** `fail()` deferred focus with
+      `$nextTick`, which flushes Alpine's queue rather than the browser's style
+      pass — so `x-show` had not necessarily applied `display`, and `focus()`
+      on a `display:none` element is a SILENT no-op. A focus move that only
+      lands on a fast machine is a WCAG 2.4.3 failure for anyone on a slow one.
+
+      Fixed with a synchronous style flush (`void el.offsetHeight`), which is
+      deterministic rather than probabilistic, in one shared helper across all
+      three call sites, each now asserted. Not fixed by retrying the test:
+      CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
+      made CI stop reporting it.
+
+- [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
+
+      Non-blocking review nit on #229, verified and deferred rather than done.
+
+      `SQLiteAdapter.update_with_retry` (`sqlite_adapter.py:563`) exists and
+      documents itself as "the safe primitive for read-modify-write callers":
+      it re-`get()`s, applies a mutator, updates, and retries on
+      `ConflictError`. `_write_session_secret`'s update branch reimplements
+      exactly that. Mine exists because I did not know the primitive was
+      there.
+
+      Not a correctness problem — the hand-rolled loop is correct, and its
+      test now genuinely proves it re-reads (a competing write bumps `_rev`,
+      so a hoisted read fails). It is avoidable duplication of a primitive the
+      codebase already trusts and tests, and duplication is what drifts.
+
+      Deferred because rewriting the secret-write path at the end of a PR this
+      size, on a branch where rule 11 already applies, buys no behaviour and
+      risks a regression in the one function that must not lose a write. Its
+      own small change, with its own review.
+
+- [ ] T14: the password-change rotation commits before the save does — state: queued (no deps)
+
+      P2 review finding on #229, **attempted and withdrawn**, so it is a task
+      rather than a fix.
+
+      `Core.md5Password` is the VALUE hook: it runs while the settings save is
+      still in progress, before `Settings.save()` writes `config.ini`. Rotating
+      there means a save that then fails -- read-only config directory, a
+      permissions change, an I/O error -- has already signed the operator out
+      of every device for a change that was never persisted, and after a
+      restart the OLD password is still authoritative.
+
+      **The fix is available and clean.**
+      `fireEvent('setting.save.<section>.<option>.after')` fires AFTER
+      `self.save()` (`core/settings.py:514`), so a save that raises never
+      reaches it. Moving the rotation there couples it to the commit rather
+      than the attempt, and takes the rotation out of the value hook where an
+      exception risks the auth_required lockout that T-M6 is also about.
+
+      One wrinkle to design around: the `.after` hook receives no value, so it
+      cannot tell a password being SET from one being CLEARED, and D10 says
+      clearing must not rotate. A flag set in `md5Password` and consumed by the
+      after-hook works, but must be assigned unconditionally so a failed save
+      cannot leave it set for the next one.
+
+      **Why it is deferred.** Three attempts to measure in this area produced
+      nothing usable: the ordering test passes on the current code, and I could
+      not prove it is non-vacuous -- a successful save through the same harness
+      would not demonstrably rotate either, so the test may be asserting
+      nothing. Shipping a guard that looks like coverage and is not is worse
+      than shipping none. Project rule 11 already applies to this function on
+      this branch.
+
+      Do it with a working harness: assert first that a SUCCESSFUL save
+      rotates, then that a failing one does not.
+
+- [ ] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: queued (no deps)
+
+      Review Medium on #229, confirmed by execution and then **attempted and
+      reverted**, which is why it is a task rather than a fix.
+
+      `Settings.getProperty` wraps its read in a blanket `except Exception:`
+      that logs at DEBUG and returns None (`core/settings.py:640-654`).
+      Measured against a store whose reads raise:
+
+          getProperty returned: None   <-- did NOT raise
+
+      So `Env.prop` never reports a broken store, the probe's `except` is
+      unreachable in production, and it answers "readable" for both "never had
+      a secret" and "the store just raised" -- the exact ambiguity it exists to
+      resolve. Its test passed only by monkeypatching `getProperty` wholesale,
+      bypassing the handler a real fault goes through.
+
+      **Not urgent.** The reviewer's own analysis, verified: `ensure_session_secret`
+      reads via `_session_secret_row` (the adapter directly), which DOES
+      propagate, and `login_post` catches it -- so fail-closed holds today,
+      just via an undocumented path rather than the one AC-SEC-33's write-up
+      names. The risk is fragility: consolidating the read paths would remove
+      that backstop silently.
+
+      **Why it is deferred rather than fixed.** Three attempts, each worse:
+      pointing the probe at the adapter made the probe and `get_session_secret`
+      read differently, so a login issued a cookie while the secret was
+      unreadable (caught by
+      `test_login_issues_no_cookie_when_the_secret_cannot_be_read`); pointing
+      both at the adapter broke 22 tests. Project rule 11 says the fourth
+      attempt is not the answer. All of it was reverted; the suite is green.
+
+      Two shapes to choose between, both from the review:
+      1. read through the adapter in BOTH the probe and `get_session_secret`,
+         and fix every test that injects a `getProperty` fault (there are at
+         least six, across three files);
+      2. delete the probe and document `ensure_session_secret`'s own exception
+         propagation as the AC-SEC-33 enforcement point.
+
+      Option 2 is smaller and matches what already happens. Either way it is
+      its own change on the authentication path, with its own review.
+
+- [ ] T11: a focus move that fails entirely tells only the developer console — state: queued (no deps)
+
+      Raised in review of #230 and accepted as a follow-up rather than built
+      there. `_focusWhenShown` warns to `console.warn` if both the flush and
+      the retry fail. That reaches somebody with devtools open; it reaches
+      nobody who is actually affected, and the person affected is exactly who
+      WCAG 2.4.3 exists to protect.
+
+      A user-visible fallback is the right shape: a toast, or
+      `document.body.focus()` plus a visible status-line update.
+
+      The path should never execute — but "should never" is what the original
+      bug said too.
+
+- [ ] T12: JS inside a Jinja template gets no lint pass — state: queued (no deps)
+
+      Found by breaking it: a missing `+` in a multi-line string inside
+      `suggestions.html`'s `<script>` block made the whole Alpine component
+      fail to parse, and four E2E tests went red. Ruff does not see template
+      JS, ESLint does not, and vitest only covers `couchpotato/ui/static`.
+
+      A syntax error in any template's inline script is invisible until a
+      browser test happens to exercise that page — and pages with no E2E
+      coverage would ship dead. A `check-traps` rule that extracts `<script>`
+      blocks from templates and parses them would close the class for a few
+      lines, per the standing preference for enforced checks over remembered
+      ones.
+
+- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: queued · the PLAN merged as #228; `ci.yml` is untouched, so the gate is still slow and the deliverable is outstanding. Needs /plan-cycle for its ACs before implementation
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
@@ -146,6 +302,50 @@ this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
 
 ## Conductor log
+
+- **Tick 31** — **PR #229 raised** for T4 after `make verify` went green
+  (exit 0, captured to a log rather than through a pipe). Five implementation
+  tranches, then a nine-lens review returning eleven findings: seven fixed,
+  four deferred with reasons in `specs/PR2B-SESSION-COOKIE.md`.
+
+  Two of the fixed findings were criteria a tranche had reported DONE and had
+  not built (AC-DESIGN-7's `HX-Redirect`, AC-OPS-47's log clause), which is the
+  argument for the review gate existing at all. One was a **lockout**: on a
+  `url_base` install the pre-upgrade `path=/` cookie shadowed the new one and
+  the operator could not log in, while the page told them their password still
+  worked. AC-SEC-44's upgrade drill missed it because that drill runs at root,
+  where the two paths coincide.
+
+  **I introduced a startup crash and the gate caught it.** The posture log
+  called `session_cookie_attributes()` above the line that sets `web_base`, so
+  a real server died on boot -- and all three of my unit tests passed because
+  every one of them monkeypatched the function that breaks. Fixed by ordering,
+  plus a test that drives the real function and one that pins the ordering by
+  source. That is the second fix on this branch to introduce a defect; both
+  were caught before push, which is the frame holding rather than failing.
+
+
+- **Tick 10** — #228 merged (`085160eb`, verified from `gh pr view`, 19/19
+  green). **T9 stays unticked:** what merged is the PR 7 *plan*;
+  `git diff cd358c20..origin/master -- .github/workflows/ci.yml` is empty, so
+  the gate is exactly as slow as it was. A merged plan is not a merged fix.
+
+  T4 started, and per M15 it started with `/plan-cycle`, not code. Spec split
+  out to `specs/PR2B-SESSION-COOKIE.md` so the lenses had a one-PR surface;
+  nine ran, none skipped, 85 ACs and eight settled decisions. Four executed
+  claims re-verified against source rather than relayed: the `text/html`
+  rate-limit exemption (so `POST /login/` is unlimited), `listDocuments`
+  iterating `db.all('id')` (so an `api_key` holder can read a property row),
+  `setProperty`'s bare `except Exception:` turning a lost CAS into a duplicate
+  insert, and zero logout controls in the UI. Re-measuring the binary
+  round-trip *strengthened* a criterion: the corruption is length-variable
+  (lens saw 31 chars, I saw 29), so a naive length assertion would be flaky.
+
+  Open concern recorded rather than acted on: at 85 ACs over eight source
+  files this is a big PR, and the one genuinely separable piece is the
+  rate-limit fix (AC-SEC-42) — it is a real finding but independent of the
+  cookie. Left in scope because nine lenses just agreed it; split it if the
+  diff proves unreviewable. Armed: nothing external — T4 implementation is next.
 
 - **Tick 9** — #228 is 19/19 green; BLOCKED was two more unresolved review
   threads, not a check. Both were arithmetic in tick 8's own correction, and
@@ -1951,6 +2151,69 @@ Specifically answer: what did the 697s run spend its time on, and is
 `--fail-on-flaky-tests` retrying? At 1 in 12 with the other eleven spanning 38s
 (99s to 137s), a per-run cause (runner, apt mirror, a retry) is more likely than
 a workflow one -- but "more likely" is not a measurement.
+
+**Both questions are now answered below, and the guess above was half right:**
+the cause was per-run, but it was not a retry, and the 12-run sample it rests on
+is superseded by a 23-run one. Kept as written so the prediction can be scored
+against the measurement rather than quietly edited to match it.
+
+
+**T9.1 ANSWERED 2026-08-07 by the orchestrator.**
+
+#### Method
+
+`gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs` over the last 25
+CI runs, then `.../actions/jobs/<job_id>` for the step timings. n = 23 successful
+`accessibility` jobs (one skipped and one cancelled run excluded). This is a
+wider sample than the twelve-run one recorded earlier, and it supersedes it.
+
+#### The outlier is one step, and it is not the tests
+
+Job `92791614728` (697s) against a normal job `92806433719` (115s):
+
+| Step | Slow run | Normal run |
+|---|---|---|
+| Install Python dependencies | 17s | 27s |
+| Install Node dependencies | 8s | 8s |
+| **Install Playwright browsers** | **610s** | **22s** |
+| Run accessibility tests | 51s | 46s |
+| everything else | ~5s | ~9s |
+
+**The test suite took 51s on the slow run and 46s on the normal one.** The spike
+is entirely `npx playwright install --with-deps chromium`.
+
+#### Across all 23 runs
+
+| Step | n | min | median | max |
+|---|---|---|---|---|
+| job total | 23 | 99 | **115** | 697 |
+| Install Playwright browsers | 23 | 21 | 27 | **610** |
+| Run accessibility tests | 23 | 46 | **51** | 55 |
+| Install Python dependencies | 23 | 15 | 17 | 30 |
+
+Excluding the single stall, the Playwright install is 21-35s (median 26.5s).
+
+**The test step never misbehaved once in 23 runs: 46-55s, including on the run
+that took 697s.** So `--fail-on-flaky-tests` retrying is ruled out as the cause,
+which was the open question T9.1 was written to answer.
+
+#### What this changes about T9.2 and T9.3
+
+1. **Caching the Playwright browser download is now the highest-value change,
+   and for a reason the plan did not have.** It was scoped as "save ~25s on the
+   median". It also removes the only mechanism that has ever produced an
+   outlier: a 610s network or apt stall in a step that downloads a browser on
+   every single run. Median win is modest; tail win is the whole 10-minute
+   complaint.
+2. **The 697s run needs no further diagnosis.** It was a slow download, not the
+   repo, not the suite, not a retry. T9.1's question "is
+   `--fail-on-flaky-tests` retrying?" is answered: no.
+3. **The ~51s test step is the floor** for this job as it stands, and cutting it
+   means cutting coverage, which the plan explicitly rules out. So the job
+   cannot go much below ~60s even with perfect caching, and the remaining
+   complaint is wall-clock from the serial chain (T9.3), exactly as scoped.
+4. **The earlier twelve-run figures are superseded**: median 123.5s becomes 115s
+   at n=23. Same conclusion, better sample.
 
 ### T9.2: Stop paying for the same install twice · S · risk: low
 

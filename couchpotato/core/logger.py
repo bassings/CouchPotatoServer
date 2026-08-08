@@ -14,6 +14,8 @@ Usage::
 import logging
 import re
 import sys
+import threading
+import time
 
 # Custom log level for "info2" (release-rejection reasons, provider
 # circuit-breaker trips, etc). Must be ABOVE INFO (20) so it is visible at
@@ -25,7 +27,7 @@ logging.addLevelName(INFO2, 'INFO')
 
 # Privacy filter patterns
 _REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'uid', 'key', 'passkey',
-                    'token', 'authkey', 'torrent_pass', 'sid']
+                    'token', 'authkey', 'torrent_pass', 'sid', 'secret']
 
 #: Names redacted even OUTSIDE a query string, i.e. bare `name=value` in prose.
 #:
@@ -51,12 +53,125 @@ _REPLACE_PRIVATE = ['api', 'apikey', 'api_key', 'password', 'username', 'h', 'ui
 #: Plex auth token was written to the log on every notification, matched by
 #: neither pass (the query-string one wants an exact lowercase `token` right
 #: after `?`/`&`; this one was case-sensitive and anchored on `\b`).
+#: `secret` was added for the session signing secret (AC-SEC-41). None of the
+#: names above matches it: it is stored as the `session_secret` property, and
+#: the obvious way to write it in a debug line is `session_secret=<64 hex>` --
+#: which the `[\w-]*` prefix catches, along with `client_secret=` and
+#: `app_secret=`. Unlike the api_key there is no verbatim-value pass for it: the
+#: secret ROTATES, so a cached copy in this filter would be stale exactly when
+#: it mattered, and re-reading it per record would take the adapter's
+#: process-wide lock on every log line.
 _REPLACE_PRIVATE_BARE = ['api_key', 'apikey', 'password', 'passkey', 'token', 'authkey',
-                         'torrent_pass']
+                         'torrent_pass', 'secret']
 
 #: Names too SHORT to carry a prefix match. `sid` is three characters, and
 #: `[\w-]*sid=` would eat ordinary words. Matched exactly, case-insensitively.
 _REPLACE_PRIVATE_BARE_EXACT = ['sid']
+
+#: Home-directory prefixes, redacted to the directory name alone.
+#:
+#: `traceback.format_exc()` writes every frame's ABSOLUTE source path, so an
+#: unhandled error in a native install logs `/home/<name>/...` or
+#: `/Users/<name>/...` -- the operator's username and directory layout, in a
+#: file that routinely gets pasted into bug reports. The project security floor
+#: says no private filesystem paths in logs, and this filter had no path
+#: handling at all.
+#:
+#: The tail is KEPT deliberately. The module path, line number and function are
+#: the entire reason a traceback is logged; a filter that ate the line would
+#: remove the diagnosis along with the leak, which is how redaction gets
+#: switched off.
+_HOME_PREFIX_RE = re.compile(r'(?:/home/|/Users/)[^/\s"\':,)]+')
+
+
+#: Seconds a `log_suppressed` key stays quiet after its first record.
+#:
+#: Five minutes, chosen against the ring rather than by feel. The ring is
+#: 500,000 bytes x 11 files and the records this bounds cost roughly 266 bytes
+#: each, so at two records per key per window three keys cost about 1.5 KB an
+#: hour -- the ring holds years of that. At sixty seconds it would be five
+#: times that and still churn the ring in about two weeks of a stuck install,
+#: which is the case where the operator most needs the OTHER lines to survive.
+#: Short enough that an operator who restarts and reloads sees the message
+#: immediately, because the first record after a quiet period is never withheld.
+LOG_SUPPRESSION_WINDOW = 300
+
+#: key -> [emitted_at, suppressed_since_then]. Process-wide and small: one
+#: entry per call site, never per request, per IP or per message, so a stranger
+#: cannot grow it.
+_log_suppression_state = {}
+_log_suppression_lock = threading.Lock()
+
+
+def reset_log_suppression():
+    """Forget every window. For tests; nothing in the app calls it."""
+    with _log_suppression_lock:
+        _log_suppression_state.clear()
+
+
+def log_suppressed(log_method, key, message, *args, window=LOG_SUPPRESSION_WINDOW,
+                   now=None):
+    """Emit `message` at most twice per `window` per `key`, visibly.
+
+    For log calls an UNAUTHENTICATED caller can trigger once per request. Three
+    of them live on the authentication surface (`couchpotato/__init__.py`), all
+    at ERROR, all firing on every request while the install is in a state the
+    operator is probably trying to fix. Measured: 1,000 unauthenticated
+    requests wrote 533,043 bytes, so roughly 10,300 of them evict the entire
+    5.5 MB ring -- and that ring is the only diagnostic a self-hosted install
+    has. Anyone who can reach the port could erase the evidence of everything
+    else that happened.
+
+    The bound must not cost the diagnosis, which is the reason those lines are
+    at ERROR and name the `config.ini` remedy in full. So a window emits:
+
+      1. the FIRST occurrence, complete and unmodified;
+      2. one notice that further identical messages are being withheld, so
+         "this happened once" and "this is happening on every request" do not
+         read identically;
+      3. nothing else -- until the window passes, when the next occurrence is
+         emitted in full WITH the number that were withheld.
+
+    `args` are passed through un-interpolated: `CPLog` is `%`-style and
+    `PrivacyFilter` redacts `record.msg % record.args` itself, so formatting
+    here would route secrets and private paths around the filter.
+
+    `now` is injectable so the window is testable without sleeping and without
+    patching a module-level `time.time` -- which on this repo also freezes
+    `date.today()` and has produced a recorded false positive. The default
+    clock is `time.monotonic`, not `time.time`: a clock step (NTP, a container
+    resuming) must not silence a call site for hours or unsuppress it early.
+    """
+    current = time.monotonic() if now is None else now
+
+    with _log_suppression_lock:
+        state = _log_suppression_state.get(key)
+
+        if state is not None and current - state[0] < window:
+            state[1] += 1
+            if state[1] > 1:
+                return
+            # Exactly one notice per window, on the SECOND occurrence: the
+            # count is not known yet, and repeating the message it is
+            # suppressing would double the bytes this exists to save.
+            notice = ('The message above is repeating. Further identical '
+                      'messages are suppressed for up to %d seconds, and the '
+                      'number withheld will be reported with the next one.'
+                      % window)
+            log_method(notice)
+            return
+
+        withheld = state[1] if state is not None else 0
+        _log_suppression_state[key] = [current, 0]
+
+    if withheld:
+        # Appended as a LITERAL, already interpolated and containing no `%`:
+        # the format string still belongs to the caller, whose `args` are
+        # applied to it downstream by `PrivacyFilter`.
+        message = '%s (%d identical messages were suppressed since the last one.)' % (
+            message, withheld)
+
+    log_method(message, *args)
 
 
 class ColorFormatter(logging.Formatter):
@@ -126,6 +241,30 @@ class PrivacyFilter(logging.Filter):
             msg = re.sub(r'[\w-]*%s=[^\s&,;)\]}\'"]+' % replace,
                          lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,
                          flags=re.IGNORECASE)
+        msg = _HOME_PREFIX_RE.sub('<home>', msg)
+
+        # The TRACEBACK too, and it needs materialising here to reach it.
+        #
+        # Stdlib formats `record.exc_info` inside `Formatter.format()`, which
+        # runs AFTER filters -- so every frame's absolute source path reached
+        # the file untouched, and the api_key scrubbing below was bypassed for
+        # the same reason. Measured with this filter attached:
+        #
+        #     traceback reached the log      : True
+        #     absolute repo path in the log  : True
+        #     redaction marker <home> present: False
+        #
+        # `Formatter.format()` reuses `record.exc_text` when it is already
+        # set, so rendering it here and scrubbing it is what makes the
+        # redaction actually apply. Two live call sites pass `exc_info=True`
+        # (`couchpotato/ui/__init__.py:441` and `:466`), and without this the
+        # whole point of the redaction is lost: an operator pastes
+        # couchpotato.log into an issue and their home directory is in it.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = _HOME_PREFIX_RE.sub('<home>', record.exc_text)
+
         for replace in _REPLACE_PRIVATE_BARE_EXACT:
             msg = re.sub(r'\b%s=[^\s&,;)\]}\'"]+' % replace,
                          lambda m: m.group(0).split('=', 1)[0] + '=xxx', msg,

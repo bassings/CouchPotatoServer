@@ -6,26 +6,19 @@ import { test, expect } from './fixtures';
  */
 
 test.describe('Navigation', () => {
-  // Skip auth if no credentials are set (local dev)
-  test.beforeEach(async ({ page }) => {
-    // Try to access the page; if redirected to login, handle it
-    await page.goto('/');
-    if (page.url().includes('/login')) {
-      // Check if auth is actually required (might be disabled)
-      const loginForm = page.locator('form');
-      if (await loginForm.count() > 0) {
-        // Fill in test credentials if environment variables are set
-        const username = process.env.CP_TEST_USER || '';
-        const password = process.env.CP_TEST_PASS || '';
-        if (username && password) {
-          await page.fill('input[name="username"]', username);
-          await page.fill('input[name="password"]', password);
-          await page.click('button[type="submit"]');
-          await page.waitForURL('**/');
-        }
-      }
-    }
-  });
+  // AC-QA-27: the login `beforeEach` that used to sit here is GONE, not fixed.
+  //
+  // It navigated to `/`, and then did nothing at all unless the URL contained
+  // `/login`, AND a form existed, AND both CP_TEST_USER and CP_TEST_PASS were
+  // set in the environment. Every worker in this suite is seeded with no
+  // password, so `auth_is_required()` is False and none of those three
+  // conditions has ever held: three nested `if`s that could only pass
+  // silently. It read as authentication coverage and was not any.
+  //
+  // The real thing now lives in `authenticated-session.a11y.spec.ts`, which
+  // starts a server WITH a password and fails -- rather than skipping -- if
+  // the login form is not there. Every test below does its own `page.goto`,
+  // so nothing here depended on the navigation this hook also performed.
 
   test('should load the wanted page by default', async ({ page }) => {
     await page.goto('/');
@@ -91,8 +84,38 @@ test.describe('Navigation', () => {
     await collapseBtn.click();
     // Check that sidebar is collapsed (narrower width)
     await expect(sidebar).toHaveClass(/w-16/);
-    // Click again to expand
-    await page.click('aside button:last-child');
+    // Click the SAME named control again rather than `aside button:last-child`.
+    // That selector means "any button that is the last child of its parent",
+    // not "the last button in the sidebar" -- so the D8 sign-out button, the
+    // only child of its <form>, matches it too. It does not bite today only
+    // because the seeded E2E instance has no password and the control is not
+    // rendered (see the test below); it would become a strict-mode violation
+    // the moment AC-QA-27 turns authentication on.
+    await collapseBtn.click();
     await expect(sidebar).toHaveClass(/w-56/);
+  });
+
+  /*
+   * D8's negative half, asserted UNCONDITIONALLY.
+   *
+   * scripts/seed_e2e_data.py seeds no password, so `auth_is_required()` is
+   * false on every worker's instance and there is no session for a sign-out
+   * control to end. Rendering one anyway would be a button that signs the
+   * operator out of nothing.
+   *
+   * Deliberately not written as `if (authOn) { ... }`: that shape passes
+   * silently in exactly the configuration this suite runs in, which is the
+   * vacuous-guard pattern `make check-traps` exists to stop. It fails if the
+   * `{% if auth_required %}` guard in base.html is dropped, and it fails if
+   * this instance ever starts requiring a login -- at which point AC-QA-27's
+   * authenticated E2E is the test that should replace it.
+   */
+  test('with authentication off, the shell renders no sign-out control', async ({ page }) => {
+    await page.goto('/');
+    await expect(page).not.toHaveURL(/login/);
+    await expect(page.locator('aside')).toBeVisible();
+
+    await expect(page.locator('form[action$="logout/"]')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /sign out|log out/i })).toHaveCount(0);
   });
 });
