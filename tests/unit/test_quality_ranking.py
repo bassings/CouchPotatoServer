@@ -244,6 +244,28 @@ class TestIs3dRuleRefusesInBothDirections:
             {'identifier': '1080p', 'is_3d': False},
         ) is False
 
+    def test_better_rung_3d_incoming_vs_worse_rung_non3d_existing_is_not_better(self, monkeypatch):
+        """The ONLY case where rank alone would authorise a replacement and
+        only the 3D rule stops it -- so it is the only case that can catch an
+        ASYMMETRIC implementation.
+
+        A check written as `if existing_is_3d and not incoming_is_3d` passes
+        every other 3D test in this class: the same-rung pair is refused by
+        rank equality, the worse-incoming pair by rank, and the
+        existing-3D pair by the asymmetric branch itself. Only this
+        combination -- incoming strictly better AND 3D, existing worse and 2D
+        -- reaches the comparison with rank saying "replace".
+
+        Without it the suite is green while a 3D copy silently overwrites a
+        2D one at a lower rung, which is a different film for anyone without
+        3D playback.
+        """
+        plugin = _make_plugin(monkeypatch)
+        assert plugin.isBetterQuality(
+            {'identifier': '2160p', 'is_3d': True},
+            {'identifier': '720p', 'is_3d': False},
+        ) is False
+
     def test_worse_rung_3d_existing_vs_better_rung_non3d_incoming_would_be_better_but_for_3d(self, monkeypatch):
         """Here the rung comparison alone WOULD authorise a replacement
         (1080p incoming beats 720p existing) -- the 3D mismatch must still
