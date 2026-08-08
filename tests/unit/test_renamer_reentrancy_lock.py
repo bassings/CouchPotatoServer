@@ -25,10 +25,8 @@ the check-and-set atomically, proven by racing two real threads against a
 real filesystem -- not by asserting a lock object exists or that media_lock
 was called.
 """
-import os
 import threading
 
-import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
 

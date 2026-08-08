@@ -279,6 +279,18 @@ Release documents carry `copy_id` (`release/main.py:233`, via
 is therefore answered by copy identity, and an ambiguous answer REFUSES rather
 than guessing — that ambiguity is how the wrong file gets deleted.
 
+### D6 — sub-tasks renumbered B0–B4
+
+`T5.4` named path ownership here and the re-entrancy lock in
+`REMEDIATION-2026-08.md:2163`; that collision is how D4 went missing. Now
+B0 (lock), B1 (ranking), B2 (attach releases), B3 (atomic replacement),
+B4 (path ownership).
+
+Two smaller corrections: the likely-touched-paths list named
+`couchpotato/core/plugins/renamer/test_*.py`, which do not exist — all three
+test files live in `tests/unit/`; and `quality/main.py` was missing from
+FEAT-009's affected-files table although B1 necessarily changes it.
+
 ### D7 — replacement is refused for multi-file groups (raised in B0's review)
 
 Review found the criteria **mutually unsatisfiable**, and it is a live case:
@@ -321,18 +333,6 @@ nothing they cannot get from the database with the id.
 The general tension worth stating: the more useful a log line is for post-hoc
 diagnosis of an irreversible delete, the more it leaks. The identifier keeps
 the diagnosis and drops the leak.
-
-### D6 — sub-tasks renumbered B0–B4
-
-`T5.4` named path ownership here and the re-entrancy lock in
-`REMEDIATION-2026-08.md:2163`; that collision is how D4 went missing. Now
-B0 (lock), B1 (ranking), B2 (attach releases), B3 (atomic replacement),
-B4 (path ownership).
-
-Two smaller corrections: the likely-touched-paths list named
-`couchpotato/core/plugins/renamer/test_*.py`, which do not exist — all three
-test files live in `tests/unit/`; and `quality/main.py` was missing from
-FEAT-009's affected-files table although B1 necessarily changes it.
 
 ## Proposed shape, in the order it must be built
 
