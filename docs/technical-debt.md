@@ -4,6 +4,38 @@
 > against `origin/master` before relying on them — these are point-in-time
 > snapshots, and several older claims have already gone stale once.
 
+## Lessons
+
+### A mutation that lands is not a mutation that bites (2026-08-08)
+
+CLAUDE.md rule 10 already said to confirm a mutation applied, because a `sed`
+that matches nothing produces a passing test against code you believe you
+reverted. Proving the accessibility gate blocks a real WCAG failure (AC-A11Y-2
+of `specs/CI-003-fast-gate.md`) found the next step, and it is a different
+failure with an identical symptom.
+
+The probe stripped `:aria-label` from a sidebar button and pushed. CI came back
+**green**, and the immediate reading was "the accessibility gate has a hole".
+
+It does not. That button carries a visible `<span x-text="darkMode ? 'Light
+mode' : 'Dark mode'">`, so it still had an accessible name from its content;
+the `aria-label` was redundant and axe was correct to report nothing. The edit
+had landed perfectly — confirmed in the diff — it simply did not create a WCAG
+violation.
+
+Retargeted at the collapse-sidebar button one element below (one `aria-hidden`
+svg, no text child, no `x-text`, all three asserted programmatically before
+pushing) the gate went red immediately: `button-name: Ensure buttons have
+discernible text`, commit `b42a5845`, run `31255505196`. Reverting turned it
+green again, commit `2e545adc`, run `31255866860`.
+
+**Why it matters:** "the mutation did not apply" and "the mutation applied but
+was not hostile" both present as a green run, and the natural conclusion in
+both cases is that the guard is broken. The first is caught by hashing the
+file; only the second is caught by asking what property makes this input
+actually violate the thing, and asserting that property before trusting the
+result. Getting it wrong the other way files a bug against working code.
+
 ## Known technical debt
 
 > Refreshed 2026-07-07 — most of the old list was stale (verified against
