@@ -56,6 +56,7 @@ class QualityPlugin(Plugin):
         addEvent('quality.ishigher', self.isHigher)
         addEvent('quality.isfinish', self.isFinish)
         addEvent('quality.fill', self.fill)
+        addEvent('quality.rank', self.rankQuality)
 
         addApiView('quality.size.save', self.saveSize)
         addApiView('quality.list', self.allView, docs = {
@@ -526,6 +527,93 @@ class QualityPlugin(Plugin):
             return False
         except Exception:
             return False
+
+    def rankQuality(self, quality):
+        """Profile-independent rank of a quality identifier.
+
+        Lower index is better. The ordering is entirely defined by the
+        position of an identifier in `qualities` above -- the same source
+        `addOrder` uses to build `self.order` -- and never by the persisted
+        quality-document `order` field, by `self.all()`'s merged docs, or by
+        any profile. "Is this file objectively better than what's on disk"
+        is a global question, not a profile question: see `isBetterQuality`
+        and the FEAT-009B spec (withdrawn attempt #2 confused the two and
+        authorised deleting a 2160p remux, because the default profile
+        excludes 2160p).
+
+        Accepts a bare identifier string, or a dict carrying one under
+        'identifier' (the shape a release document's recorded quality
+        takes). Returns None -- never 0, which is the BEST rank -- for
+        anything that isn't a known identifier: an unrecognised string, an
+        empty string, None, a non-string/non-dict, or a dict with no
+        'identifier' key. Callers must treat None as "cannot compare, do not
+        replace", never as "worst possible" -- returning 0 for "unknown"
+        here would let an unrecognised quality masquerade as the best copy
+        available.
+        """
+        if isinstance(quality, dict):
+            identifier = quality.get('identifier')
+        elif isinstance(quality, str):
+            identifier = quality
+        else:
+            return None
+
+        if not identifier:
+            return None
+
+        try:
+            return self.order.index(identifier)
+        except ValueError:
+            return None
+
+    def isBetterQuality(self, incoming, existing):
+        """Is `incoming` a strictly better rung than `existing`?
+
+        Global and profile-free by construction: this reads only
+        `rankQuality` (which reads only `self.order`) and the `is_3d` flag
+        already carried on `incoming`/`existing`. It must never fire
+        'profile.default' and never call `isHigher` -- both answer "should I
+        keep searching under this profile", not "is this file objectively
+        better", and that confusion is exactly what withdrawn attempt #2 got
+        wrong (spec FEAT-009B, D2).
+
+        Refuses (returns False) when either side's rank is unknown, when the
+        two ranks are equal -- only a STRICTLY better rung authorises a
+        replacement -- and when 'is_3d' differs between the two sides.
+        `is_3d` is not part of the global list ordering, so a 3D and a
+        non-3D copy at the same rung are never comparable, whichever rung
+        each sits at.
+        """
+        # Both operands MUST be dicts carrying their own is_3d. A bare
+        # identifier string is refused rather than assumed non-3D, and that
+        # is not pedantry: a release document stores `quality` and `is_3d` as
+        # SIBLING fields, so the natural call site is `existing['quality']` --
+        # a string. Defaulting its is_3d to False made a 2D 1080p incoming
+        # copy look better than an existing 3D 720p one, measured returning
+        # True before this guard. On the code path that deletes from the
+        # library, missing metadata is "refuse", never "assume the convenient
+        # value".
+        if not isinstance(incoming, dict) or not isinstance(existing, dict):
+            return False
+        # And the key must be PRESENT, not merely falsy. A dict carrying
+        # `identifier` but no `is_3d` is a caller that has not supplied the
+        # metadata, which is the same situation as the bare string above --
+        # release documents store the two as siblings, so building the dict
+        # from `r['quality']` alone loses it silently. Same rule: absent
+        # metadata refuses.
+        if 'is_3d' not in incoming or 'is_3d' not in existing:
+            return False
+
+        incoming_rank = self.rankQuality(incoming)
+        existing_rank = self.rankQuality(existing)
+
+        if incoming_rank is None or existing_rank is None:
+            return False
+
+        if bool(incoming.get('is_3d')) != bool(existing.get('is_3d')):
+            return False
+
+        return incoming_rank < existing_rank
 
     def isHigher(self, quality, compare_with, profile = None):
         if not isinstance(profile, dict) or not profile.get('qualities'):

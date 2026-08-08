@@ -129,7 +129,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
-- [ ] T16: `ui-e2e-tests` inherits the position `accessibility` just vacated — state: queued (needs: T9) · **owner decision taken 2026-08-08: ship T9 first, decide this once T9's real numbers land**
+- [ ] T16: the CI/local gate is paid for TWICE, serially — state: **blocked-on-human: build the hybrid split from the sketch, or spec it through /plan-cycle first?** (supersedes the original ui-e2e-tests-edge scoping)
+
+      **Re-scoped 2026-08-09 after the owner asked whether moving CI local would be faster. Measured, and it
+      would not — the premise inverts.** This repo is PUBLIC on standard `ubuntu-latest`, so its Actions
+      minutes are free; the owner's spend is a different private repo. And the local gate is already both
+      mandatory and faster: `core.hooksPath=.githooks` runs all of `scripts/verify.sh` before every push, at
+      ~7 min against CI's 511s median to a mergeable PR (Python suite 107-150s local vs 234s per CI leg;
+      chromium E2E 3.4m vs 4.4m).
+
+      So the waste is not location, it is DUPLICATION: the same gate is paid ~7 min locally and ~8.5 min in
+      CI, serially, every push. Containerising locally would make it worse — Docker on macOS is a VM with
+      slow bind-mount I/O for a file-heavy suite.
+
+      What CI alone can do: Python 3.10-3.13 (the venv is 3.14.6, so local covers one leg of five), the
+      Alpine/Docker build, CodeQL (which caught two real defects on #232), and the AI review. Everything
+      else on a PR run is duplication.
+
+      Proposed: PR runs keep lint, secrets, CodeQL, review, docker and ONE Python leg; master and nightly
+      keep the full matrix, E2E and accessibility; and the pre-push hook becomes path-aware so a
+      Python-only change skips E2E. ~15 min per cycle to ~5, and it strengthens rule 2's "CI is
+      confirmation, not discovery" rather than working against it. · **owner decision taken 2026-08-08: ship T9 first, decide this once T9's real numbers land**
 
       Raised by the review of T9 (finding M7) and confirmed by measurement, not
       inference. Across 15 successful PR runs, `accessibility` was the LAST
