@@ -430,13 +430,14 @@ that was true when written, in a document that kept being extended. **The rule
 that would have prevented all five is not "re-measure at merge" — it is quote a
 figure in exactly ONE place and reference it everywhere else.**
 
-**AC-QA-60 PASS.** 138s (median, n=9) against a 300s threshold, and the after-median beats the
-before-median by 530s — far more than the 71s before-spread that constraint 3
-requires it to clear.
+**AC-QA-60 PASS.** The after-median in the table above is well under the 300s
+threshold, and it beats the before-median by far more than the 71s before-spread
+that constraint 3 requires it to clear. No figure restated here: the derived
+delta was wrong twice for exactly that reason.
 
-**AC-QA-61 PASS.** 136s (median, n=9) against a 145s cap. The job itself did not get faster,
-which is the point: the speedup is entirely queueing that was removed, not work
-that stopped being done.
+**AC-QA-61 PASS.** The job-duration median in the table above is under the 145s
+cap. The job itself did not get faster, which is the point: the speedup is
+entirely queueing that was removed, not work that stopped being done.
 
 **AC-QA-62 PASS.** Run `31247191287` shows a hit on the **primary** key, not a
 restore-key fallback:
@@ -453,9 +454,10 @@ the job nor leaves it without a browser.
 is the tail it removes, not the median it saves.
 
 **M7 confirmed by measurement, not projection.** The last required check moved
-666s → **511s**, a 23% cut — against the accessibility verdict's 80%. The gate
-is still ~8.5 minutes to mergeable. That is exactly what T16 is for, and it is why
-this section reports both numbers.
+far less than the accessibility verdict did — compare the two rows of the table
+above. The gate is still ~8.5 minutes to mergeable. That is exactly what T16 is
+for, and it is why this section reports both numbers rather than the flattering
+one.
 
 ## The accessibility lens, run separately after the review cycle missed it
 
