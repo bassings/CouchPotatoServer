@@ -170,6 +170,79 @@ class TestConcurrentScansAreMutuallyExclusive:
         )
 
 
+class TestTheGuardHoldsWhileFilesAreMoving:
+    """The window that actually matters is the TRANSFER, not the config read.
+
+    Review's counter-example against the first version of this test: clearing
+    `renaming_started` immediately after discovery, instead of in the
+    `finally`, would keep that test green while still letting a second scan
+    start during group processing. The first test blocks inside
+    `conf('from')`, so it proves the check-and-set is atomic and nothing more.
+
+    This one blocks inside `_processGroup` -- with a real group returned from
+    `scanner.scan`, so the renamer is genuinely mid-scan -- and asserts a
+    second entrant is refused while that is happening. It is the case the
+    guard exists for: the renamer is the code path that moves, and will soon
+    delete, files from the library.
+    """
+
+    def test_a_second_scan_is_refused_while_a_group_is_being_processed(
+        self, tmp_path, monkeypatch
+    ):
+        in_process = threading.Event()
+        release_process = threading.Event()
+        processed = []
+        processed_lock = threading.Lock()
+
+        plugin = Renamer.__new__(Renamer)
+
+        def _fire(event_name, **kwargs):
+            if event_name == 'scanner.scan':
+                return {'movie-1': {'identifier': 'movie-1'}}
+            return None
+
+        def _process_group(_self, group, media_folder, release_download):
+            with processed_lock:
+                processed.append(group)
+            in_process.set()
+            assert release_process.wait(timeout=5), 'driver never released the mover'
+
+        monkeypatch.setattr(
+            type(plugin), 'conf',
+            lambda _self, key, default=None, **kw: str(tmp_path) if key == 'from' else default,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.main.fireEvent', _fire
+        )
+        monkeypatch.setattr(type(plugin), 'shuttingDown', lambda _self: False, raising=False)
+        monkeypatch.setattr(type(plugin), '_processGroup', _process_group, raising=False)
+
+        first = threading.Thread(target=plugin.scan)
+        first.start()
+        assert in_process.wait(timeout=5), 'the first scan never reached _processGroup'
+
+        # The renamer is now genuinely mid-transfer. A second caller must be
+        # refused, and must be refused PROMPTLY rather than queueing behind it.
+        second = threading.Thread(target=plugin.scan)
+        second.start()
+        second.join(timeout=2)
+        assert not second.is_alive(), (
+            'the second entrant blocked behind an in-flight scan instead of '
+            'being refused -- the lock is being held across the whole scan'
+        )
+
+        release_process.set()
+        first.join(timeout=5)
+        assert not first.is_alive(), 'the first scan never completed'
+
+        assert len(processed) == 1, (
+            '_processGroup ran %d times: a second scan entered while the first '
+            'was still moving files' % len(processed)
+        )
+        assert plugin.renaming_started is False
+
+
 class TestAFailedScanDoesNotWedgeTheRenamerForever:
 
     def test_the_flag_clears_and_a_later_scan_still_runs(self, tmp_path, monkeypatch):

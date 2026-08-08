@@ -279,6 +279,49 @@ Release documents carry `copy_id` (`release/main.py:233`, via
 is therefore answered by copy identity, and an ambiguous answer REFUSES rather
 than guessing — that ambiguity is how the wrong file gets deleted.
 
+### D7 — replacement is refused for multi-file groups (raised in B0's review)
+
+Review found the criteria **mutually unsatisfiable**, and it is a live case:
+`renamer/main.py:251` sets `replacements['cd'] = ' cd%d' % (idx + 1)`, so a
+group really can carry cd1 and cd2, and `_moveRenamedFiles` iterates
+`rename_files.items()`.
+
+If cd1's `os.replace` commits and cd2's then fails — a permission change, a
+mount interruption — cd1's old bytes are already irrecoverable. AC-SIMP-11
+forbids a set-aside, so **no implementation could honour "both library files
+remain byte-identical"**. Preflight cannot close it: the failure is at the
+second swap.
+
+**Decision: refuse replacement for any group containing more than one video
+file.** Single-file groups only, declined with an explicit outcome and a log
+line naming why.
+
+Chosen as a subtraction rather than the retain-until-all-commit alternative,
+which would mean holding a full second copy of a multi-GB group on the delete
+path and inventing a new failure mode to guard the first one. Multi-part movies
+simply do not get upgrade-replacement. One swap, atomic by construction,
+nothing to roll back.
+
+### D8 — the replacement log records an IDENTIFIER, never the destination path
+
+AC-SEC-8 as written requires every irreversible replacement to log the
+destination path. Review showed I had over-trusted `PrivacyFilter`: its
+`_HOME_PREFIX_RE` rewrites only the `/home/<name>` or `/Users/<name>` prefix,
+so `/home/alice/Media/Movies/Title.mkv` reaches the rotating ring and
+`docker logs` as `<home>/Media/Movies/Title.mkv` — still carrying library
+layout and title. On a record that fires for every deletion, that is a viewing
+history written to disk.
+
+**AC-SEC-8 is amended before B3: the operator-facing record identifies the
+media by its existing identifier (imdb id / media `_id`) and names both quality
+identifiers and the deciding rank — not the raw path.** Whoever is diagnosing a
+bad replacement needs to know which movie and which two rungs; the path adds
+nothing they cannot get from the database with the id.
+
+The general tension worth stating: the more useful a log line is for post-hoc
+diagnosis of an irreversible delete, the more it leaks. The identifier keeps
+the diagnosis and drops the leak.
+
 ### D6 — sub-tasks renumbered B0–B4
 
 `T5.4` named path ownership here and the re-entrancy lock in
