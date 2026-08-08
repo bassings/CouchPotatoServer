@@ -1397,8 +1397,15 @@ TEMPLATE_SUFFIXES = (".html",)
 # the body -- turning correct code into a SyntaxError at a line number pointing
 # at the tag. A blocking gate that is red on valid input is how people learn to
 # reach for --no-verify, so quoted runs are consumed whole.
+# `</script\s*>`, not `</script>`: HTML permits whitespace before an end tag's
+# `>`, and CodeQL's bad-HTML-filtering-regexp query flagged exactly this. It is
+# not cosmetic. A block closed with `</script >` failed to match, so it was
+# never parsed, reported only as "skip-unterminated", and THE GATE PASSED GREEN
+# WITH A SYNTAX ERROR INSIDE IT -- a false green in the rule whose whole purpose
+# is preventing one. Measured before the fix on `<script>const broken = (;
+# </script >`: exit 0.
 SCRIPT_TAG_RE = re.compile(
-    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script>""",
+    r"""<script\b((?:[^>"']|"[^"]*"|'[^']*')*)>(.*?)</script\s*>""",
     re.IGNORECASE | re.DOTALL,
 )
 # Counts `<script` openers so an UNTERMINATED one cannot vanish: without this a
@@ -1406,7 +1413,28 @@ SCRIPT_TAG_RE = re.compile(
 # listed as skipped -- an extraction failure that is invisible in the very
 # output added to make extraction failures visible.
 SCRIPT_OPEN_RE = re.compile(r"<script\b", re.IGNORECASE)
-SCRIPT_TYPE_RE = re.compile(r"""type\s*=\s*["']([^"']*)["']""", re.IGNORECASE)
+# Attributes are TOKENISED, not pattern-matched out of the raw tag text, and
+# both shortcuts this replaces were live defects:
+#
+#   * `\bsrc\s*=` also matched `data-src=`, because `-` is a non-word character
+#     so `\b` matches inside it. A block carrying `data-src` was classified
+#     external and never parsed -- measured: a real SyntaxError inside one
+#     exited 0. Same false-green family as the `</script >` closer.
+#   * a `type` pattern requiring quotes missed `type=application/json`, which
+#     HTML permits unquoted, so a JSON data block was parsed as JavaScript and
+#     reported as a SyntaxError. A false RED in a gate with no override.
+ATTR_RE = re.compile(
+    r"""(?:^|\s)([A-Za-z_:][-A-Za-z0-9_:.]*)(?:\s*=\s*("[^"]*"|'[^']*'|[^\s"'=<>`]+))?"""
+)
+
+
+def _parse_attrs(attrs: str) -> dict:
+    """`{name_lower: value_lower_unquoted}`; a bare attribute maps to ``""``."""
+    out = {}
+    for name, raw in ATTR_RE.findall(attrs):
+        value = raw[1:-1] if raw[:1] in ('"', "'") and raw[-1:] == raw[:1] else raw
+        out[name.lower()] = value.strip().lower()
+    return out
 JINJA_TAG_RE = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\{#.*?#\}", re.DOTALL)
 
 # `type=` values that ARE JavaScript — anything else is template DATA, not code.
@@ -1467,16 +1495,15 @@ def _iter_script_blocks(text: str):
 
     for m in SCRIPT_TAG_RE.finditer(text):
 
-        attrs, body = m.group(1), m.group(2)
+        attrs, body = _parse_attrs(m.group(1)), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
-        if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
+        if "src" in attrs:
             yield (line, "skip-src", body)
             continue
         if not body.strip():
             yield (line, "skip-empty", body)
             continue
-        type_match = SCRIPT_TYPE_RE.search(attrs)
-        script_type = type_match.group(1).lower() if type_match else ""
+        script_type = attrs.get("type", "")
         if script_type not in JS_SCRIPT_TYPES:
             yield (line, f"skip-type:{script_type}", body)
             continue

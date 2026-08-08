@@ -2349,6 +2349,66 @@ def test_a_commented_script_mention_is_not_reported_as_unterminated(tmp_path):
     )
 
 
+@pytest.mark.parametrize("closer", ["</script>", "</script >", "</script\t>", "</script\n>"])
+def test_whitespace_before_the_end_tag_bracket_does_not_produce_a_false_green(tmp_path, closer):
+    """The worst outcome this rule can have, and it shipped for one commit.
+
+    HTML permits whitespace before an end tag's `>`. `</script>` alone did not
+    match `</script >`, so the block was never parsed, was reported merely as
+    "skip-unterminated", and THE GATE EXITED 0 with a genuine syntax error
+    inside it. A false green in the rule whose entire purpose is preventing
+    false greens.
+
+    Found by CodeQL's bad-HTML-filtering-regexp query, which is the second time
+    that query has caught this exact class in this repo -- so it is pinned here
+    rather than trusted to a comment.
+    """
+    path = tmp_path / "closer.html"
+    path.write_text("<script>\nconst broken = (;\n%s\n" % closer)
+    findings = findings_for(path)
+    assert findings, "a syntax error was NOT reported with closer %r" % closer
+    assert findings[0][0] == 2, "wrong line for closer %r: %r" % (closer, findings)
+
+
+def test_a_data_src_attribute_does_not_hide_a_block_from_the_parser(tmp_path):
+    """Second false green of the same family as the `</script >` closer.
+
+    `\\bsrc\\s*=` also matches `data-src=`, because `-` is a non-word character
+    so `\\b` matches inside it. A block carrying `data-src` was classified as
+    external and never parsed -- so a real syntax error inside one exited 0.
+
+    The control matters: a genuine `src=` must still skip, or the fix has
+    simply disabled the external-script exemption.
+    """
+    hidden = tmp_path / "datasrc.html"
+    hidden.write_text('<script data-src="x">\nconst broken = (;\n</script>\n')
+    assert findings_for(hidden), "a data-src attribute hid a syntax error from the gate"
+
+    external = tmp_path / "realsrc.html"
+    external.write_text('<script src="/static/x.js"></script>\n')
+    assert findings_for(external) == [], "a genuine external script is no longer exempt"
+
+
+def test_an_unquoted_type_attribute_is_classified_correctly(tmp_path):
+    """HTML permits unquoted attribute values, so `type=application/json` was
+    read as an empty type and the JSON parsed as JavaScript -- a false RED on a
+    data block, in a gate with no override.
+
+    Both directions: the data block must be exempt, and an unquoted
+    `type=module` must still be parsed as a module rather than skipped.
+    """
+    data = tmp_path / "unquoted_json.html"
+    data.write_text('<script type=application/json>\n{"a": 1}\n</script>\n')
+    assert findings_for(data) == [], "an unquoted non-JS type was parsed as JavaScript"
+
+    module = tmp_path / "unquoted_module.html"
+    module.write_text("<script type=module>\nexport const a = 1;\n</script>\n")
+    assert findings_for(module) == [], "an unquoted type=module was misclassified"
+    kinds = [k for _l, k, _b in
+             check_test_traps._iter_script_blocks(module.read_text())]
+    assert kinds == ["module"], "expected the block parsed AS a module, got %r" % kinds
+
+
 def test_a_nested_block_literal_is_a_KNOWN_false_red(tmp_path):
     """A second unmaskable case, pinned rather than left to be rediscovered.
 
