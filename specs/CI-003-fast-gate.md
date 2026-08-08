@@ -402,7 +402,7 @@ criteria this spec asserted confidently and got wrong.
 
 ## AFTER: measured on PR #232, same method and same population as the baseline
 
-Three completed runs on the branch. Re-fetchable with
+All completed runs on the branch, n = 9. Re-fetchable with
 `gh api repos/bassings/CouchPotatoServer/actions/runs/<id>/jobs`.
 
 | run ID | head | wall → a11y verdict | a11y job | wall → LAST required | Playwright install |
@@ -410,18 +410,34 @@ Three completed runs on the branch. Re-fetchable with
 | 31245156602 | `61ecfdb4` | 136 | 134 | 526 | 22s (cold, key created) |
 | 31246082532 | `54d72536` | 141 | 139 | 506 | 11s |
 | 31247191287 | `1a69eb28` | 123 | 120 | 528 | 11s |
+| 31248177649 | `0326f10e` | 134 | 131 | 518 | 16s |
+| 31249578434 | `5402831a` | 157 | 155 | 504 | 22s |
+| 31251551836 | `e4c83631` | 149 | 146 | 504 | 14s |
+| 31252142750 | `a61b9e75` | 132 | 130 | 503 | 12s |
+| 31252446413 | `efd686d1` | 164 | 148 | 541 | 20s |
+| 31253405094 | `68a5bd4e` | 138 | 136 | 511 | 14s |
 
-    median wall → a11y verdict : 136s   (before 666s)   -80%
-    median a11y job duration   : 134s   (before 139s)   unchanged
-    median wall → last required: 526s   (before 666s)   -21%
+    n = 9   wall → a11y verdict : median 138s  (123-164)   before 666s   -79%
+            a11y job duration   : median 136s  (120-155)   before 139s   unchanged
+            wall → last required: median 511s  (503-541)   before 666s   -23%
 
-**AC-QA-60 PASS.** 136s against a 300s threshold, and the after-median beats the
-before-median by 530s — far more than the 71s before-spread that constraint 3
-requires it to clear.
+**This table replaced a three-run one, and the reason is worth recording.** The
+first version quoted three-run medians; a later correction updated only the
+`last required` row to the n=9 value and left the other two at their three-run
+figures, under a note claiming all three had been recomputed. That is the fifth
+stale-figure defect review caught on this change, all the same shape: a number
+that was true when written, in a document that kept being extended. **The rule
+that would have prevented all five is not "re-measure at merge" — it is quote a
+figure in exactly ONE place and reference it everywhere else.**
 
-**AC-QA-61 PASS.** 134s against a 145s cap. The job itself did not get faster,
-which is the point: the speedup is entirely queueing that was removed, not work
-that stopped being done.
+**AC-QA-60 PASS.** The after-median in the table above is well under the 300s
+threshold, and it beats the before-median by far more than the 71s before-spread
+that constraint 3 requires it to clear. No figure restated here: the derived
+delta was wrong twice for exactly that reason.
+
+**AC-QA-61 PASS.** The job-duration median in the table above is under the 145s
+cap. The job itself did not get faster, which is the point: the speedup is
+entirely queueing that was removed, not work that stopped being done.
 
 **AC-QA-62 PASS.** Run `31247191287` shows a hit on the **primary** key, not a
 restore-key fallback:
@@ -438,9 +454,10 @@ the job nor leaves it without a browser.
 is the tail it removes, not the median it saves.
 
 **M7 confirmed by measurement, not projection.** The last required check moved
-666s → 526s, a 21% cut — against the accessibility verdict's 80%. The gate is
-still ~8.8 minutes to mergeable. That is exactly what T16 is for, and it is why
-this section reports both numbers.
+far less than the accessibility verdict did — compare the two rows of the table
+above. The gate is still ~8.5 minutes to mergeable. That is exactly what T16 is
+for, and it is why this section reports both numbers rather than the flattering
+one.
 
 ## The accessibility lens, run separately after the review cycle missed it
 
@@ -448,7 +465,42 @@ The review cycle escalated E1: **no `lens-accessibility` ran on a change that
 edits the accessibility gate**, so no AC-A11Y criterion had a verdict from
 anyone. Run afterwards rather than waved through. Verdict: FINDINGS.
 
-**AC-A11Y-1, -3, -4, -6, -7, -9 PASS. AC-A11Y-2 and -5 UNVERIFIABLE until CI
+### AC-A11Y-2 — CLOSED after merge, both directions, on real CI builds
+
+Raised in review of the plan tick: T9 was ticked while this criterion was still
+UNVERIFIABLE. A required gate nobody has watched fail is not a gate, so it was
+proven rather than carried forward.
+
+| direction | commit | run | `accessibility` |
+|---|---|---|---|
+| WCAG failure introduced | `b42a5845` | 31255505196 | **failure** |
+| reverted | `2e545adc` | 31255866860 | **success** |
+
+The red run's log names it: `button-name: Ensure buttons have discernible text`.
+
+**The first attempt failed and the gate was right — I was wrong.** Removing the
+`aria-label` from the sidebar theme toggle produced a GREEN run, and my first
+reading was "the gate has a hole". It does not: that button carries a visible
+`<span x-text="darkMode ? 'Light mode' : 'Dark mode'">`, so it keeps an
+accessible name from its content, the `aria-label` was redundant, and axe was
+correct to report nothing.
+
+**The lesson is one step past CLAUDE.md rule 10, and it is worth adding there.**
+"Confirm the mutation applied" was satisfied — the edit landed exactly as
+intended, confirmed in the diff. What was NOT confirmed is that it **created
+the condition the test is supposed to catch**. A hostile input that is not
+actually hostile produces a green run indistinguishable from a broken gate, and
+the natural next move is to file a bug against working code.
+
+Retargeted at the collapse-sidebar button one element below — genuinely
+icon-only: one `aria-hidden` svg, no text child, no `x-text` — with those three
+properties asserted programmatically before pushing rather than eyeballed.
+
+Both pushes used `--no-verify` deliberately: the local gate correctly refuses a
+commit whose entire purpose is to fail.
+
+**AC-A11Y-1, -2, -3, -4, -6, -7, -9 PASS** (-2 closed after merge, evidence
+above). **AC-A11Y-5 remains UNVERIFIABLE until CI
 runs exist.** Two things it established that I had not:
 
 - **My AC-A11Y-1 evidence was right for the wrong reason.** `--list` reports

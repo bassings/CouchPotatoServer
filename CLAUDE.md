@@ -111,6 +111,11 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
     trusting either outcome — a `sed` that silently matched nothing produces a
     passing test against code you believe you reverted, which is a false green
     that looks exactly like success.
+
+    **Landing is not enough: confirm the mutation created the CONDITION the
+    guard is meant to catch.** A probe that is not actually hostile produces a
+    green run indistinguishable from a broken guard. Worked example:
+    `docs/technical-debt.md`.
 11. **After three failed fixes, question the frame, not the fix.** Each attempt
     surfacing a new defect elsewhere means the shape is wrong. Stop, say so, and
     re-open the approach instead of trying a fourth. On any branch where a fix

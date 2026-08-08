@@ -264,7 +264,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       The path should never execute — but "should never" is what the original
       bug said too.
 
-- [ ] T12: JS inside a Jinja template gets no lint pass — state: building · bundled into `specs/CI-003-fast-gate.md` as Part B, implemented as rule 8 of `scripts/check_test_traps.py`
+- [x] T12: JS inside a Jinja template gets no lint pass — state: merged #232 · bundled into `specs/CI-003-fast-gate.md` as Part B, implemented as rule 8 of `scripts/check_test_traps.py`
 
       Two things this task's original write-up got wrong, both corrected in the
       spec: it claimed ESLint covers `couchpotato/ui/static`, and **there is no
@@ -287,7 +287,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       lines, per the standing preference for enforced checks over remembered
       ones.
 
-- [ ] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: building · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
+- [x] T9: PR 7 — make the accessibility gate fast (owner request 2026-08-07) — state: merged #232 · **AC-A11Y-2 closed after merge** by a real red/green pair on CI (`b42a5845` run 31255505196 = failure, `2e545adc` run 31255866860 = success); it was UNVERIFIABLE when the box was first ticked, which review rightly flagged · spec `specs/CI-003-fast-gate.md`, 49 ACs written by `/plan-cycle` 2026-08-08 (security, qa, simplicity, operability, accessibility). Bundled with T12; both are gate-only changes
 
       **The owner was right and three rounds of my own "corrections" were
       measuring the wrong thing.** Every earlier version of this task reported
@@ -357,16 +357,82 @@ happens to notice.
 
 ## Conductor log
 
+- **Tick 35** — **#232 merged (`f97b3ab2`), T9 and T12 ticked. Plan 7 of 16.**
+
+  **All three figures re-derived as medians over the same population**, after
+  review caught the first version quoting a single run's 511s beside two
+  medians as if they were the same kind of number. Every completed run on the
+  branch, n = 9, same `gh api` method as the baseline:
+
+  | | before (n=15) | after (n=9) | range |
+  |---|---:|---:|---|
+  | wall to a11y verdict | 666s | **138s** | 123-164 |
+  | a11y job duration | 139s | 136s | 120-155 |
+  | wall to last required check | 666s | **511s** | 503-541 |
+
+  The a11y job duration is unchanged, which is the load-bearing detail: the win
+  is queueing removed, not work skipped.
+
+  **The honest summary of this PR is the ratio, not the speedup — and the
+  first version of this paragraph undercounted it, which review also caught.**
+  Recounted against the spec rather than from memory, rule 8 (the gate written
+  to prevent false greens) shipped:
+
+  - **four false GREENS** — `</script >` unmatched; `data-src=` classified
+    external; the legacy `<!-- //-->` idiom eating a whole body; and a live
+    Jinja render root covered by a hardcoded filename instead of a walk, so a
+    new template with a broken script exited 0.
+  - **five false REDS** — a Jinja control tag in expression position; a `>`
+    inside an attribute value; `<script-loader>` matching because `\b` is not
+    an HTML5 tag-name terminator; a commented-out `<script>` being parsed; and
+    an unquoted `type=application/json` parsed as JavaScript.
+  - **three vacuous or wrong guards** — the `--fail-on-flaky-tests` check
+    matching a whole multi-line block; the AC-A11Y-6 enumeration test passing
+    for a reason unrelated to what it claimed to guard; and the
+    `skip-unterminated` attribution printing four false lines on every green
+    run.
+
+  Every one found by review or CodeQL. **None by my own testing**, despite
+  mutation-proving each guard as I went.
+
+  What that says about the mutation discipline: proving a guard fires on the
+  defect you thought of says nothing about the defects you did not. The
+  probes that found these were adversarial inputs from someone who had not
+  written the code.
+
+  Two process lessons worth carrying, both now written into the spec:
+
+  1. **A line budget set at planning must be RE-OPENED when review finds
+     defects whose fixes do not fit it** — never silently breached, and never
+     used as an argument against fixing them. Measured at the merge commit
+     (`git diff --numstat f97b3ab2^ f97b3ab2`): AC-SIMP-5 ran to **+58**
+     against a cap of 30, AC-SIMP-8 to **+311** against 120. The `+287` first
+     recorded here was taken mid-branch and was stale by merge — in the very
+     paragraph telling the next reader to re-measure at merge.
+  2. **A figure asserted once goes stale.** I recorded "+36" (in `907c7f51`,
+     measured mid-branch and true at the time; the merge commit `f97b3ab2`
+     makes it +58) and pointed at a
+     PR body that never restated the real number, inside a document whose
+     stated principle is not to assert what you have not measured. Re-measure
+     at merge, not at the time of writing.
+
+  T16 (the residual ~8.5 minutes to mergeable) is the owner's call and is
+  recorded with the measurement behind it.
+
 - **Tick 34** — PR #232 open, T9 measured and closed on evidence, 16 review
   threads worked to 0.
 
-  **T9's acceptance criteria closed on measurement.** Three runs, same method
-  and population as the baseline: wall→a11y verdict 666s → **136s** (−80%,
-  threshold 300s); a11y job duration 139s → 134s (unchanged, cap 145s);
-  wall→last required 666s → **526s** (−21%). The job did not get faster, which
-  is the point — the win is queueing removed, not work skipped. AC-QA-62 closed
-  with a hit on the PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the
-  cold run that created it.
+  **T9's acceptance criteria closed on measurement.** Figures deliberately NOT
+  restated here — they live in one place, the n=9 table in
+  `specs/CI-003-fast-gate.md`'s AFTER section, and this entry references it.
+  Restating them inline is what produced five separate stale-figure findings on
+  this change, including one where a note claiming three medians had been
+  recomputed sat above a table where only one had.
+
+  What this tick established: the job duration did not change, so the win is
+  queueing removed rather than work skipped. AC-QA-62 closed with a hit on the
+  PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the cold run that
+  created it.
 
   **The review found more in my work than the work found in the codebase, and
   two of them were false GREENS** — the gate exiting 0 with a real syntax error
