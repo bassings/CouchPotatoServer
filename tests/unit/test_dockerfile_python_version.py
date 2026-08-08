@@ -127,8 +127,9 @@ def test_ci_matrix_tests_exactly_the_dockerfile_version():
     )
 
 
-def test_every_ci_job_uses_the_dockerfile_python():
-    """Not just the `test` matrix -- EVERY setup-python in ci.yml.
+def test_every_workflow_job_uses_the_dockerfile_python():
+    """Not just the `test` matrix, and not just ci.yml -- EVERY setup-python
+    in EVERY workflow.
 
     This is the guard that would have caught the drift it was written for.
     When the matrix was narrowed to the production interpreter, five jobs were
@@ -142,26 +143,27 @@ def test_every_ci_job_uses_the_dockerfile_python():
     failure here; the claim is only as strong as its weakest job.
     """
     dockerfile_version = dockerfile_versions()[0]
-    workflow = yaml.safe_load(CI_WORKFLOW.read_text(encoding="utf-8"))
 
     wrong = []
-    for job_name, job in workflow["jobs"].items():
-        for step in job.get("steps", []) or []:
-            if not isinstance(step, dict):
-                continue
-            if not str(step.get("uses", "")).startswith("actions/setup-python"):
-                continue
-            version = str((step.get("with") or {}).get("python-version", ""))
-            if version.startswith("${{"):
-                continue  # driven by the matrix, covered by the test above
-            if version != dockerfile_version:
-                wrong.append(f"{job_name}={version}")
+    for path in sorted(CI_WORKFLOW.parent.glob("*.yml")):
+        workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        for job_name, job in (workflow.get("jobs") or {}).items():
+            for step in job.get("steps", []) or []:
+                if not isinstance(step, dict):
+                    continue
+                if not str(step.get("uses", "")).startswith("actions/setup-python"):
+                    continue
+                version = str((step.get("with") or {}).get("python-version", ""))
+                if version.startswith("${{"):
+                    continue  # driven by the matrix, covered by the test above
+                if version != dockerfile_version:
+                    wrong.append(f"{path.name}:{job_name}={version}")
 
     assert not wrong, (
-        f"Dockerfile ships Python {dockerfile_version} but these ci.yml jobs "
-        f"pin a different interpreter: {sorted(wrong)}. Jobs that start the "
-        f"application (ui-e2e-tests, accessibility) must run the production "
-        f"interpreter or the gate is testing something nobody ships."
+        f"Dockerfile ships Python {dockerfile_version} but these workflow jobs "
+        f"pin a different interpreter: {sorted(wrong)}. Any job that starts the "
+        f"application or runs its tests must use the production interpreter, or "
+        f"the gate is testing something nobody ships."
     )
 
 
