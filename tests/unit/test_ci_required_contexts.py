@@ -105,12 +105,20 @@ def test_every_playwright_invocation_in_ci_keeps_fail_on_flaky_tests(ci_workflow
     into green -- and phone width is where this project's first real a11y
     regression was found (a 441px restore picker on a 393px device).
     """
+    # Per INVOCATION, not per step. A `run:` block is often multi-line --
+    # ui-e2e-tests' "Run E2E tests" step carries two `--project=` lines today --
+    # so checking the whole block for the substring passes as soon as ANY line
+    # has the flag. A third invocation added to that same step without it would
+    # not have been caught: a guard vacuous against the one change it exists to
+    # catch. Matches the per-line shape of the verify.sh test below.
     unguarded = [
-        step.get('name', step['run'])
-        for job in ci_workflow['jobs'].values()
+        '%s: %s' % (job_name, line.strip())
+        for job_name, job in ci_workflow['jobs'].items()
         for step in job.get('steps', [])
-        if '--project=' in str(step.get('run', ''))
-        and '--fail-on-flaky-tests' not in step['run']
+        for line in str(step.get('run', '')).splitlines()
+        if '--project=' in line
+        and not line.lstrip().startswith('#')
+        and '--fail-on-flaky-tests' not in line
     ]
     assert not unguarded, (
         'these CI Playwright invocations can retry a failure into green: %s' % unguarded

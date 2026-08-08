@@ -40,8 +40,13 @@ CHECKER = REPO_ROOT / "scripts" / "check_test_traps.py"
 
 # AC-QA-74: pytest cases needing `node` skip visibly rather than going red,
 # so scripts/test-local.sh's node-less Alpine container stays clean.
+# Resolved ONCE at import. A live `shutil.which` call is unsafe here: the
+# missing-node tests monkeypatch the shared `shutil` module object, so a
+# later call would see their patch and skip the very test doing the patching.
+_NODE_ON_THIS_MACHINE = shutil.which("node") is not None
+
 requires_node = pytest.mark.skipif(
-    shutil.which("node") is None,
+    not _NODE_ON_THIS_MACHINE,
     reason="node is not installed; required for check_test_traps' template "
     "inline-script rule (CI-003 Part B, AC-QA-74).",
 )
@@ -64,6 +69,24 @@ def run_checker(*args):
 
 
 def findings_for(path: Path):
+    """Run the checker over one file.
+
+    Skips, visibly, when the file would reach rule 8 and this machine has no
+    `node`. Tagging the ~15 affected tests with `@requires_node` individually
+    was the obvious fix and the wrong one: the next html test added without the
+    decorator silently reintroduces the problem, and this file grows. Verified
+    by removing node from PATH — 12 tests failed before this guard, 0 after,
+    which is what `scripts/test-local.sh` (Alpine, no node) would have hit.
+
+    Keyed on `_NODE_ON_THIS_MACHINE`, resolved ONCE at import, not on a live
+    `shutil.which` call. `monkeypatch.setattr(check_test_traps.shutil, "which",
+    ...)` patches the shared `shutil` MODULE object, so a live call here sees
+    the patch too — which made `test_missing_node_is_a_hard_named_failure`
+    silently SKIP instead of asserting. Caught by running with `-rs` and
+    reading a "node is not installed" skip on a machine that has node.
+    """
+    if path.suffix == ".html" and not _NODE_ON_THIS_MACHINE:
+        pytest.skip("node is not installed; rule 8 cannot parse template scripts here")
     return list(check_test_traps.check_file(path))
 
 
@@ -2496,6 +2519,8 @@ def test_node_options_in_the_environment_cannot_make_the_checker_execute(tmp_pat
     first shown to DO fire against a bare `node --check`, so a green result
     below cannot be the mechanism silently not working.
     """
+    if not _NODE_ON_THIS_MACHINE:
+        pytest.skip("node is not installed; the control below cannot run")
     marker = tmp_path / "executed"
     payload = tmp_path / "payload.js"
     payload.write_text("require('fs').writeFileSync(%r, 'x');\n" % str(marker))
