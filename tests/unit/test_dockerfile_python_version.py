@@ -145,7 +145,14 @@ def test_every_workflow_job_uses_the_dockerfile_python():
     dockerfile_version = dockerfile_versions()[0]
 
     wrong = []
-    for path in sorted(CI_WORKFLOW.parent.glob("*.yml")):
+    # BOTH extensions: GitHub Actions accepts .yaml as well as .yml, and a
+    # guard that silently skips half the possible filenames is the same
+    # too-narrow-scope defect this test was widened to fix.
+    workflow_files = sorted(
+        set(CI_WORKFLOW.parent.glob("*.yml")) | set(CI_WORKFLOW.parent.glob("*.yaml"))
+    )
+    assert workflow_files, "no workflow files found -- the glob is wrong"
+    for path in workflow_files:
         workflow = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         for job_name, job in (workflow.get("jobs") or {}).items():
             for step in job.get("steps", []) or []:
