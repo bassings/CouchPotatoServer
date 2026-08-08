@@ -96,7 +96,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T1: PR 1 — M0 safety net for the destructive paths — state: merged #225
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
-- [ ] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: awaiting-ci #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs, review cycle 7 fixed / 4 deferred
+- [x] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: merged #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs; ~25 review findings across six rounds, all fixed or recorded as T11-T15
 - [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3)
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
