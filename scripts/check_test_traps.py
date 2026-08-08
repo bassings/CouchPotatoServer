@@ -1464,9 +1464,9 @@ def _iter_script_blocks(text: str):
     body starts. `kind` is `"classic"`/`"module"`, or `"skip-*"` (external
     `src=`, non-JS `type=`, empty body).
     """
-    matched = 0
+
     for m in SCRIPT_TAG_RE.finditer(text):
-        matched += 1
+
         attrs, body = m.group(1), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
         if re.search(r"\bsrc\s*=", attrs, re.IGNORECASE):
@@ -1482,10 +1482,23 @@ def _iter_script_blocks(text: str):
             continue
         yield (line, "module" if script_type == "module" else "classic", body)
 
-    # Every `<script` opener that produced no block lost its body to a missing
-    # or malformed `</script>`. Report it as a skip rather than letting it be
-    # indistinguishable from a file with no scripts at all.
-    for opener in list(SCRIPT_OPEN_RE.finditer(text))[matched:]:
+    # Every `<script` opener NOT inside a matched element lost its body to a
+    # missing or malformed `</script>`. Report it, so an extraction failure is
+    # not indistinguishable from a file with no scripts at all.
+    #
+    # By span containment, NOT by count. The first version took a positional
+    # slice of the leftovers, which is only equivalent when the unmatched
+    # openers happen to come last -- and they do not. `base.html` contains the
+    # literal `// <script>` inside a JS comment at :238, so the count was off
+    # by one and the slice named the LAST opener (:511, a real, terminated,
+    # correctly-parsed block) as unterminated. That put four false lines into
+    # the operator-facing channel added specifically so an extraction failure
+    # could not hide, on every green run -- noise in the one place that must
+    # stay trustworthy.
+    element_spans = [m.span() for m in SCRIPT_TAG_RE.finditer(text)]
+    for opener in SCRIPT_OPEN_RE.finditer(text):
+        if any(start <= opener.start() < end for start, end in element_spans):
+            continue
         yield (text.count("\n", 0, opener.start()) + 1, "skip-unterminated", "")
 
 

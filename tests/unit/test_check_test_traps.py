@@ -24,11 +24,13 @@ independently of the current tree) and also assert it is clean on the real tree,
 which is what makes it usable as a blocking gate.
 """
 
+import ast
 import os
 import re
 import shutil
 import subprocess
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -2315,6 +2317,58 @@ def test_an_unterminated_script_is_reported_as_skipped_not_silently_dropped(tmp_
     )
 
 
+def test_a_commented_script_mention_is_not_reported_as_unterminated(tmp_path):
+    """The skipped list must be CORRECT, not merely present.
+
+    The first version of the unterminated check took a positional slice of
+    leftover `<script` openers, which is only equivalent to "the unmatched
+    ones" when the unmatched openers come last. They do not: `base.html` says
+    `// <script>` in a comment at :238, so the count was off by one and the
+    slice blamed :511 -- a real, terminated, correctly-parsed block. Four such
+    false lines printed on every green run, in the channel added precisely so
+    a real extraction failure could not hide.
+
+    Both halves asserted together, because either alone passes trivially: the
+    commented mention must NOT be reported, and the genuinely unterminated
+    block after it MUST be, at its own line.
+    """
+    path = tmp_path / "mixed.html"
+    path.write_text(
+        "<script>\n"
+        "// <script> mentioned inside a comment\n"
+        "const a = 1;\n"
+        "</script>\n"
+        "<script>\n"
+        "const b = 2;\n"
+    )
+    skips = [(line, kind) for line, kind, _body in
+             check_test_traps._iter_script_blocks(path.read_text())
+             if kind == "skip-unterminated"]
+    assert skips == [(5, "skip-unterminated")], (
+        "expected exactly the genuinely unterminated block at line 5, got %r" % skips
+    )
+
+
+def test_a_nested_block_literal_is_a_KNOWN_false_red(tmp_path):
+    """A second unmaskable case, pinned rather than left to be rediscovered.
+
+    `{{` opens a Jinja interpolation as far as the mask is concerned, so a
+    nested block in a function body is eaten whole:
+
+        function f() {{ return 1; }}   ->   function f() __JINJA__
+
+    Same family as the split-expression limit above. Recorded so the next
+    person to hit it finds a decision instead of filing a bug, and so that
+    teaching the mask to handle it makes this fail loudly.
+    """
+    path = tmp_path / "nested_block.html"
+    path.write_text("<script>\nfunction f() {{ return 1; }}\n</script>\n")
+    assert findings_for(path), (
+        "the nested-block-literal false RED is a documented known limit; if it "
+        "now passes, the mask improved and _mask_jinja's docstring is stale"
+    )
+
+
 def test_node_options_in_the_environment_cannot_make_the_checker_execute(tmp_path, monkeypatch):
     """SB-2 / AC-SEC-1's headline property, enforced by the code that claims it.
 
@@ -2548,8 +2602,19 @@ def test_no_per_file_allowlist_in_the_rule_itself():
             check_test_traps.check_html_template,
         )
     )
+    # Match the MECHANISM, not the prose. This file's convention is to cite the
+    # exact file that proved a bug as evidence (`docker-entrypoint.sh` in
+    # DEFAULT_ROOTS above; `base.html:238` in the unterminated-block comment).
+    # Matching raw source made this guard punish the evidence rather than the
+    # defect -- and the cheapest way to make it green would have been deleting
+    # the comment, which is the wrong direction entirely.
+    #
+    # `ast.unparse` drops comments and normalises the rest, so what remains is
+    # code plus string literals -- which is exactly the surface a real per-file
+    # allowlist would have to live in.
+    code = ast.unparse(ast.parse(textwrap.dedent(src)))
     for banned in (".html", "ALLOWLIST", "movie_detail", "suggestions", "wanted", "base.html"):
-        assert banned not in src, f"per-file special-casing found: {banned!r}"
+        assert banned not in code, f"per-file special-casing found: {banned!r}"
 
 
 def test_login_html_is_in_scope_and_clean():

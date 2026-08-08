@@ -98,6 +98,43 @@ def test_the_accessibility_gate_still_runs_the_accessibility_project(ci_workflow
         )
 
 
+def test_every_playwright_invocation_in_ci_keeps_fail_on_flaky_tests(ci_workflow):
+    """AC-A11Y-4 names the whole file, not just the accessibility job.
+
+    Without this, a flaky small-screen test could later be retried quietly
+    into green -- and phone width is where this project's first real a11y
+    regression was found (a 441px restore picker on a 393px device).
+    """
+    unguarded = [
+        step.get('name', step['run'])
+        for job in ci_workflow['jobs'].values()
+        for step in job.get('steps', [])
+        if '--project=' in str(step.get('run', ''))
+        and '--fail-on-flaky-tests' not in step['run']
+    ]
+    assert not unguarded, (
+        'these CI Playwright invocations can retry a failure into green: %s' % unguarded
+    )
+
+
+def test_the_local_gate_keeps_fail_on_flaky_tests_too(ci_workflow):
+    """`scripts/verify.sh` is the gate the pre-push hook runs, so it must not
+    drift from CI: a local run that retries into green is how untested code
+    reaches a push."""
+    verify = (REPO / 'scripts' / 'verify.sh').read_text(encoding='utf-8')
+    unguarded = [
+        line.strip()
+        for line in verify.splitlines()
+        if '--project=' in line
+        and not line.lstrip().startswith('#')  # prose, not an invocation
+        and '--fail-on-flaky-tests' not in line
+    ]
+    assert not unguarded, (
+        'these verify.sh Playwright invocations can retry a failure into green: %s'
+        % unguarded
+    )
+
+
 def test_the_guard_can_actually_fail():
     """Prove the matcher is not vacuous, without mutating the real workflow.
 

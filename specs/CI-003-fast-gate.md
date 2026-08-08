@@ -400,6 +400,79 @@ criteria this spec asserted confidently and got wrong.
   only while nobody set it. Now stripped in the checker, with a test whose
   control first proves the mechanism fires against a bare `node --check`.
 
+## The accessibility lens, run separately after the review cycle missed it
+
+The review cycle escalated E1: **no `lens-accessibility` ran on a change that
+edits the accessibility gate**, so no AC-A11Y criterion had a verdict from
+anyone. Run afterwards rather than waved through. Verdict: FINDINGS.
+
+**AC-A11Y-1, -3, -4, -6, -7, -9 PASS. AC-A11Y-2 and -5 UNVERIFIABLE until CI
+runs exist.** Two things it established that I had not:
+
+- **My AC-A11Y-1 evidence was right for the wrong reason.** `--list` reports
+  what Playwright *selects* in the tree you run it from, not what a CI job
+  executes. The stronger proof is input identity, which the lens ran:
+  `playwright.config.ts`, `package.json`, `package-lock.json` and the whole
+  `tests/e2e` tree are blob-identical between master and this branch, and the
+  invocation string is byte-identical across the move. Nothing that determines
+  selection changed, so no listing diff was needed.
+
+- **AC-A11Y-5's hazard is closed, by mechanism, and I could not have known
+  from the diff.** I worried a cache hit might change font fallback and so
+  silently change what contrast and target-size assertions measure. It cannot,
+  for two independent reasons read out of the pinned `playwright-core`:
+  `installBrowsers` calls `installDeps` *before* `install` and unconditionally,
+  with no short-circuit in `installDependenciesLinux`; and on `ubuntu24.04-x64`
+  the `chromium` dependency group contains **no font package at all** — every
+  font comes from the `tools` group, installed on hit and miss alike. The cache
+  directory holds only browser and ffmpeg revisions, no font payload. The
+  hazard would have been real had the install been gated on `cache-hit`, which
+  is exactly what the comment refuses to do.
+
+### An accessibility improvement nobody claimed, and it is the best argument for this change
+
+Under `needs: ui-e2e-tests`, a red `test` or `ui-unit-tests` job caused
+`accessibility` to be **skipped** — and **GitHub treats a skipped required
+check as satisfying branch protection.** So the accessibility verdict was
+*absent*, not red, on exactly the branches most likely to be broken. With no
+`needs:`, the gate always reports. That is the same concern AC-A11Y-9 exists to
+protect, arriving from a direction no criterion anticipated.
+
+### The lens found a Medium defect in my own review fix
+
+The `skip-unterminated` report attributed by **count** — a positional slice of
+leftover `<script` openers — which is only equivalent to "the unmatched ones"
+when the unmatched openers come last. They do not: `base.html:238` contains the
+literal `// <script>` inside a JS comment, so the count was off by one and the
+slice blamed `:511`, a real, terminated, correctly-parsed block. Four false
+lines printed on **every green run**, in the operator-facing channel added
+specifically so a real extraction failure could not hide.
+
+I had the evidence and walked past it: I saw the skipped count go from 4 to 8
+after my fix and did not ask why. Fixed by span containment, pinned by a test
+asserting both halves at once (the commented mention is not reported, the
+genuinely unterminated block after it is, at its own line).
+
+Also from the lens, all fixed: a third unmaskable false-RED class
+(`function f() {{ return 1; }}`) now pinned as a known limit; the
+`--fail-on-flaky-tests` guard widened to the mobile invocation and all four in
+`scripts/verify.sh`, which were unguarded; and the executable bit restored on
+`scripts/check_test_traps.py`.
+
+### Spec gaps it recorded
+
+- **SB-10: AC-A11Y-2 and -5's empirical clauses were unsatisfiable as
+  sequenced.** `ci.yml` restricts `push:` to `master`/`develop`, so pushing a
+  branch produces no run at all — the criteria needed to say "open the PR, then
+  measure", and the review cycle should not have run before a run existed.
+- **SB-11: AC-QA-71 requires skipped blocks to be listed, never that the list be
+  correct**, which is precisely how the Medium above passed every test.
+- **SB-12: AC-A11Y-7's justification overstates the rule's reach.** The
+  `<script>`-block half is real, but this repo's *densest* a11y-critical inline
+  JS is in Alpine attributes the rule cannot see — `movie_detail.html`'s trailer
+  focus trap at `:318-326` and the restore-picker focus return at `:206`. Rule 8
+  must not be over-trusted as "template JS is now gated".
+
 ## Spec gaps and AC conflicts found at implementation
 
 Recorded per the harness contract: a finding with no AC behind it is a spec bug,
