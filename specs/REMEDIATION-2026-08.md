@@ -357,6 +357,53 @@ happens to notice.
 
 ## Conductor log
 
+- **Tick 34** — PR #232 open, T9 measured and closed on evidence, 16 review
+  threads worked to 0.
+
+  **T9's acceptance criteria closed on measurement.** Three runs, same method
+  and population as the baseline: wall→a11y verdict 666s → **136s** (−80%,
+  threshold 300s); a11y job duration 139s → 134s (unchanged, cap 145s);
+  wall→last required 666s → **526s** (−21%). The job did not get faster, which
+  is the point — the win is queueing removed, not work skipped. AC-QA-62 closed
+  with a hit on the PRIMARY key (269 MB, run 31247191287), AC-QA-64 with the
+  cold run that created it.
+
+  **The review found more in my work than the work found in the codebase, and
+  two of them were false GREENS** — the gate exiting 0 with a real syntax error
+  in the file, which is the exact failure rule 8 exists to prevent:
+  `</script>` not matching `</script >` (CodeQL, twice: narrowing to `\s*`
+  earned a second alert for `</script\t\n bar>`, so it is now the general
+  `</script\b[^>]*>`), and `\bsrc\s*=` matching `data-src=` because `-` is a
+  non-word character. Plus three false REDs: a Jinja control tag in expression
+  position, a `>` inside an attribute value, and `<script-loader>` matching
+  because `\b` is not an HTML5 tag-name terminator.
+
+  **I got one finding wrong twice, in opposite directions, and that is the
+  lesson worth keeping.** A reviewer said an unterminated `<script>` followed
+  by a terminated one merges into a bogus block. I dismissed it (my test used a
+  semicolon, forcing a SyntaxError), then reproduced their exact case, declared
+  it a confirmed false green, and wrote a linear opener/closer scan to fix it.
+  **That fix was a regression.** Per HTML5 `<script>` content is RAW TEXT
+  terminated only by `</script`; stdlib `HTMLParser` sees ONE start tag there,
+  so a browser parses the file identically and fails at runtime, not at parse.
+  Exit 0 was correct. The scan also broke the real `base.html:238` pattern
+  (`// <script>` in a comment). Reverted. I had conflated "the gate passes"
+  with "the gate is wrong", and only a spec-following parser settled it.
+
+  **Two of my own guards were vacuous.** The `--fail-on-flaky-tests` guard
+  matched the whole multi-line `run:` block, and `ui-e2e-tests` already carries
+  two `--project=` lines — so a third without the flag would pass. And the
+  Alpine container run would have gone red: removing `node` from PATH produced
+  12 failures. The fix for THAT had its own bug — keying on a live
+  `shutil.which` meant `monkeypatch.setattr(check_test_traps.shutil, ...)`
+  patched the shared module, so `test_missing_node_is_a_hard_named_failure`
+  skipped instead of asserting. Caught by reading `-rs` output.
+
+  Also: a push was rejected by the pre-push hook for stale `.e2e-w0-data`, left
+  by a `make verify` that timed out and was backgrounded while another started.
+  Two gate runs must not overlap, and a gate run whose files change under it is
+  not evidence.
+
 - **Tick 33** — T9 + T12 built on `ci/fast-gate-and-template-js`. Part B (the
   template-script parse rule) delegated to the implementer; Part A (`ci.yml`)
   done by the orchestrator, because it carries the branch-protection trap and a
