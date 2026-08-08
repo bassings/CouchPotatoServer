@@ -129,6 +129,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
+- [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
+
+      Non-blocking review nit on #229, verified and deferred rather than done.
+
+      `SQLiteAdapter.update_with_retry` (`sqlite_adapter.py:563`) exists and
+      documents itself as "the safe primitive for read-modify-write callers":
+      it re-`get()`s, applies a mutator, updates, and retries on
+      `ConflictError`. `_write_session_secret`'s update branch reimplements
+      exactly that. Mine exists because I did not know the primitive was
+      there.
+
+      Not a correctness problem — the hand-rolled loop is correct, and its
+      test now genuinely proves it re-reads (a competing write bumps `_rev`,
+      so a hoisted read fails). It is avoidable duplication of a primitive the
+      codebase already trusts and tests, and duplication is what drifts.
+
+      Deferred because rewriting the secret-write path at the end of a PR this
+      size, on a branch where rule 11 already applies, buys no behaviour and
+      risks a regression in the one function that must not lose a write. Its
+      own small change, with its own review.
+
 - [ ] T14: the password-change rotation commits before the save does — state: queued (no deps)
 
       P2 review finding on #229, **attempted and withdrawn**, so it is a task
