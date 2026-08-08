@@ -521,11 +521,23 @@ Recorded per the harness contract: a finding with no AC behind it is a spec bug,
 and so is an AC that cannot be satisfied alongside another.
 
 - **AC-SIMP-5 (≤30 net added lines in `ci.yml`) conflicts with AC-OPS-8 and
-  AC-SIMP-6.** Measured at implementation: net **+36**. The functional change is
-  14 lines (one `setup-node` step, two `actions/cache` steps, one deleted
-  `needs:`); the other 22 are comments that AC-OPS-8 explicitly requires (the
-  cache step must carry its symptom and its check) and that AC-SIMP-6 requires
-  for the removed `needs:` edge (the evidence it carried no data dependency).
+  AC-SIMP-6.**
+
+  **Corrected after review, and the correction is the embarrassing part:** this
+  entry said "net **+36**" and deferred the final figure to the PR body, which
+  never restated one. The measured figure at merge is **+58** (`git diff
+  --numstat master...HEAD -- .github/workflows/ci.yml` → `59 1`), so the cap is
+  breached by 28, not 6. The number was true when written and went stale as the
+  review's own M4/L1/L2 comment corrections landed, and I left a pointer to a
+  figure that did not exist rather than re-measuring. In a document whose
+  stated principle is "do not assert what you have not measured", that is the
+  exact failure it warns about.
+
+  The functional change is ~14 lines (one `setup-node` step, two
+  `actions/cache` steps, one deleted `needs:`); everything else is comments
+  that AC-OPS-8 explicitly requires (the cache step must carry its symptom and
+  its check, plus the disproven-integrity correction and the `restore-keys`
+  prohibition) and that AC-SIMP-6 requires for the removed `needs:` edge.
 
   Not resolved by trimming, because the surrounding file's idiom is heavily
   commented — the `secrets` job carries a ~30-line block explaining a single
@@ -539,12 +551,25 @@ and so is an AC that cannot be satisfied alongside another.
   comments, record AC-SIMP-5 as an accepted deviation.** Final figure after the
   review's own M4/L1/L2 comment corrections were folded in: see the PR body.
 
-- **AC-SIMP-8 (≤120 net lines in `check_test_traps.py`) is also breached, and
-  for the same structural reason.** The budget was set against a version of the
-  rule that had three defects in it; fixing a false-RED class, a second false-RED
-  class, a silent extraction failure and an environment-dependent security
-  property cannot be done inside a budget calibrated on the defective version.
-  Both AC-SIMP budgets were written before anyone had executed the code.
+- **AC-SIMP-8 (≤120 net lines in `check_test_traps.py`): measured +287**, more
+  than double the cap. Stated as a number here because "also breached" was the
+  hand-wave review rightly called out.
+
+  The rule landed at exactly 120/120. The other 167 lines are the review's
+  findings and their explanations: three **false GREENS** (`</script >` not
+  matching, `data-src=` classified external, the legacy `<!-- //-->` idiom
+  eating a body), three false REDs (Jinja in expression position, `>` inside an
+  attribute value, `<script-loader>` matching because `\b` is not an HTML5
+  tag-name terminator), an environment-dependent security property
+  (`NODE_OPTIONS`), a wrong `skip-unterminated` attribution, and re-entrant
+  counters.
+
+  A budget calibrated against a version of the code with three false greens in
+  it cannot survive fixing them. Both AC-SIMP budgets were written before
+  anyone had executed the rule, which is the real lesson: **a line budget set
+  at planning should be re-opened when review finds defects whose fixes do not
+  fit it, not silently breached and not used as an argument against fixing
+  them.**
 
   The generalisable lesson for the next planning cycle, which is the whole point
   of recording this: **a net-line budget on a file whose house style is long

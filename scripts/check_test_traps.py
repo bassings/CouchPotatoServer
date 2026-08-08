@@ -1516,11 +1516,33 @@ def _iter_script_blocks(text: str):
     `src=`, non-JS `type=`, empty body).
     """
 
-    # Comments blanked (newlines kept) before anything else looks at the text,
-    # so a commented-out <script> is neither parsed nor counted as an opener.
-    text = HTML_COMMENT_RE.sub(lambda m: "\n" * m.group(0).count("\n"), text)
-    for m in SCRIPT_TAG_RE.finditer(text):
+    # Comment spans are COMPUTED, not blanked out of the text, and that is a
+    # false-green fix rather than a refactor. Blanking first meant a body
+    # containing the legacy "hide JS from ancient browsers" idiom --
+    #
+    #     <script>
+    #     <!--
+    #     const broken = (;
+    #     //-->
+    #     </script>
+    #
+    # -- had its whole body eaten by `<!--...-->` before extraction, arrived as
+    # `skip-empty`, and the gate exited 0 on a real syntax error. Measured.
+    # This repo is a fork of a 2011-era codebase, so that idiom is not
+    # hypothetical.
+    #
+    # An opener INSIDE a comment span is still skipped, which is all the
+    # original blanking was for. The body is passed to the parser verbatim:
+    # `<!--` and `-->` are legal comment syntax inside a script (Annex B), so
+    # node reads that block the way a browser does.
+    comment_spans = [m.span() for m in HTML_COMMENT_RE.finditer(text)]
 
+    def _inside_comment(index: int) -> bool:
+        return any(start <= index < end for start, end in comment_spans)
+
+    for m in SCRIPT_TAG_RE.finditer(text):
+        if _inside_comment(m.start()):
+            continue
         attrs, body = _parse_attrs(m.group(1)), m.group(2)
         line = text.count("\n", 0, m.start(2)) + 1
         if "src" in attrs:
@@ -1550,6 +1572,8 @@ def _iter_script_blocks(text: str):
     # stay trustworthy.
     element_spans = [m.span() for m in SCRIPT_TAG_RE.finditer(text)]
     for opener in SCRIPT_OPEN_RE.finditer(text):
+        if _inside_comment(opener.start()):
+            continue
         if any(start <= opener.start() < end for start, end in element_spans):
             continue
         yield (text.count("\n", 0, opener.start()) + 1, "skip-unterminated", "")

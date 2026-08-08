@@ -2227,7 +2227,12 @@ def test_reintroducing_the_230_defect_is_flagged(tmp_path):
     findings = findings_for(path)
     assert findings, "the exact #230 defect (a dropped `+`) was not flagged"
     line_no, message = findings[0]
-    assert line_no == 226, (line_no, findings)
+    # Computed, not hardcoded. `226` was a magic number: the needle check above
+    # catches the line MOVING, but an unrelated insertion earlier in the file
+    # leaves the needle intact and silently staleness the constant, failing
+    # later with no signal about why. Same pattern as the deep-file test.
+    expected_line = mutated[: mutated.index(needle.replace(" +\n", "\n"))].count("\n") + 1
+    assert line_no == expected_line, (line_no, expected_line, findings)
     assert "Error" in message
 
 
@@ -2450,6 +2455,26 @@ def test_a_hyphenated_custom_element_is_not_a_script_block(tmp_path):
         "expected the real error at line 3, got %r -- the block was closed early "
         "by a string" % findings
     )
+
+
+def test_the_legacy_hide_js_comment_idiom_does_not_hide_a_syntax_error(tmp_path):
+    """Third false green of the same family, and the most historically likely.
+
+    The 2011-era "hide JS from ancient browsers" idiom puts `<!--` and `//-->`
+    INSIDE the script body. Blanking HTML comments before extraction ate the
+    whole body, so the block arrived as `skip-empty` and the gate exited 0 on a
+    real syntax error. This repo is a fork of a codebase from exactly that era.
+
+    Comment spans are now computed rather than blanked: an opener inside a
+    comment is still skipped, but a body is handed to the parser verbatim --
+    `<!--` is legal comment syntax inside a script (Annex B), so node reads it
+    the way a browser does.
+    """
+    path = tmp_path / "legacy_hide.html"
+    path.write_text("<script>\n<!--\nconst broken = (;\n//-->\n</script>\n")
+    findings = findings_for(path)
+    assert findings, "the legacy <!-- --> idiom hid a syntax error from the gate"
+    assert findings[0][0] == 3, "expected the real error at line 3, got %r" % findings
 
 
 def test_a_commented_out_script_element_is_not_parsed(tmp_path):
