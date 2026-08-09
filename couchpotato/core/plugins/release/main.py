@@ -56,6 +56,36 @@ def copyIdentity(files):
     return ','.join(str(size) for size in sorted(sizes))
 
 
+class IncompleteReleaseSet:
+    """Returned by `forMedia(require_complete=True)` when the set is partial.
+
+    Deliberately NOT None. `fireEvent(single=True)` collects only non-None
+    handler results and returns `[]` when there are none (event.py:222), so a
+    handler answering None arrives at the caller as `[]` -- and `[] is None`
+    is False, which silently turns the refusal into "this media has no
+    releases" and lets the replacement proceed on evidence we know is
+    incomplete.
+
+    That boundary has now produced three dead guards in this feature alone.
+    A sentinel object survives the bus unchanged, so the check cannot be
+    quietly undone by the transport.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self):
+        return '<INCOMPLETE_RELEASE_SET>'
+
+    def __bool__(self):
+        # Falsy, so any caller that forgets the identity check and writes
+        # `releases or []` still fails CLOSED rather than iterating it.
+        return False
+
+
+#: Singleton; compare with `is`.
+INCOMPLETE_RELEASE_SET = IncompleteReleaseSet()
+
+
 class Release(Plugin):
 
     _database = {
@@ -797,16 +827,19 @@ class Release(Plugin):
     def forMedia(self, media_id, require_complete = False):
         """Releases for a media id, best-effort by default.
 
-        `require_complete=True` returns None instead of a partial list when any
-        existing document could not be READ. Most callers want the partial
+        `require_complete=True` returns `INCOMPLETE_RELEASE_SET` instead of a
+        partial list when any existing document could not be READ. A sentinel
+        rather than None, because None does not survive `fireEvent`. Most callers want the partial
         list -- showing four of five releases in the UI beats showing an
         error. Upgrade replacement does not: an omitted document may be the one
         that claims the destination, and resolving ownership from an
         incomplete set can attribute the wrong quality to the file about to be
         deleted.
 
-        `RecordDeleted` does NOT count as incomplete: that document genuinely
-        no longer exists, so excluding it leaves the set correct.
+        A document that has been DELETED does not count as incomplete: it
+        genuinely no longer exists, so excluding it leaves the set correct.
+        That arrives as `RecordDeleted` from CodernityDB and as a plain
+        `KeyError` from SQLiteAdapter, which is the production backend.
         """
         db = get_db()
         raw_releases = db.get_many('release', media_id)
@@ -817,7 +850,17 @@ class Release(Plugin):
             try:
                 doc = db.get('id', r.get('_id'))
                 releases.append(doc)
-            except RecordDeleted:
+            except (RecordDeleted, KeyError):
+                # `RecordDeleted` is CodernityDB's; the production backend is
+                # SQLiteAdapter, which raises a plain KeyError for a row that
+                # is not there (sqlite_adapter.py:411). Catching only the
+                # former meant an ordinary concurrent deletion fell through to
+                # the generic handler below, counted as UNREADABLE, and made
+                # `require_complete` refuse every replacement for that media.
+                #
+                # Both mean the same thing and neither is incompleteness: the
+                # document genuinely no longer exists, so excluding it leaves
+                # the set correct.
                 pass
             except (ValueError, EOFError):
                 unreadable += 1
@@ -831,7 +874,7 @@ class Release(Plugin):
                 'Refusing to answer with a partial release list for media %s: '
                 '%s document(s) could not be read.', media_id, unreadable,
             )
-            return None
+            return INCOMPLETE_RELEASE_SET
 
         # tryFloat, not tryInt: scores are floats (score/main.py adds
         # seeders * 100 / 15), so truncating would tie releases whose scores

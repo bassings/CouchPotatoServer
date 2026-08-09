@@ -256,6 +256,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         be made is a decision not to replace, and an exception escaping here
         would abort a scan that was otherwise fine (AC-QA-12).
         """
+        # Imported here rather than at module scope: release.main imports the
+        # renamer package indirectly, and a top-level import closes the cycle.
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
         from couchpotato.core.plugins.renamer.replacement import (
             DECLINED_ERROR,
             DECLINED_INCOMPLETE_EVIDENCE,
@@ -283,13 +286,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # require_complete: an unreadable release document may be the
             # one that claims this destination, and resolving ownership from a
             # partial set can attribute the wrong quality to the file about to
-            # be deleted. None means "the set is incomplete" -- distinct from
-            # an empty list, which means "this media genuinely has no
-            # releases".
+            # be deleted. The SENTINEL means "the set is incomplete" --
+            # distinct from an empty list, which means "this media genuinely
+            # has no releases".
             releases = fireEvent(
                 'release.for_media', media_id, require_complete=True, single=True,
             ) if media_id else []
-            if releases is None:
+            # Identity against the sentinel, NOT `is None`. A handler
+            # returning None reaches this side of `fireEvent` as `[]`
+            # (event.py:222), so `is None` was dead here -- the same boundary
+            # that had just been fixed one layer up for `quality.rank`.
+            if releases is INCOMPLETE_RELEASE_SET:
                 return DECLINED_INCOMPLETE_EVIDENCE
 
             outcome, _existing = decide_replacement(

@@ -322,7 +322,8 @@ class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
     """
 
     def test_an_incomplete_release_list_refuses_rather_than_resolving(self, scene):
-        scene['state']['releases'] = None      # forMedia's "I could not read it all"
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        scene['state']['releases'] = INCOMPLETE_RELEASE_SET
         outcome = scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('2160p')
         )
@@ -400,7 +401,33 @@ class TestForMediaHonoursRequireComplete:
         # Default stays best-effort -- the UI callers depend on this.
         assert len(plugin.forMedia('m')) == 1
         # Strict refuses to answer at all.
-        assert plugin.forMedia('m', require_complete=True) is None
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
+
+    def test_a_KeyError_from_the_REAL_backend_is_a_deletion_not_a_failure(self, monkeypatch):
+        """`RecordDeleted` is CodernityDB's exception. The production backend
+        is SQLiteAdapter, which raises a plain KeyError for a row that is not
+        there (sqlite_adapter.py:411).
+
+        Catching only `RecordDeleted` meant an ordinary concurrent deletion
+        fell through to the generic handler, was counted as UNREADABLE, and
+        made `require_complete` refuse every replacement for that media --
+        turning the safety check into a permanent outage of the feature it was
+        protecting. The existing test passed because it raised the
+        CodernityDB exception, which this backend never produces.
+        """
+        import couchpotato.core.plugins.release.main as release_main
+        plugin, db = self._plugin(
+            {'a': {'_id': 'a'}, 'b': KeyError('Document not found: b')}, ['a', 'b'],
+        )
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        result = plugin.forMedia('m', require_complete=True)
+        assert result is not None and len(result) == 1, (
+            'a deleted row made the whole set look unreadable'
+        )
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert result is not INCOMPLETE_RELEASE_SET
 
     def test_a_deleted_document_does_NOT_count_as_incomplete(self, monkeypatch):
         """RecordDeleted means the document genuinely no longer exists, so
@@ -425,7 +452,8 @@ class TestForMediaHonoursRequireComplete:
         monkeypatch.setattr(release_main, 'get_db', lambda: db)
         monkeypatch.setattr(release_main, 'fireEvent', lambda *a, **k: None)
 
-        assert plugin.forMedia('m', require_complete=True) is None
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
 
 
 class TestTheProductionCollisionPathReachesTheDecision:
@@ -573,3 +601,61 @@ class TestARepeATingFailureDoesNotEraseTheLog:
         assert any(
             'malformed release document' in r.getMessage() for r in caplog.records
         ), 'a second, unrelated broken group was silenced by the first'
+
+
+class TestTheIncompleteSignalSurvivesTheRealEventBus:
+    """The signal is a SENTINEL, not None, and this is why.
+
+    `fireEvent(single=True)` collects only non-None handler results and
+    returns `[]` when there are none (event.py:222). So a `forMedia` that
+    answered None reached the renamer as `[]`, `[] is None` was False, and the
+    refusal never fired: replacement proceeded on evidence known to be
+    incomplete, in production, while every unit test passed because they
+    injected a stand-in for `fireEvent` instead of using it.
+
+    That is the THIRD dead guard this boundary has produced in this feature.
+    The fix is structural rather than another careful check: a sentinel object
+    is non-None, so the transport cannot filter it away.
+
+    These tests deliberately go through the real bus. Injecting a stand-in
+    here would reproduce the exact blind spot they exist to close.
+    """
+
+    def test_None_really_is_swallowed_by_the_bus(self, monkeypatch):
+        """The precondition, asserted rather than assumed. If this ever stops
+        being true the sentinel is unnecessary -- and the comment explaining
+        it becomes a lie."""
+        from couchpotato.core import event as event_module
+        from couchpotato.core.event import addEvent, fireEvent
+
+        monkeypatch.setattr(event_module, 'events', dict(event_module.events))
+        addEvent('probe.answers_none', lambda *a, **k: None)
+
+        assert fireEvent('probe.answers_none', single=True) == []
+
+    def test_the_sentinel_reaches_the_caller_unchanged(self, monkeypatch):
+        from couchpotato.core import event as event_module
+        from couchpotato.core.event import addEvent, fireEvent
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        monkeypatch.setattr(event_module, 'events', dict(event_module.events))
+        addEvent('probe.incomplete', lambda *a, **k: INCOMPLETE_RELEASE_SET)
+
+        assert fireEvent('probe.incomplete', single=True) is INCOMPLETE_RELEASE_SET
+
+    def test_the_sentinel_is_falsy_so_a_careless_caller_still_fails_closed(self):
+        """Belt and braces. Anyone who forgets the identity check and writes
+        `releases or []` gets an empty list -- a refusal -- rather than
+        iterating a sentinel or proceeding on partial evidence."""
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        assert not INCOMPLETE_RELEASE_SET
+        assert (INCOMPLETE_RELEASE_SET or []) == []
+
+    def test_the_renamer_refuses_when_the_bus_delivers_the_sentinel(self, scene):
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        scene['state']['releases'] = INCOMPLETE_RELEASE_SET
+        outcome = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('2160p')
+        )
+        assert outcome == DECLINED_INCOMPLETE_EVIDENCE
