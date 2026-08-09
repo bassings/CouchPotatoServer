@@ -52,7 +52,15 @@ def world(tmp_path, monkeypatch):
     }
 
     state = {
-        'conf': {'upgrade_replace': True, 'cleanup': False},
+        # `to` is the configured library root. Replacement refuses a
+        # destination outside it, so a fixture without one would exercise the
+        # containment refusal on every test and prove nothing about the rest.
+        'conf': {
+            'upgrade_replace': True,
+            'cleanup': False,
+            'to': str(lib),
+            'default_file_action': 'move',
+        },
         'status_updates': [],
         'releases': [release],
     }
@@ -77,7 +85,12 @@ def world(tmp_path, monkeypatch):
                 return None
         return None
 
-    monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent', _fire)
+    def _set_fire(handler):
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.main.fireEvent', handler,
+        )
+
+    _set_fire(_fire)
 
     plugin = Renamer.__new__(Renamer)
     monkeypatch.setattr(
@@ -98,16 +111,23 @@ def world(tmp_path, monkeypatch):
             'meta_data': {'quality': {'identifier': incoming, 'is_3d': False}},
             'files': {'movie': [str(src)]},
             'parentdir': str(dl),
+            # How determineMedia identified this movie. Anything other than
+            # an ASSERTED source refuses replacement, so a fixture without
+            # this would exercise that refusal on every test.
+            'identity_source': 'nfo',
         }
 
     return {
         'plugin': plugin, 'src': str(src), 'dst': str(dst),
         'state': state, 'group': _group, 'old_sha': _sha(dst), 'lib': lib,
+        'fire': _fire, 'set_fire': _set_fire,
     }
 
 
-def _run(world, incoming='2160p'):
-    world['plugin']._moveRenamedFiles({world['src']: world['dst']}, world['group'](incoming))
+def _run(world, incoming='2160p', dst=None):
+    world['plugin']._moveRenamedFiles(
+        {world['src']: dst or world['dst']}, world['group'](incoming),
+    )
 
 
 class TestNothingHappensUnlessTheOperatorOptedIn:
@@ -201,10 +221,14 @@ class TestAFailedSwapIsNotTreatedAsSuccess:
     def test_a_failing_swap_leaves_the_release_at_done_and_the_files_alone(
         self, world, monkeypatch
     ):
+        # Staging no longer goes through `moveFile` -- it is a plain
+        # copyfile, deliberately, so the source survives until after the
+        # swap. Breaking moveFile here would therefore break nothing and this
+        # test would pass against a swap that succeeded.
+        import couchpotato.core.plugins.renamer.swap as swap_module
         monkeypatch.setattr(
-            type(world['plugin']), 'moveFile',
-            lambda _s, a, b, use_default=False: (_ for _ in ()).throw(OSError('mount gone')),
-            raising=False,
+            swap_module.shutil, 'copyfile',
+            lambda a, b, **kw: (_ for _ in ()).throw(OSError('mount gone')),
         )
         _run(world)
 
@@ -259,4 +283,417 @@ class TestAFailedSupersedeDoesNotUndoASuccessfulSwap:
 
         monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent', _fire)
         _run(world)                                   # must not raise
+        assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestADestinationOutsideTheLibraryIsNeverDestroyed:
+    """A naming template, a crafted media title or a `media_folder` override
+    can resolve outside the configured library: `doReplace` preserves path
+    separators and `..`, and `os.path.join` honours an absolute component.
+
+    Refusing to WRITE somewhere odd would be over-reach -- the ordinary move
+    has always done that. Refusing to DESTROY a file outside the library the
+    operator gave us is not.
+    """
+
+    @staticmethod
+    def _claimed_by_a_release(world, path):
+        """Point the existing release at `path`.
+
+        Without this the test passes for the WRONG reason: no release claims
+        the outside file, so ownership resolution refuses as
+        `declined_no_owner` and the containment check is never reached.
+        Verified by mutation -- with containment disabled, the first version
+        of these two tests still passed.
+        """
+        from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
+        world['state']['releases'][0]['files'] = {'movie': [str(path)]}
+        world['state']['releases'][0]['copy_id'] = copy_id_for_sizes(
+            [os.path.getsize(str(path))]
+        )
+
+    def test_a_destination_above_the_library_root_is_refused(self, world, tmp_path):
+        outside = tmp_path / 'not-the-library.mkv'
+        outside.write_bytes(OLD)
+        self._claimed_by_a_release(world, outside)
+        before = _sha(str(outside))
+
+        _run(world, dst=str(outside))
+
+        assert _sha(str(outside)) == before, 'a file outside the library was destroyed'
+        assert world['state']['status_updates'] == []
+
+    def test_a_traversal_out_of_the_library_is_refused(self, world, tmp_path):
+        outside = tmp_path / 'escaped.mkv'
+        outside.write_bytes(OLD)
+        traversal = os.path.join(
+            world['state']['conf']['to'], '..', 'escaped.mkv',
+        )
+        self._claimed_by_a_release(world, traversal)
+        before = _sha(str(outside))
+
+        _run(world, dst=traversal)
+
+        assert _sha(str(outside)) == before, (
+            'a `..` in the destination walked out of the library and the file '
+            'there was destroyed'
+        )
+
+    def test_an_unset_library_root_refuses_rather_than_permitting(self, world):
+        """Unable to prove containment is not permission. An install with no
+        `to` configured gets no upgrade replacement, which is inconvenient and
+        recoverable; the alternative is not."""
+        world['state']['conf']['to'] = None
+        _run(world)
+        assert _sha(world['dst']) == world['old_sha']
+
+    def test_the_ordinary_case_inside_the_library_still_replaces(self, world):
+        """The control. Without it, a guard that refuses everything would look
+        identical to one that works."""
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestTheDownloadIsDisposedOfAfterTheSwapNotDuringIt:
+    """`default_file_action` describes how a download reaches the library. It
+    was never a statement about how a temporary file is staged, and honouring
+    it during staging is what left dangling links in the download folder:
+    `symlink_reversed` pointed the source at the `.part` path, and `os.replace`
+    then renamed that path away.
+
+    Applied here instead, after the swap, every mode has something coherent to
+    mean.
+    """
+
+    def test_move_removes_the_download(self, world):
+        world['state']['conf']['default_file_action'] = 'move'
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+        assert not os.path.exists(world['src'])
+
+    def test_copy_leaves_the_download_in_place(self, world):
+        world['state']['conf']['default_file_action'] = 'copy'
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+        assert open(world['src'], 'rb').read() == NEW
+
+    def test_symlink_reversed_points_at_the_LIBRARY_not_at_a_staging_path(self, world):
+        """The finding, stated as an assertion: the link must resolve to the
+        real library file. Pointing it at the staging name produced a link
+        that was already dangling by the time the swap finished."""
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+        _run(world)
+
+        assert os.path.islink(world['src']), 'no link was left for the downloader'
+        assert os.path.realpath(world['src']) == os.path.realpath(world['dst'])
+        assert os.path.exists(world['src']), (
+            'the download folder holds a DANGLING link: the downloader and '
+            'the seeding client can no longer reach the file'
+        )
+        assert open(world['src'], 'rb').read() == NEW
+
+    def test_no_staging_file_is_left_behind_in_the_library(self, world):
+        _run(world)
+        strays = [
+            n for n in os.listdir(os.path.dirname(world['dst']))
+            if n.startswith('.cp-upgrade-')
+        ]
+        assert not strays, 'a .part file survived a successful swap: %r' % strays
+
+    def test_a_failed_disposal_does_not_undo_a_completed_swap(self, world, monkeypatch):
+        """The bytes are already in the library. Nothing that happens to the
+        download afterwards can justify raising through a replacement that
+        succeeded."""
+        world['state']['conf']['default_file_action'] = 'move'
+        monkeypatch.setattr(
+            os, 'remove',
+            lambda *a, **k: (_ for _ in ()).throw(OSError('permission denied')),
+        )
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestTheSupersededReleaseIsActuallyReleased:
+    def test_a_refused_status_update_is_reported_not_swallowed(self, world, caplog):
+        """`Release.updateStatus` CATCHES database errors and contention and
+        returns False, and the dispatcher contains handler exceptions too --
+        so a try/except around the fireEvent never sees the ordinary failure.
+
+        The old bytes are already gone at this point. A release left at `done`
+        while claiming a destroyed file is what produces the re-download loop
+        this bookkeeping exists to prevent, so it must be loud.
+        """
+        import logging
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.update_status':
+                return False
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        with caplog.at_level(logging.ERROR):
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+        assert any(
+            'REFUSED' in r.getMessage() for r in caplog.records
+        ), 'a refused status update was silently discarded'
+
+    def test_a_successful_update_detaches_the_replaced_path(self, world):
+        """Marking it `ignored` changes only the status. The document keeps
+        its `files['movie']` path and `copy_id`, `release.for_media` returns
+        ignored releases, and ownership resolution then sees a second claimant
+        for a destination whose bytes it did not produce -- so the operator's
+        NEXT upgrade refuses as ambiguous because of this one.
+        """
+        detached = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.detach_file':
+                detached.append((args[0], args[1]))
+                return True
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        _run(world)
+
+        assert detached == [('r-720p', world['dst'])], (
+            'the superseded release still claims the replaced path'
+        )
+
+
+class TestASourceThatMovedSinceTheScanIsRefused:
+    """The scanner measures the group, derives a quality rung from that
+    measurement, and the renamer runs later. A downloader still appending in
+    between gives a file whose rung describes an earlier, smaller version of
+    itself -- and acting on it destroys a complete library copy on the
+    strength of a rung the bytes have not earned.
+
+    `meta_data['size']` is a float in MEGABYTES, summed across the group's
+    movie files (`getFileSize` divides by 1024 twice). Getting the units wrong
+    here is not a rounding error: it makes the comparison never match, the
+    guard refuses everything, and the feature looks broken -- or, with the
+    comparison the other way round, it matches nothing and the guard is inert
+    while every test passes. The first implementation read `meta_data['size']`
+    as a dict keyed by path, which is not its shape at all: it returned None
+    for every group, so the check never ran. Mutation testing found that; no
+    test did, because none of them drove the renamer with a recorded size.
+    """
+
+    @staticmethod
+    def _with_recorded_size(world, megabytes):
+        group = world['group']()
+        group['meta_data']['size'] = megabytes
+        return group
+
+    def _run_with(self, world, group):
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+    def test_a_source_matching_the_scan_still_replaces(self, world):
+        """The control, and the units check. If MB and bytes were confused,
+        this refuses and the feature is dead rather than dangerous."""
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+        self._run_with(world, self._with_recorded_size(world, actual_mb))
+        assert open(world['dst'], 'rb').read() == NEW
+
+    def test_a_source_that_grew_since_the_scan_is_refused(self, world):
+        scanned_mb = os.path.getsize(world['src']) / 1024 / 1024
+        with open(world['src'], 'ab') as handle:
+            handle.write(b'z' * (4 * 1024 * 1024))     # well past the tolerance
+
+        self._run_with(world, self._with_recorded_size(world, scanned_mb))
+
+        assert _sha(world['dst']) == world['old_sha'], (
+            'a library copy was destroyed by a file that was still downloading'
+        )
+        assert world['state']['status_updates'] == []
+
+    def test_a_source_that_shrank_since_the_scan_is_refused(self, world):
+        scanned_mb = (os.path.getsize(world['src']) + 8 * 1024 * 1024) / 1024 / 1024
+        self._run_with(world, self._with_recorded_size(world, scanned_mb))
+        assert _sha(world['dst']) == world['old_sha']
+
+    def test_a_group_with_no_recorded_size_is_not_refused(self, world):
+        """Skipped, not fabricated. A size invented here would compare equal
+        to itself and read exactly like a guard that works."""
+        group = world['group']()
+        group['meta_data'].pop('size', None)
+        self._run_with(world, group)
+        assert open(world['dst'], 'rb').read() == NEW
+
+    def test_sub_tolerance_growth_is_accepted_deliberately(self, world):
+        """The documented limitation, pinned so it cannot drift silently. A
+        file that grew by a few hundred kilobytes has not changed quality
+        rung, and the MB round trip needs room."""
+        scanned_mb = os.path.getsize(world['src']) / 1024 / 1024
+        with open(world['src'], 'ab') as handle:
+            handle.write(b'z' * 1000)
+
+        self._run_with(world, self._with_recorded_size(world, scanned_mb))
+        assert open(world['dst'], 'rb').read() != OLD
+
+    def test_the_recorded_size_is_read_as_MEGABYTES_not_bytes(self, world):
+        """Directly against the unit, because getting it wrong is silent in
+        both directions. A byte count in that field must NOT be mistaken for a
+        matching size."""
+        as_bytes = os.path.getsize(world['src'])
+        self._run_with(world, self._with_recorded_size(world, as_bytes))
+        assert _sha(world['dst']) == world['old_sha'], (
+            'the scanner figure was read as bytes; the units are megabytes'
+        )
+
+    def test_a_source_that_cannot_be_measured_is_refused(self, world):
+        """Driven against the helper directly, on purpose.
+
+        `_moveRenamedFiles` checks `os.path.exists(src)` before it gets here,
+        so this branch is only reachable in the race between those two calls.
+        Mutation testing showed it: flipping the OSError branch to `return
+        True` changed no test, because nothing could reach it through the
+        ordinary path.
+
+        Unreachable-today is not the same as wrong, and the direction matters
+        on a destructive path: unable to measure is not unchanged.
+        """
+        group = world['group']()
+        group['meta_data']['size'] = 42.0
+        assert world['plugin']._sourceStillMatchesTheScan(
+            group, '/definitely/not/here.mkv'
+        ) is False
+
+
+class TestNoFilesystemPathReachesTheLogDuringAReplacement:
+    """PrivacyFilter only rewrites the `/home/<name>` and `/Users/<name>`
+    prefixes. It does not remove the library layout, the film title, a NAS
+    path or a Windows path, so anything else this flow logs goes into the
+    rotating ring and into `docker logs` verbatim.
+
+    Staging used to go through `moveFile`, whose every branch logs both full
+    paths at INFO ('Reverse symlink "%s" to "%s"'). Moving staging off that
+    mover was done for the dangling-link bug; this test is what stops the
+    privacy half regressing independently of it.
+    """
+
+    def test_a_successful_replacement_logs_no_path(self, world, caplog):
+        import logging
+
+        with caplog.at_level(logging.DEBUG):
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'nothing was replaced'
+
+        leaked = [
+            r.getMessage() for r in caplog.records
+            if world['dst'] in r.getMessage() or world['src'] in r.getMessage()
+        ]
+        assert not leaked, 'a filesystem path reached the log: %r' % leaked
+
+    def test_the_record_still_identifies_the_media_and_both_rungs(self, world, caplog):
+        """The privacy rule must not cost the diagnosis. Whoever debugs a bad
+        swap needs to know which movie and which two rungs; the path adds
+        nothing the database cannot give them from the id."""
+        import logging
+
+        with caplog.at_level(logging.WARNING):
+            _run(world)
+
+        announced = [
+            r.getMessage() for r in caplog.records
+            if 'About to replace' in r.getMessage()
+        ]
+        assert announced
+        assert 'media-1' in announced[0]
+        assert '720p' in announced[0] and '2160p' in announced[0]
+
+
+class TestAGuessedMovieIdentityNeverAuthorisesDestruction:
+    """`folder_scanner.determineMedia` has five ways to name a group. Four
+    assert an identity for this exact release -- the downloader's imdb id, a
+    CP tag, an NFO, an id in the filename. The fifth is `movie.search` on a
+    title and year parsed out of the filename, which returns the best match
+    rather than a verified answer.
+
+    That was harmless while the scanner only added files: a wrong guess
+    mis-filed a download. It is not harmless here, because the guess decides
+    whose releases get fetched and therefore whose library copy gets
+    destroyed.
+    """
+
+    @pytest.mark.parametrize('source', ['download_id', 'cp_tag', 'nfo', 'filename'])
+    def test_an_asserted_identity_replaces(self, world, source):
+        group = world['group']()
+        group['identity_source'] = source
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+        assert open(world['dst'], 'rb').read() == NEW, source
+
+    def test_a_searched_identity_is_refused(self, world):
+        group = world['group']()
+        group['identity_source'] = 'search'
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+        assert _sha(world['dst']) == world['old_sha'], (
+            "a fuzzy title match destroyed a library file"
+        )
+        assert world['state']['status_updates'] == []
+
+    def test_a_group_with_no_recorded_source_is_refused(self, world):
+        """determineMedia writes the field on every path, so its absence
+        means this group did not come from there and nothing has vouched for
+        it. Refused rather than trusted."""
+        group = world['group']()
+        group.pop('identity_source', None)
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+        assert _sha(world['dst']) == world['old_sha']
+
+    def test_the_download_survives_the_refusal(self, world):
+        group = world['group']()
+        group['identity_source'] = 'search'
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+        assert open(world['src'], 'rb').read() == NEW
+
+
+class TestAClaimedQualityThatTheBytesContradictIsRefused:
+    """`media_parser.getMetaData` PREFERS a snatched release's claimed quality
+    over the scanner's own detection, so a mislabelled release description
+    arrives at the decision as fact. Ranked on that label alone, a 700 MB file
+    claiming 2160p outranks a genuine 1080p library copy and replaces it.
+
+    Only the absurd is caught. The bands overlap heavily and encoding
+    efficiency varies, so anything tighter would refuse real upgrades.
+    """
+
+    @staticmethod
+    def _with_bands(world, low_mb):
+        def _fire(event, *args, **kwargs):
+            if event == 'quality.single':
+                return {'identifier': args[0], 'size': (low_mb, low_mb * 10)}
+            return world['fire'](event, *args, **kwargs)
+        world['set_fire'](_fire)
+
+    def test_a_file_far_below_its_claimed_band_is_refused(self, world):
+        # The download is ~17 KB; a 2160p band starting at 10,000 MB.
+        self._with_bands(world, 10000)
+        _run(world)
+        assert _sha(world['dst']) == world['old_sha'], (
+            'a tiny file claiming 2160p destroyed the library copy'
+        )
+
+    def test_a_file_inside_its_band_still_replaces(self, world):
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+        self._with_bands(world, actual_mb)
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+
+    def test_a_file_just_under_the_band_is_still_allowed(self, world):
+        """The bands are advisory. Refusing everything below the nominal floor
+        would reject genuine, well-encoded upgrades, so only a file nowhere
+        near its rung is treated as contradicted."""
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+        self._with_bands(world, actual_mb * 1.5)
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+
+    def test_an_unknown_band_does_not_refuse(self, world):
+        """Nothing to check against is not evidence of a problem, and every
+        one of those cases is refused elsewhere for its own reason."""
+        _run(world)     # the base fixture answers None to quality.single
         assert open(world['dst'], 'rb').read() == NEW

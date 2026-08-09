@@ -484,3 +484,63 @@ different cause.
 This is a spec bug, not an implementation deviation: the AC was under-specified
 and the implementation was more correct than the criterion it was written
 against.
+
+### D10: staging does not honour `default_file_action` (B4b review)
+
+The B4b review returned seventeen findings, eight of them P1, on the one code
+path in this project that destroys an irreplaceable file. They were not
+seventeen bugs. Most of them followed from one choice: `replace_atomically`
+staged the incoming file with `moveFile(use_default=True)`, the operator's
+configured mover.
+
+Three of that mover's four modes are wrong for a temporary file:
+
+- `symlink_reversed`, and the cross-device fallback of `link`, point the
+  SOURCE at the staging path. `os.replace` then renames that path away, so
+  the download folder is left holding a dangling link and the downloader or
+  seeding client can no longer reach the file.
+- `move` consumes the source before the irreversible step, so a failure
+  between staging and swap leaves the staged file as the only complete copy
+  in existence -- and `_discard_staging_if_safe` then correctly refuses to
+  tidy it, leaving wreckage under a hidden name.
+- every branch logs both full paths at INFO, which is exactly what
+  PrivacyFilter exists to keep out of the ring buffer.
+
+`default_file_action` describes how a download reaches the library. It was
+never a statement about how a temporary file is staged, and honouring it there
+bought nothing and cost all three.
+
+So staging is a plain `copyfile`, and `default_file_action` is applied to the
+SOURCE after a successful swap, which is the only place it ever meant
+anything. The cost is one extra pass over the bytes. What it buys is that the
+source is INTACT until after the irreversible step -- on this path, the trade
+to want.
+
+Six refusals were added around it, each of which had no test demanding it:
+a symlinked source, a source that no longer matches the scanner's
+measurement, a destination whose identity changed while we were staging, a
+destination outside the configured library root, a movie identity that came
+from a fuzzy title search rather than an assertion, and a claimed quality rung
+the file's size contradicts. Plus the AC-OPS-2 record before the irreversible
+step, which B4b had never implemented.
+
+The identity refusal needed `folder_scanner.determineMedia` to record HOW it
+identified a group. Four of its five sources assert an identity for this
+release; `movie.search` returns the best match for a parsed title and year,
+which is a guess. That distinction did not matter while the scanner only added
+files, because a wrong guess mis-filed a download. Here it decides whose
+library copy is destroyed.
+
+### D11: mutation testing needs bytecode caching disabled
+
+Recorded because it produced a false green during this work, and would again.
+
+Two consecutive mutations of the same file happened to shrink it by exactly
+the same number of bytes. Python invalidates a cached `.pyc` on (mtime, size),
+so the second mutation -- same size, same coarse mtime -- reused the first
+one's bytecode and the run reported the guard as UNPROVEN when it was fine.
+The failure mode is the dangerous direction too: the same collision can make a
+mutation appear KILLED when the code under test never changed.
+
+Mutation runs therefore use `python -B` with `__pycache__` cleared, and the
+harness asserts that the file hash changed rather than trusting the edit.

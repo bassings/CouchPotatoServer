@@ -47,7 +47,15 @@ def scene(tmp_path, monkeypatch):
         'is_3d': False,
     }
 
-    state = {'releases': [release], 'for_media_calls': [], 'conf': {'upgrade_replace': True}}
+    state = {
+        'releases': [release],
+        'for_media_calls': [],
+        'conf': {
+            'upgrade_replace': True,
+            'to': str(tmp_path),          # the library root: see e2e fixture
+            'default_file_action': 'move',
+        },
+    }
 
     def _fire(event, *args, **kwargs):
         if event == 'release.for_media':
@@ -85,6 +93,10 @@ def scene(tmp_path, monkeypatch):
             'media': {'_id': 'media-1'},
             'meta_data': {'quality': {'identifier': incoming, 'is_3d': False}},
             'files': {'movie': movie_files if movie_files is not None else [str(dst) + '.new']},
+            # How determineMedia identified this movie. Anything other than
+            # an ASSERTED source refuses replacement, so a fixture without
+            # this would exercise that refusal on every test.
+            'identity_source': 'nfo',
         }
 
     return {'plugin': plugin, 'dst': str(dst), 'state': state, 'group': _group}
@@ -112,11 +124,19 @@ class TestTheDecisionIsActuallyReached:
         refusal is what distinguishes "the gate ran and said no" from "the
         gate never ran".
         """
-        worse = scene['group']('720p')
-        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse)[0] == DECLINED_NOT_BETTER
+        outcome, _ = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('720p')
+        )
+        assert outcome == DECLINED_NOT_BETTER
 
+        # A FRESH group: releases are now cached per group (one lookup per
+        # group, not one per colliding file), so reusing the dict above would
+        # reuse its cached answer and this half would prove nothing.
         scene['state']['releases'] = []          # simulate the inert attempt
-        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse)[0] == DECLINED_NO_OWNER
+        outcome, _ = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('720p')
+        )
+        assert outcome == DECLINED_NO_OWNER
 
 
 class TestTheRankBoundaryNormalisesFireEventsEmptyList:
@@ -175,27 +195,54 @@ class TestTheGateConsultsTheNewKey:
 
 
 class TestTheDeadSettingIsAnnouncedOnce:
+    """Driven against the notice itself, because it is no longer reached from
+    the collision path.
+
+    It used to live inside `_replacementOutcome`, which only runs when a
+    destination actually collides. An operator who deliberately set the old
+    key on a library with nothing colliding therefore got precisely the
+    silence D1 exists to prevent, and got it until something happened to
+    collide. It is now emitted once per process at the top of a scan.
+    """
+
     def test_an_operator_who_set_it_is_told_it_does_nothing(self, scene, caplog):
         scene['state']['conf'] = {'remove_lower_quality_copies': True}
-        with caplog.at_level('WARNING'):
-            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
         assert any('no longer read' in r.getMessage() for r in caplog.records)
 
     def test_it_is_said_once_per_process_not_once_per_scan(self, scene, caplog):
         """The renamer runs on a timer. A warning repeated every few minutes
         is one an operator learns to filter out."""
         scene['state']['conf'] = {'remove_lower_quality_copies': True}
-        with caplog.at_level('WARNING'):
+        with caplog.at_level(logging.WARNING):
             for _ in range(4):
-                scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+                scene['plugin']._warnAboutTheDeadSetting()
         said = [r for r in caplog.records if 'no longer read' in r.getMessage()]
         assert len(said) == 1, 'warned %d times' % len(said)
 
     def test_nothing_is_said_when_the_operator_never_set_it(self, scene, caplog):
         scene['state']['conf'] = {'upgrade_replace': False}
-        with caplog.at_level('WARNING'):
-            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
         assert not any('no longer read' in r.getMessage() for r in caplog.records)
+
+    def test_the_scan_is_what_announces_it_not_a_collision(self, scene):
+        """Anti-inertness. The notice reaching nobody is the bug this moved to
+        fix, so the call site is pinned rather than assumed."""
+        import inspect
+
+        from couchpotato.core.plugins.renamer.main import Renamer
+
+        scan_source = inspect.getsource(Renamer.scan)
+        assert '_warnAboutTheDeadSetting()' in scan_source, (
+            'the deprecation notice is no longer emitted from a scan, so an '
+            'operator whose library has no collisions never hears it'
+        )
+        decision_source = inspect.getsource(Renamer._replacementOutcome)
+        assert '_warnAboutTheDeadSetting()' not in decision_source, (
+            'the notice is back on the per-collision path'
+        )
 
 
 class TestTheDecisionNeverBreaksAScan:
@@ -276,7 +323,7 @@ class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
 
     def test_an_incomplete_release_list_refuses_rather_than_resolving(self, scene):
         scene['state']['releases'] = None      # forMedia's "I could not read it all"
-        outcome = scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('2160p')
         )
         assert outcome == DECLINED_INCOMPLETE_EVIDENCE
@@ -286,9 +333,10 @@ class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
         database, the other to their library. Collapsing them into a single
         refusal would lose the only signal that says which."""
         scene['state']['releases'] = []
-        assert scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('2160p')
-        ) == DECLINED_NO_OWNER
+        )
+        assert outcome == DECLINED_NO_OWNER
 
     def test_the_renamer_actually_asks_for_a_complete_answer(self, scene):
         """Anti-inertness: forMedia defaults to the partial list, so dropping
@@ -400,129 +448,136 @@ class TestTheProductionCollisionPathReachesTheDecision:
                 {src: scene['dst']}, scene['group']('2160p'),
             )
 
-        collision = [
+        # B4a computed and logged a refusal here. B4b ACTS, so a reachable
+        # decision now shows up as the destination holding the incoming bytes
+        # -- and the replacement record naming the two rungs. Either is proof
+        # the gate ran; asserting both is proof it ran and completed.
+        with open(scene['dst'], 'rb') as handle:
+            assert handle.read() == b'y' * 9000, (
+                'the decision was REPLACE but the library file is unchanged: '
+                'the gate is unreachable from the production rename path'
+            )
+        # AC-OPS-2: the record that must exist BEFORE the irreversible step,
+        # because a crash immediately after `os.replace` leaves nothing later
+        # in the path having run and the old file already gone.
+        announcements = [
             r.getMessage() for r in caplog.records
-            if 'Destination already exists' in r.getMessage()
+            if 'About to replace a library copy' in r.getMessage()
         ]
-        assert collision, 'the collision path was never taken'
-        assert REPLACE in collision[0], (
-            'the rename path logged a collision without computing the upgrade '
-            'decision -- the gate is unreachable in production: %s' % collision[0]
+        assert announcements, (
+            'the irreversible step was taken with no prior record: a crash '
+            'here leaves an unexplained deletion'
+        )
+        assert 'media-1' in announcements[0]
+        assert scene['dst'] not in announcements[0], (
+            'the forensic record leaked the library path'
         )
 
-    def test_the_existing_file_is_still_kept_and_cleanup_suppressed(self, scene, tmp_path):
-        """B4a computes but does not act. Proving that here means a later step
-        that starts acting has to change this test deliberately."""
+    def test_a_refusal_still_keeps_the_existing_file_and_suppresses_cleanup(self, scene, tmp_path):
+        """The other half: when the decision is NOT replace, nothing moves.
+
+        B4a proved this by never acting at all. B4b has to prove it while the
+        acting code is right there, which is the version that matters -- a
+        gate that refuses correctly is worth nothing if the refusal path can
+        still reach the swap.
+        """
         parent = tmp_path / 'download'
         parent.mkdir()
         src = parent / 'incoming.mkv'
         src.write_bytes(b'y' * 9000)
 
-        group = scene['group']('2160p')
+        group = scene['group']('720p')          # worse: declined_not_better
         group['parentdir'] = str(parent)
+        group['files'] = {'movie': [str(src)]}
         scene['state']['conf']['cleanup'] = True
 
         scene['plugin']._moveRenamedFiles({str(src): scene['dst']}, group)
 
         with open(scene['dst'], 'rb') as handle:
-            assert handle.read() == b'x' * 5000, 'the existing file was modified'
+            assert handle.read() == b'x' * 5000, 'a refused replacement still swapped'
         assert src.exists(), 'the incoming file was destroyed'
         assert parent.is_dir(), 'cleanup ran despite a skip'
 
 
-class TestARepeATingFailureDoesNotEraseTheLog:
-    """The collided download is deliberately LEFT IN PLACE on a skip.
+class TestTheReleaseLookupIsBoundedPerGroup:
+    """AC-ARCH-5: at most one release lookup per group, none per file.
 
-    So a group whose release documents are malformed raises here, and raises
-    again on every scheduled scan, for as long as the file sits there. An
-    unbounded full traceback per scan evicts the rotating log, which is the
-    only diagnostic a self-hosted install has: the failure would quietly erase
-    the evidence of itself, along with everything else that happened.
-
-    The first occurrence must stay complete, or the bound has cost the
-    diagnosis it was meant to protect.
+    `_replacementOutcome` runs per colliding `(src, dst)` pair, so a group with
+    more than one existing destination fired a `get_many` plus a `get` per
+    release for each of them -- on a timer, to reach the same answer.
     """
 
-    @pytest.fixture(autouse=True)
-    def _fresh_windows(self):
+    def test_two_collisions_in_one_group_share_a_single_lookup(self, scene):
+        group = scene['group']()
+        for _ in range(3):
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], group)
+
+        assert scene['state']['for_media_calls'] == ['media-1'], (
+            'the release lookup ran once per colliding file: %r'
+            % scene['state']['for_media_calls']
+        )
+
+    def test_a_DIFFERENT_group_gets_its_own_lookup(self, scene):
+        """The cache is per group, not per plugin. Anything on `self` would
+        outlive the scan and go stale between them."""
+        scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        assert scene['state']['for_media_calls'] == ['media-1', 'media-1']
+
+
+class TestAnAbandonedStagingFileIsReported:
+    """Killed between staging and `os.replace`, the staged copy survives under
+    a hidden name the scanner ignores (`.part` is not a media extension) while
+    the library still holds the old file. Unreported, automation says the
+    download is missing and nobody can find the complete copy sitting there.
+    """
+
+    def _stale_part(self, directory, age_hours):
+        import time as time_module
+        name = '.cp-upgrade-deadbeef.part'
+        path = os.path.join(directory, name)
+        with open(path, 'wb') as handle:
+            handle.write(b'a complete download nobody can see' * 100)
+        old = time_module.time() - age_hours * 3600
+        os.utime(path, (old, old))
+        return name, path
+
+    def test_an_old_staging_file_is_named_in_the_log(self, scene, caplog, tmp_path):
         from couchpotato.core.logger import reset_log_suppression
         reset_log_suppression()
-        yield
-        reset_log_suppression()
+        name, _ = self._stale_part(str(tmp_path), age_hours=48)
 
-    def _exploding(self, scene, monkeypatch):
-        def _boom(event, *a, **k):
-            if event == 'release.for_media':
-                raise RuntimeError('malformed release document')
-            return None
-        monkeypatch.setattr(
-            'couchpotato.core.plugins.renamer.main.fireEvent', _boom
-        )
-
-    def test_the_first_failure_is_reported_in_full(self, scene, monkeypatch, caplog):
-        self._exploding(scene, monkeypatch)
-        with caplog.at_level(logging.ERROR):
-            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._reportStaleStagingFiles(str(tmp_path))
 
         messages = [r.getMessage() for r in caplog.records]
-        assert any('malformed release document' in m for m in messages), (
-            'the traceback was suppressed on its FIRST occurrence, so the '
-            'bound cost the diagnosis: %r' % messages
+        assert any(name in m for m in messages), (
+            'an abandoned complete download was never reported: %r' % messages
+        )
+        assert not any(str(tmp_path) in m for m in messages), (
+            'the report leaked the library directory'
         )
 
-    def test_twenty_scans_do_not_write_twenty_tracebacks(self, scene, monkeypatch, caplog):
-        self._exploding(scene, monkeypatch)
-        with caplog.at_level(logging.ERROR):
-            for _ in range(20):
-                scene['plugin']._replacementOutcome(
-                    's.mkv', scene['dst'], scene['group']()
-                )
+    def test_a_transfer_still_in_progress_is_NOT_reported(self, scene, caplog, tmp_path):
+        """A 60 GB remux across a slow NAS mount is a long copy. Reporting a
+        live transfer as wreckage is worse than reporting nothing."""
+        from couchpotato.core.logger import reset_log_suppression
+        reset_log_suppression()
+        self._stale_part(str(tmp_path), age_hours=0)
 
-        tracebacks = [
-            r for r in caplog.records
-            if 'malformed release document' in r.getMessage()
-        ]
-        assert len(tracebacks) < 20, (
-            'every scan wrote a full traceback (%d of 20); the rotating log '
-            'is being evicted by the failure it is meant to record'
-            % len(tracebacks)
-        )
-        assert tracebacks, 'nothing was recorded at all'
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._reportStaleStagingFiles(str(tmp_path))
 
-    def test_the_suppression_key_carries_no_filesystem_path(self, scene, monkeypatch):
-        """PrivacyFilter exists to keep library paths out of logs, and a
-        suppression key is retained state, not a transient message. Keying on
-        the destination would put a private path somewhere the filter does not
-        reach."""
-        keys = []
-        import couchpotato.core.plugins.renamer.main as renamer_main
-        monkeypatch.setattr(
-            renamer_main, 'log_suppressed',
-            lambda method, key, message, *a, **k: keys.append(key),
-        )
-        self._exploding(scene, monkeypatch)
-        scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        assert not [
+            r for r in caplog.records if 'abandoned' in r.getMessage()
+        ], 'a staging file being written right now was reported as abandoned'
 
-        assert keys, 'the failure did not go through log_suppressed at all'
-        assert scene['dst'] not in keys[0]
-        assert 'The Thing' not in keys[0]
-        assert 'media-1' in keys[0], (
-            'the key does not distinguish media, so one broken group would '
-            'silence the diagnosis for every other: %r' % keys[0]
-        )
+    def test_ordinary_library_files_are_not_reported(self, scene, caplog, tmp_path):
+        (tmp_path / 'A Real Movie.mkv').write_bytes(b'x' * 10)
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._reportStaleStagingFiles(str(tmp_path))
+        assert not [r for r in caplog.records if 'abandoned' in r.getMessage()]
 
-    def test_a_different_media_is_not_silenced_by_the_first(self, scene, monkeypatch, caplog):
-        self._exploding(scene, monkeypatch)
-        with caplog.at_level(logging.ERROR):
-            for _ in range(6):
-                scene['plugin']._replacementOutcome(
-                    's.mkv', scene['dst'], scene['group']()
-                )
-            other = scene['group']()
-            other['media'] = {'_id': 'media-2'}
-            caplog.clear()
-            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], other)
-
-        assert any(
-            'malformed release document' in r.getMessage() for r in caplog.records
-        ), 'a second, unrelated broken group was silenced by the first'
+    def test_an_unreadable_directory_does_not_break_the_scan(self, scene):
+        """A diagnostic that can break a scan is worse than no diagnostic."""
+        scene['plugin']._reportStaleStagingFiles('/definitely/not/here')
