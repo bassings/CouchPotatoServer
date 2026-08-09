@@ -196,7 +196,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if outcome == REPLACE and not self._sizeSupportsTheClaimedQuality(group, src):
                     outcome = DECLINED_SIZE_CONTRADICTS_QUALITY
 
-                if outcome == REPLACE and not self._sourceStillMatchesTheScan(group, src):
+                measured_source_size = self._sourceStillMatchesTheScan(group, src)
+                if outcome == REPLACE and measured_source_size is None:
                     # The quality rung was derived from the scanner's
                     # measurement. If the bytes have moved since, the rung
                     # describes a file that no longer exists.
@@ -214,13 +215,16 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if outcome == REPLACE:
                     ok, reason = replace_atomically(
                         src, dst,
+                        expected_source_size=measured_source_size,
                         destination_identity=identity_of(dst),
                         about_to_replace=lambda: self._announceImminentReplacement(
                             src, dst, superseded, group,
                         ),
                     )
                     if ok:
-                        self._disposeOfSourceAfterReplacement(src, dst)
+                        self._disposeOfSourceAfterReplacement(
+                            src, dst, (group.get('media') or {}).get('_id'),
+                        )
                         self._supersedeRelease(superseded, group, dst)
                         moved_any = True
                         continue
@@ -365,6 +369,25 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 size, name, int(age // 3600),
             )
 
+    @staticmethod
+    def _withoutPaths(error):
+        """Describe an OSError without naming the file it happened to.
+
+        `traceback.format_exc()` embeds `OSError.filename` in its final line
+        regardless of the frame limit, so `[Errno 13] Permission denied:
+        '/mnt/downloads/Some.Movie.2001/incoming.mkv'` reaches the rotating
+        ring verbatim. PrivacyFilter only rewrites a `/home/<name>` prefix, so
+        a NAS mount, a Windows path or anything under /downloads goes straight
+        through -- the leak D8 exists to prevent, arrived at through the one
+        place that formats an exception rather than a message.
+
+        errno and strerror carry the whole remedy anyway. Which file it was is
+        already known from the media id in the surrounding record.
+        """
+        errno = getattr(error, 'errno', None)
+        detail = getattr(error, 'strerror', None) or type(error).__name__
+        return '[errno %s] %s' % (errno, detail) if errno else detail
+
     #: Identity sources that ASSERT which movie this is, as opposed to
     #: guessing. `search` is absent deliberately: it is the best match for a
     #: parsed title and year, which is a guess, and a wrong guess on this path
@@ -450,7 +473,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     @classmethod
     def _sourceStillMatchesTheScan(cls, group, source):
-        """Is the source the same size the SCANNER measured?
+        """The source's size if it still matches the scan, else None.
+
+        Returning the SIZE rather than a bool is what lets the caller hand it
+        to `replace_atomically` as `expected_source_size`. Without that the
+        swap took its own fresh measurement, self-consistent with whatever it
+        copied, and a downloader appending between this check and that copy
+        was invisible to both.
 
         The quality rung on this group was derived from that measurement. A
         downloader still appending between the scan and the rename gives a
@@ -463,28 +492,35 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         itself and passes forever, which is the shape this check exists to
         avoid.
 
-        True when the scanner recorded nothing usable: the check is skipped
-        rather than fabricated. A size invented here would compare equal to
-        itself and read exactly like a guard that works.
+        When the scanner recorded nothing usable the comparison is skipped
+        rather than fabricated -- a size invented here would compare equal to
+        itself and read exactly like a guard that works -- but the measurement
+        just taken is still returned, because it is what closes the window
+        above.
 
         Only meaningful because D7 refuses multi-file groups -- `meta_data`
         holds ONE size summed across the group's movie files, so with more
         than one it would not describe this file at all. If that refusal is
         ever relaxed, this must be revisited before it is.
         """
-        recorded_mb = (group.get('meta_data') or {}).get('size')
-        if not isinstance(recorded_mb, (int, float)) or recorded_mb <= 0:
-            return True
-
         try:
             actual = os.path.getsize(source)
         except OSError:
             # Unable to measure is not the same as unchanged, and this is the
             # destructive path.
-            return False
+            return None
+
+        recorded_mb = (group.get('meta_data') or {}).get('size')
+        if not isinstance(recorded_mb, (int, float)) or recorded_mb <= 0:
+            # Nothing to compare against, but the measurement just taken is
+            # still worth carrying: it closes the window between here and the
+            # staging copy inside replace_atomically.
+            return actual
 
         expected = recorded_mb * 1024 * 1024
-        return abs(actual - expected) <= cls.SCAN_SIZE_TOLERANCE_BYTES
+        if abs(actual - expected) > cls.SCAN_SIZE_TOLERANCE_BYTES:
+            return None
+        return actual
 
     def _announceImminentReplacement(self, source, destination, superseded, group):
         """AC-OPS-2: one WARNING in the last moment before the file is gone.
@@ -510,7 +546,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             (superseded or {}).get('_id'),
         )
 
-    def _disposeOfSourceAfterReplacement(self, source, destination):
+    def _disposeOfSourceAfterReplacement(self, source, destination, media_id=None):
         """Now honour `default_file_action` -- on the SOURCE, after the swap.
 
         Staging deliberately copies, so at this point the download still
@@ -535,11 +571,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # back is not recreated: the swap replaced the destination inode,
             # so the old link would point at the destroyed file and a new one
             # cannot span filesystems anyway.
-        except Exception:
+        except Exception as error:
             log.warning(
-                'Replaced the library copy, but could not apply "%s" to the '
-                'download afterwards. The library is correct and the download '
-                'is still on disk: %s', action, traceback.format_exc(1),
+                'Replaced the library copy for media %s, but could not apply '
+                '"%s" to the download afterwards. The library is correct and '
+                'the download is still on disk: %s',
+                media_id, action, self._withoutPaths(error),
             )
 
     def _supersedeRelease(self, superseded, group, destination=None):
@@ -621,16 +658,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         if not destination:
             return
-        try:
-            fireEvent(
-                'release.detach_file', superseded['_id'], destination,
-                single = True,
-            )
-        except Exception:
+
+        # Read the result rather than catching. `detachFile` wraps its own
+        # database call and RETURNS False, and fireEvent's dispatcher contains
+        # handler exceptions too -- so a try/except here would only ever fire
+        # for something that broke before detachFile's own guard, and would
+        # look like it was handling the ordinary failure while never seeing
+        # it. That is the same mistake `_supersedeRelease` documents 25 lines
+        # up, and it is worth not making twice in one file.
+        detached = fireEvent(
+            'release.detach_file', superseded['_id'], destination, single = True,
+        )
+        if detached is not True:
             log.warning(
-                'Release %s is off "done" but still lists the replaced path; '
-                'a later upgrade of this movie may refuse as ambiguous: %s',
-                superseded.get('_id'), traceback.format_exc(1),
+                'Release %s is off "done" but still lists the replaced path. '
+                'A later upgrade of this movie may refuse as ambiguous until '
+                'that document is corrected.', superseded.get('_id'),
             )
 
     def _warnAboutTheDeadSetting(self):

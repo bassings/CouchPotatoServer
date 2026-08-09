@@ -62,6 +62,7 @@ def world(tmp_path, monkeypatch):
             'default_file_action': 'move',
         },
         'status_updates': [],
+        'detached': [],
         'releases': [release],
     }
 
@@ -70,6 +71,9 @@ def world(tmp_path, monkeypatch):
             return state['releases']
         if event == 'release.update_status':
             state['status_updates'].append((args[0], kwargs.get('status')))
+            return True
+        if event == 'release.detach_file':
+            state['detached'].append((args[0], args[1]))
             return True
         if event == 'quality.is_better':
             order = ['2160p', 'bd50', '1080p', '720p']
@@ -392,6 +396,30 @@ class TestTheDownloadIsDisposedOfAfterTheSwapNotDuringIt:
         )
         assert open(world['src'], 'rb').read() == NEW
 
+    def test_link_leaves_the_download_as_an_independent_copy(self, world):
+        """`link` is the SHIPPING DEFAULT, so this is the common config.
+
+        It falls through with `copy`: nothing happens to the source. A
+        hardlink back is deliberately not recreated -- the swap replaced the
+        destination inode, so the old link would point at the destroyed file,
+        and a new one cannot span filesystems anyway (the library and the
+        download folder are routinely different mounts here).
+
+        The behaviour change is real and worth pinning rather than leaving
+        incidental: after a replacement the download is an independent copy
+        rather than a hardlink, which costs disk until it is cleaned up.
+        """
+        world['state']['conf']['default_file_action'] = 'link'
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW
+        assert os.path.exists(world['src']), 'the download was removed under "link"'
+        assert not os.path.islink(world['src'])
+        assert os.stat(world['src']).st_ino != os.stat(world['dst']).st_ino, (
+            'the download was hardlinked to the new library file; that link '
+            'would break the next time the file is replaced'
+        )
+
     def test_no_staging_file_is_left_behind_in_the_library(self, world):
         _run(world)
         strays = [
@@ -556,9 +584,13 @@ class TestASourceThatMovedSinceTheScanIsRefused:
         """
         group = world['group']()
         group['meta_data']['size'] = 42.0
+        # None means "do not proceed". The helper returns the measured SIZE
+        # on success, so that the caller can hand it to replace_atomically as
+        # `expected_source_size` and close the window between this check and
+        # the staging copy.
         assert world['plugin']._sourceStillMatchesTheScan(
             group, '/definitely/not/here.mkv'
-        ) is False
+        ) is None
 
 
 class TestNoFilesystemPathReachesTheLogDuringAReplacement:
@@ -696,4 +728,178 @@ class TestAClaimedQualityThatTheBytesContradictIsRefused:
         """Nothing to check against is not evidence of a problem, and every
         one of those cases is refused elsewhere for its own reason."""
         _run(world)     # the base fixture answers None to quality.single
+        assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestAFailedDisposalDoesNotLeakThePath:
+    """The leak I introduced while removing leaks everywhere else.
+
+    `traceback.format_exc()` puts `OSError.filename` in its final line
+    regardless of the frame limit, so `[Errno 13] Permission denied:
+    '/mnt/downloads/Some.Movie.2001/incoming.mkv'` reached the rotating ring
+    verbatim. PrivacyFilter only rewrites a `/home/<name>` prefix, so a NAS
+    mount or anything under /downloads goes straight through.
+
+    Every deliberate record on this path is careful about paths. The one place
+    that formatted an EXCEPTION rather than a message was not, which is where
+    this class of leak always comes from.
+    """
+
+    def test_a_permission_error_on_the_download_does_not_name_it(
+        self, world, caplog, monkeypatch
+    ):
+        import logging
+
+        world['state']['conf']['default_file_action'] = 'move'
+        real_remove = os.remove
+
+        def _refuse(path, *a, **k):
+            if str(path) == world['src']:
+                raise PermissionError(13, 'Permission denied', world['src'])
+            return real_remove(path, *a, **k)
+
+        monkeypatch.setattr(os, 'remove', _refuse)
+
+        with caplog.at_level(logging.DEBUG):
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert world['src'] not in messages, (
+            'the download path reached the log through an exception: %s'
+            % messages
+        )
+        # The bound must not cost the diagnosis.
+        assert 'Permission denied' in messages
+        assert '13' in messages
+        assert 'media-1' in messages
+
+    def test_the_swap_is_not_undone_by_a_failed_disposal(self, world, monkeypatch):
+        world['state']['conf']['default_file_action'] = 'move'
+        monkeypatch.setattr(
+            os, 'remove',
+            lambda *a, **k: (_ for _ in ()).throw(PermissionError(13, 'nope', '/x')),
+        )
+        _run(world)
+        assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestTheDetachResultIsReadNotCaught:
+    """`detachFile` wraps its own database call and RETURNS False; fireEvent's
+    dispatcher contains handler exceptions too. A try/except here would only
+    ever fire for something that broke before detachFile's own guard, while
+    looking like it handled the ordinary failure.
+
+    That is the same mistake `_supersedeRelease` documents 25 lines above, and
+    the review was right that making it twice in one file is worse than making
+    it once.
+    """
+
+    def test_a_refused_detach_is_reported(self, world, caplog):
+        import logging
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.detach_file':
+                return False
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        with caplog.at_level(logging.WARNING):
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW
+        assert any(
+            'still lists the replaced path' in r.getMessage()
+            for r in caplog.records
+        ), 'a refused detach was silently discarded'
+
+    def test_an_empty_event_result_is_also_a_refusal(self, world, caplog):
+        """`fireEvent(single=True)` returns `[]` when nothing handled the
+        event, and `[] is not True`. An unregistered handler must not read as
+        success -- the same `[]`-versus-None boundary that made the rank guard
+        dead in production earlier in this feature."""
+        import logging
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.detach_file':
+                return []
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        with caplog.at_level(logging.WARNING):
+            _run(world)
+
+        assert any(
+            'still lists the replaced path' in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_a_successful_detach_says_nothing(self, world, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING):
+            _run(world)
+        assert not any(
+            'still lists the replaced path' in r.getMessage()
+            for r in caplog.records
+        )
+
+
+class TestTheWindowBetweenTheCheckAndTheStagingCopyIsClosed:
+    """`_sourceStillMatchesTheScan` reads the source size, and
+    `replace_atomically` reads it again before staging. Two self-consistent
+    reads: a downloader appending BETWEEN them was invisible to both, so the
+    swap staged a file larger than the one the quality rung describes and its
+    own size check compared the staged copy against the newer measurement and
+    passed.
+
+    Passing the renamer's measurement through as `expected_source_size` is
+    what closes it. Mutation testing found this twice -- dropping the argument
+    at the call site changed nothing, because every test measured the source
+    once and never moved it afterwards.
+
+    The injection point is argument evaluation order: `expected_source_size`
+    is already computed when `identity_of(dst)` runs, so growing the file
+    inside that call lands exactly in the window.
+    """
+
+    def test_a_source_that_grows_after_the_check_is_refused(self, world, monkeypatch):
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        real_identity_of = renamer_main.identity_of
+        grew = {}
+
+        def _grow_then_identify(path):
+            if not grew:
+                with open(world['src'], 'ab') as handle:
+                    handle.write(b'the downloader was not finished' * 500)
+                grew['yes'] = True
+            return real_identity_of(path)
+
+        monkeypatch.setattr(renamer_main, 'identity_of', _grow_then_identify)
+
+        _run(world)
+
+        assert grew, 'the injection point never ran; this test proves nothing'
+        assert _sha(world['dst']) == world['old_sha'], (
+            'a file that was still being written replaced the library copy'
+        )
+        assert world['state']['status_updates'] == []
+
+    def test_an_unchanged_source_still_replaces_through_the_same_path(self, world, monkeypatch):
+        """Control. Without it, a guard that refused everything would look
+        identical to one that closes the window."""
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        real_identity_of = renamer_main.identity_of
+        seen = {}
+
+        def _identify(path):
+            seen['called'] = True
+            return real_identity_of(path)
+
+        monkeypatch.setattr(renamer_main, 'identity_of', _identify)
+        _run(world)
+
+        assert seen.get('called')
         assert open(world['dst'], 'rb').read() == NEW
