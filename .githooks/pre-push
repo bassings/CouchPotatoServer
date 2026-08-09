@@ -10,10 +10,41 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-echo "🔒 pre-push: running full local gate (scripts/verify.sh)…"
+# Coverage follows the CHANGE SURFACE, not the branch. A Python-only change
+# does not need five minutes of browser tests here, because CI runs them on
+# master and nightly regardless -- and `scripts/needs_e2e.sh` is the single
+# source of truth for that question, shared with the workflow so the two
+# cannot drift apart.
+#
+# It errs towards YES on any doubt (no base ref, unreadable diff). A slow gate
+# is an annoyance; a skipped gate that should have run is how a UI regression
+# reaches master.
+#
+# The base is the branch this work MERGES INTO, resolved by
+# scripts/push_base_ref.sh. It is deliberately not `@{upstream}`: after the
+# first push that is the branch's own remote ref, which would narrow the
+# question to "what changed since my last push" and let a UI change in commit
+# one be forgotten by commit two.
+VERIFY_ARGS=()
+# No `|| echo origin/master` fallback, deliberately. push_base_ref.sh cannot
+# exit non-zero -- every git call that could fail is guarded and the last line
+# is a bare echo -- so that fallback only fired if the script were missing
+# entirely, and it would then have supplied a CONFIDENT wrong answer.
+#
+# An empty BASE_REF is better: needs_e2e.sh treats a missing base ref as
+# "assume YES" and runs the full gate. A guard that cannot fire is worse than
+# no guard, because it reads as protection.
+BASE_REF="$("$REPO_ROOT/scripts/push_base_ref.sh")"
+if ! "$REPO_ROOT/scripts/needs_e2e.sh" "$BASE_REF"; then
+  VERIFY_ARGS+=(--no-e2e)
+  echo "🔒 pre-push: running the FAST local gate (no browser-visible files changed)"
+  echo "   E2E, accessibility and mobile are skipped here and still run in CI."
+else
+  echo "🔒 pre-push: running the FULL local gate (scripts/verify.sh)…"
+fi
 echo "   (bypass with 'git push --no-verify' — use sparingly)"
 
-if "$REPO_ROOT/scripts/verify.sh"; then
+if "$REPO_ROOT/scripts/verify.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}"; then
   echo "✅ pre-push: gate passed — pushing."
   exit 0
 else
