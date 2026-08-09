@@ -398,12 +398,25 @@ class TestIs3dReadFromArgumentNotFromCache:
         assert threed_result['is_3d'] is True, \
             'setup failed to reproduce the cache-poisoning precondition'
 
-        # Confirm the poison actually landed on the shared cache entry --
-        # otherwise the assertion below would pass for the wrong reason.
+        # The shared cache entry must NOT have been poisoned. This assertion
+        # was inverted until 2026-08-09: it required the poison to be present,
+        # because `guess()` set is_3d on the module-level `qualities` dict that
+        # every caller shares, so a 3D guess for one movie flipped is_3d on
+        # every other group holding that rung. Harmless while nothing compared
+        # them; not harmless once upgrade replacement decides whether to DELETE
+        # on exactly that field -- and the dangerous direction, a genuinely 3D
+        # copy reading as 2D, would authorise replacing a 2D copy with a 3D one.
+        #
+        # `guess()` now returns a copy, so the root cause is gone rather than
+        # merely worked around at the comparison. The assertion below still
+        # earns its place: it proves the comparison reads is_3d from its
+        # ARGUMENTS, which is what makes it correct even if some other path
+        # reintroduces sharing.
         cached_1080p = next(
             q for q in plugin.cached_qualities if q['identifier'] == '1080p')
-        assert cached_1080p['is_3d'] is True, \
-            'the cached quality dict was not poisoned -- test setup is wrong'
+        assert not cached_1080p.get('is_3d'), \
+            'guess() mutated the shared cached quality dict; every other group '\
+            'holding this rung now reads is_3d=True'
 
         # Now compare two FRESH, independent dicts -- the shape a release
         # document actually provides (D2: quality comes from the release

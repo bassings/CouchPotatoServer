@@ -113,6 +113,37 @@ class TestTheDecisionIsActuallyReached:
         assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse) == DECLINED_NO_OWNER
 
 
+class TestTheRankBoundaryNormalisesFireEventsEmptyList:
+    """`fireEvent(single=True)` collects only non-None handler results and
+    returns `[]` when there are none.
+
+    So `rankQuality` answering None for an UNRECOGNISED identifier arrives as
+    `[]`, and `[] is None` is False -- the unknown-identifier guard in
+    decide_replacement never fired through the real wiring. It was dead in
+    production while every unit test passed, because the tests injected a
+    plain function instead of going through the event bus.
+
+    This test goes through the REAL bus for that reason. Injecting a stand-in
+    here would reproduce the blind spot it exists to close.
+    """
+
+    def test_an_unknown_identifier_normalises_to_None_not_empty_list(self, monkeypatch):
+        from couchpotato.core.event import addEvent, fireEvent  # noqa: F401
+        from couchpotato.core.plugins.quality.main import QualityPlugin
+
+        quality = QualityPlugin.__new__(QualityPlugin)
+        quality.order = []
+        quality.addOrder()
+        addEvent('quality.rank', quality.rankQuality)
+
+        # Confirm the precondition rather than assuming it: the raw event
+        # really does hand back [] rather than None.
+        assert fireEvent('quality.rank', {'identifier': 'laserdisc'}, single=True) == []
+
+        assert Renamer._rankViaEvent({'identifier': 'laserdisc'}) is None
+        assert Renamer._rankViaEvent({'identifier': '2160p'}) == 0
+
+
 class TestTheGateConsultsTheNewKey:
     def test_upgrade_replace_off_refuses(self, scene):
         scene['state']['conf'] = {'upgrade_replace': False}

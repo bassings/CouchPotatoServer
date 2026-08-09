@@ -171,8 +171,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # testing so nobody saw what it did when it fired.
                 outcome = self._replacementOutcome(src, dst, group)
                 log.warning(
-                    'Destination already exists, keeping it (upgrade decision: %s)',
-                    outcome,
+                    'Destination already exists, keeping it: %s (upgrade decision: %s)',
+                    dst, outcome,
                 )
                 skipped = True
                 continue
@@ -196,6 +196,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             source_folder = group.get('parentdir')
             if source_folder and os.path.isdir(source_folder):
                 self.deleteFolder(source_folder)
+
+    @staticmethod
+    def _rankViaEvent(quality):
+        """`fireEvent(single=True)` collects only non-None handler results and
+        returns `[]` when there are none -- so `rankQuality` answering None for
+        an UNRECOGNISED identifier arrives here as `[]`, and `[] is None` is
+        False.
+
+        Without this normalisation the unknown-identifier guard in
+        decide_replacement never fires through the real wiring: it was dead in
+        production while passing every unit test, because the tests injected a
+        plain function. Found by review, confirmed by executing fireEvent.
+        """
+        result = fireEvent('quality.rank', quality, single=True)
+        return None if result == [] else result
 
     def _warnAboutTheDeadSetting(self):
         """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
@@ -232,13 +247,28 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         be made is a decision not to replace, and an exception escaping here
         would abort a scan that was otherwise fine (AC-QA-12).
         """
-        from couchpotato.core.plugins.renamer.replacement import decide_replacement
-
-        self._warnAboutTheDeadSetting()
+        from couchpotato.core.plugins.renamer.replacement import (
+            DECLINED_MULTI_FILE_GROUP,
+            DECLINED_SETTING_OFF,
+            decide_replacement,
+        )
 
         try:
+            self._warnAboutTheDeadSetting()
             media = group.get('media') or {}
             media_id = media.get('_id')
+
+            # The DB round trip only happens once the cheap refusals have
+            # passed. `upgrade_replace` is off by default, so otherwise every
+            # ordinary destination collision on every install would pay for a
+            # `get_many` plus a `get` per release to reach a foregone
+            # conclusion. decide_replacement checks these first too; this
+            # mirrors that order rather than trusting it.
+            if not bool(self.conf('upgrade_replace', default=False)):
+                return DECLINED_SETTING_OFF
+            if len((group.get('files') or {}).get('movie') or []) != 1:
+                return DECLINED_MULTI_FILE_GROUP
+
             releases = fireEvent('release.for_media', media_id, single=True) if media_id else []
 
             outcome, _existing = decide_replacement(
@@ -251,7 +281,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 is_better=lambda a, b: bool(
                     fireEvent('quality.is_better', a, b, single=True)
                 ),
-                rank=lambda q: fireEvent('quality.rank', q, single=True),
+                rank=self._rankViaEvent,
             )
             return outcome
         except Exception:
