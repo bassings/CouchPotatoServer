@@ -614,6 +614,53 @@ class TestTheClassifierIsTakenFromTheBaseBranch:
             'the working-tree classifier is still being executed'
         )
 
+    def test_a_base_without_the_classifier_runs_the_browser_suites(self):
+        """The bootstrap case, and it is not hypothetical: this job failed on
+        its own PR with `fatal: path 'scripts/needs_e2e.sh' exists on disk,
+        but not in 'origin/master'`, because the PR that introduces the
+        classifier is by definition a PR whose base does not have one.
+
+        Worth noting how it was found. The local tests assert the workflow's
+        TEXT; only CI executes it, so a shell error in that step is invisible
+        to `make verify`. The lesson is not "add more text assertions" -- it
+        is that this step's failure mode has to be safe, because the gate
+        cannot fully test itself.
+
+        No trusted answer available resolves the same way every other
+        uncertainty here does: run them.
+        """
+        scope = yaml.safe_load(CI.read_text())['jobs']['scope']
+        step = [s for s in scope['steps'] if s.get('id') == 'decide'][0]
+        code = [
+            ln for ln in step['run'].splitlines()
+            if not ln.lstrip().startswith('#')
+        ]
+        starts = [i for i, ln in enumerate(code) if 'if ! git show' in ln]
+        assert starts, (
+            'the classifier extraction is unguarded, so a base branch without '
+            'it fails the job instead of running the suites'
+        )
+
+        # Line-exact `fi`, not a substring search: 'fi' also occurs inside
+        # 'classifier', and splitting on it cut the block in half. The same
+        # substring trap that once turned `_make_plugin` into
+        # `_make_make_plugin`.
+        start = starts[0]
+        ends = [
+            i for i, ln in enumerate(code)
+            if i > start and ln.strip() == 'fi'
+        ]
+        assert ends, 'the guard block is never closed'
+        block = code[start:ends[0]]
+
+        assert any('browser=true' in ln for ln in block), (
+            'a base with no classifier does not resolve to running the '
+            'suites: %r' % block
+        )
+        assert not any('browser=false' in ln for ln in block), (
+            'the no-classifier path can resolve to SKIP'
+        )
+
     def test_the_pre_push_hook_DOES_use_the_working_tree_copy(self):
         """Deliberately different, and worth stating.
 

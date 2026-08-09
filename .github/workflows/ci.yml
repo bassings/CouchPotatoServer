@@ -89,7 +89,18 @@ jobs:
         # The base copy is what master is already protected by, so it is the
         # only version with any authority over what merges into master.
         CLASSIFIER="$(mktemp)"
-        git show "origin/$BASE_REF:scripts/needs_e2e.sh" > "$CLASSIFIER"
+        if ! git show "origin/$BASE_REF:scripts/needs_e2e.sh" > "$CLASSIFIER" 2>/dev/null; then
+          # The base branch has no classifier. True for the PR that
+          # INTRODUCES it -- which is how this was found, by the job failing
+          # on its own PR -- and for any branch cut before it landed.
+          #
+          # Run the browser suites. There is no trusted answer available, and
+          # "no trusted answer" resolves the same way every other uncertainty
+          # in this gate does.
+          echo "no classifier on origin/$BASE_REF -- browser suites run"
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
         chmod +x "$CLASSIFIER"
 
         if "$CLASSIFIER" "origin/$BASE_REF"; then
