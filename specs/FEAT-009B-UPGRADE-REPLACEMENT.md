@@ -272,12 +272,34 @@ reentrant lock, already used by `release/main.py:218`; the renamer does not
 import it. **Use that, not `Plugin.acquireLock`, which the architecture lens
 flagged as itself racy.**
 
-### D5 — path ownership keys on `copy_id`
+### D5 — path ownership is path-THEN-size, corrected 2026-08-09
 
-Release documents carry `copy_id` (`release/main.py:233`, via
-`copyIdentity(group['files'])`), not a file list. "Which release owns this path"
-is therefore answered by copy identity, and an ambiguous answer REFUSES rather
-than guessing — that ambiguity is how the wrong file gets deleted.
+**This decision was wrong as first written and is corrected here rather than
+quietly patched, because B2 was about to be built on it.** It said release
+documents carry `copy_id` "not a file list". They carry both:
+
+  - `release['files']` — a bucket→paths dict, written unconditionally on the
+    scan path (`release/main.py:314`);
+  - `release['copy_id']` — a SIZE-derived identity, written only when
+    computable (`copyIdentity`, `release/main.py:24-56`, which returns None if
+    a file cannot be stat'ed).
+
+So resolving the owner is two steps, which is what AC-SEC-9 actually describes
+("its recorded path after `sp()` normalisation and size, OR the `copy_id`"):
+
+1. **Candidates by path.** Releases whose `files['movie']` contains the
+   destination after `sp()` normalisation.
+2. **Disambiguate by size.** Path alone is not enough and the reason is
+   recorded in `copyIdentity`'s own docstring: the default template is
+   `<namethe> (<year>)/<thename><cd>.<ext>` with no quality or group token, so
+   **every copy of a movie renames to the same path**. When more than one
+   release claims it, the one whose `copy_id` matches the file actually on disk
+   wins.
+
+**Refuse on any residue**: no candidate, several candidates none of which match
+by size, several that all match, or a candidate with no `copy_id` at all.
+Unknown never means replaceable — that ambiguity is how the wrong file gets
+deleted.
 
 ### D6 — sub-tasks renumbered B0–B4
 
