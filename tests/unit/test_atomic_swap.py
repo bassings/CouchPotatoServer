@@ -10,7 +10,15 @@ mocks, and every failure case asserts the same two things:
 Asserting only "the call returned False" would pass for a function that had
 already deleted the movie and then errored.
 
-AC-SEC-6, AC-SEC-7, AC-DATA-3, and the T5.3 acceptance list.
+AC-SEC-6 (aliased paths: hardlink, symlink, broken symlink) and AC-SEC-7
+(the staging file: unique per attempt, never left behind while the source
+survives, never deleted when it is the only complete copy).
+
+Deliberately NOT claimed: AC-DATA-3, which is about releases belonging to
+the group's own media and needs a real SQLiteAdapter -- this file never
+touches the database. An earlier version of this docstring cited it, and
+an over-claimed citation is worse than none: it tells the next reader a
+criterion is covered when nothing here can cover it.
 """
 import hashlib
 import os
@@ -220,6 +228,55 @@ class TestTheStagedFileIsNeverTheOnlyCopyWeDelete:
         )
         replace_atomically(library['src'], library['dst'], _move_then_truncate_source)
         assert len(_no_stray_staging(library['dir'])) == 1
+        assert _sha(library['dst']) == library['old_sha']
+
+
+class TestTheTOCTOUGuardsActuallyGuard:
+    """Both `os.path.getsize` calls are wrapped because the paths were checked
+    moments earlier and can vanish in between.
+
+    Review pointed out that adding the guards is not the same as proving them,
+    which is CLAUDE.md rule 10 applied to my own fix -- so each one is forced
+    to raise here. Without these, an OSError escapes and breaks this
+    function's `(ok, reason)` contract, reaching the renamer as an untyped
+    failure instead of a named refusal.
+    """
+
+    def test_the_source_vanishing_after_its_existence_check_is_a_named_refusal(
+        self, library, monkeypatch
+    ):
+        real_getsize = os.path.getsize
+
+        def _vanishing(path):
+            if path == library['src']:
+                raise OSError('source removed between the check and the stat')
+            return real_getsize(path)
+
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.swap.os.path.getsize', _vanishing
+        )
+        ok, reason = replace_atomically(library['src'], library['dst'], _real_move)
+        assert (ok, reason) == (False, REFUSED_NO_SOURCE)
+        assert _sha(library['dst']) == library['old_sha']
+
+    def test_an_unstattable_staged_file_is_a_named_failure(self, library, monkeypatch):
+        real_getsize = os.path.getsize
+        state = {'moved': False}
+
+        def _move_then_break(src, dst):
+            shutil.move(src, dst)
+            state['moved'] = dst
+
+        def _breaks_on_staging(path):
+            if state['moved'] and path == state['moved']:
+                raise OSError('staged file unreadable')
+            return real_getsize(path)
+
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.swap.os.path.getsize', _breaks_on_staging
+        )
+        ok, reason = replace_atomically(library['src'], library['dst'], _move_then_break)
+        assert (ok, reason) == (False, FAILED_STAGING)
         assert _sha(library['dst']) == library['old_sha']
 
 

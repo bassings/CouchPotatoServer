@@ -231,8 +231,12 @@ arriving through a different door.
 
 **Decision: a new option key that defaults to off.** The stale `True` can then
 never activate anything, because the new code does not read that key. The old
-key is ignored, and its presence logged once so an operator who set it
-deliberately learns it no longer does anything.
+key is ignored. Its presence should be logged once so an operator who set it
+deliberately learns it no longer does anything — **and that clause is NOT yet
+implemented.** It belongs where the new key is read, which is the wiring step
+(B4), not in the pure decision layer. Review caught the gap between this
+paragraph and the code, so it is recorded here rather than left to be
+discovered: B4 does not ship without it.
 
 ### D2 — the on-disk quality comes from the RELEASE DOC, never `quality.guess`
 
