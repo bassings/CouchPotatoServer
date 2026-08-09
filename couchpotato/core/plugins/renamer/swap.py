@@ -38,6 +38,11 @@ REFUSED_NO_SOURCE = 'refused_no_source'
 REFUSED_DESTINATION_MISSING = 'refused_destination_missing'
 REFUSED_DESTINATION_IS_SYMLINK = 'refused_destination_is_symlink'
 REFUSED_SAME_FILE = 'refused_same_file'
+# Distinct from the above: we could not determine whether they are the same
+# file. Both refuse, but 'they are the same inode' and 'a stat failed' send
+# an operator to different places, and guessing the reassuring one is the
+# habit this module exists to avoid.
+REFUSED_IDENTITY_UNVERIFIABLE = 'refused_identity_unverifiable'
 
 # Failures after work began. The library file is intact in every one of them.
 FAILED_STAGING = 'failed_staging'
@@ -88,7 +93,7 @@ def replace_atomically(source, destination, move, remove=os.remove):
         if os.path.samefile(source, destination):
             return False, REFUSED_SAME_FILE
     except OSError:
-        return False, REFUSED_SAME_FILE
+        return False, REFUSED_IDENTITY_UNVERIFIABLE
 
     # Guarded for the same time-of-check/time-of-use reason as `samefile`
     # above: several stat calls on the destination happen between the source's

@@ -32,6 +32,7 @@ from couchpotato.core.plugins.renamer.swap import (
     FAILED_SWAP,
     REFUSED_DESTINATION_IS_SYMLINK,
     REFUSED_DESTINATION_MISSING,
+    REFUSED_IDENTITY_UNVERIFIABLE,
     REFUSED_NO_SOURCE,
     REFUSED_SAME_FILE,
     REPLACED,
@@ -136,6 +137,21 @@ class TestRefusalsTakenBeforeAnythingIsTouched:
         assert (ok, reason) == (False, REFUSED_SAME_FILE)
         assert os.path.exists(library['src'])
         assert os.path.exists(hard)
+
+
+class TestAFailedIdentityCheckSaysSoRatherThanGuessing:
+    def test_a_raising_samefile_is_its_own_refusal(self, library, monkeypatch):
+        """`samefile` stats both paths and can raise. Reporting
+        `refused_same_file` for that would assert something we do not know --
+        "they are the same inode" and "a stat failed" send an operator to
+        different places, and the first is the reassuring one."""
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.swap.os.path.samefile',
+            lambda a, b: (_ for _ in ()).throw(OSError('gone')),
+        )
+        ok, reason = replace_atomically(library['src'], library['dst'], _real_move)
+        assert (ok, reason) == (False, REFUSED_IDENTITY_UNVERIFIABLE)
+        assert _sha(library['dst']) == library['old_sha']
 
 
 class TestFailuresLeaveTheLibraryIntactAndTheDownloadRecoverable:
