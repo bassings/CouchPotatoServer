@@ -33,6 +33,29 @@ from couchpotato.core.plugins.renamer.replacement import (
 )
 
 
+def _isolated_event_registry(monkeypatch):
+    """Give this test its own copy of the event registry.
+
+    A SHALLOW `dict(events)` is not enough, and the difference is invisible
+    until it bites: `addEvent` does `handler_list = events[name]` then
+    `append` and `sort` (event.py:154-156). With a shallow copy the per-name
+    LIST objects are shared with the original, so registering a handler for a
+    name that already exists mutates the real registry -- and the "restore"
+    restores a dict whose lists were changed underneath it.
+
+    The failure is order-dependent: it only shows when something else has
+    already registered that event name in the same process, which is exactly
+    the condition that makes it hard to reproduce and easy to dismiss.
+    """
+    import couchpotato.core.event as event_module
+    monkeypatch.setattr(
+        event_module, 'events',
+        {name: list(handlers) for name, handlers in event_module.events.items()},
+        raising=True,
+    )
+    return event_module
+
+
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
     """A real destination file, a real group, and a release that owns it."""
@@ -134,17 +157,14 @@ class TestTheRankBoundaryNormalisesFireEventsEmptyList:
     """
 
     def test_an_unknown_identifier_normalises_to_None_not_empty_list(self, monkeypatch):
-        from couchpotato.core import event as event_module
         from couchpotato.core.event import addEvent, fireEvent
         from couchpotato.core.plugins.quality.main import QualityPlugin
 
         # The event registry is module-global and shared by every test in the
         # process. Registering a handler on it without restoring leaks a
         # `quality.rank` responder into whatever runs next, so a later test
-        # could pass because THIS one is still answering. Snapshot and restore.
-        monkeypatch.setattr(
-            event_module, 'events', dict(event_module.events), raising=True,
-        )
+        # could pass because THIS one is still answering.
+        _isolated_event_registry(monkeypatch)
 
         quality = QualityPlugin.__new__(QualityPlugin)
         quality.order = []
@@ -625,20 +645,18 @@ class TestTheIncompleteSignalSurvivesTheRealEventBus:
         """The precondition, asserted rather than assumed. If this ever stops
         being true the sentinel is unnecessary -- and the comment explaining
         it becomes a lie."""
-        from couchpotato.core import event as event_module
         from couchpotato.core.event import addEvent, fireEvent
 
-        monkeypatch.setattr(event_module, 'events', dict(event_module.events))
+        _isolated_event_registry(monkeypatch)
         addEvent('probe.answers_none', lambda *a, **k: None)
 
         assert fireEvent('probe.answers_none', single=True) == []
 
     def test_the_sentinel_reaches_the_caller_unchanged(self, monkeypatch):
-        from couchpotato.core import event as event_module
         from couchpotato.core.event import addEvent, fireEvent
         from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
 
-        monkeypatch.setattr(event_module, 'events', dict(event_module.events))
+        _isolated_event_registry(monkeypatch)
         addEvent('probe.incomplete', lambda *a, **k: INCOMPLETE_RELEASE_SET)
 
         assert fireEvent('probe.incomplete', single=True) is INCOMPLETE_RELEASE_SET
@@ -722,3 +740,55 @@ class TestAFailingQueryIsARefusalNotAnEscapingException:
         monkeypatch.setattr(release_main, 'get_db', lambda: db)
 
         assert plugin.forMedia('m') == []
+
+
+class TestTheEventRegistrySnapshotActuallyRestores:
+    """A shallow `dict(events)` looks like isolation and is not.
+
+    `addEvent` does `handler_list = events[name]` then `append` and `sort`
+    (event.py:154-156), so with a shallow copy the per-name LIST objects are
+    shared with the original registry. Registering a handler for a name that
+    ALREADY EXISTS mutates the real one, and the restore puts back a dict
+    whose lists were changed underneath it.
+
+    Order-dependent, which is what makes it worth a test: it only bites once
+    something else has registered that name in the same process, so it hides
+    until an unrelated test is added and then looks like that test's fault.
+    """
+
+    def test_registering_an_EXISTING_event_name_does_not_leak(self, monkeypatch):
+        import couchpotato.core.event as event_module
+        from couchpotato.core.event import addEvent
+
+        # Precondition: the name must already be present, or a shallow copy
+        # would have been sufficient and this proves nothing.
+        with pytest.MonkeyPatch.context() as outer:
+            outer.setattr(event_module, 'events', {'probe.shared': []})
+            addEvent('probe.shared', lambda: 'original')
+            before = len(event_module.events['probe.shared'])
+            assert before == 1
+
+            with pytest.MonkeyPatch.context() as inner:
+                _isolated_event_registry(inner)
+                addEvent('probe.shared', lambda: 'from the isolated test')
+                assert len(event_module.events['probe.shared']) == 2
+
+            after = len(event_module.events['probe.shared'])
+
+        assert after == before, (
+            'the isolated test leaked a handler into the shared registry: '
+            '%d handlers before, %d after' % (before, after)
+        )
+
+    def test_a_brand_new_event_name_also_does_not_leak(self, monkeypatch):
+        """The case a shallow copy DID handle, kept so the fix cannot regress
+        into only covering the new-name path."""
+        import couchpotato.core.event as event_module
+        from couchpotato.core.event import addEvent
+
+        with pytest.MonkeyPatch.context() as outer:
+            outer.setattr(event_module, 'events', {})
+            with pytest.MonkeyPatch.context() as inner:
+                _isolated_event_registry(inner)
+                addEvent('probe.brand_new', lambda: 'x')
+            assert 'probe.brand_new' not in event_module.events
