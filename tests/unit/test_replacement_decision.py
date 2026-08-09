@@ -55,6 +55,15 @@ def _rank_is_better(incoming, existing):
         return False
 
 
+def _rank(quality):
+    """Stand-in for QualityPlugin.rankQuality: None for anything unknown."""
+    order = ['2160p', 'bd50', '1080p', '720p']
+    try:
+        return order.index(quality['identifier'])
+    except (KeyError, ValueError, TypeError):
+        return None
+
+
 def _decide(**over):
     kwargs = dict(
         destination=DEST,
@@ -64,6 +73,7 @@ def _decide(**over):
         video_file_count=1,
         setting_enabled=True,
         is_better=_rank_is_better,
+        rank=_rank,
     )
     kwargs.update(over)
     return decide_replacement(**kwargs)
@@ -186,6 +196,24 @@ class TestAbsentIs3dOnTheExistingReleaseRefuses:
 
         _decide(releases=[recorded_3d], is_better=_spy)
         assert seen == [{'identifier': '720p', 'is_3d': True}]
+
+
+class TestTheIncomingSideIsHeldToTheSameStandard:
+    """Symmetry matters here, not tidiness.
+
+    `identifier`-only was accepted on the incoming side while the existing side
+    required both fields. The real `isBetterQuality` then refuses for the
+    missing `is_3d` and the caller reports `declined_not_better` -- "the copy
+    on disk is fine" -- when the truth is "we could not read the incoming
+    quality". Same refusal, wrong diagnosis, and the wrong one is reassuring.
+    """
+
+    def test_an_incoming_quality_with_no_is_3d_is_unknown_not_not_better(self):
+        assert _decide(incoming_quality={'identifier': '2160p'})[0] == DECLINED_UNKNOWN_QUALITY
+
+    def test_a_complete_incoming_quality_still_replaces(self):
+        """Control: the stricter check must not refuse the ordinary case."""
+        assert _decide(incoming_quality={'identifier': '2160p', 'is_3d': False})[0] == REPLACE
 
 
 class TestAnUnrecognisedIdentifierIsUnknownNotWorse:

@@ -90,7 +90,15 @@ def replace_atomically(source, destination, move, remove=os.remove):
     except OSError:
         return False, REFUSED_SAME_FILE
 
-    expected_size = os.path.getsize(source)
+    # Guarded for the same time-of-check/time-of-use reason as `samefile`
+    # above: several stat calls on the destination happen between the source's
+    # existence check and this one, and an operator or another process can
+    # remove it in that window. An escaping OSError would break the
+    # `(ok, reason)` contract.
+    try:
+        expected_size = os.path.getsize(source)
+    except OSError:
+        return False, REFUSED_NO_SOURCE
 
     # --- stage beside the destination ----------------------------------
     # Unique per attempt: two concurrent scans, or a previous crashed run,
@@ -112,6 +120,10 @@ def replace_atomically(source, destination, move, remove=os.remove):
     try:
         staged_size = os.path.getsize(staging)
     except OSError:
+        # Cleanup attempted here too, for consistency with every other failure
+        # branch. The helper still refuses to discard the staged file when it
+        # is the only complete copy, so consistency costs no safety.
+        _discard_staging_if_safe(staging, source, expected_size, remove)
         return False, FAILED_STAGING
 
     if staged_size != expected_size:

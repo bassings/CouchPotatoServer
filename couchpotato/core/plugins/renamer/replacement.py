@@ -57,7 +57,7 @@ def decide_replacement(
     video_file_count,
     setting_enabled,
     is_better,
-    rank=None,
+    rank,
 ):
     """Return `(outcome, existing_release)`.
 
@@ -106,18 +106,27 @@ def decide_replacement(
         'is_3d': existing['is_3d'],
     }
 
-    if not _has_identifier(incoming_quality):
-        # `quality.guess` returns None at quality/main.py:362 and :373, so this
-        # is reachable rather than defensive.
+    # Symmetric with the existing side above: identifier AND is_3d must both
+    # be present. `_has_identifier` alone accepted a dict carrying only an
+    # identifier, which the real `isBetterQuality` then refuses for a missing
+    # is_3d -- reporting `declined_not_better`, i.e. "the copy on disk is
+    # fine", when the truth is "we could not read the incoming quality".
+    # `quality.guess` returns None at quality/main.py:362 and :373, so the
+    # unknown case is reachable rather than defensive.
+    if not _is_complete_quality(incoming_quality):
         return DECLINED_UNKNOWN_QUALITY, None
 
     # An identifier the ranking does not recognise is UNKNOWN, not "not
     # better". Both refuse, but they send an operator to different places: one
     # says the copy on disk is fine, the other says we could not read the
     # quality at all.
-    if rank is not None:
-        if rank(incoming_quality) is None or rank(existing_quality) is None:
-            return DECLINED_UNKNOWN_QUALITY, None
+    #
+    # `rank` is a REQUIRED argument, not an optional one defaulting to None.
+    # As an optional it was a safety check that a caller could silently omit,
+    # which is the fail-OPEN shape this whole task exists to avoid -- and the
+    # wiring step is exactly where it would have been forgotten.
+    if rank(incoming_quality) is None or rank(existing_quality) is None:
+        return DECLINED_UNKNOWN_QUALITY, None
 
     if not is_better(incoming_quality, existing_quality):
         return DECLINED_NOT_BETTER, None
@@ -125,5 +134,12 @@ def decide_replacement(
     return REPLACE, existing
 
 
-def _has_identifier(quality):
-    return bool(isinstance(quality, dict) and quality.get('identifier'))
+def _is_complete_quality(quality):
+    """Both fields present. `is_3d` is checked for PRESENCE, not truth: absent
+    is not False, and a 3D copy is not comparable with a 2D one at the same
+    rung."""
+    return bool(
+        isinstance(quality, dict)
+        and quality.get('identifier')
+        and 'is_3d' in quality
+    )
