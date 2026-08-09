@@ -5,7 +5,7 @@ import traceback
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
@@ -296,7 +296,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             )
             return outcome
         except Exception:
-            log.error('Could not decide on upgrade replacement: %s', traceback.format_exc())
+            # The collided download is deliberately left in place, so a group
+            # that raises here raises again on every scheduled scan. An
+            # unbounded full traceback each time evicts the rotating log,
+            # which is the only diagnostic a self-hosted install has -- so the
+            # failure would erase the evidence of itself. `log_suppressed`
+            # keeps the FIRST occurrence complete and bounds the repeats.
+            #
+            # The key is the media id, never the path: paths are exactly what
+            # PrivacyFilter exists to keep out of logs.
+            log_suppressed(
+                log.error,
+                'renamer_replacement_decision_failed:%s' % (
+                    (group.get('media') or {}).get('_id') or 'unknown',
+                ),
+                'Could not decide on upgrade replacement: %s',
+                traceback.format_exc(),
+            )
             return 'declined_error'
 
     @staticmethod

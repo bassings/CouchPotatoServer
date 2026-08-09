@@ -74,7 +74,10 @@ def scene(tmp_path, monkeypatch):
         lambda _self, key, default=None, **kw: state['conf'].get(key, default),
         raising=False,
     )
-    Renamer._warned_dead_setting = False
+    # Restored, not just reset. `TestTheDeadSettingIsAnnouncedOnce` leaves it
+    # True, and other test files import Renamer in the same process -- a
+    # leaked True would silence a warning a later test expects to see.
+    monkeypatch.setattr(Renamer, '_warned_dead_setting', False, raising=False)
 
     def _group(incoming='2160p', movie_files=None):
         return {
@@ -422,3 +425,101 @@ class TestTheProductionCollisionPathReachesTheDecision:
             assert handle.read() == b'x' * 5000, 'the existing file was modified'
         assert src.exists(), 'the incoming file was destroyed'
         assert parent.is_dir(), 'cleanup ran despite a skip'
+
+
+class TestARepeATingFailureDoesNotEraseTheLog:
+    """The collided download is deliberately LEFT IN PLACE on a skip.
+
+    So a group whose release documents are malformed raises here, and raises
+    again on every scheduled scan, for as long as the file sits there. An
+    unbounded full traceback per scan evicts the rotating log, which is the
+    only diagnostic a self-hosted install has: the failure would quietly erase
+    the evidence of itself, along with everything else that happened.
+
+    The first occurrence must stay complete, or the bound has cost the
+    diagnosis it was meant to protect.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_windows(self):
+        from couchpotato.core.logger import reset_log_suppression
+        reset_log_suppression()
+        yield
+        reset_log_suppression()
+
+    def _exploding(self, scene, monkeypatch):
+        def _boom(event, *a, **k):
+            if event == 'release.for_media':
+                raise RuntimeError('malformed release document')
+            return None
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.main.fireEvent', _boom
+        )
+
+    def test_the_first_failure_is_reported_in_full(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('malformed release document' in m for m in messages), (
+            'the traceback was suppressed on its FIRST occurrence, so the '
+            'bound cost the diagnosis: %r' % messages
+        )
+
+    def test_twenty_scans_do_not_write_twenty_tracebacks(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            for _ in range(20):
+                scene['plugin']._replacementOutcome(
+                    's.mkv', scene['dst'], scene['group']()
+                )
+
+        tracebacks = [
+            r for r in caplog.records
+            if 'malformed release document' in r.getMessage()
+        ]
+        assert len(tracebacks) < 20, (
+            'every scan wrote a full traceback (%d of 20); the rotating log '
+            'is being evicted by the failure it is meant to record'
+            % len(tracebacks)
+        )
+        assert tracebacks, 'nothing was recorded at all'
+
+    def test_the_suppression_key_carries_no_filesystem_path(self, scene, monkeypatch):
+        """PrivacyFilter exists to keep library paths out of logs, and a
+        suppression key is retained state, not a transient message. Keying on
+        the destination would put a private path somewhere the filter does not
+        reach."""
+        keys = []
+        import couchpotato.core.plugins.renamer.main as renamer_main
+        monkeypatch.setattr(
+            renamer_main, 'log_suppressed',
+            lambda method, key, message, *a, **k: keys.append(key),
+        )
+        self._exploding(scene, monkeypatch)
+        scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+
+        assert keys, 'the failure did not go through log_suppressed at all'
+        assert scene['dst'] not in keys[0]
+        assert 'The Thing' not in keys[0]
+        assert 'media-1' in keys[0], (
+            'the key does not distinguish media, so one broken group would '
+            'silence the diagnosis for every other: %r' % keys[0]
+        )
+
+    def test_a_different_media_is_not_silenced_by_the_first(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            for _ in range(6):
+                scene['plugin']._replacementOutcome(
+                    's.mkv', scene['dst'], scene['group']()
+                )
+            other = scene['group']()
+            other['media'] = {'_id': 'media-2'}
+            caplog.clear()
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], other)
+
+        assert any(
+            'malformed release document' in r.getMessage() for r in caplog.records
+        ), 'a second, unrelated broken group was silenced by the first'
