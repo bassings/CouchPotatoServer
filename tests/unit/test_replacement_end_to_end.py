@@ -1046,9 +1046,13 @@ class TestAFailedReverseSymlinkNeverDestroysTheDownload:
             'the disposal'
         )
         assert calls['n'] == 1, 'the link was never attempted'
+        # The temp link is uuid-suffixed (`.cp-link-<hex>.tmp`), so match the
+        # MIDDLE rather than the end. An `endswith('.cp-link-tmp')` here went
+        # vacuous the moment the name gained its uuid, and passed while
+        # proving nothing.
         strays = [
             n for n in os.listdir(os.path.dirname(world['src']))
-            if n.endswith('.cp-link-tmp')
+            if '.cp-link-' in n
         ]
         assert not strays, 'a temporary link survived the failure: %r' % strays
         assert os.path.exists(world['src'])
@@ -1058,3 +1062,108 @@ class TestAFailedReverseSymlinkNeverDestroysTheDownload:
         _run(world)
         assert os.path.islink(world['src'])
         assert os.path.realpath(world['src']) == os.path.realpath(world['dst'])
+
+
+class TestBookkeepingHappensBeforeTheDownloadIsDisposedOf:
+    """Both steps are best-effort, but the ORDER between them is not free.
+
+    A kill between them leaves different wreckage:
+
+      dispose first  -- download gone, release still `done` claiming a file
+                        that no longer exists. That is the unbounded
+                        re-download loop D3 exists to prevent, with nothing
+                        left on disk to recover from.
+      supersede first-- release correctly off `done`, download still present.
+                        Untidy and entirely recoverable.
+
+    The swap has already committed either way. The only question is which
+    half-finished state a crash leaves, so pick the recoverable one.
+    """
+
+    def test_the_release_is_superseded_before_the_source_is_touched(self, world):
+        order = []
+        real_dispose = type(world['plugin'])._disposeOfSourceAfterReplacement
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.update_status':
+                order.append('supersede')
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+
+        import couchpotato.core.plugins.renamer.main as renamer_main
+        with pytest.MonkeyPatch.context() as patch:
+            def _dispose(self, *a, **k):
+                order.append('dispose')
+                return real_dispose(self, *a, **k)
+            patch.setattr(renamer_main.Renamer,
+                          '_disposeOfSourceAfterReplacement', _dispose)
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+        assert order == ['supersede', 'dispose'], (
+            'the download was disposed of before the release was taken off '
+            '"done": a crash in that window loses the download AND leaves the '
+            'release claiming a destroyed file. Order was %r' % order
+        )
+
+    def test_a_failed_supersede_does_not_stop_the_disposal(self, world):
+        """Reordering must not make disposal conditional on bookkeeping. The
+        library is already correct; leaving the download behind forever
+        because a database write failed would be a new bug."""
+        def _fire(event, *args, **kwargs):
+            if event == 'release.update_status':
+                return False
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        world['state']['conf']['default_file_action'] = 'move'
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW
+        assert not os.path.exists(world['src']), (
+            'disposal was skipped because the status update failed'
+        )
+
+
+class TestTheTemporaryLinkNameCannotCollide:
+    def test_two_attempts_do_not_reuse_the_same_temp_name(self, world, monkeypatch):
+        """swap.py uuid-suffixes its staging path because "two concurrent
+        scans, or a previous crashed run, must not collide". A fixed name here
+        would have been the one place in this flow assuming the
+        single-process case the rest of it explicitly does not."""
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        seen = []
+        real_symlink = renamer_main.symlink
+
+        def _record(target, link_name):
+            seen.append(link_name)
+            return real_symlink(target, link_name)
+
+        monkeypatch.setattr(renamer_main, 'symlink', _record)
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+
+        _run(world)
+
+        # A second replacement. The first left `src` as a symlink into the
+        # library, and a symlinked source is refused (correctly) -- so it has
+        # to be replaced with a real file, or this second attempt never
+        # reaches the linking code and the test proves nothing.
+        os.remove(world['src'])
+        with open(world['src'], 'wb') as handle:
+            handle.write(NEW)
+        with open(world['dst'], 'wb') as handle:
+            handle.write(OLD)
+        world['state']['releases'][0]['copy_id'] = __import__(
+            'couchpotato.core.plugins.renamer.owner', fromlist=['x']
+        ).copy_id_for_sizes([len(OLD)])
+        _run(world)
+
+        assert len(seen) == 2, (
+            'the second replacement never reached the linking code: %r' % seen
+        )
+        assert seen[0] != seen[1], (
+            'the temp link name is deterministic, so two concurrent scans '
+            'would collide on it: %r' % seen
+        )

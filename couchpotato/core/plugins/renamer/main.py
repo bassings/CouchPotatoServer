@@ -2,6 +2,7 @@
 import os
 import time
 import traceback
+import uuid
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
@@ -222,10 +223,27 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         ),
                     )
                     if ok:
+                        # Bookkeeping BEFORE disposal, and the order is not
+                        # free. Both are best-effort, but a kill between them
+                        # leaves different wreckage:
+                        #
+                        #   dispose first  -> download gone, release still
+                        #                     `done` claiming a file that no
+                        #                     longer exists. That is the
+                        #                     unbounded re-download loop D3
+                        #                     exists to prevent, with nothing
+                        #                     left on disk to recover from.
+                        #   supersede first-> release correctly off `done`,
+                        #                     download still present. Untidy
+                        #                     and entirely recoverable.
+                        #
+                        # The swap has already committed either way, so the
+                        # only question is which half-finished state a crash
+                        # leaves behind. Pick the recoverable one.
+                        self._supersedeRelease(superseded, group, dst)
                         self._disposeOfSourceAfterReplacement(
                             src, dst, (group.get('media') or {}).get('_id'),
                         )
-                        self._supersedeRelease(superseded, group, dst)
                         moved_any = True
                         continue
                     # The swap refused or failed. The library file is intact
@@ -589,7 +607,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # The log below then said "the download is still on disk",
                 # which was false. A message that reassures about data safety
                 # while the data is gone is worse than no message.
-                staging_link = source + '.cp-link-tmp'
+                # Unique per attempt, for the same reason swap.py's staging
+                # path is: two concurrent scans, or a previous crashed run,
+                # must not collide on this name. A fixed name here would have
+                # been the one place in this flow that assumed the
+                # single-process case the rest of it explicitly does not.
+                staging_link = '%s.cp-link-%s.tmp' % (source, uuid.uuid4().hex)
                 try:
                     symlink(destination, staging_link)
                     os.replace(staging_link, source)
