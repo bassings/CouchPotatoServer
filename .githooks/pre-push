@@ -10,10 +10,27 @@ set -euo pipefail
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
 
-echo "🔒 pre-push: running full local gate (scripts/verify.sh)…"
+# Coverage follows the CHANGE SURFACE, not the branch. A Python-only change
+# does not need five minutes of browser tests here, because CI runs them on
+# master and nightly regardless -- and `scripts/needs_e2e.sh` is the single
+# source of truth for that question, shared with the workflow so the two
+# cannot drift apart.
+#
+# It errs towards YES on any doubt (no base ref, unreadable diff). A slow gate
+# is an annoyance; a skipped gate that should have run is how a UI regression
+# reaches master.
+VERIFY_ARGS=()
+BASE_REF="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo origin/master)"
+if ! "$REPO_ROOT/scripts/needs_e2e.sh" "$BASE_REF"; then
+  VERIFY_ARGS+=(--no-e2e)
+  echo "🔒 pre-push: running the FAST local gate (no browser-visible files changed)"
+  echo "   E2E, accessibility and mobile are skipped here and still run in CI."
+else
+  echo "🔒 pre-push: running the FULL local gate (scripts/verify.sh)…"
+fi
 echo "   (bypass with 'git push --no-verify' — use sparingly)"
 
-if "$REPO_ROOT/scripts/verify.sh"; then
+if "$REPO_ROOT/scripts/verify.sh" "${VERIFY_ARGS[@]+"${VERIFY_ARGS[@]}"}"; then
   echo "✅ pre-push: gate passed — pushing."
   exit 0
 else

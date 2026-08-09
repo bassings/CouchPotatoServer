@@ -5,6 +5,11 @@ on:
     branches: [ master, develop ]
   pull_request:
     branches: [ master, develop ]
+  # Nightly, so the browser suites run against master even in a week with no
+  # UI changes. Without this, "coverage follows the change surface" would mean
+  # a long run of Python-only work never exercises the UI at all.
+  schedule:
+    - cron: '0 15 * * *'   # 01:00 Australia/Sydney, off-peak for the owner
 
 permissions:
   contents: read
@@ -19,6 +24,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Answers "do the browser suites need to run?" ONCE, via the same script the
+  # pre-push hook calls. Sharing the script is the point: two copies of "what
+  # counts as a UI change" drift, and the quieter side then silently stops
+  # covering something.
+  #
+  # Always YES on master and on the nightly run -- the change-surface rule is a
+  # PR-time optimisation, not a reduction in what master is held to.
+  scope:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      browser: ${{ steps.decide.outputs.browser }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0        # needs\_e2e.sh diffs against the base
+    - id: decide
+      run: |
+        set -euo pipefail
+        if [ "${{ github.event_name }}" != "pull_request" ]; then
+          echo "not a pull request (${{ github.event_name }}) -- browser suites always run"
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if ./scripts/needs_e2e.sh "origin/${{ github.base_ref }}"; then
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "browser=false" >> "$GITHUB_OUTPUT"
+        fi
+
   lint:
     runs-on: ubuntu-latest
     permissions:
@@ -242,7 +278,14 @@ jobs:
     permissions:
       contents: read
       actions: write
-    needs: [test, ui-unit-tests]
+    needs: [test, ui-unit-tests, scope]
+    # Skipped when nothing browser-visible changed. GitHub reports a skipped
+    # job as satisfying a required status check, which is what keeps such a PR
+    # mergeable -- and that is a deliberate reliance, recorded here because it
+    # is the same GitHub behaviour that once let the accessibility verdict be
+    # ABSENT rather than red on broken branches. It is acceptable only because
+    # the skip is decided by the change surface and master/nightly always run.
+    if: needs.scope.outputs.browser == 'true'
     steps:
     - uses: actions/checkout@v7
     
@@ -376,7 +419,11 @@ jobs:
     permissions:
       contents: read
       actions: write
-    # NO `needs:` -- deliberately. Was `needs: ui-e2e-tests`, added 2026-02-16
+    needs: [scope]
+    if: needs.scope.outputs.browser == 'true'
+    # `needs: [scope]` ONLY -- scope is seconds, so this still starts almost
+    # immediately and does not re-enter the serial chain CI-003 removed it
+    # from. Was `needs: ui-e2e-tests`, added 2026-02-16
     # in 40539241 with no stated reason and no data dependency: since T1.7 this
     # job starts, seeds and tears down its OWN server on its own runner, so
     # there was no shared state for the edge to sequence. It cost the whole
