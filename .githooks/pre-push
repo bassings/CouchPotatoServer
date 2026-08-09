@@ -19,8 +19,14 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # It errs towards YES on any doubt (no base ref, unreadable diff). A slow gate
 # is an annoyance; a skipped gate that should have run is how a UI regression
 # reaches master.
+#
+# The base is the branch this work MERGES INTO, resolved by
+# scripts/push_base_ref.sh. It is deliberately not `@{upstream}`: after the
+# first push that is the branch's own remote ref, which would narrow the
+# question to "what changed since my last push" and let a UI change in commit
+# one be forgotten by commit two.
 VERIFY_ARGS=()
-BASE_REF="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null || echo origin/master)"
+BASE_REF="$("$REPO_ROOT/scripts/push_base_ref.sh" 2>/dev/null || echo origin/master)"
 if ! "$REPO_ROOT/scripts/needs_e2e.sh" "$BASE_REF"; then
   VERIFY_ARGS+=(--no-e2e)
   echo "🔒 pre-push: running the FAST local gate (no browser-visible files changed)"

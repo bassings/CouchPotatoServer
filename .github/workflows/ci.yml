@@ -42,14 +42,21 @@ jobs:
       with:
         fetch-depth: 0        # needs\_e2e.sh diffs against the base
     - id: decide
+      # Context values go through `env:`, never spliced into `run:`. Not
+      # exploitable today (the pull_request trigger is filtered to two literal
+      # branches), but it is the shape GitHub's hardening guide flags, and it
+      # is one careless widening of that filter away from being real.
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
       run: |
         set -euo pipefail
-        if [ "${{ github.event_name }}" != "pull_request" ]; then
-          echo "not a pull request (${{ github.event_name }}) -- browser suites always run"
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "not a pull request ($EVENT_NAME) -- browser suites always run"
           echo "browser=true" >> "$GITHUB_OUTPUT"
           exit 0
         fi
-        if ./scripts/needs_e2e.sh "origin/${{ github.base_ref }}"; then
+        if ./scripts/needs_e2e.sh "origin/$BASE_REF"; then
           echo "browser=true" >> "$GITHUB_OUTPUT"
         else
           echo "browser=false" >> "$GITHUB_OUTPUT"
@@ -285,7 +292,19 @@ jobs:
     # is the same GitHub behaviour that once let the accessibility verdict be
     # ABSENT rather than red on broken branches. It is acceptable only because
     # the skip is decided by the change surface and master/nightly always run.
-    if: needs.scope.outputs.browser == 'true'
+    #
+    # And it is why this condition FAILS CLOSED. Keying on `== 'true'` meant a
+    # scope job that died before writing its output -- failed checkout,
+    # classifier that would not run -- skipped both browser jobs and left the
+    # PR mergeable with no E2E and no accessibility coverage at all. Only an
+    # explicit 'false' is safe to skip on. `!cancelled()` is required because
+    # the implicit success() of `needs:` would otherwise skip this job before
+    # the condition is read.
+    if: >-
+      !cancelled()
+      && needs.test.result == 'success'
+      && needs.ui-unit-tests.result == 'success'
+      && needs.scope.outputs.browser != 'false'
     steps:
     - uses: actions/checkout@v7
     
@@ -420,7 +439,16 @@ jobs:
       contents: read
       actions: write
     needs: [scope]
-    if: needs.scope.outputs.browser == 'true'
+    # Fail CLOSED. A skipped job satisfies a required status check on GitHub,
+    # so keying on `== 'true'` meant that a scope job which died before writing
+    # its output -- failed checkout, classifier that would not run -- skipped
+    # both browser jobs and left the PR mergeable with no E2E and no
+    # accessibility coverage. Only an explicit 'false' is safe to skip on.
+    # `!cancelled()` is required because the implicit success() of `needs:`
+    # would otherwise skip this job before the condition is read at all.
+    if: >-
+      !cancelled()
+      && needs.scope.outputs.browser != 'false'
     # `needs: [scope]` ONLY -- scope is seconds, so this still starts almost
     # immediately and does not re-enter the serial chain CI-003 removed it
     # from. Was `needs: ui-e2e-tests`, added 2026-02-16
