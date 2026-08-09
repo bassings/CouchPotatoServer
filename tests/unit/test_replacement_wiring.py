@@ -792,3 +792,52 @@ class TestTheEventRegistrySnapshotActuallyRestores:
                 _isolated_event_registry(inner)
                 addEvent('probe.brand_new', lambda: 'x')
             assert 'probe.brand_new' not in event_module.events
+
+
+class TestTheCollisionWarningCarriesNoPath:
+    """`PrivacyFilter` (logger.py) redacts `name=value` secrets, NOT paths, so
+    a library path at WARNING reaches the rotating ring and `docker logs`
+    verbatim -- on every collision, forever, because the source folder is
+    deliberately left in place and the collision recurs every scan.
+
+    This line predates the feature, which is not a reason to leave it
+    inconsistent with the code now sitting directly beneath it, where
+    `log_suppressed` is keyed on the media id for exactly this reason.
+
+    The path is still what an operator needs to diagnose a recurring
+    collision, so it moves to DEBUG rather than disappearing: that is the
+    level somebody turns on while actually looking.
+    """
+
+    def _collide(self, scene, tmp_path):
+        import os as os_module
+        src = os_module.path.join(str(tmp_path), 'incoming.mkv')
+        with open(src, 'wb') as handle:
+            handle.write(b'y' * 9000)
+        scene['plugin']._moveRenamedFiles({src: scene['dst']}, scene['group']('720p'))
+
+    def test_the_warning_names_the_media_not_the_path(self, scene, caplog, tmp_path):
+        with caplog.at_level(logging.WARNING):
+            self._collide(scene, tmp_path)
+
+        warnings = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.WARNING and 'Destination already exists' in r.getMessage()
+        ]
+        assert warnings, 'the collision was not reported at WARNING'
+        assert scene['dst'] not in warnings[0], (
+            'a library path reached WARNING, which ships and rotates '
+            'unattended: %s' % warnings[0]
+        )
+        assert 'media-1' in warnings[0], (
+            'the warning names neither path nor media, identifying nothing'
+        )
+
+    def test_DEBUG_keeps_the_path(self, scene, caplog, tmp_path):
+        with caplog.at_level(logging.DEBUG):
+            self._collide(scene, tmp_path)
+
+        assert any(
+            r.levelno == logging.DEBUG and scene['dst'] in r.getMessage()
+            for r in caplog.records
+        ), 'the path is nowhere, so a recurring collision cannot be diagnosed'

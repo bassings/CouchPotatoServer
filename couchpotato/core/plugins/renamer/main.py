@@ -170,10 +170,26 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # what hid the danger, because the gate never fired in
                 # testing so nobody saw what it did when it fired.
                 outcome = self._replacementOutcome(src, dst, group)
+                # WARNING carries no path; DEBUG does.
+                #
+                # WARNING is the level that ships and rotates unattended, and
+                # `PrivacyFilter` (logger.py) redacts `name=value` secrets,
+                # NOT paths -- so a library path here reaches the ring buffer
+                # and `docker logs` verbatim, on every collision, forever.
+                # The new code just below is careful to key `log_suppressed`
+                # on the media id for exactly that reason, and this line
+                # predating the feature is not a reason to leave it
+                # inconsistent with the code now sitting beside it.
+                #
+                # The path is still needed to diagnose a recurring collision,
+                # so DEBUG keeps it: that is the level somebody turns on while
+                # actually looking.
                 log.warning(
-                    'Destination already exists, keeping it: %s (upgrade decision: %s)',
-                    dst, outcome,
+                    'Destination already exists, keeping it: media %s '
+                    '(upgrade decision: %s)',
+                    (group.get('media') or {}).get('_id'), outcome,
                 )
+                log.debug('The collided destination was: %s', dst)
                 skipped = True
                 continue
 
