@@ -248,6 +248,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         would abort a scan that was otherwise fine (AC-QA-12).
         """
         from couchpotato.core.plugins.renamer.replacement import (
+            DECLINED_INCOMPLETE_EVIDENCE,
             DECLINED_MULTI_FILE_GROUP,
             DECLINED_SETTING_OFF,
             decide_replacement,
@@ -269,7 +270,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             if len((group.get('files') or {}).get('movie') or []) != 1:
                 return DECLINED_MULTI_FILE_GROUP
 
-            releases = fireEvent('release.for_media', media_id, single=True) if media_id else []
+            # require_complete: an unreadable release document may be the
+            # one that claims this destination, and resolving ownership from a
+            # partial set can attribute the wrong quality to the file about to
+            # be deleted. None means "the set is incomplete" -- distinct from
+            # an empty list, which means "this media genuinely has no
+            # releases".
+            releases = fireEvent(
+                'release.for_media', media_id, require_complete=True, single=True,
+            ) if media_id else []
+            if releases is None:
+                return DECLINED_INCOMPLETE_EVIDENCE
 
             outcome, _existing = decide_replacement(
                 destination=dst,

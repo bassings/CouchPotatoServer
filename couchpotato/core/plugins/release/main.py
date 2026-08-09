@@ -794,12 +794,25 @@ class Release(Plugin):
                 else:
                     yield ms
 
-    def forMedia(self, media_id):
+    def forMedia(self, media_id, require_complete = False):
+        """Releases for a media id, best-effort by default.
 
+        `require_complete=True` returns None instead of a partial list when any
+        existing document could not be READ. Most callers want the partial
+        list -- showing four of five releases in the UI beats showing an
+        error. Upgrade replacement does not: an omitted document may be the one
+        that claims the destination, and resolving ownership from an
+        incomplete set can attribute the wrong quality to the file about to be
+        deleted.
+
+        `RecordDeleted` does NOT count as incomplete: that document genuinely
+        no longer exists, so excluding it leaves the set correct.
+        """
         db = get_db()
         raw_releases = db.get_many('release', media_id)
 
         releases = []
+        unreadable = 0
         for r in raw_releases:
             try:
                 doc = db.get('id', r.get('_id'))
@@ -807,9 +820,18 @@ class Release(Plugin):
             except RecordDeleted:
                 pass
             except (ValueError, EOFError):
+                unreadable += 1
                 fireEvent('database.delete_corrupted', r.get('_id'), traceback_error = traceback.format_exc(0))
             except Exception:
+                unreadable += 1
                 log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())
+
+        if require_complete and unreadable:
+            log.warning(
+                'Refusing to answer with a partial release list for media %s: '
+                '%s document(s) could not be read.', media_id, unreadable,
+            )
+            return None
 
         # tryFloat, not tryInt: scores are floats (score/main.py adds
         # seeders * 100 / 15), so truncating would tie releases whose scores

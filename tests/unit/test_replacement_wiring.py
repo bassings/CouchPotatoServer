@@ -16,6 +16,7 @@ So the assertions here are about REACHABILITY, not just refusal:
 Nothing is replaced yet: `_moveRenamedFiles` still skips. This step exists to
 prove the decision is live before anything acts on it.
 """
+import logging
 import os
 
 import pytest
@@ -24,6 +25,7 @@ from couchpotato.core.plugins.renamer.main import Renamer
 from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
 from couchpotato.core.plugins.renamer.owner import DECLINED_NO_OWNER
 from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_INCOMPLETE_EVIDENCE,
     DECLINED_NOT_BETTER,
     DECLINED_SETTING_OFF,
     REPLACE,
@@ -128,8 +130,17 @@ class TestTheRankBoundaryNormalisesFireEventsEmptyList:
     """
 
     def test_an_unknown_identifier_normalises_to_None_not_empty_list(self, monkeypatch):
-        from couchpotato.core.event import addEvent, fireEvent  # noqa: F401
+        from couchpotato.core import event as event_module
+        from couchpotato.core.event import addEvent, fireEvent
         from couchpotato.core.plugins.quality.main import QualityPlugin
+
+        # The event registry is module-global and shared by every test in the
+        # process. Registering a handler on it without restoring leaks a
+        # `quality.rank` responder into whatever runs next, so a later test
+        # could pass because THIS one is still answering. Snapshot and restore.
+        monkeypatch.setattr(
+            event_module, 'events', dict(event_module.events), raising=True,
+        )
 
         quality = QualityPlugin.__new__(QualityPlugin)
         quality.order = []
@@ -244,3 +255,170 @@ class TestTheDecisionNeverBreaksAScan:
             's.mkv', '/definitely/not/here.mkv', scene['group']('2160p')
         )
         assert outcome != REPLACE
+
+
+class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
+    """A release document that cannot be READ is not a release that is absent.
+
+    `release.forMedia` skips unreadable documents and returns the rest, which
+    is right for the UI -- four of five releases beats an error page. It is
+    wrong here: the skipped document may be the one that claims this
+    destination, and resolving ownership from a partial set can attribute the
+    wrong quality to the file about to be deleted. So the renamer asks for a
+    complete answer and refuses when it cannot have one.
+    """
+
+    def test_an_incomplete_release_list_refuses_rather_than_resolving(self, scene):
+        scene['state']['releases'] = None      # forMedia's "I could not read it all"
+        outcome = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('2160p')
+        )
+        assert outcome == DECLINED_INCOMPLETE_EVIDENCE
+
+    def test_incomplete_is_distinguished_from_genuinely_having_no_releases(self, scene):
+        """The distinction is the whole point: one sends an operator to their
+        database, the other to their library. Collapsing them into a single
+        refusal would lose the only signal that says which."""
+        scene['state']['releases'] = []
+        assert scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('2160p')
+        ) == DECLINED_NO_OWNER
+
+    def test_the_renamer_actually_asks_for_a_complete_answer(self, scene):
+        """Anti-inertness: forMedia defaults to the partial list, so dropping
+        `require_complete=True` at the call site would silently restore the
+        old behaviour with every other test still green."""
+        seen = {}
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.for_media':
+                seen.update(kwargs)
+                return scene['state']['releases']
+            return None
+
+        import couchpotato.core.plugins.renamer.main as renamer_main
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(renamer_main, 'fireEvent', _fire)
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+
+        assert seen.get('require_complete') is True, (
+            'the renamer accepted a possibly-partial release list: %r' % (seen,)
+        )
+
+
+class TestForMediaHonoursRequireComplete:
+    """The other half of the boundary, tested on forMedia itself.
+
+    Asserting only the renamer's side would leave the flag free to be a no-op.
+    """
+
+    def _plugin(self, docs, raw_ids):
+        from couchpotato.core.plugins.release.main import Release
+
+        plugin = Release.__new__(Release)
+
+        class _DB:
+            def get_many(self, *a, **k):
+                return [{'_id': i} for i in raw_ids]
+
+            def get(self, _index, _id):
+                value = docs[_id]
+                if isinstance(value, Exception):
+                    raise value
+                return value
+
+        return plugin, _DB()
+
+    def test_a_complete_read_returns_the_list_under_both_modes(self, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+        plugin, db = self._plugin({'a': {'_id': 'a'}, 'b': {'_id': 'b'}}, ['a', 'b'])
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        assert len(plugin.forMedia('m')) == 2
+        assert len(plugin.forMedia('m', require_complete=True)) == 2
+
+    def test_an_unreadable_document_makes_the_strict_answer_None(self, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+        plugin, db = self._plugin(
+            {'a': {'_id': 'a'}, 'b': RuntimeError('disk went away')}, ['a', 'b'],
+        )
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        # Default stays best-effort -- the UI callers depend on this.
+        assert len(plugin.forMedia('m')) == 1
+        # Strict refuses to answer at all.
+        assert plugin.forMedia('m', require_complete=True) is None
+
+    def test_a_deleted_document_does_NOT_count_as_incomplete(self, monkeypatch):
+        """RecordDeleted means the document genuinely no longer exists, so
+        excluding it leaves the set CORRECT. Counting it as incomplete would
+        make ordinary deletion refuse every replacement forever."""
+        import couchpotato.core.plugins.release.main as release_main
+        from CodernityDB.database import RecordDeleted
+
+        plugin, db = self._plugin(
+            {'a': {'_id': 'a'}, 'b': RecordDeleted('gone')}, ['a', 'b'],
+        )
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        result = plugin.forMedia('m', require_complete=True)
+        assert result is not None and len(result) == 1
+
+    def test_a_corrupt_document_counts_as_incomplete(self, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+        plugin, db = self._plugin(
+            {'a': {'_id': 'a'}, 'b': ValueError('corrupt')}, ['a', 'b'],
+        )
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+        monkeypatch.setattr(release_main, 'fireEvent', lambda *a, **k: None)
+
+        assert plugin.forMedia('m', require_complete=True) is None
+
+
+class TestTheProductionCollisionPathReachesTheDecision:
+    """Every other test in this file calls `_replacementOutcome` directly.
+
+    That leaves the suite vulnerable to exactly the inertness it was written to
+    prevent: deleting the call from `_moveRenamedFiles` would keep all of them
+    green while the gate never ran in production. These drive the real
+    collision path instead.
+    """
+
+    def test_a_collision_during_a_real_rename_computes_the_outcome(self, scene, caplog):
+        src = os.path.join(os.path.dirname(scene['dst']), 'incoming.mkv')
+        with open(src, 'wb') as handle:
+            handle.write(b'y' * 9000)
+
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._moveRenamedFiles(
+                {src: scene['dst']}, scene['group']('2160p'),
+            )
+
+        collision = [
+            r.getMessage() for r in caplog.records
+            if 'Destination already exists' in r.getMessage()
+        ]
+        assert collision, 'the collision path was never taken'
+        assert REPLACE in collision[0], (
+            'the rename path logged a collision without computing the upgrade '
+            'decision -- the gate is unreachable in production: %s' % collision[0]
+        )
+
+    def test_the_existing_file_is_still_kept_and_cleanup_suppressed(self, scene, tmp_path):
+        """B4a computes but does not act. Proving that here means a later step
+        that starts acting has to change this test deliberately."""
+        parent = tmp_path / 'download'
+        parent.mkdir()
+        src = parent / 'incoming.mkv'
+        src.write_bytes(b'y' * 9000)
+
+        group = scene['group']('2160p')
+        group['parentdir'] = str(parent)
+        scene['state']['conf']['cleanup'] = True
+
+        scene['plugin']._moveRenamedFiles({str(src): scene['dst']}, group)
+
+        with open(scene['dst'], 'rb') as handle:
+            assert handle.read() == b'x' * 5000, 'the existing file was modified'
+        assert src.exists(), 'the incoming file was destroyed'
+        assert parent.is_dir(), 'cleanup ran despite a skip'
