@@ -231,3 +231,57 @@ class TestTheSwapFailureNamesTheOsCondition:
         assert 'Read-only file system' in messages
         assert '30' in messages
         assert files['dst'] not in messages, 'the failure log leaked the path'
+
+
+class TestAnUnestablishedBaselineRefusesRatherThanSkipping:
+    """`destination_identity=None` used to mean "no check", so a caller that
+    TRIED and failed to stat the destination silently disabled the one guard
+    against another process replacing it mid-stage.
+
+    That is fail-open on the path that destroys a file, in the exact place
+    this module's design says to fail closed. It needed two stacked races to
+    reach, which is why it survived: rare enough never to be seen, and
+    reachable enough to matter once.
+
+    A sentinel separates "did not ask" from "asked and could not answer".
+    """
+
+    def test_a_None_baseline_refuses_before_anything_is_staged(self, files):
+        from couchpotato.core.plugins.renamer.swap import REFUSED_IDENTITY_UNVERIFIABLE
+
+        ok, reason = replace_atomically(
+            files['src'], files['dst'], destination_identity=None,
+        )
+
+        assert (ok, reason) == (False, REFUSED_IDENTITY_UNVERIFIABLE)
+        with open(files['dst'], 'rb') as handle:
+            assert handle.read() == OLD
+        assert not _stray_parts(str(files['lib'])), (
+            'it staged before refusing, which is work done for a swap that '
+            'was never going to happen'
+        )
+
+    def test_omitting_the_argument_still_means_no_check(self, files):
+        """The other half. Collapsing both into a refusal would break every
+        caller that legitimately does not ask, including the swap tests."""
+        ok, reason = replace_atomically(files['src'], files['dst'])
+        assert (ok, reason) == (True, REPLACED)
+
+    def test_a_real_baseline_still_revalidates(self, files):
+        """And the sentinel must not have disabled the check it was added to
+        protect."""
+        from couchpotato.core.plugins.renamer.swap import FAILED_DESTINATION_CHANGED
+
+        identity = identity_of(files['dst'])
+
+        def _stage_then_someone_else_wins(source, staging):
+            shutil.copyfile(source, staging)
+            with open(files['dst'], 'wb') as handle:
+                handle.write(b'a better copy')
+
+        ok, reason = replace_atomically(
+            files['src'], files['dst'],
+            stage=_stage_then_someone_else_wins,
+            destination_identity=identity,
+        )
+        assert (ok, reason) == (False, FAILED_DESTINATION_CHANGED)

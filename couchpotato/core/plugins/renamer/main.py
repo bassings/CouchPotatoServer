@@ -419,9 +419,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         errno and strerror carry the whole remedy anyway. Which file it was is
         already known from the media id in the surrounding record.
         """
-        errno = getattr(error, 'errno', None)
-        detail = getattr(error, 'strerror', None) or type(error).__name__
-        return '[errno %s] %s' % (errno, detail) if errno else detail
+        # OSError is the one whose `str()` appends `filename`, so it is
+        # rebuilt from errno and strerror instead. Everything else keeps its
+        # message: the leak is specific to OSError, and dropping every
+        # message to guard against it would cost the diagnosis the log exists
+        # for -- the same trade refused in `log_suppressed`.
+        if isinstance(error, OSError):
+            detail = error.strerror or type(error).__name__
+            if error.errno is not None:
+                return '[errno %s] %s' % (error.errno, detail)
+            return detail
+
+        message = str(error)
+        return '%s: %s' % (type(error).__name__, message) if message else type(error).__name__
 
     #: Identity sources that ASSERT which movie this is, as opposed to
     #: guessing. `search` is absent deliberately: it is the best match for a
@@ -697,15 +707,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'release.update_status', superseded['_id'], status = 'ignored',
                 single = True,
             )
-        except Exception:
-            # Logged HERE, with the traceback, and then short-circuited: the
+        except Exception as error:
+            # Logged HERE and then short-circuited: the
             # shared report below would otherwise fire for the same single
             # failure and produce two differently-worded ERROR records for it.
             # One failure, one record -- otherwise the log implies two things
             # went wrong and neither entry tells the whole story.
+            # `_withoutPaths`, not `format_exc`. The traceback's last line
+            # embeds `OSError.filename` regardless of frame limit, which is
+            # the same leak `_withoutPaths` was added for -- and this file is
+            # otherwise meticulous about it.
             log.error(
                 'Replaced the file for release %s but could not take it off '
-                '"done": %s', superseded.get('_id'), traceback.format_exc(),
+                '"done": %s', superseded.get('_id'), self._withoutPaths(error),
             )
             return
 
@@ -835,7 +849,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 rank=self._rankViaEvent,
             )
             return outcome, existing
-        except Exception:
+        except Exception as error:
             # The collided download is deliberately left in place, so a group
             # that raises here raises again on every scheduled scan. An
             # unbounded full traceback each time evicts the rotating log,
@@ -851,7 +865,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                     (group.get('media') or {}).get('_id') or 'unknown',
                 ),
                 'Could not decide on upgrade replacement: %s',
-                traceback.format_exc(),
+                self._withoutPaths(error),
             )
             return DECLINED_ERROR, None
 

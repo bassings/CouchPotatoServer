@@ -1283,3 +1283,34 @@ class TestOneFailureProducesOneRecord:
         ]
         assert len(errors) == 1, errors
         assert 'REFUSED' in errors[0]
+
+
+class TestRedactingAnExceptionKeepsItsDiagnosis:
+    """`_withoutPaths` exists because `OSError.__str__` appends `filename`.
+
+    The first version dropped the MESSAGE for every other exception type,
+    which is the bound costing the diagnosis it was meant to protect -- the
+    same trade refused in `log_suppressed`. The leak is specific to OSError;
+    a RuntimeError's message is what the code chose to say and carries no
+    path.
+    """
+
+    def test_an_OSError_keeps_errno_and_strerror_but_not_the_filename(self, world):
+        plugin = world['plugin']
+        error = PermissionError(13, 'Permission denied', '/mnt/nas/Some Movie.mkv')
+        rendered = plugin._withoutPaths(error)
+
+        assert '13' in rendered and 'Permission denied' in rendered
+        assert '/mnt/nas' not in rendered
+        assert 'Some Movie' not in rendered
+
+    def test_a_plain_exception_keeps_its_message(self, world):
+        rendered = world['plugin']._withoutPaths(RuntimeError('database went away'))
+        assert 'database went away' in rendered, (
+            'the message was dropped, so the log records that something '
+            'failed without recording what: %r' % rendered
+        )
+        assert 'RuntimeError' in rendered
+
+    def test_an_exception_with_no_message_still_names_its_type(self, world):
+        assert 'RuntimeError' in world['plugin']._withoutPaths(RuntimeError())

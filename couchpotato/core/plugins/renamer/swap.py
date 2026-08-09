@@ -73,10 +73,19 @@ FAILED_DESTINATION_CHANGED = 'failed_destination_changed'
 
 REPLACED = 'replaced'
 
+#: Distinguishes "the caller did not ask for revalidation" from "the caller
+#: asked, and could not establish a baseline". Those are opposite situations
+#: and `None` conflated them: an unreadable destination at decision time
+#: produced `destination_identity=None`, which silently SKIPPED the check --
+#: fail-open, on the one path that destroys a file, in the exact place this
+#: module's design says to fail closed.
+_IDENTITY_NOT_REQUESTED = object()
+
 
 def replace_atomically(source, destination, stage=None,
                        remove=os.remove, expected_source_size=None,
-                       destination_identity=None, about_to_replace=None):
+                       destination_identity=_IDENTITY_NOT_REQUESTED,
+                       about_to_replace=None):
     """Replace `destination` with `source`. Returns `(ok, reason)`.
 
     `stage(src, staging)` puts the source bytes at the staging path. It
@@ -112,6 +121,8 @@ def replace_atomically(source, destination, stage=None,
 
     `destination_identity` is `(st_dev, st_ino, st_size, st_mtime_ns)` taken
     when the decision was made, re-checked immediately before the swap.
+    Passing it as None means the caller TRIED and could not stat the
+    destination, which is a refusal -- not the same as omitting it.
 
     `about_to_replace()` is called in the last moment before the irreversible
     step, for the caller's forensic record.
@@ -167,6 +178,14 @@ def replace_atomically(source, destination, stage=None,
     # existence check and this one, and an operator or another process can
     # remove it in that window. An escaping OSError would break the
     # `(ok, reason)` contract.
+    # Refused before staging, not skipped at the end. A caller that asked for
+    # revalidation and handed us None could not stat the destination when it
+    # decided -- so there is no baseline to compare against, and proceeding
+    # would mean doing the irreversible step with the one check that guards
+    # concurrent replacement turned off.
+    if destination_identity is not _IDENTITY_NOT_REQUESTED and destination_identity is None:
+        return False, REFUSED_IDENTITY_UNVERIFIABLE
+
     try:
         expected_size = os.path.getsize(source)
     except OSError:
@@ -214,7 +233,7 @@ def replace_atomically(source, destination, stage=None,
     # CouchPotato process against the same library can have installed a better
     # copy while this one was staging -- and the decision that authorised this
     # swap was made against the file that used to be there.
-    if destination_identity is not None:
+    if destination_identity is not _IDENTITY_NOT_REQUESTED:
         if identity_of(destination) != tuple(destination_identity):
             _discard_staging_if_safe(staging, source, expected_size, remove)
             return False, FAILED_DESTINATION_CHANGED
