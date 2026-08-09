@@ -24,7 +24,19 @@ permissions:
 # deliberately false in docker.yml / release-to-prod.yml, where a cancelled run
 # would leave a half-published image.
 concurrency:
-  group: ci-${{ github.ref }}
+  # `github.event_name` is part of the key, and that is the whole point.
+  #
+  # A `schedule` run against the default branch has `github.ref` of
+  # refs/heads/master -- the SAME ref a `push` to master has. Keyed on ref
+  # alone, the nightly and a master push shared one group with
+  # cancel-in-progress, so a merge landing near 15:00 UTC killed one or the
+  # other. Silently: a cancelled run is not a red run, so nothing pages and
+  # the nightly simply stops happening on the weeks anything gets merged.
+  #
+  # That defeats the reason the nightly exists -- a quiet week of Python-only
+  # work still has to exercise the UI against master, and "quiet" is exactly
+  # when nobody would notice it had not.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

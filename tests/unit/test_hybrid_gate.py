@@ -216,6 +216,21 @@ class TestTheBrowserJobsAreGatedButStillReport:
         assert '"$EVENT_NAME" != "pull_request"' in text
         assert 'browser=true' in text
 
+    def test_the_nightly_cannot_be_cancelled_by_a_master_push(self):
+        """A scheduled run and a push to master share `github.ref`, so a
+        concurrency group keyed on ref alone let one cancel the other --
+        silently, because a cancelled run is not a failed one.
+
+        The nightly exists for weeks when nothing else runs, and a merge
+        landing near the cron time is precisely when it would be lost.
+        """
+        workflow = yaml.safe_load(CI.read_text(encoding='utf-8'))
+        group = workflow['concurrency']['group']
+        assert 'github.event_name' in group, (
+            'the nightly shares a concurrency group with master pushes and '
+            'can be cancelled by one: %s' % group
+        )
+
     def test_a_nightly_schedule_exists(self):
         workflow = yaml.safe_load(CI.read_text(encoding='utf-8'))
         triggers = workflow.get(True) or workflow.get('on')
