@@ -1167,3 +1167,119 @@ class TestTheTemporaryLinkNameCannotCollide:
             'the temp link name is deterministic, so two concurrent scans '
             'would collide on it: %r' % seen
         )
+
+
+class TestTheCollisionWarningSplitsPathFromLevel:
+    """Two reviews disagreed about the skip warning, and both were right about
+    their own level.
+
+    One wanted the destination path back: a collision recurs every scan
+    interval by design (the source folder is deliberately left in place), and
+    the line is unreadable without knowing WHICH file. The other pointed out
+    that a raw library path at WARNING is exactly what D8 forbids everywhere
+    else in this method -- PrivacyFilter masks only a `/home/<name>` prefix,
+    so a NAS mount or the library layout reaches the rotating ring and
+    `docker logs` verbatim.
+
+    WARNING is the level that ships and rotates unattended, so it names the
+    media and the decision. DEBUG is the level somebody turns on while
+    actually diagnosing, and it gets the path. Pinned here so the split reads
+    as a decision rather than as an accident of where a `%s` ended up.
+    """
+
+    def _refuse(self, world):
+        group = world['group']('720p')          # worse: declined_not_better
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+    def test_the_warning_carries_the_media_and_no_path(self, world, caplog):
+        import logging
+        with caplog.at_level(logging.WARNING):
+            self._refuse(world)
+
+        warnings = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.WARNING and 'Destination already exists' in r.getMessage()
+        ]
+        assert warnings, 'the collision was not reported at WARNING'
+        assert world['dst'] not in warnings[0], (
+            'a library path reached WARNING, which ships and rotates '
+            'unattended: %s' % warnings[0]
+        )
+        assert 'media-1' in warnings[0], (
+            'the warning names neither the path nor the media, so it '
+            'identifies nothing at all'
+        )
+        assert 'declined_not_better' in warnings[0]
+
+    def test_DEBUG_still_carries_the_path_for_whoever_is_diagnosing(self, world, caplog):
+        import logging
+        with caplog.at_level(logging.DEBUG):
+            self._refuse(world)
+
+        debug = [
+            r.getMessage() for r in caplog.records
+            if r.levelno == logging.DEBUG and world['dst'] in r.getMessage()
+        ]
+        assert debug, (
+            'the path is nowhere, so an operator debugging a recurring '
+            'collision cannot tell which file it is'
+        )
+
+
+class TestOneFailureProducesOneRecord:
+    """When `release.update_status` RAISES, the except branch logged the
+    traceback and then fell through to the shared "status update was REFUSED"
+    report, producing two differently-worded ERROR records for one failure.
+
+    Not incorrect, and that is what makes it worth fixing: an operator reading
+    the ring sees two entries, infers two problems, and neither entry tells
+    the whole story. The except branch now returns after logging.
+    """
+
+    def test_a_raising_status_update_logs_exactly_once(self, world, caplog):
+        import logging
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.update_status':
+                raise RuntimeError('database went away')
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        with caplog.at_level(logging.ERROR):
+            _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+
+        errors = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.ERROR and 'r-720p' in r.getMessage()
+        ]
+        assert len(errors) == 1, (
+            'one failure produced %d ERROR records, which reads as %d '
+            'separate problems: %r' % (len(errors), len(errors), errors)
+        )
+        assert 'database went away' in errors[0], (
+            'the surviving record dropped the traceback, so deduplicating '
+            'cost the diagnosis'
+        )
+
+    def test_a_REFUSED_update_still_reports_once(self, world, caplog):
+        """The other branch, so the dedup cannot be achieved by silencing the
+        non-raising failure instead."""
+        import logging
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.update_status':
+                return False
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        with caplog.at_level(logging.ERROR):
+            _run(world)
+
+        errors = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.ERROR and 'r-720p' in r.getMessage()
+        ]
+        assert len(errors) == 1, errors
+        assert 'REFUSED' in errors[0]

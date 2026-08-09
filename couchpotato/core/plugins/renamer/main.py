@@ -252,10 +252,27 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                     # reason is carried through rather than flattened.
                     outcome = reason
 
+                # Two reviews disagreed about this line, so the split is
+                # deliberate rather than a compromise.
+                #
+                # One asked for the path back, because a collision recurring
+                # every scan interval is unreadable without knowing WHICH
+                # file. The other pointed out that a raw library path at
+                # WARNING is exactly what D8 forbids everywhere else in this
+                # method -- PrivacyFilter only masks a `/home/<name>` prefix,
+                # so a NAS mount or library layout goes into the rotating ring
+                # and `docker logs` verbatim.
+                #
+                # Both are right about their own level. WARNING is the level
+                # that ships and rotates unattended, so it names the media and
+                # the decision. DEBUG is the level somebody turns on while
+                # actually diagnosing a collision, and it gets the path.
                 log.warning(
-                    'Destination already exists, keeping it: %s (upgrade decision: %s)',
-                    dst, outcome,
+                    'Destination already exists, keeping it: media %s '
+                    '(upgrade decision: %s)',
+                    (group.get('media') or {}).get('_id'), outcome,
                 )
+                log.debug('The collided destination was: %s', dst)
                 skipped = True
                 continue
 
@@ -681,11 +698,16 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 single = True,
             )
         except Exception:
-            updated = False
+            # Logged HERE, with the traceback, and then short-circuited: the
+            # shared report below would otherwise fire for the same single
+            # failure and produce two differently-worded ERROR records for it.
+            # One failure, one record -- otherwise the log implies two things
+            # went wrong and neither entry tells the whole story.
             log.error(
                 'Replaced the file for release %s but could not take it off '
                 '"done": %s', superseded.get('_id'), traceback.format_exc(),
             )
+            return
 
         if updated is False or updated == []:
             log.error(
