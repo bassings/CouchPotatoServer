@@ -22,6 +22,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     renaming_started = False
     checking_snatched = False
+    _warned_dead_setting = False
 
     def __init__(self):
 
@@ -161,7 +162,18 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             if os.path.exists(dst):
-                log.warning('Destination already exists, keeping it: %s', dst)
+                # The replacement decision is COMPUTED and recorded, and then
+                # deliberately not acted on -- the swap is wired in the next
+                # step. Computing it here first is what proves the gate is
+                # REACHABLE with real scan data: withdrawn attempt #2 was
+                # simultaneously dangerous and inert, and the inertness is
+                # what hid the danger, because the gate never fired in
+                # testing so nobody saw what it did when it fired.
+                outcome = self._replacementOutcome(src, dst, group)
+                log.warning(
+                    'Destination already exists, keeping it (upgrade decision: %s)',
+                    outcome,
+                )
                 skipped = True
                 continue
 
@@ -184,6 +196,76 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             source_folder = group.get('parentdir')
             if source_folder and os.path.isdir(source_folder):
                 self.deleteFolder(source_folder)
+
+    def _warnAboutTheDeadSetting(self):
+        """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
+
+        Spec D1. That key carried 'default': True for the life of the fork
+        while being read by nothing, so `setDefault` has already persisted
+        True into real config files. Upgrade replacement therefore reads a NEW
+        key, `upgrade_replace`, which defaults off -- but somebody who set the
+        old one DELIBERATELY would otherwise get silence where they expected
+        behaviour, and silence is the worst answer for a setting whose name
+        promises deletion.
+
+        Once per process, not once per scan: the renamer runs on a timer, and
+        a warning repeated every few minutes is one an operator learns to
+        filter out.
+        """
+        if Renamer._warned_dead_setting:
+            return
+        Renamer._warned_dead_setting = True
+        if self.conf('remove_lower_quality_copies', default=False):
+            log.warning(
+                'The "Delete Others" setting (remove_lower_quality_copies) is no '
+                'longer read and does nothing. Upgrade replacement is now the '
+                '"Replace lower quality copies" setting (upgrade_replace), which '
+                'is OFF by default and must be enabled deliberately.'
+            )
+
+    def _replacementOutcome(self, src, dst, group):
+        """What WOULD upgrade replacement do with this file? Decide, do not act.
+
+        Returns an outcome value from `renamer.replacement`, or
+        `declined_error` if anything at all goes wrong. This runs inside the
+        ordinary rename path, so it must never raise: a decision that cannot
+        be made is a decision not to replace, and an exception escaping here
+        would abort a scan that was otherwise fine (AC-QA-12).
+        """
+        from couchpotato.core.plugins.renamer.replacement import decide_replacement
+
+        self._warnAboutTheDeadSetting()
+
+        try:
+            media = group.get('media') or {}
+            media_id = media.get('_id')
+            releases = fireEvent('release.for_media', media_id, single=True) if media_id else []
+
+            outcome, _existing = decide_replacement(
+                destination=dst,
+                incoming_quality=(group.get('meta_data') or {}).get('quality'),
+                releases=releases or [],
+                size_on_disk=self._sizeOrNone(dst),
+                video_file_count=len((group.get('files') or {}).get('movie') or []),
+                setting_enabled=bool(self.conf('upgrade_replace', default=False)),
+                is_better=lambda a, b: bool(
+                    fireEvent('quality.is_better', a, b, single=True)
+                ),
+                rank=lambda q: fireEvent('quality.rank', q, single=True),
+            )
+            return outcome
+        except Exception:
+            log.error('Could not decide on upgrade replacement: %s', traceback.format_exc())
+            return 'declined_error'
+
+    @staticmethod
+    def _sizeOrNone(path):
+        """None means "could not stat", which the decision layer treats as a
+        refusal rather than as a size of zero."""
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
 
     def _processGroup(self, group, media_folder=None, release_download=None):
         """Process a single scanner group (rename/move files)."""

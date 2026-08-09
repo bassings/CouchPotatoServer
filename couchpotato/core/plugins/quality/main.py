@@ -57,6 +57,7 @@ class QualityPlugin(Plugin):
         addEvent('quality.isfinish', self.isFinish)
         addEvent('quality.fill', self.fill)
         addEvent('quality.rank', self.rankQuality)
+        addEvent('quality.is_better', self.isBetterQuality)
 
         addApiView('quality.size.save', self.saveSize)
         addApiView('quality.list', self.allView, docs = {
