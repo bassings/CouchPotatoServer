@@ -7,6 +7,8 @@ from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
 from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.core.media_lock import media_lock
+from couchpotato.core.plugins.renamer.replacement import REPLACE
+from couchpotato.core.plugins.renamer.swap import replace_atomically
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
 from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
@@ -169,7 +171,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # simultaneously dangerous and inert, and the inertness is
                 # what hid the danger, because the gate never fired in
                 # testing so nobody saw what it did when it fired.
-                outcome = self._replacementOutcome(src, dst, group)
+                outcome, superseded = self._replacementOutcome(src, dst, group)
+
+                if outcome == REPLACE:
+                    ok, reason = replace_atomically(
+                        src, dst,
+                        lambda a, b: self.moveFile(a, b, use_default = True),
+                    )
+                    if ok:
+                        self._supersedeRelease(superseded, group)
+                        moved_any = True
+                        continue
+                    # The swap refused or failed. The library file is intact
+                    # and a complete copy of the download survives -- swap.py
+                    # guarantees both -- so this is an ordinary skip, and the
+                    # reason is carried through rather than flattened.
+                    outcome = reason
+
                 log.warning(
                     'Destination already exists, keeping it: %s (upgrade decision: %s)',
                     dst, outcome,
@@ -211,6 +229,53 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         result = fireEvent('quality.rank', quality, single=True)
         return None if result == [] else result
+
+    def _supersedeRelease(self, superseded, group):
+        """Take the replaced release off `done` after its file has gone.
+
+        Spec D3. `os.replace` has already destroyed the old file by this
+        point, so "account for the old copy" can only mean a database change
+        -- and leaving the old rung at `done` while it still claims the path
+        is what produced the unbounded re-download loop in FEAT-009 designs #2
+        and #4: `Release.add` keys on `<imdb>.<audio>.<quality>`
+        (release/main.py:222) and would create a SECOND done release beside it.
+
+        Best-effort by design. The bytes are already swapped; failing the
+        whole rename now would not undo that, and raising here would abort a
+        scan that has otherwise succeeded. A stale `done` release is
+        recoverable by the next scan, which is not true of the file.
+        """
+        media = group.get('media') or {}
+        media_id = media.get('_id')
+        incoming = (group.get('meta_data') or {}).get('quality') or {}
+
+        # D8: the record names the MEDIA and the two rungs, never the
+        # destination path. PrivacyFilter only rewrites the `/home/<name>`
+        # prefix (core/logger.py), so a raw path would put library layout and
+        # film titles into the rotating ring and `docker logs` on every
+        # replacement. Whoever diagnoses a bad swap needs to know which movie
+        # and which two rungs; the path adds nothing the database cannot give
+        # them from the id.
+        log.info(
+            'Replaced a library copy: media %s, %s -> %s (release %s superseded)',
+            media_id,
+            (superseded or {}).get('quality'),
+            incoming.get('identifier'),
+            (superseded or {}).get('_id'),
+        )
+
+        if not superseded or not superseded.get('_id'):
+            return
+        try:
+            fireEvent(
+                'release.update_status', superseded['_id'], status = 'ignored',
+                single = True,
+            )
+        except Exception:
+            log.error(
+                'Replaced the file for release %s but could not take it off '
+                '"done": %s', superseded.get('_id'), traceback.format_exc(),
+            )
 
     def _warnAboutTheDeadSetting(self):
         """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
@@ -283,7 +348,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             if releases is None:
                 return DECLINED_INCOMPLETE_EVIDENCE
 
-            outcome, _existing = decide_replacement(
+            outcome, existing = decide_replacement(
                 destination=dst,
                 incoming_quality=(group.get('meta_data') or {}).get('quality'),
                 releases=releases or [],
@@ -295,7 +360,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 ),
                 rank=self._rankViaEvent,
             )
-            return outcome
+            return outcome, existing
         except Exception:
             # The collided download is deliberately left in place, so a group
             # that raises here raises again on every scheduled scan. An
@@ -314,7 +379,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'Could not decide on upgrade replacement: %s',
                 traceback.format_exc(),
             )
-            return DECLINED_ERROR
+            return DECLINED_ERROR, None
 
     @staticmethod
     def _sizeOrNone(path):

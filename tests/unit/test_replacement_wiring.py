@@ -94,7 +94,7 @@ class TestTheDecisionIsActuallyReached:
     def test_a_better_copy_reaches_REPLACE_with_real_releases(self, scene):
         """The reachability assertion. If this ever returns a refusal for a
         clearly-better copy, the gate has gone inert again."""
-        outcome = scene['plugin']._replacementOutcome(
+        outcome, _victim = scene['plugin']._replacementOutcome(
             'src.mkv', scene['dst'], scene['group']('2160p')
         )
         assert outcome == REPLACE
@@ -113,10 +113,10 @@ class TestTheDecisionIsActuallyReached:
         gate never ran".
         """
         worse = scene['group']('720p')
-        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse) == DECLINED_NOT_BETTER
+        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse)[0] == DECLINED_NOT_BETTER
 
         scene['state']['releases'] = []          # simulate the inert attempt
-        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse) == DECLINED_NO_OWNER
+        assert scene['plugin']._replacementOutcome('s.mkv', scene['dst'], worse)[0] == DECLINED_NO_OWNER
 
 
 class TestTheRankBoundaryNormalisesFireEventsEmptyList:
@@ -162,7 +162,7 @@ class TestTheRankBoundaryNormalisesFireEventsEmptyList:
 class TestTheGateConsultsTheNewKey:
     def test_upgrade_replace_off_refuses(self, scene):
         scene['state']['conf'] = {'upgrade_replace': False}
-        outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
         assert outcome == DECLINED_SETTING_OFF
 
     def test_the_dead_key_being_true_does_NOT_enable_anything(self, scene):
@@ -170,7 +170,7 @@ class TestTheGateConsultsTheNewKey:
         persisted True on every existing install. If it could still enable
         replacement, upgrading would start deleting library files."""
         scene['state']['conf'] = {'remove_lower_quality_copies': True}
-        outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
         assert outcome == DECLINED_SETTING_OFF
 
 
@@ -208,15 +208,17 @@ class TestTheDecisionNeverBreaksAScan:
             return None
 
         monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent', _boom)
-        outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        outcome, _victim = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']()
+        )
         assert outcome == DECLINED_ERROR
 
     def test_a_group_with_no_media_does_not_raise(self, scene):
-        outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})
+        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})
         assert outcome != REPLACE
 
     def test_an_unstattable_destination_does_not_raise(self, scene):
-        outcome = scene['plugin']._replacementOutcome(
+        outcome, _victim = scene['plugin']._replacementOutcome(
             's.mkv', '/definitely/not/here.mkv', scene['group']()
         )
         assert outcome != REPLACE
@@ -247,7 +249,7 @@ class TestTheDecisionNeverBreaksAScan:
         # The destination cannot be stat'ed at all.
         assert scene['plugin']._sizeOrNone('/definitely/not/here.mkv') is None
 
-        outcome = scene['plugin']._replacementOutcome(
+        outcome, _victim = scene['plugin']._replacementOutcome(
             's.mkv', str(empty_dst), scene['group']('2160p')
         )
         # A real 0-byte file DOES resolve -- that is the control proving the
@@ -255,7 +257,7 @@ class TestTheDecisionNeverBreaksAScan:
         assert outcome == REPLACE
 
         # But an unreadable one must not borrow that zero.
-        outcome = scene['plugin']._replacementOutcome(
+        outcome, _victim = scene['plugin']._replacementOutcome(
             's.mkv', '/definitely/not/here.mkv', scene['group']('2160p')
         )
         assert outcome != REPLACE
