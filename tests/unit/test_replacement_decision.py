@@ -152,6 +152,60 @@ class TestQualityMustBeKnownOnBothSides:
         assert _decide(incoming_quality=incoming)[0] == DECLINED_UNKNOWN_QUALITY
 
 
+class TestAbsentIs3dOnTheExistingReleaseRefuses:
+    """B1 refuses a quality dict whose `is_3d` is absent, because absent is not
+    the same as False: a 3D copy and a 2D one at the same rung are not
+    comparable, and guessing "not 3D" authorises replacing one with the other.
+
+    This layer defeated that protection by building the dict with
+    `bool(existing.get('is_3d'))`, fabricating the key and handing B1
+    something that LOOKED complete. Measured before the fix: a release
+    recorded without the field returned `replace`.
+
+    Worth keeping as a cautionary case -- the fix was one layer below, and
+    the caller undid it.
+    """
+
+    def test_a_release_document_with_no_is_3d_field_refuses(self):
+        no_3d = {k: v for k, v in _existing().items() if k != 'is_3d'}
+        assert 'is_3d' not in no_3d
+        assert _decide(releases=[no_3d])[0] == DECLINED_UNKNOWN_QUALITY
+
+    def test_an_explicit_false_is_fine(self):
+        """The control: refusing ABSENT must not refuse RECORDED-as-2D, or the
+        feature never fires for the overwhelmingly common case."""
+        assert _decide(releases=[_existing(is_3d=False)])[0] == REPLACE
+
+    def test_an_explicit_true_is_passed_through_not_flattened(self):
+        recorded_3d = _existing(is_3d=True)
+        seen = []
+
+        def _spy(incoming, existing):
+            seen.append(existing)
+            return False
+
+        _decide(releases=[recorded_3d], is_better=_spy)
+        assert seen == [{'identifier': '720p', 'is_3d': True}]
+
+
+class TestAnUnrecognisedIdentifierIsUnknownNotWorse:
+    """Both refuse, but they send an operator to different places: "the copy
+    on disk is fine" versus "we could not read its quality at all"."""
+
+    def test_an_existing_quality_the_ranking_does_not_know(self):
+        def _rank(q):
+            return None if q['identifier'] == 'laserdisc' else 0
+
+        odd = _existing(quality='laserdisc')
+        outcome, _ = _decide(releases=[odd], rank=_rank)
+        assert outcome == DECLINED_UNKNOWN_QUALITY
+
+    def test_a_known_pair_still_reaches_the_comparison(self):
+        """Control: the rank check must not swallow every decision."""
+        outcome, _ = _decide(rank=lambda q: 0)
+        assert outcome == REPLACE
+
+
 class TestOnlyAStrictlyBetterCopyReplaces:
     def test_a_worse_copy_refuses(self):
         assert _decide(incoming_quality=WORSE)[0] == DECLINED_NOT_BETTER

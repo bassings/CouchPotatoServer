@@ -74,10 +74,20 @@ def replace_atomically(source, destination, move, remove=os.remove):
         # would turn a bug into a file operation.
         return False, REFUSED_DESTINATION_MISSING
 
-    if os.path.samefile(source, destination):
-        # The shipping default `file_action = link` hardlinks the download into
-        # the library, so source and destination can be the same inode. Moving
-        # a file onto itself destroys it.
+    # The shipping default `file_action = link` hardlinks the download into
+    # the library, so source and destination can be the same inode. Moving a
+    # file onto itself destroys it.
+    #
+    # Wrapped, because `samefile` stats BOTH paths and raises OSError if
+    # either has gone -- and both were checked moments ago, so this is a real
+    # time-of-check/time-of-use window, not a hypothetical. An escaping
+    # exception would break this function's own `(ok, reason)` contract and
+    # reach the renamer as an untyped failure. If we cannot tell whether they
+    # are the same file, we refuse.
+    try:
+        if os.path.samefile(source, destination):
+            return False, REFUSED_SAME_FILE
+    except OSError:
         return False, REFUSED_SAME_FILE
 
     expected_size = os.path.getsize(source)
