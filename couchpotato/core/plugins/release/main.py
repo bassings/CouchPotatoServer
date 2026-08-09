@@ -842,10 +842,25 @@ class Release(Plugin):
         `KeyError` from SQLiteAdapter, which is the production backend.
         """
         db = get_db()
-        raw_releases = db.get_many('release', media_id)
 
+        # The QUERY itself is inside the guard, not just the per-document
+        # reads. `get_many` returns a generator (sqlite_adapter.query yields),
+        # so `_query_index` does not run until the first `next()` -- which
+        # happens at the `for` statement. An OperationalError from lock
+        # contention therefore escaped `forMedia` entirely, and a caller
+        # asking for a COMPLETE answer got an exception instead of the
+        # refusal it asked for.
         releases = []
         unreadable = 0
+        try:
+            raw_releases = list(db.get_many('release', media_id))
+        except Exception:
+            log.error('Could not read the release list for media %s: %s',
+                      media_id, traceback.format_exc())
+            if require_complete:
+                return INCOMPLETE_RELEASE_SET
+            return []
+
         for r in raw_releases:
             try:
                 doc = db.get('id', r.get('_id'))

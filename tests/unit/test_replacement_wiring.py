@@ -391,7 +391,7 @@ class TestForMediaHonoursRequireComplete:
         assert len(plugin.forMedia('m')) == 2
         assert len(plugin.forMedia('m', require_complete=True)) == 2
 
-    def test_an_unreadable_document_makes_the_strict_answer_None(self, monkeypatch):
+    def test_an_unreadable_document_makes_the_strict_answer_the_sentinel(self, monkeypatch):
         import couchpotato.core.plugins.release.main as release_main
         plugin, db = self._plugin(
             {'a': {'_id': 'a'}, 'b': RuntimeError('disk went away')}, ['a', 'b'],
@@ -505,7 +505,7 @@ class TestTheProductionCollisionPathReachesTheDecision:
         assert parent.is_dir(), 'cleanup ran despite a skip'
 
 
-class TestARepeATingFailureDoesNotEraseTheLog:
+class TestARepeatingFailureDoesNotEraseTheLog:
     """The collided download is deliberately LEFT IN PLACE on a skip.
 
     So a group whose release documents are malformed raises here, and raises
@@ -659,3 +659,66 @@ class TestTheIncompleteSignalSurvivesTheRealEventBus:
             's.mkv', scene['dst'], scene['group']('2160p')
         )
         assert outcome == DECLINED_INCOMPLETE_EVIDENCE
+
+
+class TestAFailingQueryIsARefusalNotAnEscapingException:
+    """`get_many` returns a GENERATOR: `sqlite_adapter.query` yields, so
+    `_query_index` does not execute until the first `next()`. That happens at
+    the `for` statement, which used to sit outside the guard -- so an
+    `OperationalError` from lock contention escaped `forMedia` entirely and a
+    caller that had explicitly asked for a complete answer got an exception
+    instead of the refusal it asked for.
+
+    Nothing unsafe followed (the renamer's broad except turned it into
+    `declined_error`), but a guard that cannot see the failure it exists to
+    report is not doing its job.
+    """
+
+    def _plugin(self, raiser):
+        from couchpotato.core.plugins.release.main import Release
+
+        plugin = Release.__new__(Release)
+
+        class _DB:
+            def get_many(self, *a, **k):
+                def _gen():
+                    raise raiser
+                    yield  # pragma: no cover -- makes this a generator
+                return _gen()
+
+            def get(self, *a, **k):  # pragma: no cover
+                raise AssertionError('should never be reached')
+
+        return plugin, _DB()
+
+    def test_a_query_that_explodes_refuses_under_require_complete(self, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
+
+    def test_the_lazy_query_really_does_raise_at_iteration(self, monkeypatch):
+        """Precondition, asserted rather than assumed: if `get_many` ever
+        becomes eager, the guard's placement stops mattering and the comment
+        explaining it becomes wrong."""
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        gen = db.get_many('release', 'm')          # no raise yet
+        try:
+            next(gen)
+        except RuntimeError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError('the fixture is not lazy, so it cannot model the bug')
+
+    def test_the_default_caller_still_gets_a_list_not_an_exception(self, monkeypatch):
+        """Fifteen other callers want best-effort. An escaping exception would
+        be a behaviour change for all of them."""
+        import couchpotato.core.plugins.release.main as release_main
+
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        assert plugin.forMedia('m') == []
