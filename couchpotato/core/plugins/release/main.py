@@ -853,7 +853,23 @@ class Release(Plugin):
         releases = []
         unreadable = 0
         try:
-            raw_releases = list(db.get_many('release', media_id))
+            # `with_doc=False` explicitly. `get_many`'s own default is True
+            # (sqlite_adapter.py:989), and with it the generator resolves each
+            # document INTERNALLY via `self.get('id', ...)` catching only
+            # KeyError (sqlite_adapter.py:646-653). A corrupt document raises
+            # JSONDecodeError -- a ValueError -- which escapes the generator.
+            #
+            # The whole per-document loop below, including the ValueError
+            # branch that increments `unreadable` and fires
+            # `database.delete_corrupted`, was therefore dead on the
+            # production backend for the one failure mode it names: one bad
+            # document made the ENTIRE set unreadable and the self-healing
+            # event never fired.
+            #
+            # `with_doc=False` yields raw index rows, restoring the
+            # index-then-per-document-read shape the rest of this function
+            # assumes -- and putting the read inside the try that can see it.
+            raw_releases = list(db.get_many('release', media_id, with_doc=False))
         except Exception:
             log.error('Could not read the release list for media %s: %s',
                       media_id, traceback.format_exc())
