@@ -447,7 +447,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return True
 
         band = fireEvent('quality.single', identifier, single=True) or {}
-        low = (band.get('size') or (None, None))[0]
+
+        # `size_min`, NOT `size`. The operator edits size_min/size_max through
+        # the settings UI (`quality.size.save` -> saveSize), and those land as
+        # separate keys on the quality DOCUMENT. `single()` returns
+        # `mergeDicts(static_quality, document)`, and the static `size` tuple
+        # exists only in the static half -- so nothing the operator changes
+        # ever reaches it, and reading `size` here would silently enforce the
+        # shipped defaults against a library they had deliberately retuned.
+        #
+        # `quality.guess` uses size_min/size_max for exactly this comparison
+        # (quality/main.py:470), so this follows the same source of truth
+        # rather than inventing a second one.
+        low = band.get('size_min')
+        if not isinstance(low, (int, float)):
+            low = (band.get('size') or (None, None))[0]
         if not isinstance(low, (int, float)) or low <= 0:
             return True
 
@@ -565,8 +579,27 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             if action == 'move':
                 os.remove(source)
             elif action == 'symlink_reversed':
-                os.remove(source)
-                symlink(destination, source)
+                # Link FIRST at a temporary name, then rename it over the
+                # source. Removing the source and then linking left a window
+                # where a failed `symlink` -- a FAT/exFAT download mount, a
+                # quota, a permissions problem, all plausible for a downloads
+                # mount that differs from the library mount -- destroyed the
+                # download and created nothing in its place.
+                #
+                # The log below then said "the download is still on disk",
+                # which was false. A message that reassures about data safety
+                # while the data is gone is worse than no message.
+                staging_link = source + '.cp-link-tmp'
+                try:
+                    symlink(destination, staging_link)
+                    os.replace(staging_link, source)
+                except Exception:
+                    if os.path.lexists(staging_link):
+                        try:
+                            os.remove(staging_link)
+                        except OSError:
+                            pass
+                    raise
             # 'copy' and 'link' leave the download where it is. A hardlink
             # back is not recreated: the swap replaced the destination inode,
             # so the old link would point at the destroyed file and a new one

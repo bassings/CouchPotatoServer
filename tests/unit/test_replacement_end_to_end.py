@@ -903,3 +903,158 @@ class TestTheWindowBetweenTheCheckAndTheStagingCopyIsClosed:
 
         assert seen.get('called')
         assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestTheOperatorsOwnSizeBandsAreWhatIsEnforced:
+    """`size_min`/`size_max` are what the settings UI edits (`quality.size.save`
+    -> `saveSize`), and they land as separate keys on the quality DOCUMENT.
+    `quality.single` returns `mergeDicts(static_quality, document)`, and the
+    static `size` tuple exists only in the static half -- so nothing the
+    operator changes ever reaches it.
+
+    Reading `size` therefore enforced the SHIPPED defaults against a library
+    they had deliberately retuned, silently. `quality.guess` compares against
+    size_min/size_max (quality/main.py:470); this now follows the same source
+    of truth instead of inventing a second one.
+    """
+
+    @staticmethod
+    def _band(world, *, static_low, operator_low=None):
+        doc = {'identifier': '2160p', 'size': (static_low, static_low * 10)}
+        if operator_low is not None:
+            doc['size_min'] = operator_low
+            doc['size_max'] = operator_low * 10
+
+        def _fire(event, *args, **kwargs):
+            if event == 'quality.single':
+                return dict(doc)
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+
+    def test_a_relaxed_operator_floor_is_honoured(self, world):
+        """The shipped 2160p floor is 10,000 MB. An operator who lowered it
+        must not have that decision quietly overridden."""
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+        self._band(world, static_low=10000, operator_low=actual_mb)
+
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, (
+            "the operator's own size_min was ignored in favour of the "
+            'shipped default'
+        )
+
+    def test_a_tightened_operator_floor_is_also_honoured(self, world):
+        """Both directions. A guard that only ever relaxed would be
+        indistinguishable from one that stopped checking."""
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+        self._band(world, static_low=actual_mb, operator_low=actual_mb * 100)
+
+        _run(world)
+
+        assert _sha(world['dst']) == world['old_sha'], (
+            'a file below the operator-configured floor still replaced'
+        )
+
+    def test_the_static_tuple_is_the_fallback_when_no_document_value_exists(self, world):
+        self._band(world, static_low=10000)     # no size_min at all
+        _run(world)
+        assert _sha(world['dst']) == world['old_sha']
+
+
+class TestAFailedReverseSymlinkNeverDestroysTheDownload:
+    """`os.remove(source)` then `symlink(...)` left a window where a failed
+    link destroyed the download and created nothing -- and the warning then
+    said "the download is still on disk", which was false.
+
+    A message that reassures about data safety while the data is gone is worse
+    than no message, so the ordering is fixed rather than the wording: link at
+    a temporary name, then rename it over the source.
+    """
+
+    def test_a_failing_symlink_leaves_the_download_intact(self, world, monkeypatch):
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+        monkeypatch.setattr(
+            renamer_main, 'symlink',
+            lambda *a, **k: (_ for _ in ()).throw(OSError(1, 'Operation not permitted')),
+        )
+
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+        assert os.path.exists(world['src']), (
+            'the download was destroyed by a failed reverse symlink'
+        )
+        with open(world['src'], 'rb') as handle:
+            assert handle.read() == NEW, 'the download was replaced by nothing'
+
+    def test_the_warning_is_true_when_it_says_the_download_survived(self, world, monkeypatch, caplog):
+        import logging
+
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+        monkeypatch.setattr(
+            renamer_main, 'symlink',
+            lambda *a, **k: (_ for _ in ()).throw(OSError(1, 'Operation not permitted')),
+        )
+
+        with caplog.at_level(logging.WARNING):
+            _run(world)
+
+        claimed = [
+            r.getMessage() for r in caplog.records
+            if 'still on disk' in r.getMessage()
+        ]
+        assert claimed, 'the failure was not reported at all'
+        assert os.path.exists(world['src']), (
+            'the log claims the download is still on disk and it is not'
+        )
+
+    def test_no_temporary_link_is_left_behind_on_failure(self, world, monkeypatch):
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+        real_symlink = renamer_main.symlink
+        calls = {'n': 0}
+
+        def _link_then_fail_the_rename(target, link_name):
+            calls['n'] += 1
+            real_symlink(target, link_name)
+
+        monkeypatch.setattr(renamer_main, 'symlink', _link_then_fail_the_rename)
+
+        # Scoped to the LINK rename only. `swap.py` uses the same
+        # `os.replace`, so patching it wholesale broke the atomic swap and the
+        # disposal never ran -- the test then passed for the wrong reason.
+        real_replace = os.replace
+
+        def _fail_only_the_link_rename(src, dst, *a, **k):
+            if str(src).endswith('.cp-link-tmp'):
+                raise OSError(1, 'nope')
+            return real_replace(src, dst, *a, **k)
+
+        monkeypatch.setattr(renamer_main.os, 'replace', _fail_only_the_link_rename)
+
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, (
+            'the swap itself was broken, so this test proves nothing about '
+            'the disposal'
+        )
+        assert calls['n'] == 1, 'the link was never attempted'
+        strays = [
+            n for n in os.listdir(os.path.dirname(world['src']))
+            if n.endswith('.cp-link-tmp')
+        ]
+        assert not strays, 'a temporary link survived the failure: %r' % strays
+        assert os.path.exists(world['src'])
+
+    def test_the_happy_path_still_produces_a_link_to_the_library(self, world):
+        world['state']['conf']['default_file_action'] = 'symlink_reversed'
+        _run(world)
+        assert os.path.islink(world['src'])
+        assert os.path.realpath(world['src']) == os.path.realpath(world['dst'])
