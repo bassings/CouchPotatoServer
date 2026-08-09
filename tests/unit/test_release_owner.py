@@ -148,6 +148,56 @@ class TestSeveralReleasesClaimTheSamePath:
         assert (release, outcome) == (None, DECLINED_AMBIGUOUS_OWNER)
 
 
+class TestAClaimantWithNoEvidenceBlocksTheWholeDecision:
+    """A release with no `copy_id` cannot be ruled IN or OUT.
+
+    Review's P1, reproduced before fixing: with a size-matching claimant beside
+    a legacy one carrying no `copy_id`, the resolver returned the matching
+    release as resolved. But the legacy claimant may be the real owner -- it
+    simply has no evidence either way -- so the quality compared against would
+    belong to the wrong release. On the code path that deletes from the
+    library, "no evidence" has to block the decision rather than lose a vote.
+    """
+
+    def test_a_legacy_claimant_beside_a_matching_one_is_refused(self):
+        matching = _release('r-match', [DEST], size=5000)
+        legacy = _release('r-legacy', [DEST])          # pre-Part-A, no copy_id
+        release, outcome = resolve_owning_release(
+            DEST, [matching, legacy], size_on_disk=5000
+        )
+        assert (release, outcome) == (None, DECLINED_AMBIGUOUS_OWNER)
+
+    def test_it_still_resolves_when_every_claimant_has_evidence(self):
+        """The control: refusing on missing evidence must not refuse
+        everything, which would make the gate inert."""
+        small = _release('r-720p', [DEST], size=3000)
+        large = _release('r-2160p', [DEST], size=40000)
+        release, outcome = resolve_owning_release(DEST, [small, large], size_on_disk=40000)
+        assert outcome == OWNER_RESOLVED
+        assert release['_id'] == 'r-2160p'
+
+
+class TestAnUnstattableDestinationAlwaysReadsAsUnverified:
+    """Review's P2: "could not stat" and "cannot tell who owns it" are
+    different refusals, and reporting the wrong one sends the next operator
+    looking in the wrong place. The first version only produced UNVERIFIED on
+    the single-claimant path.
+    """
+
+    def test_with_one_claimant(self):
+        only = _release('r1', [DEST], size=5000)
+        assert resolve_owning_release(DEST, [only], None)[1] == DECLINED_UNVERIFIED_COPY
+
+    def test_with_several_claimants(self):
+        a = _release('a', [DEST], size=1000)
+        b = _release('b', [DEST], size=2000)
+        assert resolve_owning_release(DEST, [a, b], None)[1] == DECLINED_UNVERIFIED_COPY
+
+    def test_with_no_claimants(self):
+        """Even here: we could not read the file, so that is what we say."""
+        assert resolve_owning_release(DEST, [], None)[1] == DECLINED_UNVERIFIED_COPY
+
+
 class TestOnlyTheMovieBucketIsEvidence:
     def test_a_subtitle_sharing_the_path_does_not_make_a_release_a_claimant(self):
         """`copyIdentity` restricts itself to the movie bucket for the same
@@ -167,12 +217,21 @@ class TestOnlyTheMovieBucketIsEvidence:
 
 
 @pytest.mark.parametrize('variant', [
-    DEST,
-    DEST.replace('/', os.sep) if os.sep != '/' else DEST,
+    DEST,                                            # identical
+    DEST.replace('/library/', '/library//'),         # doubled separator
+    DEST.replace('/Movies/', '/Movies/./'),          # redundant .
+    '/library/Movies/Alien (1979)/../The Thing (1982)/The Thing.mkv',   # traversal
 ])
 def test_paths_are_compared_after_sp_normalisation(variant):
-    """AC-SEC-9 specifies `sp()` normalisation on both sides, so a recorded
-    path and a destination that differ only cosmetically still match."""
+    """AC-SEC-9 specifies `sp()` normalisation on both sides.
+
+    The first version of this parametrize was vacuous: it passed `DEST` and
+    `DEST.replace('/', os.sep) if os.sep != '/' else DEST`, and on the Linux
+    runners this project uses `os.sep` IS `/` -- so both entries were the same
+    string and the test ran the identical input twice while appearing to cover
+    two cases. These variants normalise to `DEST` on every platform, so the
+    test actually exercises normalisation.
+    """
     only = _release('r1', [variant], size=5000)
     release, outcome = resolve_owning_release(DEST, [only], size_on_disk=5000)
     assert outcome == OWNER_RESOLVED, (variant, outcome)

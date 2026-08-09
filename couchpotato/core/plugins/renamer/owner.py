@@ -27,10 +27,6 @@ decision instead of on prose (AC-QA-11).
 """
 
 from couchpotato.core.helpers.variable import sp
-from couchpotato.core.logger import CPLog
-
-log = CPLog(__name__)
-
 
 # Outcome values. `declined_*` all mean "the library file was left alone".
 OWNER_RESOLVED = 'resolved'
@@ -60,6 +56,16 @@ def resolve_owning_release(destination, releases, size_on_disk):
     The caller must treat any `declined_*` as "do not touch the library file".
     """
     target = sp(destination)
+
+    # Checked FIRST, before any claimant counting. "Could not stat" is a
+    # different refusal from "cannot tell which release owns it", and reporting
+    # the wrong one sends the next operator looking in the wrong place. The
+    # first version only produced UNVERIFIED on the single-claimant path, so an
+    # unstattable destination with two claimants reported AMBIGUOUS instead --
+    # contradicting this module's own contract.
+    if size_on_disk is None:
+        return None, DECLINED_UNVERIFIED_COPY
+
     candidates = [r for r in (releases or []) if target in _movie_paths(r)]
 
     if not candidates:
@@ -67,14 +73,29 @@ def resolve_owning_release(destination, releases, size_on_disk):
         # never means replaceable (AC-QA-10).
         return None, DECLINED_NO_OWNER
 
+    # A claimant with no copy_id cannot be ruled IN or OUT -- releases written
+    # before FEAT-009 Part A have none. With one such claimant beside a
+    # size-matching one, the first version returned the matching release as
+    # resolved, and that is the dangerous shape: the legacy claimant may be the
+    # real owner, so the quality we would compare against belongs to the wrong
+    # release. On a path that deletes from the library, "no evidence" must
+    # block the whole decision rather than lose a vote.
+    unverifiable = [r for r in candidates if not r.get('copy_id')]
+
     if len(candidates) == 1:
-        only = candidates[0]
         # Still verified by size. A single claimant proves which release was
         # scanned from this path, not that the bytes there now are the ones it
         # described -- the file may have been swapped since (AC-DATA-6).
-        if not _copy_matches(only, size_on_disk):
+        # `unverifiable` is deliberately NOT re-checked here: with one
+        # candidate, a missing copy_id already makes _copy_matches false.
+        # Mutation testing proved the extra clause could not fail, and a guard
+        # clause nobody can break is one that only looks like protection.
+        if not _copy_matches(candidates[0], size_on_disk):
             return None, DECLINED_UNVERIFIED_COPY
-        return only, OWNER_RESOLVED
+        return candidates[0], OWNER_RESOLVED
+
+    if unverifiable:
+        return None, DECLINED_AMBIGUOUS_OWNER
 
     # More than one release claims the path, which is the NORMAL case for two
     # qualities of the same movie under the default template. Size decides.
@@ -82,12 +103,13 @@ def resolve_owning_release(destination, releases, size_on_disk):
     if len(matching) == 1:
         return matching[0], OWNER_RESOLVED
 
-    log.info(
-        'Refusing to identify the copy at a destination: %s releases claim it '
-        'and %s match by size — release ids %s',
-        len(candidates), len(matching),
-        sorted(str(r.get('_id')) for r in candidates),
-    )
+    # Deliberately NOT logged here. This is a pure function called once per
+    # file per scan, so an unchanged ambiguous destination would emit an
+    # identical record on every pass -- against the bounded-logging
+    # requirement at specs/FEAT-009B-UPGRADE-REPLACEMENT.md:165. The outcome
+    # value is the contract; B3's caller owns operator messaging, including
+    # suppression, and under D8 it names the media identifier rather than the
+    # path.
     return None, DECLINED_AMBIGUOUS_OWNER
 
 
