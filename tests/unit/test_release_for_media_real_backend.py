@@ -170,3 +170,74 @@ class TestOneUnreadableDocumentIsIsolatedNotFatalToTheWholeSet:
         result = obj.forMedia('m-nothing', require_complete=True)
         assert result is not INCOMPLETE_RELEASE_SET
         assert result == []
+
+
+class TestARepeatedlyUnreadableSetDoesNotEraseTheLog:
+    """`forMedia` has sixteen callers and runs on ordinary page loads, not
+    just on a rename collision -- so this path is HOTTER than the renamer
+    decision whose traceback was bounded two commits earlier.
+
+    Sustained lock contention would therefore repeat on every scan AND every
+    dashboard render, and an unbounded traceback each time evicts the rotating
+    log that is the only diagnostic a self-hosted install has: the failure
+    erases the evidence of itself.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_windows(self):
+        from couchpotato.core.logger import reset_log_suppression
+        reset_log_suppression()
+        yield
+        reset_log_suppression()
+
+    @staticmethod
+    def _always_fails(db):
+        def _boom(*a, **k):
+            raise RuntimeError('database is locked')
+        db.get_many = _boom
+
+    def test_the_first_failure_is_reported_in_full(self, plugin, caplog):
+        import logging
+        obj, db, _fired = plugin
+        self._always_fails(db)
+
+        with caplog.at_level(logging.ERROR):
+            obj.forMedia('m-1', require_complete=True)
+
+        assert any('database is locked' in r.getMessage() for r in caplog.records), (
+            'the first failure was suppressed, so the bound cost the diagnosis'
+        )
+
+    def test_twenty_reads_do_not_write_twenty_tracebacks(self, plugin, caplog):
+        import logging
+        obj, db, _fired = plugin
+        self._always_fails(db)
+
+        with caplog.at_level(logging.ERROR):
+            for _ in range(20):
+                obj.forMedia('m-1', require_complete=True)
+
+        tracebacks = [
+            r for r in caplog.records if 'database is locked' in r.getMessage()
+        ]
+        assert tracebacks, 'nothing was recorded at all'
+        assert len(tracebacks) < 20, (
+            'every read wrote a full traceback (%d of 20); the rotating log '
+            'is being evicted by the failure it exists to record'
+            % len(tracebacks)
+        )
+
+    def test_a_different_media_is_not_silenced_by_the_first(self, plugin, caplog):
+        import logging
+        obj, db, _fired = plugin
+        self._always_fails(db)
+
+        with caplog.at_level(logging.ERROR):
+            for _ in range(6):
+                obj.forMedia('m-1', require_complete=True)
+            caplog.clear()
+            obj.forMedia('m-2', require_complete=True)
+
+        assert any('database is locked' in r.getMessage() for r in caplog.records), (
+            'a second, unrelated media was silenced by the first'
+        )

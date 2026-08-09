@@ -11,7 +11,7 @@ from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
 from .index import ReleaseIndex, ReleaseStatusIndex, ReleaseIDIndex, ReleaseDownloadIndex
@@ -853,26 +853,47 @@ class Release(Plugin):
         releases = []
         unreadable = 0
         try:
-            # `with_doc=False` explicitly. `get_many`'s own default is True
-            # (sqlite_adapter.py:989), and with it the generator resolves each
-            # document INTERNALLY via `self.get('id', ...)` catching only
-            # KeyError (sqlite_adapter.py:646-653). A corrupt document raises
-            # JSONDecodeError -- a ValueError -- which escapes the generator.
+            # `with_doc=False` explicitly, and it is worth being precise
+            # about what that does and does not buy, because the first
+            # version of this comment claimed more than the code delivers.
             #
-            # The whole per-document loop below, including the ValueError
-            # branch that increments `unreadable` and fires
-            # `database.delete_corrupted`, was therefore dead on the
-            # production backend for the one failure mode it names: one bad
-            # document made the ENTIRE set unreadable and the self-healing
-            # event never fired.
+            # DOES: `get_many` defaults to True (sqlite_adapter.py:989), and
+            # with it the generator re-fetches each document itself via
+            # `self.get('id', ...)`, catching only KeyError
+            # (sqlite_adapter.py:646-653). Any other read failure took the
+            # whole set down and skipped the per-document accounting below.
+            # With False we get raw index rows and do the reads ourselves,
+            # inside the try that can see them fail.
             #
-            # `with_doc=False` yields raw index rows, restoring the
-            # index-then-per-document-read shape the rest of this function
-            # assumes -- and putting the read inside the try that can see it.
+            # DOES NOT: avoid JSON parsing. `_query_index` is eager --
+            # `[self._doc_from_row(row) for row in rows]`
+            # (sqlite_adapter.py:920) -- so a document whose stored JSON will
+            # not parse fails the whole query no matter what `with_doc` says.
+            # That is caught by the guard below and answers
+            # INCOMPLETE_RELEASE_SET, which is fail-closed and correct, but it
+            # is a whole-set refusal rather than an isolated one and
+            # `database.delete_corrupted` does not fire for it.
+            #
+            # Not worth chasing further here: the schema rejects malformed
+            # JSON at write time (see
+            # tests/unit/test_release_for_media_real_backend.py), so that path
+            # needs file-level damage to reach at all.
             raw_releases = list(db.get_many('release', media_id, with_doc=False))
         except Exception:
-            log.error('Could not read the release list for media %s: %s',
-                      media_id, traceback.format_exc())
+            # Bounded, for the reason the renamer's decision failure is:
+            # sustained lock contention repeats on every scan, and an
+            # unbounded traceback each time evicts the rotating log that is
+            # the only diagnostic a self-hosted install has. This path is
+            # HOTTER than that one -- `forMedia` has sixteen callers and runs
+            # on ordinary page loads, not just on a rename collision.
+            #
+            # Keyed on the media id, never a path.
+            log_suppressed(
+                log.error,
+                'release_for_media_unreadable:%s' % (media_id or 'unknown',),
+                'Could not read the release list for media %s: %s',
+                media_id, traceback.format_exc(),
+            )
             if require_complete:
                 return INCOMPLETE_RELEASE_SET
             return []
