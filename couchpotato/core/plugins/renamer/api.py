@@ -132,11 +132,38 @@ config = [{
                     'default': False,
                 },
                 {
+                    # DEAD. Declared 'default': True for the life of this fork
+                    # while being read by nothing, so `setDefault`
+                    # (core/settings.py:396, which writes only when the option
+                    # is ABSENT) has already persisted True into real config
+                    # files -- measured at .config/config.ini:151.
+                    #
+                    # Wiring THIS key up would therefore have begun deleting
+                    # library files on the first scan after upgrade, on every
+                    # existing install, with no action by the operator. That is
+                    # both withdrawn attempts' failure mode arriving through a
+                    # different door, so upgrade replacement got a NEW key
+                    # below instead. Owner decision, 2026-08-08 (spec D1).
+                    #
+                    # Left in place, and left declared, so an operator who set
+                    # it deliberately still sees it; `upgrade_replace` is what
+                    # the code reads.
                     'name': 'remove_lower_quality_copies',
                     'type': 'bool',
-                    'label': 'Delete Others',
-                    'description': 'Remove lower/equal quality copies of a release after downloading.',
+                    'label': 'Delete Others (unused)',
+                    'description': 'No longer read. Superseded by "Replace lower quality copies", which must be enabled deliberately.',
                     'default': True,
+                },
+                {
+                    # The key upgrade replacement actually reads. Defaults OFF
+                    # and cannot inherit the stale True above, because
+                    # setDefault only materialises a value for an ABSENT
+                    # option and this name has never existed in any config.
+                    'name': 'upgrade_replace',
+                    'type': 'bool',
+                    'label': 'Replace lower quality copies',
+                    'description': 'When a strictly better copy of a movie you already have is downloaded, DELETE the existing library file and put the new one in its place. The deleted file cannot be recovered. Off by default.',
+                    'default': False,
                 },
                 {
                     'advanced': True,
