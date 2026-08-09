@@ -110,7 +110,7 @@ disk (AC-DATA-5).
 - **AC-QA-9**: When two or more releases claim the destination path with different qualities, the renamer refuses, logs the ambiguity naming both release ids, and preserves both the library file and the download; `copy_id` is the discriminator, tested in the resolvable case (one release's `copy_id` matches the file on disk, so it wins) and the unresolvable case (neither or both match, so it refuses). Proof: unit.
 - **AC-QA-10**: When no release claims the destination path (a manually placed file, or a file attached to a different media), the renamer refuses to replace and preserves both files: unknown never means replaceable. Proof: unit.
 - **AC-QA-11**: The code records a distinguishable outcome per file (`replaced`, `declined_worse`, `declined_equal`, `declined_unknown_quality`, `declined_ambiguous_owner`, `declined_setting_off`, `failed`), every "no replacement happened" test asserts on that outcome value rather than only on file contents, and a test asserting `declined_worse` fails if the gate is made inert by removing the releases attachment. Proof: unit. (Covers AC-OPS-4, AC-DATA-4a.)
-- **AC-QA-12** (amended during B4a review, see D9): When `release.for_media` returns an empty list, returns None, raises, or the media dict has no `_id`, the renamer refuses, does not propagate an exception out of `_moveRenamedFiles`, and leaves the library file and the download intact. The recorded outcome names the CAUSE and the four are distinct: `declined_no_owner` (empty list, or no `_id` -- nothing claims this destination), `declined_incomplete_evidence` (None -- a release document exists but could not be read), `declined_error` (raised). Proof: unit.
+- **AC-QA-12** (amended during B4a review, see D9): When `release.for_media` returns an empty list, returns `INCOMPLETE_RELEASE_SET`, raises, or the media dict has no `_id`, the renamer refuses, does not propagate an exception out of `_moveRenamedFiles`, and leaves the library file and the download intact. The recorded outcome names the CAUSE and the four are distinct: `declined_no_owner` (empty list, or no `_id` -- nothing claims this destination), `declined_incomplete_evidence` (the sentinel -- a release document exists but could not be read), `declined_error` (raised). Proof: unit.
 - **AC-QA-13**: When the incoming group's `meta_data['quality']` is missing, is None (reachable: `quality.guess` returns None at `quality/main.py:362` and `:373`) or lacks an `identifier`, the renamer refuses and does not raise; a test drives `_processGroup` with `{'meta_data': {'quality': None}}` and asserts no AttributeError escapes and no file is removed. Proof: unit.
 - **AC-QA-14**: Happy path: with the setting on and a strictly better incoming copy, the destination holds the new bytes afterwards (asserted by SHA-256, not by mtime or size alone) and the outcome recorded is `replaced`. Proof: integration.
 - **AC-QA-15**: Equal-rung and worse-rung incoming copies leave the destination byte-identical (SHA-256 before and after), leave the download present and suppress `cleanup`, tested as three cases: worse, equal rung with equal 3D, and better rung with mismatched 3D. Proof: integration.
@@ -484,3 +484,25 @@ different cause.
 This is a spec bug, not an implementation deviation: the AC was under-specified
 and the implementation was more correct than the criterion it was written
 against.
+
+### D12: the incomplete signal is a sentinel, because None cannot survive the bus
+
+Amends D9, which described the signal as `None`. That was accurate when it was
+written and wrong two commits later, which is the drift this section exists to
+record rather than quietly fix.
+
+`fireEvent(single=True)` collects only non-None handler results and returns
+`[]` when there are none (`event.py:222`). A handler answering None therefore
+reaches the caller as `[]`, and `[] is None` is False -- so the guard was dead
+through the real wiring while every unit test passed, because the tests
+injected a stand-in for `fireEvent`.
+
+That was the THIRD dead guard from this one boundary in this feature. The fix
+is structural rather than another careful check: `INCOMPLETE_RELEASE_SET` is a
+sentinel object, non-None so the transport cannot filter it away, and falsy so
+a caller who forgets the identity check and writes `releases or []` still
+fails closed.
+
+Being accurate about the severity, because the obvious reading overstates it:
+an empty release list still refuses, via `declined_no_owner` at `owner.py:74`.
+The dead guard produced a wrong DIAGNOSIS, not an unsafe replacement.
