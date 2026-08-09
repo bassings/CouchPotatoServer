@@ -25,6 +25,7 @@ from couchpotato.core.plugins.renamer.main import Renamer
 from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
 from couchpotato.core.plugins.renamer.owner import DECLINED_NO_OWNER
 from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_ERROR,
     DECLINED_INCOMPLETE_EVIDENCE,
     DECLINED_NOT_BETTER,
     DECLINED_SETTING_OFF,
@@ -208,7 +209,7 @@ class TestTheDecisionNeverBreaksAScan:
 
         monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent', _boom)
         outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
-        assert outcome == 'declined_error'
+        assert outcome == DECLINED_ERROR
 
     def test_a_group_with_no_media_does_not_raise(self, scene):
         outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})

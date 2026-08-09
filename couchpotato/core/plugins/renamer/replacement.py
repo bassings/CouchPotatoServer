@@ -51,6 +51,12 @@ DECLINED_UNKNOWN_QUALITY = 'declined_unknown_quality'
 # that claims the destination, so the difference decides whether an operator
 # looks at their database or at their library.
 DECLINED_INCOMPLETE_EVIDENCE = 'declined_incomplete_evidence'
+
+# The decision itself blew up. Named for the same reason as every other
+# outcome here: a raw string duplicated at the call site and again in a test
+# has no shared symbol, so a typo in either survives a rename and nothing
+# catches it.
+DECLINED_ERROR = 'declined_error'
 DECLINED_NOT_BETTER = 'declined_not_better'
 
 

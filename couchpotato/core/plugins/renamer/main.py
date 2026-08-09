@@ -248,6 +248,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         would abort a scan that was otherwise fine (AC-QA-12).
         """
         from couchpotato.core.plugins.renamer.replacement import (
+            DECLINED_ERROR,
             DECLINED_INCOMPLETE_EVIDENCE,
             DECLINED_MULTI_FILE_GROUP,
             DECLINED_SETTING_OFF,
@@ -313,7 +314,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'Could not decide on upgrade replacement: %s',
                 traceback.format_exc(),
             )
-            return 'declined_error'
+            return DECLINED_ERROR
 
     @staticmethod
     def _sizeOrNone(path):
