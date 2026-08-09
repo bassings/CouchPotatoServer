@@ -5,16 +5,16 @@
 # THE SINGLE SOURCE OF TRUTH for that question. The pre-push hook and the CI
 # workflow both call this, and that is the whole point: two copies of "what
 # counts as a UI change" drift, and when they drift the quieter side silently
-# stops covering something. `tests/unit/test_needs_e2e.sh_contract.py` fails if
-# either caller stops using it.
+# stops covering something. `tests/unit/test_hybrid_gate.py`
+# (TestBothCallersUseTheSharedScript) fails if either caller stops using it.
 #
 # Exit 0  = run the browser suites.
 # Exit 1  = they can be skipped for this change.
 #
 # Usage:  scripts/needs_e2e.sh <base-ref>
 #
-# Erring: when in ANY doubt -- no base ref, an unreadable diff, an unrecognised
-# path -- this exits 0. A slow gate is an annoyance; a skipped gate that should
+# Erring: when in ANY doubt -- no base ref, an unreadable diff, a pattern the
+# classifier itself cannot apply -- this exits 0. A slow gate is an annoyance; a skipped gate that should
 # have run is how a UI regression reaches master.
 set -euo pipefail
 
@@ -50,7 +50,7 @@ fi
 # `couchpotato/templates/` is the other live Jinja render root (the login
 # page). The Playwright config and fixtures decide what runs at all, and
 # package-lock pins the browser itself.
-UI_PATTERNS='^(couchpotato/ui/|couchpotato/static/|couchpotato/templates/|tests/e2e/|playwright\.config\.ts$|package\.json$|package-lock\.json$|scripts/verify\.sh$|scripts/needs_e2e\.sh$|\.github/workflows/)'
+UI_PATTERNS='^(couchpotato/ui/|couchpotato/static/|couchpotato/templates/|tests/e2e/|playwright\.config\.ts$|package\.json$|package-lock\.json$|scripts/verify\.sh$|scripts/needs_e2e\.sh$|scripts/push_base_ref\.sh$|\.github/workflows/)'
 
 # A here-string, NOT a pipe, and deliberately so. `echo ... | grep -q` made
 # grep exit at the first match; with enough remaining output to fill the pipe
@@ -58,7 +58,19 @@ UI_PATTERNS='^(couchpotato/ui/|couchpotato/static/|couchpotato/templates/|tests/
 # and the `if` took the FALSE branch. The failure scaled the wrong way: the
 # more files a change touched, the more likely it was to SKIP the browser
 # suites. Measured on this machine: correct at 1,000 paths, wrong at 4,000.
-MATCHED="$(grep -E "$UI_PATTERNS" <<< "$CHANGED" || true)"
+# `|| true` would swallow ANY grep failure, including a malformed pattern
+# (exit 2), and fall through to "nothing browser-visible changed" -- the one
+# fail-OPEN in a script that errs towards YES everywhere else. So exit 1 (no
+# match) and exit >=2 (the classifier itself broke) are kept apart.
+set +e
+MATCHED="$(grep -E "$UI_PATTERNS" <<< "$CHANGED")"
+GREP_RC=$?
+set -e
+
+if [[ "$GREP_RC" -gt 1 ]]; then
+  echo "needs_e2e: the classifier itself failed (grep exit $GREP_RC), assuming YES" >&2
+  exit 0
+fi
 
 if [[ -n "$MATCHED" ]]; then
   echo "needs_e2e: YES -- browser-visible files changed:" >&2

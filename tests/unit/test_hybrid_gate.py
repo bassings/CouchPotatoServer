@@ -68,6 +68,12 @@ class TestTheScriptAnswersTheQuestion:
         'package-lock.json',                     # pins the browser itself
         'scripts/verify.sh',
         '.github/workflows/ci.yml',
+        # The classifier protects itself: editing it forces the full gate, so
+        # a PR cannot quietly defang its own coverage. Untested until now --
+        # and `couchpotato/static/` was dropped from this same pattern once
+        # and shipped green precisely because no case named it.
+        'scripts/needs_e2e.sh',
+        'scripts/push_base_ref.sh',
     ])
     def test_browser_visible_changes_need_the_suites(self, repo, path):
         repo['commit'](path)
@@ -406,3 +412,41 @@ class TestTheScopeStepDoesNotSpliceContextIntoTheShell:
             % step['run']
         )
         assert 'BASE_REF' in step.get('env', {})
+
+
+class TestABrokenClassifierStillErrsTowardsRunning:
+    def test_a_pattern_grep_cannot_apply_answers_YES_not_no(self, repo, tmp_path):
+        """Every other error path here errs towards YES. A `grep` that exits 2
+        on a malformed pattern must not be the one exception, because that one
+        resolves in the fail-OPEN direction: the classifier breaks and the
+        browser suites quietly stop running.
+
+        The pattern is a fixed literal today, so this is defence against a
+        future edit rather than a live bug. It is cheap, and the alternative
+        is a script whose invariant holds everywhere except in its own
+        failure.
+        """
+        import re
+        import subprocess as sp
+
+        broken = tmp_path / 'needs_e2e_broken.sh'
+        source = SCRIPT.read_text()
+        patched = re.sub(r"^UI_PATTERNS=.*$", "UI_PATTERNS='^(['", source,
+                         count=1, flags=re.M)
+        assert patched != source, 'the UI_PATTERNS line was not replaced'
+        broken.write_text(patched)
+        broken.chmod(0o755)
+
+        repo['commit']('docs/only-a-doc.md')
+
+        # Control: with the real pattern this same change answers NO, so a
+        # YES below can only come from the error branch.
+        assert _run('main', cwd=repo['dir']) == 1
+
+        result = sp.run([str(broken), 'main'], cwd=str(repo['dir']),
+                        capture_output=True, text=True)
+        assert result.returncode == 0, (
+            'a classifier that cannot run resolved to SKIP: rc=%d %s'
+            % (result.returncode, result.stderr)
+        )
+        assert 'classifier itself failed' in result.stderr

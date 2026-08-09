@@ -25,6 +25,12 @@ if DEFAULT="$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/n
   fi
 fi
 
+# Deliberately does not resolve `develop`, even though ci.yml's pull_request
+# trigger fires for it too. CI is unaffected -- the scope job always diffs the
+# real github.base_ref -- and a develop-targeted branch diffed against master
+# yields a SUPERSET of its changes, so the local gate over-runs rather than
+# under-runs. That is the correct direction here, and a choice, not an
+# oversight.
 for candidate in origin/master origin/main master main; do
   if git rev-parse --verify --quiet "$candidate" >/dev/null; then
     echo "$candidate"
