@@ -95,3 +95,12 @@ test_data/
 # Untracked root-level dev scripts (gitignored, so invisible to git but not to
 # Docker).
 test_*.py
+
+# Scan and coverage outputs. Gitignored, so invisible to git -- but the build
+# context is the filesystem, not the index, and Dockerfile:117 copies the whole
+# context in. Without these, anyone who runs the documented Sonar workflow
+# bakes their coverage reports and scanner metadata into the runtime image.
+coverage/
+coverage.xml
+htmlcov/
+.scannerwork/
