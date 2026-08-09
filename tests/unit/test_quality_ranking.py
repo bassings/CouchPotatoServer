@@ -352,13 +352,19 @@ class TestNeverConsultsAProfile:
 
 
 class TestIs3dReadFromArgumentNotFromCache:
-    """AC-SEC-11: guessing a 3D release earlier in the SAME process leaves
-    `is_3d = True` on the cached quality dict for that rung indefinitely
-    (`QualityPlugin.guess` mutates the dict it gets from `self.all()`, which
-    is cached on `self.cached_qualities` for the process lifetime). The
-    comparison must take is_3d from each file's own (release-doc-sourced)
-    metadata, never from that shared cache -- otherwise a 3D guess made for
-    an unrelated file poisons every later comparison at the same rung.
+    """AC-SEC-11, and a description of a bug that no longer exists.
+
+    `QualityPlugin.guess` USED TO mutate `is_3d` on the dict it got from
+    `self.all()` -- a module-level entry cached on `self.cached_qualities` for
+    the process lifetime -- so guessing a 3D release left `is_3d = True` on
+    that rung for every later caller. Five call sites consumed it.
+
+    That is fixed at the root: `guess()` now returns `dict(quality)` with
+    `is_3d` set on the copy, so the shared cache is never touched. The
+    docstring is kept in the past tense rather than deleted because the class
+    still earns its place -- it pins that the comparison takes is_3d from each
+    file's own release-doc metadata, which is what makes the fix safe to rely
+    on rather than merely present.
 
     This is only a meaningful test if it runs the 3D guess FIRST, in the
     same process, before the comparison -- a fresh process would never
