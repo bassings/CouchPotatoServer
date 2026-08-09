@@ -56,7 +56,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
       with:
-        fetch-depth: 0        # needs\_e2e.sh diffs against the base
+        fetch-depth: 0        # needs_e2e.sh diffs against the base
     - id: decide
       # Context values go through `env:`, never spliced into `run:`. Not
       # exploitable today (the pull_request trigger is filtered to two literal

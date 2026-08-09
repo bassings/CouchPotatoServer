@@ -26,7 +26,15 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 # question to "what changed since my last push" and let a UI change in commit
 # one be forgotten by commit two.
 VERIFY_ARGS=()
-BASE_REF="$("$REPO_ROOT/scripts/push_base_ref.sh" 2>/dev/null || echo origin/master)"
+# No `|| echo origin/master` fallback, deliberately. push_base_ref.sh cannot
+# exit non-zero -- every git call that could fail is guarded and the last line
+# is a bare echo -- so that fallback only fired if the script were missing
+# entirely, and it would then have supplied a CONFIDENT wrong answer.
+#
+# An empty BASE_REF is better: needs_e2e.sh treats a missing base ref as
+# "assume YES" and runs the full gate. A guard that cannot fire is worse than
+# no guard, because it reads as protection.
+BASE_REF="$("$REPO_ROOT/scripts/push_base_ref.sh")"
 if ! "$REPO_ROOT/scripts/needs_e2e.sh" "$BASE_REF"; then
   VERIFY_ARGS+=(--no-e2e)
   echo "🔒 pre-push: running the FAST local gate (no browser-visible files changed)"
