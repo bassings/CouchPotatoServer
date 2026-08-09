@@ -110,6 +110,35 @@ class TestItErrsTowardsRunning:
         assert _run('main', cwd=repo['dir']) == 0
 
 
+def _ui_prefixes():
+    """Every path prefix in the script's own UI_PATTERNS.
+
+    Read from the script rather than hardcoded, so the drift guard cannot
+    fall behind the pattern it is guarding. It checked only
+    `couchpotato/ui/` before -- and `couchpotato/static/` was the prefix this
+    very PR had to add after it shipped missing, which is exactly the entry a
+    single hardcoded string would keep missing.
+    """
+    import re
+    line = [
+        ln for ln in SCRIPT.read_text().splitlines()
+        if ln.startswith('UI_PATTERNS=')
+    ]
+    assert len(line) == 1, 'UI_PATTERNS is not a single assignment'
+    prefixes = re.findall(r'[A-Za-z0-9_./\\-]+/(?=\||\))', line[0])
+    assert prefixes, 'no directory prefixes parsed out of UI_PATTERNS: %s' % line[0]
+    return [p.replace('\\', '') for p in prefixes]
+
+
+def test_the_drift_guard_reads_every_prefix_not_just_one():
+    """Guard on the guard: if the parse ever returns a single entry, the
+    drift check has quietly narrowed back to what it used to be."""
+    prefixes = _ui_prefixes()
+    assert 'couchpotato/ui/' in prefixes
+    assert 'couchpotato/static/' in prefixes
+    assert len(prefixes) >= 4, prefixes
+
+
 class TestBothCallersUseTheSharedScript:
     """The drift guard. If either side grows its own path list, the two stop
     agreeing and the quieter one silently covers less."""
@@ -134,9 +163,18 @@ class TestBothCallersUseTheSharedScript:
         assert any('$REPO_ROOT' in ln or './scripts' in ln for ln in calls), calls
 
     def test_the_workflow_actually_runs_it(self):
-        calls = self._invocations(CI)
-        assert calls, 'the workflow mentions the script but never executes it'
-        assert any('./scripts/needs_e2e.sh' in ln for ln in calls), calls
+        """Via the BASE branch's copy, deliberately -- see
+        TestTheClassifierIsTakenFromTheBaseBranch. What matters here is that
+        the workflow executes THE SCRIPT rather than re-deciding for itself."""
+        text = CI.read_text(encoding='utf-8')
+        code = [ln for ln in text.splitlines() if not ln.lstrip().startswith('#')]
+        assert any(
+            'scripts/needs_e2e.sh' in ln and ('git show' in ln or './' in ln)
+            for ln in code
+        ), 'the workflow mentions the script but never executes it'
+        assert any('"$CLASSIFIER"' in ln for ln in code), (
+            'the extracted classifier is never run'
+        )
 
     def test_neither_caller_hardcodes_its_own_ui_path_list(self):
         """A second list is the drift. `couchpotato/ui/` appearing in the hook
@@ -150,7 +188,8 @@ class TestBothCallersUseTheSharedScript:
             # diff, that answers the same question independently.
             lines = [
                 ln for ln in text.splitlines()
-                if 'couchpotato/ui/' in ln and not ln.lstrip().startswith('#')
+                if any(prefix in ln for prefix in _ui_prefixes())
+                and not ln.lstrip().startswith('#')
             ]
             assert not lines, (
                 '%s answers the UI question itself instead of asking the '
@@ -450,3 +489,123 @@ class TestABrokenClassifierStillErrsTowardsRunning:
             % (result.returncode, result.stderr)
         )
         assert 'classifier itself failed' in result.stderr
+
+
+class TestThePushBaseFallsBackAndFailsSafe:
+    """The `origin/HEAD` symref is set by `git clone` and by nothing else --
+    a repo initialised with `git init` and given a remote by hand has no such
+    ref, and a stale one survives a renamed default branch. Both fall through
+    to the candidate ladder, and neither had a test.
+    """
+
+    BASE_SCRIPT = REPO / 'scripts' / 'push_base_ref.sh'
+
+    def _base(self, cwd):
+        import subprocess as sp
+        return sp.run([str(self.BASE_SCRIPT)], cwd=str(cwd),
+                      capture_output=True, text=True).stdout.strip()
+
+    def _repo_without_origin_head(self, tmp_path):
+        import subprocess as sp
+        origin = tmp_path / 'origin.git'
+        sp.run(['git', 'init', '-q', '--bare', '-b', 'master', str(origin)],
+               check=True, capture_output=True)
+        work = tmp_path / 'work'
+        work.mkdir()
+
+        def _git(*args):
+            sp.run(['git', *args], cwd=str(work), check=True, capture_output=True)
+
+        _git('init', '-q', '-b', 'master')
+        _git('config', 'user.email', 't@example.com')
+        _git('config', 'user.name', 'T')
+        _git('remote', 'add', 'origin', str(origin))
+        (work / 'seed.txt').write_text('seed\n')
+        _git('add', '-A')
+        _git('commit', '-qm', 'seed')
+        _git('push', '-q', 'origin', 'master')
+        _git('fetch', '-q', 'origin')
+        # Modern git sets origin/HEAD on fetch. Remove it, because the case
+        # under test is a repo that has never had one.
+        sp.run(['git', 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD'],
+               cwd=str(work), capture_output=True)
+        return work, _git
+
+    def test_the_candidate_ladder_is_used_when_origin_HEAD_is_unset(self, tmp_path):
+        work, git = self._repo_without_origin_head(tmp_path)
+
+        import subprocess as sp
+        symref = sp.run(['git', 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
+                        cwd=str(work), capture_output=True, text=True)
+        assert symref.returncode != 0, (
+            'origin/HEAD exists, so this fixture cannot exercise the ladder'
+        )
+
+        assert self._base(work).endswith('master')
+
+    def test_a_repo_with_no_resolvable_base_answers_EMPTY(self, tmp_path):
+        """And empty is the safe end: needs_e2e.sh treats a missing base ref
+        as 'assume YES'. Asserted end to end rather than trusted to a comment.
+        """
+        import subprocess as sp
+        work = tmp_path / 'lonely'
+        work.mkdir()
+        sp.run(['git', 'init', '-q', '-b', 'nothing-standard', str(work)],
+               check=True, capture_output=True)
+        for args in (['config', 'user.email', 't@example.com'],
+                     ['config', 'user.name', 'T']):
+            sp.run(['git', *args], cwd=str(work), check=True, capture_output=True)
+        (work / 'a.txt').write_text('a\n')
+        sp.run(['git', 'add', '-A'], cwd=str(work), check=True, capture_output=True)
+        sp.run(['git', 'commit', '-qm', 'one'], cwd=str(work), check=True,
+               capture_output=True)
+
+        assert self._base(work) == ''
+
+        # End to end: the empty answer must make the classifier say YES.
+        result = sp.run([str(SCRIPT), ''], cwd=str(work),
+                        capture_output=True, text=True)
+        assert result.returncode == 0, (
+            'an unresolvable base resolved to SKIP: %s' % result.stderr
+        )
+
+
+class TestTheClassifierIsTakenFromTheBaseBranch:
+    """A PR that edits the classifier must not be gated by its own edit.
+
+    `actions/checkout` gives the workflow the PR's merge ref, so running the
+    working-tree copy would let an author make it `exit 1` unconditionally:
+    both required browser jobs skip, a skipped job satisfies a required check,
+    and the change that disabled the gate merges without ever running it.
+
+    Listing `scripts/needs_e2e.sh` in UI_PATTERNS does not close this. That
+    entry only forces a full run while it is still there, and the PR being
+    defended against is the one that removes it.
+    """
+
+    def test_the_scope_job_runs_the_base_copy_not_the_checkout(self):
+        scope = yaml.safe_load(CI.read_text())['jobs']['scope']
+        step = [s for s in scope['steps'] if s.get('id') == 'decide'][0]
+        run = '\n'.join(
+            ln for ln in step['run'].splitlines()
+            if not ln.lstrip().startswith('#')
+        )
+
+        assert 'git show "origin/$BASE_REF:scripts/needs_e2e.sh"' in run, (
+            'the scope job classifies with the PR\'s own copy of the '
+            'classifier, so a PR can decide it does not need to be tested'
+        )
+        assert './scripts/needs_e2e.sh' not in run, (
+            'the working-tree classifier is still being executed'
+        )
+
+    def test_the_pre_push_hook_DOES_use_the_working_tree_copy(self):
+        """Deliberately different, and worth stating.
+
+        The hook is the author's own gate on their own machine. There is no
+        adversary to defend against there -- someone editing their local
+        classifier to skip tests can equally pass `--no-verify` -- and using
+        the base copy locally would mean the author could not test a change to
+        the classifier at all.
+        """
+        assert 'scripts/needs_e2e.sh' in HOOK.read_text()
