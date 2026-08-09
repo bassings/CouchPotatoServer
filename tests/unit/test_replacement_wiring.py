@@ -191,6 +191,37 @@ class TestTheDeadSettingIsAnnouncedOnce:
         said = [r for r in caplog.records if 'no longer read' in r.getMessage()]
         assert len(said) == 1, 'warned %d times' % len(said)
 
+    def test_enabling_it_LATER_in_the_same_process_is_still_announced(self, scene, caplog):
+        """The latch must fire when the warning is due, not on the first call.
+
+        `self.conf` reads live, so "Delete Others" can be switched on in the
+        settings UI without a restart. Latching on the first call meant a scan
+        that ran while the setting was off silenced the notice for the life of
+        the process -- the silence D1 exists to prevent, reached by a
+        different door.
+        """
+        scene['state']['conf'] = {'remove_lower_quality_copies': False}
+        scene['plugin']._warnAboutTheDeadSetting()
+
+        scene['state']['conf'] = {'remove_lower_quality_copies': True}
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
+
+        assert any('no longer read' in r.getMessage() for r in caplog.records), (
+            'the operator enabled the dead setting and was never told it does '
+            'nothing, because an earlier scan latched the notice off'
+        )
+
+    def test_it_is_STILL_only_said_once_after_being_enabled(self, scene, caplog):
+        scene['state']['conf'] = {'remove_lower_quality_copies': False}
+        scene['plugin']._warnAboutTheDeadSetting()
+        scene['state']['conf'] = {'remove_lower_quality_copies': True}
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                scene['plugin']._warnAboutTheDeadSetting()
+        said = [r for r in caplog.records if 'no longer read' in r.getMessage()]
+        assert len(said) == 1, 'warned %d times' % len(said)
+
     def test_nothing_is_said_when_the_operator_never_set_it(self, scene, caplog):
         scene['state']['conf'] = {'upgrade_replace': False}
         with caplog.at_level('WARNING'):
@@ -214,6 +245,24 @@ class TestTheDecisionNeverBreaksAScan:
     def test_a_group_with_no_media_does_not_raise(self, scene):
         outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})
         assert outcome != REPLACE
+
+    def test_a_group_with_media_but_no_id_declines_as_no_owner(self, scene):
+        """AC-QA-12's no-`_id` branch, which nothing reached before.
+
+        `test_a_group_with_no_media_does_not_raise` passes `{'files': {}}`,
+        which has ZERO movie files and is refused at
+        `declined_multi_file_group` long before the media lookup -- so it
+        asserted only that nothing raised, and the branch the AC names was
+        never executed. This group has exactly one movie file and a media dict
+        with no id, which is the shape the AC is about.
+        """
+        group = scene['group']()
+        group['media'] = {}
+        outcome = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], group)
+        assert outcome == DECLINED_NO_OWNER
+        assert scene['state']['for_media_calls'] == [], (
+            'a release lookup was fired for a group with no media id'
+        )
 
     def test_an_unstattable_destination_does_not_raise(self, scene):
         outcome = scene['plugin']._replacementOutcome(

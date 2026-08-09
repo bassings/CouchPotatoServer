@@ -229,8 +229,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         if Renamer._warned_dead_setting:
             return
-        Renamer._warned_dead_setting = True
+
+        # The latch is set only when the warning is actually EMITTED, not on
+        # the first call. Setting it first looked equivalent and was not:
+        # `self.conf` reads live, so an operator can enable "Delete Others" in
+        # the settings UI without a restart. With the latch already flipped by
+        # an earlier call made while the setting was off, every later call
+        # returns before re-reading the config and the notice never comes --
+        # which is exactly the silence D1 exists to prevent, arrived at by a
+        # different door.
         if self.conf('remove_lower_quality_copies', default=False):
+            Renamer._warned_dead_setting = True
             log.warning(
                 'The "Delete Others" setting (remove_lower_quality_copies) is no '
                 'longer read and does nothing. Upgrade replacement is now the '
