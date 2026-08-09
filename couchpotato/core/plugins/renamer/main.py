@@ -197,12 +197,18 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if outcome == REPLACE and not self._sizeSupportsTheClaimedQuality(group, src):
                     outcome = DECLINED_SIZE_CONTRADICTS_QUALITY
 
-                measured_source_size = self._sourceStillMatchesTheScan(group, src)
-                if outcome == REPLACE and measured_source_size is None:
-                    # The quality rung was derived from the scanner's
-                    # measurement. If the bytes have moved since, the rung
-                    # describes a file that no longer exists.
-                    outcome = DECLINED_SOURCE_CHANGED
+                # Inside the REPLACE guard, like the checks around it. It
+                # stats the source, and on every install that has not opted
+                # into `upgrade_replace` -- the common case -- the answer was
+                # computed and thrown away on every ordinary collision.
+                measured_source_size = None
+                if outcome == REPLACE:
+                    measured_source_size = self._sourceStillMatchesTheScan(group, src)
+                    if measured_source_size is None:
+                        # The quality rung was derived from the scanner's
+                        # measurement. If the bytes have moved since, the rung
+                        # describes a file that no longer exists.
+                        outcome = DECLINED_SOURCE_CHANGED
 
                 if outcome == REPLACE and not self._destinationIsInsideTheLibrary(dst):
                     # A naming template, a crafted title or a `media_folder`

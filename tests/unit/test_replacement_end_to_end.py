@@ -1314,3 +1314,51 @@ class TestRedactingAnExceptionKeepsItsDiagnosis:
 
     def test_an_exception_with_no_message_still_names_its_type(self, world):
         assert 'RuntimeError' in world['plugin']._withoutPaths(RuntimeError())
+
+
+class TestTheSettingOffPathDoesNoWork:
+    """`upgrade_replace` is off on every install that has not opted in, so an
+    ordinary destination collision is the COMMON case. The scan-size check
+    stats the source and, when the setting is off, that answer was computed
+    and thrown away every time.
+
+    Cheap individually. The reason it is worth fixing is consistency: the
+    release lookup two lines up is explicitly ordered after the cheap
+    refusals for exactly this reason, and a guard that respects the ordering
+    beside one that does not is how the ordering stops being maintained.
+    """
+
+    def test_no_stat_of_the_source_when_the_setting_is_off(self, world, monkeypatch):
+        world['state']['conf']['upgrade_replace'] = False
+
+        stats = []
+        real_getsize = os.path.getsize
+
+        def _record(path, *a, **k):
+            stats.append(str(path))
+            return real_getsize(path, *a, **k)
+
+        monkeypatch.setattr(os.path, 'getsize', _record)
+        _run(world)
+
+        assert _sha(world['dst']) == world['old_sha'], 'it replaced with the setting off'
+        assert world['src'] not in stats, (
+            'the source was stat-ed for a decision that was already made: %r'
+            % stats
+        )
+
+    def test_the_source_IS_stat_ed_when_the_decision_needs_it(self, world, monkeypatch):
+        """The control: the check must still run when it can change the
+        answer, or this is an optimisation that removed a guard."""
+        stats = []
+        real_getsize = os.path.getsize
+
+        def _record(path, *a, **k):
+            stats.append(str(path))
+            return real_getsize(path, *a, **k)
+
+        monkeypatch.setattr(os.path, 'getsize', _record)
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW
+        assert world['src'] in stats

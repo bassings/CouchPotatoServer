@@ -269,11 +269,19 @@ def replace_atomically(source, destination, stage=None,
 def _discard_staging_if_safe(staging, source, expected_size, remove):
     """Remove the staged file ONLY if a complete copy survives elsewhere.
 
-    `move` may have consumed the source (a real move) or left it in place
-    (copy/link). After a failure the staged file is therefore sometimes the
-    only complete copy of the download in existence, and tidying it away would
-    destroy what the operator just spent hours fetching -- turning a
-    recoverable failure into a loss.
+Staging is a copy now, so in this module's own flow the source is always
+    still there and this check always passes. The guard stays anyway, and
+    deliberately:
+
+    `stage` is injectable. A caller that passes a consuming transfer -- which
+    is exactly what the renamer used to do, and what the tests still do to
+    model it -- leaves the staged file as the only complete copy of the
+    download in existence after a failure. Tidying it away would destroy what
+    the operator just spent hours fetching, turning a recoverable failure into
+    a loss.
+
+    A guard that is currently unreachable through one caller is not the same
+    as a guard that is wrong, and this one costs a stat.
 
     So: only discard when the source is still there AND still whole. Anything
     else is left on disk for a human, which is untidy and recoverable, rather
