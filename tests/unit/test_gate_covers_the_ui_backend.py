@@ -1,19 +1,27 @@
-"""The change-surface gate must see the backend the UI actually calls (T19).
+"""The gate runs the browser suites unless a change is provably irrelevant.
 
-`UI_PATTERNS` matched the templates, the static assets and the harness, but
-not the API handlers those pages invoke -- so a change to `media.list`'s
-implementation could break every movie page while the browser suites were
-skipped on the PR that did it.
+**This inverts the original rule, and the measurement is why.**
 
-The fix is not "add more patterns and hope". A hardcoded list of backend files
-goes stale the first time the UI calls a new handler, which is the same drift
-this whole gate exists to prevent. So the list is DERIVED here, from the UI's
-own source, and the test fails when the pattern and the derivation disagree.
+The first design listed what a browser could see and skipped everything else.
+It was wrong twice in review, and the second time showed it could not be made
+right: the UI calls the API from templates as well as from Python, across 33
+endpoints in 16 top-level namespaces -- `app category collection directory
+download logging manage media movie profile provider quality release search
+settings updater`. That is the whole application. An allowlist that covered it
+honestly would be `couchpotato/`.
 
-That keeps `needs_e2e.sh` fast and readable (a literal regex, no runtime
-discovery) while making the literal impossible to leave behind.
+So the saving was not real independence between backend and UI; it came from
+under-covering. `renamer`, `searcher`, `updater` and `quality` all skipped the
+browser suites while the browser called every one of those namespaces.
+
+The rule is now: SKIP only what cannot reach a browser -- documentation, plans,
+QA notes, unit tests, agent scratch. Everything else runs.
+
+Measured cost: of the last 60 commits, 6 touch only skip-listed paths. That is
+the honest saving, and it is smaller than the original claim. The failure
+direction is what changed: an unrecognised path now RUNS the suites instead of
+skipping them, which is the direction every other decision in this gate takes.
 """
-import re
 import subprocess
 from pathlib import Path
 
@@ -21,86 +29,94 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / 'scripts' / 'needs_e2e.sh'
-UI_DIR = REPO / 'couchpotato' / 'ui'
-
-#: `callApiHandler, 'media.list'` and `callApiHandler('media.list'`
-CALL_RE = re.compile(r"callApiHandler[,(]\s*'([a-z_.]+)'")
 
 
-def api_names_the_ui_calls():
-    names = set()
-    for path in UI_DIR.rglob('*.py'):
-        names |= set(CALL_RE.findall(path.read_text()))
-    return names
+def classify(repo_dir, *paths, base='main'):
+    """Commit `paths` in a throwaway repo and ask the real script."""
+    def git(*args):
+        subprocess.run(['git', *args], cwd=str(repo_dir), check=True,
+                       capture_output=True, text=True)
+    for rel in paths:
+        target = repo_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text('changed\n')
+    git('add', '-A')
+    git('commit', '-qm', 'change')
+    return subprocess.run([str(SCRIPT), base], cwd=str(repo_dir),
+                          capture_output=True, text=True).returncode
 
 
-def file_registering(name):
-    """The module that registers `name` as an API view or event."""
-    for pattern in ("addApiView('%s'" % name, "addEvent('%s'" % name):
-        out = subprocess.run(
-            ['grep', '-rl', pattern, '--include=*.py', 'couchpotato/'],
-            cwd=str(REPO), capture_output=True, text=True).stdout.split()
-        if out:
-            return sorted(out)[0]
-    return None
+@pytest.fixture
+def repo(tmp_path):
+    def git(*args):
+        subprocess.run(['git', *args], cwd=str(tmp_path), check=True,
+                       capture_output=True, text=True)
+    git('init', '-q', '-b', 'main')
+    git('config', 'user.email', 't@example.com')
+    git('config', 'user.name', 'T')
+    (tmp_path / 'seed.txt').write_text('seed\n')
+    git('add', '-A')
+    git('commit', '-qm', 'seed')
+    git('checkout', '-q', '-b', 'work')
+    return tmp_path
 
 
-def ui_patterns():
-    line = [l for l in SCRIPT.read_text().splitlines() if l.startswith('UI_PATTERNS=')]
-    assert len(line) == 1, 'UI_PATTERNS is not a single assignment'
-    return line[0]
+class TestBackendChangesRunTheBrowserSuites:
+    """The whole point of the inversion. Every one of these SKIPPED under the
+    allowlist while the browser called its namespace."""
+
+    @pytest.mark.parametrize('path', [
+        'couchpotato/core/plugins/renamer/main.py',      # browser calls release.*
+        'couchpotato/core/media/movie/searcher.py',      # movie.searcher.*
+        'couchpotato/core/_base/updater/main.py',        # updater.info
+        'couchpotato/core/plugins/quality/main.py',      # quality.list
+        'couchpotato/core/plugins/category/main.py',     # category.*
+        'couchpotato/core/plugins/profile/main.py',      # profile.*
+        'couchpotato/core/settings.py',                  # settings, settings.save
+        'couchpotato/api.py',                            # every call goes through it
+        'couchpotato/runner.py',
+    ])
+    def test_a_backend_change_runs_them(self, repo, path):
+        assert classify(repo, path) == 0, (
+            '%s skipped the browser suites, but the browser reaches this code '
+            'through the API' % path
+        )
 
 
-def pattern_alternatives():
-    """The alternatives of UI_PATTERNS, as literal path prefixes.
+class TestOnlyProvablyIrrelevantPathsSkip:
+    @pytest.mark.parametrize('path', [
+        'docs/technical-debt.md',
+        'specs/SOME-SPEC.md',
+        'QA/findings.md',
+        'tests/unit/test_something.py',
+        '.claude/agents/whatever.md',
+        'README.md',
+    ])
+    def test_these_skip(self, repo, path):
+        assert classify(repo, path) == 1, '%s should not need a browser' % path
 
-    Split on `|` and unescape, rather than scraping path-shaped substrings out
-    of the whole line. The scraping version was VACUOUS: `couchpotato/api\\.py$`
-    contains a bare `couchpotato/` once the `\\.` breaks the character run, and
-    a `couchpotato/` prefix matches every file in the project -- so every
-    coverage assertion passed no matter what the pattern said. Mutation
-    testing caught it; reading it did not.
-    """
-    body = ui_patterns()
-    inner = body[body.index("'") + 1:body.rindex("'")]
-    inner = inner.lstrip('^(').rstrip(')')
-    out = []
-    for alt in inner.split('|'):
-        alt = alt.strip().replace('\\.', '.').rstrip('$')
-        if alt:
-            out.append(alt)
-    assert len(out) >= 10, 'only parsed %r out of UI_PATTERNS' % out
-    return out
+    def test_a_mixed_change_runs_them(self, repo):
+        """One relevant file among documentation is still a reason to run."""
+        assert classify(repo, 'docs/notes.md', 'couchpotato/core/thing.py') == 0
 
-
-def test_the_ui_really_does_call_backend_handlers():
-    """Precondition. If this ever returns nothing, the derivation below is
-    vacuous and every assertion built on it passes for free."""
-    names = api_names_the_ui_calls()
-    assert len(names) >= 5, (
-        'found only %r -- the extraction is broken, not the coverage' % names
-    )
+    def test_an_unrecognised_path_RUNS_them(self, repo):
+        """The direction that matters. Under the allowlist an unknown path
+        skipped; now it runs, which is how every other uncertainty in this
+        script resolves."""
+        assert classify(repo, 'some/brand/new/place.py') == 0
 
 
-@pytest.mark.parametrize('name', sorted(api_names_the_ui_calls()))
-def test_every_handler_the_ui_calls_is_covered_by_the_gate(name):
-    path = file_registering(name)
-    assert path, (
-        "cannot locate the module registering '%s'; the derivation needs "
-        'updating before it can guard anything' % name
-    )
-    covered = any(path == alt or path.startswith(alt)
-                  for alt in pattern_alternatives())
-    assert covered, (
-        "%s serves the UI's '%s' but is not matched by UI_PATTERNS, so a "
-        'change to it skips the browser suites' % (path, name)
-    )
-
-
-def test_the_api_dispatcher_itself_is_covered():
-    """Every one of those calls goes through `couchpotato/api.py`. A change
-    there breaks all of them at once."""
-    body = ui_patterns()
-    assert 'couchpotato/api\\.py$' in body or 'couchpotato/api.py' in body, (
-        'the API dispatcher every UI call passes through is not in UI_PATTERNS'
-    )
+class TestTheOriginalBrowserPathsStillRun:
+    @pytest.mark.parametrize('path', [
+        'couchpotato/ui/templates/base.html',
+        'couchpotato/static/scripts/ui/movie-filter.js',
+        'couchpotato/templates/login.html',
+        'tests/e2e/navigation.spec.ts',
+        'playwright.config.ts',
+        'package.json',
+        'scripts/verify.sh',
+        'scripts/needs_e2e.sh',
+        '.github/workflows/ci.yml',
+    ])
+    def test_still_runs(self, repo, path):
+        assert classify(repo, path) == 0, path

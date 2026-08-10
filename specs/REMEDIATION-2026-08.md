@@ -178,7 +178,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       Decide with T9's measured after-numbers in hand, not these projections.
 
-- [ ] T19: the change-surface gate does not see backend code the UI depends on — state: queued (no deps)
+- [x] T19: the change-surface gate does not see backend code the UI depends on — state: **rule INVERTED** (owner decision 2026-08-10). See below
 
       Raised reviewing T16's own plan entry, and correct. `UI_PATTERNS` matches
       `couchpotato/ui/`, `couchpotato/static/`, `couchpotato/templates/`,
@@ -203,6 +203,29 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       got: err towards running, and a test per pattern, because
       `couchpotato/static/` shipped MISSING from the first version precisely
       because no case named it.
+
+      **Outcome, and it went further than the task proposed.** The first
+      attempt widened the allowlist to the backend the UI calls, derived from
+      `callApiHandler`. Review found that incomplete twice, and the second
+      round showed WHY it could not be completed: the UI also calls the API
+      directly from templates, across 33 endpoints in 16 namespaces — `app
+      category collection directory download logging manage media movie
+      profile provider quality release search settings updater`. An honest
+      allowlist would have been `couchpotato/`.
+
+      So T16's saving was never independence between backend and UI; it came
+      from UNDER-COVERING. `renamer`, `searcher`, `updater` and `quality` all
+      skipped the browser suites while the browser called every one of those
+      namespaces.
+
+      Measured before deciding: of the last 60 commits, 6 touch only
+      documentation, plans, QA notes, unit tests or agent scratch. So
+      inverting recovers ~10% of runs, not the majority T16 implied.
+
+      Owner chose to invert. `SKIP_PATTERNS` now lists what cannot reach a
+      browser and everything else runs. The failure direction is the point: an
+      unrecognised path RUNS the suites, which is how every other uncertainty
+      in this script already resolves.
 
 - [ ] T17: the three SonarQube findings that survived triage — state: queued (no deps)
 

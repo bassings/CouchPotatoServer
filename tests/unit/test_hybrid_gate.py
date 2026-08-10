@@ -80,12 +80,18 @@ class TestTheScriptAnswersTheQuestion:
         assert _run('main', cwd=repo['dir']) == 0, path
 
     @pytest.mark.parametrize('path', [
-        'couchpotato/core/plugins/renamer/main.py',
         'tests/unit/test_something.py',
         'docs/technical-debt.md',
         'README.md',
     ])
     def test_non_browser_changes_do_not(self, repo, path):
+        """`couchpotato/core/plugins/renamer/main.py` USED to be in this list.
+
+        It was removed when the rule inverted: the browser calls `release.*`,
+        which the renamer serves, so skipping the suites for it was the
+        under-coverage the inversion exists to fix. See
+        `test_gate_covers_the_ui_backend.py` for the measurement.
+        """
         repo['commit'](path)
         assert _run('main', cwd=repo['dir']) == 1, path
 
@@ -110,7 +116,7 @@ class TestItErrsTowardsRunning:
         assert _run('main', cwd=repo['dir']) == 0
 
 
-def _ui_prefixes():
+def _skip_prefixes():
     """Every path prefix in the script's own UI_PATTERNS.
 
     Read from the script rather than hardcoded, so the drift guard cannot
@@ -122,20 +128,20 @@ def _ui_prefixes():
     import re
     line = [
         ln for ln in SCRIPT.read_text().splitlines()
-        if ln.startswith('UI_PATTERNS=')
+        if ln.startswith('SKIP_PATTERNS=')
     ]
-    assert len(line) == 1, 'UI_PATTERNS is not a single assignment'
+    assert len(line) == 1, 'SKIP_PATTERNS is not a single assignment'
     prefixes = re.findall(r'[A-Za-z0-9_./\\-]+/(?=\||\))', line[0])
-    assert prefixes, 'no directory prefixes parsed out of UI_PATTERNS: %s' % line[0]
+    assert prefixes, 'no directory prefixes parsed out of SKIP_PATTERNS: %s' % line[0]
     return [p.replace('\\', '') for p in prefixes]
 
 
 def test_the_drift_guard_reads_every_prefix_not_just_one():
     """Guard on the guard: if the parse ever returns a single entry, the
     drift check has quietly narrowed back to what it used to be."""
-    prefixes = _ui_prefixes()
-    assert 'couchpotato/ui/' in prefixes
-    assert 'couchpotato/static/' in prefixes
+    prefixes = _skip_prefixes()
+    assert 'docs/' in prefixes
+    assert 'tests/unit/' in prefixes
     assert len(prefixes) >= 4, prefixes
 
 
@@ -182,13 +188,22 @@ class TestBothCallersUseTheSharedScript:
         locally instead of asking the script."""
         for caller in (HOOK, CI):
             text = caller.read_text(encoding='utf-8')
-            # Prose is fine -- an unrelated job's comment mentions the UI
-            # directory, and always did. What must not exist is a second
+            # Prose is fine -- an unrelated job's comment mentions these
+            # directories, and always did. What must not exist is a second
             # DECISION: a `paths:`/`paths-ignore:` filter, or a grep of the
             # diff, that answers the same question independently.
+            #
+            # The canary set follows the rule: under the allowlist it was the
+            # browser-visible prefixes; under the skip-list it is the
+            # skip prefixes, since those are what a caller would be tempted
+            # to re-implement.
+            # `tests/unit/` is excluded from the canary: CI legitimately
+            # names it as a pytest target, which is running the tests, not
+            # re-deciding what needs a browser.
+            canary = [p for p in _skip_prefixes() if p != 'tests/unit/']
             lines = [
                 ln for ln in text.splitlines()
-                if any(prefix in ln for prefix in _ui_prefixes())
+                if any(prefix in ln for prefix in canary)
                 and not ln.lstrip().startswith('#')
             ]
             assert not lines, (
@@ -483,11 +498,16 @@ class TestABrokenClassifierStillErrsTowardsRunning:
         import re
         import subprocess as sp
 
-        broken = tmp_path / 'needs_e2e_broken.sh'
+        # OUTSIDE the repo under test. Written inside it, `git add -A` in
+        # the fixture commits it, and the diff then contains an unrecognised
+        # file -- which the inverted rule correctly calls relevant, so the
+        # control fails for a reason unrelated to what this checks. The old
+        # allowlist hid that, because an unknown file skipped either way.
+        broken = tmp_path.parent / 'needs_e2e_broken.sh'
         source = SCRIPT.read_text()
-        patched = re.sub(r"^UI_PATTERNS=.*$", "UI_PATTERNS='^(['", source,
+        patched = re.sub(r"^SKIP_PATTERNS=.*$", "SKIP_PATTERNS='^(['", source,
                          count=1, flags=re.M)
-        assert patched != source, 'the UI_PATTERNS line was not replaced'
+        assert patched != source, 'the SKIP_PATTERNS line was not replaced'
         broken.write_text(patched)
         broken.chmod(0o755)
 
