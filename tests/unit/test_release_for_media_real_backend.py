@@ -427,3 +427,50 @@ class TestWithoutPathsNeverStringifiesAnOSError:
         from couchpotato.core.logger import without_paths
 
         assert without_paths(RuntimeError()) == 'RuntimeError'
+
+
+class TestDetachFileNeverRaisesPastItsOwnHandling:
+    """`sp(path)` sat above the try. An exception from it escaped uncaught,
+    past `without_paths`, into `event.py`'s handler dispatch -- which logs
+    `traceback.format_exc()`, the one formatter that embeds
+    `OSError.filename`. So the leak this function is careful about would have
+    happened through the single path that skipped its own handling.
+    """
+
+    def test_an_unusable_path_is_a_refusal_not_an_exception(self, plugin, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+
+        def _explode(_p):
+            raise TypeError('not a path')
+
+        monkeypatch.setattr(release_main, 'sp', _explode)
+
+        assert obj.detachFile(rel['_id'], object()) is False
+
+    def test_that_failure_does_not_log_a_traceback(self, plugin, monkeypatch, caplog):
+        import logging
+
+        import couchpotato.core.plugins.release.main as release_main
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+        secret = '/mnt/nas/Films/Secret Movie.mkv'
+
+        def _explode(_p):
+            error = OSError()
+            error.filename = secret
+            raise error
+
+        monkeypatch.setattr(release_main, 'sp', _explode)
+
+        with caplog.at_level(logging.ERROR):
+            assert obj.detachFile(rel['_id'], secret) is False
+
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert 'Secret Movie' not in messages, (
+            'the path escaped through the unguarded call: %s' % messages
+        )
+        assert 'Traceback' not in messages

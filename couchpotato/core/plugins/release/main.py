@@ -831,8 +831,6 @@ class Release(Plugin):
         if not release_id or not path:
             return False
 
-        target = sp(path)
-
         def _mutate(rel):
             files = rel.get('files') or {}
             remaining = {}
@@ -855,6 +853,14 @@ class Release(Plugin):
             rel['last_edit'] = int(time.time())
 
         try:
+            # Inside the guard, including `sp(path)`. It sat above and an
+            # exception from it -- a non-string path, say -- escaped
+            # uncaught, past `without_paths`, into the event dispatcher, which
+            # logs `traceback.format_exc()`. That is the one formatter that
+            # puts `OSError.filename` in the output, so the leak this function
+            # is careful about would have happened through the one path that
+            # skipped its own handling.
+            target = sp(path)
             db = get_db()
             db.update_with_retry(_mutate, release_id)
             return True
