@@ -97,7 +97,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [x] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: merged #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs; ~25 review findings across six rounds, all fixed or recorded as T11-T15
-- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo (the `qualities` list order, `isHigher`'s profile fallthrough at `quality/main.py:530-548`, the unconditional skip at `renamer/main.py:154-157`). Needs `/plan-cycle` next
+- [x] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: merged #235, #236, #238, #239, #240, #242 (B0-B4b) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo: the `qualities` list order, the profile fallthrough in `QualityPlugin.isHigher`, and the unconditional destination skip in `Renamer._moveRenamedFiles`.
+
+      Cited by SYMBOL rather than by line, because the line numbers this entry
+      originally carried (`quality/main.py:530-548`,
+      `renamer/main.py:154-157`) were moved by T5's own merged work and were
+      pointing at unrelated code by the time the task was ticked. A citation
+      that drifts is worse than none: it reads as precision and sends the next
+      reader to the wrong function. The `/plan-cycle` this line called for ran on 2026-08-08; the spec carries its ACs and D1-D12
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
@@ -129,7 +136,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
-- [ ] T16: the CI/local gate is paid for TWICE, serially — state: **blocked-on-human: build the hybrid split from the sketch, or spec it through /plan-cycle first?** (supersedes the original ui-e2e-tests-edge scoping)
+- [x] T16: the CI/local gate is paid for TWICE, serially — state: merged #241 · owner chose "both: path-aware hook + trimmed CI". `scripts/needs_e2e.sh` is the single source of truth for "does this change need a browser", called by the pre-push hook and by CI's `scope` job; browser suites now skip on a non-UI change and a nightly run keeps master honest. **Known gap, tracked as T19:** the matcher does not cover backend routes the UI calls, so a change to an API handler can skip the browser suites. Eleven review findings, three of them fail-opens: a SIGPIPE under `pipefail` that skipped the browser suites the MORE files a change touched (correct at 1,000 paths, wrong at 4,000), `couchpotato/static/` missing from the matcher so the JS driving the UI was never gated, and the classifier being read from the PR's own checkout so a PR could defang its own gate. All fixed and mutation-proven
 
       **Re-scoped 2026-08-09 after the owner asked whether moving CI local would be faster. Measured, and it
       would not — the premise inverts.** This repo is PUBLIC on standard `ubuntu-latest`, so its Actions
@@ -170,6 +177,126 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       a cost trade, and the owner owns it.
 
       Decide with T9's measured after-numbers in hand, not these projections.
+
+- [ ] T19: the change-surface gate does not see backend code the UI depends on — state: queued (no deps)
+
+      Raised reviewing T16's own plan entry, and correct. `UI_PATTERNS` matches
+      `couchpotato/ui/`, `couchpotato/static/`, `couchpotato/templates/`,
+      `tests/e2e/` and the harness files. It does NOT match the backend routes
+      and API handlers those pages call — so a change to, say, a partial's
+      handler or an API view can break the rendered page while the browser
+      suites are skipped on the PR that does it.
+
+      T16 is not reopened: #241 is merged and did what it set out to do. This
+      is the next iteration of the same question, which is "what can change
+      what a browser sees", and the honest answer is wider than the first
+      version assumed.
+
+      Not simply "add more patterns". Widening until it matches most of
+      `couchpotato/` returns the gate to running everything on everything,
+      which is the cost T16 removed. The useful shape is probably the routes
+      the UI actually calls — `couchpotato/ui/**` already matches, so the gap
+      is the API handlers behind it — established by reading the templates
+      rather than guessed.
+
+      Whatever it becomes, it needs the same treatment the rest of that gate
+      got: err towards running, and a test per pattern, because
+      `couchpotato/static/` shipped MISSING from the first version precisely
+      because no case named it.
+
+- [ ] T17: the three SonarQube findings that survived triage — state: queued (no deps)
+
+      From the first real SonarQube analysis of this repo (2026-08-10, project
+      `couchpotato`). Of 84 raw vulnerabilities, 37 were marked false positive
+      with a written reason and an explicit reopen condition, 44 were HTTP
+      findings already accepted, and **these three are genuine**. Each was read
+      at the call site rather than taken from the rule description, and
+      reachability was established for each, because two of the three are
+      narrower than the rule makes them sound.
+
+      Security rating is D and stays D until these move. That is correct: a
+      rating that went green while they were open would be the thing that
+      teaches everyone to ignore it.
+
+      **1. `python:S4830` — `downloaders/synology.py:140`, credentials over an
+      unverified TLS connection.**
+
+          req = requests.post(url, data = args, files = files, verify = False)
+
+      That request is the `SYNO.API.Auth` call: it carries the operator's
+      Synology username and password. `verify=False` disables certificate
+      validation, so anything on the path can present its own certificate and
+      read them. The same file also uses `http://` endpoints.
+
+      Reachability: the downloader ships disabled (`'enabled'` default 0), so
+      this affects operators who have turned it on — which is exactly the set
+      who typed a password into it. Not urgent for everyone, serious for them.
+
+      Fix shape: honour certificate validation by default and make disabling
+      it a deliberate, per-downloader setting with the risk stated, rather
+      than a hard-coded literal. A self-signed NAS certificate is the reason
+      it is there, so removing the escape hatch entirely will break real
+      setups.
+
+      **`verify=True` alone does not close this.** The same file also builds
+      `http://` URLs, and credentials over plain HTTP are exposed whatever the
+      TLS setting says — fixing only the flag would clear the SonarQube
+      finding while leaving the password readable on the wire. The scheme has
+      to move with it.
+
+      **2. `python:S2612` — `_base/updater/main.py:443`, 0o777 on a failed
+      delete, then unbounded recursion.**
+
+          except OSError as inst:
+              os.chmod(inst.filename, 0o777)
+              self.removeDir(path)
+
+      Two defects in three lines. It makes a path world-writable in response to
+      an error, and it retries by recursing with no depth bound and no
+      guarantee the chmod changed anything — a permission error it cannot fix
+      recurses until the stack ends.
+
+      Reachability, narrower than it first looks: called from the SOURCE
+      updater's extract paths (`updater/main.py:363`, `:379`), and
+      `SourceUpdater.doUpdate` fires `cp.source_url` before reaching them
+      (`:355`). Production runs the Docker image, so this is not how this
+      deployment updates. The plugin still loads and registers API views, so
+      it is reachable rather than dead — but it sits behind a source-install
+      update attempt, not on any routine path.
+
+      Fix shape: narrow the permission (owner-write, not world), bound the
+      retry to one attempt, and let the second failure propagate. Do not widen
+      permissions to force a delete through.
+
+      **3. `python:S5247` — `plugins/base.py:85`, Jinja autoescape off.**
+
+          env = _JinjaEnv(loader=_JinjaFSLoader(tmpl_dir))
+          t = env.get_template(templ)
+          return t.render(**params)
+
+      Jinja defaults `autoescape` to False, so this renders caller-supplied
+      values unescaped. Corroborated independently by the local gate's
+      `ruff S701`.
+
+      **`renderTemplate` has no callers IN THIS REPOSITORY** — its only
+      mention is its own definition, checked across `.py`, `.html` and `.js`.
+      So it is not a live XSS here.
+
+      That is not the same as unused, and an earlier draft of this task
+      conflated the two. It is a public method on `Plugin`, inherited by 35
+      in-tree classes and by any installed third-party plugin, so an
+      out-of-tree caller is invisible to every check available from inside
+      this repo.
+
+      Fix shape, revised: make it SAFE rather than absent — `autoescape=True`,
+      with a test proving a `<script>` in a param comes out escaped. That is
+      correct whether or not anything calls it, and it costs nothing.
+      Deletion is a separate decision needing a deprecation path, and "no
+      in-repo callers" is not evidence for it.
+
+      **Do not resolve these in SonarQube to make the rating move.** Fix the
+      code, re-scan, and let the rating follow. The 37 dismissals each carry a
+      reason and a reopen condition; these three have no reason available.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
@@ -331,6 +458,63 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       headlined is worth ~27s (4%) and the edge is worth ~516s (79%). The cache
       is retained as the TAIL fix — it is the only step here that has ever
       stalled (610s of a 697s job).
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
+
+      **Runs LAST, and it is not a duplicate of T7 even though it sounds like
+      one.** T7 is a scoped pass over the specific items this plan's reviews
+      already named (M9, M10, L7, the copy set). T18 is the sweep for what
+      nobody named — the residue this remediation itself created, which by
+      definition is not on any earlier list.
+
+      Sequenced after the others deliberately: doing it earlier deletes things
+      the remaining tasks still need, and every task between now and then adds
+      more residue.
+
+      **Seed evidence, measured rather than assumed:**
+
+      | Candidate | Size | The question |
+      |---|---|---|
+      | `couchpotato/core/**/static/*.js` | 4,487 lines | Legacy `/old/` UI. An earlier note said the userscript add-via-URL keeps part of it alive; that is obsolete — `add_via_url` is served by the NEW UI (`couchpotato/ui/__init__.py:384`) via `callApiHandler`. Re-establish what, if anything, still needs these |
+      | `libs/CodernityDB/` | 7,147 lines | Kept for one-time migration per CLAUDE.md. Has every install migrated? If the answer is unknowable, it stays and the docs say why |
+      | `Plugin.renderTemplate` | 1 method | Zero callers anywhere (`.py`, `.html`, `.js`). Also T17's third finding |
+      | `remove_lower_quality_copies` | 1 setting | Deliberately inert, warns once. Delete once operators have had a release to notice |
+      | `specs/` | 56 files | Which describe shipped behaviour, and which are abandoned drafts that read as current intent? |
+      | `QA/` | 9 files | Point-in-time findings. `review-cycle-run-recovery` in memory is explicitly "delete after a clean review cycle" |
+
+      **The docs half matters as much as the code half**, and this repo has a
+      rule for it: assert only what the repo proves. This session alone found
+      an AC describing a signal two commits after it changed, a spec claiming
+      "four" while naming three, a comment claiming `with_doc=False` isolates
+      corrupt documents when it does not, and a test docstring describing a bug
+      that had been fixed. Every one of those was written by somebody
+      confident, and every one would have sent the next reader somewhere the
+      behaviour is not.
+
+      So the pass covers CLAUDE.md, AGENTS.md, `docs/`, `specs/` and the
+      long-form task write-ups in THIS file — several of which now describe
+      decisions that were superseded by the work that followed them.
+
+      **Method, because a delete-everything sweep is how load-bearing code
+      dies.** For each candidate: prove it is unreachable, delete it, and run
+      the full gate.
+
+      Grep is a hint, not a proof: `couchpotato/__init__.py` re-exports are
+      load-bearing for plugins, and a plugin that fails to import is SKIPPED
+      rather than fatal (`loader.py:151`), so a broken reference can look like
+      a working deletion until somebody uses the feature.
+
+      An earlier draft of this paragraph said the loader hides ImportError at
+      DEBUG. It does not, and has not since REG-001: `loadModule` logs at
+      ERROR with a full traceback and carries a comment saying why. Writing
+      the task about stale documentation using a stale fact is the joke
+      telling itself, and it is recorded rather than quietly corrected because
+      it is the best argument available for the task existing. If it
+      cannot be proven unreachable, it stays and the reason is written down
+      next to it. "Probably unused" is not a finding, it is a guess.
+
+      Nothing here is urgent. It is the difference between a codebase that has
+      been remediated and one that looks like it has.
 
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
