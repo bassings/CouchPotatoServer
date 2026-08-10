@@ -50,7 +50,24 @@ fi
 # `couchpotato/templates/` is the other live Jinja render root (the login
 # page). The Playwright config and fixtures decide what runs at all, and
 # package-lock pins the browser itself.
-UI_PATTERNS='^(couchpotato/ui/|couchpotato/static/|couchpotato/templates/|tests/e2e/|playwright\.config\.ts$|package\.json$|package-lock\.json$|scripts/verify\.sh$|scripts/needs_e2e\.sh$|scripts/push_base_ref\.sh$|\.github/workflows/)'
+#
+# The couchpotato/core/ entries are the BACKEND the UI calls. Every page and
+# partial reaches the application through `callApiHandler`, so a change to
+# `media.list`'s implementation can break every movie page while nothing under
+# couchpotato/ui/ is touched at all. `couchpotato/api.py` is the dispatcher
+# they all pass through.
+#
+# This list is DERIVED, not guessed, and it is guarded:
+# `tests/unit/test_gate_covers_the_ui_backend.py` extracts the API names the
+# UI actually invokes, resolves each to the module that registers it, and
+# fails if any is not matched here. Add a `callApiHandler` call for a new
+# handler and that test tells you to widen this line -- which is the only
+# reason a hardcoded list is acceptable here at all.
+#
+# Deliberately NOT `couchpotato/core/`: matching the whole tree would return
+# the gate to running everything on everything, which is the cost this design
+# removed.
+UI_PATTERNS='^(couchpotato/ui/|couchpotato/static/|couchpotato/templates/|couchpotato/api\.py$|couchpotato/core/media/_base/media/|couchpotato/core/media/movie/charts/|couchpotato/core/media/movie/providers/info/|couchpotato/core/plugins/collection/|couchpotato/core/plugins/profile/|couchpotato/core/plugins/suggestion\.py$|couchpotato/core/plugins/userscript/|tests/e2e/|playwright\.config\.ts$|package\.json$|package-lock\.json$|scripts/verify\.sh$|scripts/needs_e2e\.sh$|scripts/push_base_ref\.sh$|\.github/workflows/)'
 
 # A here-string, NOT a pipe, and deliberately so. `echo ... | grep -q` made
 # grep exit at the first match; with enough remaining output to fill the pipe
