@@ -297,8 +297,10 @@ class TestDetachFileActuallyDetaches:
 
     def test_the_path_is_removed_from_the_document(self, plugin, tmp_path):
         obj, db, _fired = plugin
-        a = tmp_path / 'kept.mkv'; a.write_bytes(b'x' * 10)
-        b = tmp_path / 'gone.mkv'; b.write_bytes(b'y' * 20)
+        a = tmp_path / 'kept.mkv'
+        a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'
+        b.write_bytes(b'y' * 20)
         rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
 
         assert obj.detachFile(rel['_id'], str(b)) is True
@@ -312,8 +314,10 @@ class TestDetachFileActuallyDetaches:
         """A copy_id beside a removed path describes a set the document no
         longer claims, which is worse than having none."""
         obj, db, _fired = plugin
-        a = tmp_path / 'kept.mkv'; a.write_bytes(b'x' * 10)
-        b = tmp_path / 'gone.mkv'; b.write_bytes(b'y' * 20)
+        a = tmp_path / 'kept.mkv'
+        a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'
+        b.write_bytes(b'y' * 20)
         rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
         # Read it back rather than trusting insert()'s return value.
         before = db.get('id', rel['_id']).get('copy_id')
@@ -331,7 +335,8 @@ class TestDetachFileActuallyDetaches:
 
     def test_detaching_the_only_file_leaves_no_identity(self, plugin, tmp_path):
         obj, db, _fired = plugin
-        only = tmp_path / 'only.mkv'; only.write_bytes(b'z' * 30)
+        only = tmp_path / 'only.mkv'
+        only.write_bytes(b'z' * 30)
         rel = self._with_files(db, 'm-1', {'movie': [str(only)]})
 
         obj.detachFile(rel['_id'], str(only))
@@ -345,8 +350,10 @@ class TestDetachFileActuallyDetaches:
 
     def test_other_file_types_are_untouched(self, plugin, tmp_path):
         obj, db, _fired = plugin
-        movie = tmp_path / 'm.mkv'; movie.write_bytes(b'x' * 10)
-        nfo = tmp_path / 'm.nfo'; nfo.write_bytes(b'n')
+        movie = tmp_path / 'm.mkv'
+        movie.write_bytes(b'x' * 10)
+        nfo = tmp_path / 'm.nfo'
+        nfo.write_bytes(b'n')
         rel = self._with_files(db, 'm-1', {'movie': [str(movie)], 'nfo': [str(nfo)]})
 
         obj.detachFile(rel['_id'], str(movie))
@@ -360,7 +367,8 @@ class TestDetachFileActuallyDetaches:
         """Short-circuits rather than rewriting an identical document, and
         still answers True -- "not claimed" is the state the caller wanted."""
         obj, db, _fired = plugin
-        movie = tmp_path / 'm.mkv'; movie.write_bytes(b'x' * 10)
+        movie = tmp_path / 'm.mkv'
+        movie.write_bytes(b'x' * 10)
         rel = self._with_files(db, 'm-1', {'movie': [str(movie)]})
         before = db.get('id', rel['_id'])
 
