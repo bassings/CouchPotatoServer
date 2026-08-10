@@ -452,7 +452,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       is retained as the TAIL fix — it is the only step here that has ever
       stalled (610s of a 697s job).
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17 — every other open task, because each adds residue and several rewrite the code this would sweep)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
