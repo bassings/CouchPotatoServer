@@ -359,6 +359,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         `realpath` on both sides, so a symlinked library root still matches
         and a `..` in a template cannot escape it. An unreadable or unset root
         answers False: unable to prove containment is not permission.
+
+        Checked against `conf('to')` and NOT against `media_folder`, and that
+        is the point rather than an oversight.
+
+        `_processGroup` builds the destination from `media_folder or
+        conf('to')`, and `media_folder` arrives from the `renamer.scan` API as
+        a request parameter. Trusting it would mean a caller could nominate
+        any directory and have replacement destroy files there -- which is the
+        exact thing this function exists to refuse. The library root is
+        operator CONFIGURATION; a scan argument is a request, and the two do
+        not carry the same authority.
+
+        A targeted scan whose `media_folder` sits inside the library (the
+        documented shape -- "specific media subfolder") passes normally. One
+        pointing outside gets `declined_outside_library`, which is logged
+        rather than silent, and only the DESTRUCTIVE path is affected: the
+        ordinary move still writes wherever the caller asked.
         """
         root = self.conf('to')
         if not root:
