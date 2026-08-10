@@ -228,17 +228,16 @@ def replace_atomically(source, destination, stage=None,
         _discard_staging_if_safe(staging, source, expected_size, remove)
         return False, FAILED_SIZE_MISMATCH
 
-    # --- is it still the file we decided about? ------------------------
-    # Last possible moment. The renamer lock is process-local, so a second
-    # CouchPotato process against the same library can have installed a better
-    # copy while this one was staging -- and the decision that authorised this
-    # swap was made against the file that used to be there.
-    if destination_identity is not _IDENTITY_NOT_REQUESTED:
-        if identity_of(destination) != tuple(destination_identity):
-            _discard_staging_if_safe(staging, source, expected_size, remove)
-            return False, FAILED_DESTINATION_CHANGED
-
-    # --- the one destructive operation ---------------------------------
+    # --- record the intent, then check, then act -----------------------
+    #
+    # The order is: announce, revalidate, replace. The revalidation was the
+    # step before `about_to_replace()` and that was wrong -- the callback does
+    # I/O, so it sat INSIDE the window the check exists to close, and a
+    # concurrent writer landing during the log was not caught.
+    #
+    # Announcing first means the record can describe a replacement that then
+    # does not happen, so the refusal below says so explicitly. An unmatched
+    # "about to" is a worse record than an extra line.
     if about_to_replace is not None:
         try:
             about_to_replace()
@@ -247,6 +246,22 @@ def replace_atomically(source, destination, stage=None,
             # must never be silent about failing either.
             log.error('Could not record the imminent replacement', exc_info=True)
 
+    # Genuinely the last thing before the irreversible step now. The renamer
+    # lock is process-local, so a second CouchPotato process against the same
+    # library can have installed a better copy while this one was staging --
+    # and the decision that authorised this swap was made against the file
+    # that used to be there.
+    if destination_identity is not _IDENTITY_NOT_REQUESTED:
+        if identity_of(destination) != tuple(destination_identity):
+            log.warning(
+                'The announced replacement did NOT happen: the destination '
+                'changed while this one was staging, so another process has '
+                'already written it. Nothing was destroyed.'
+            )
+            _discard_staging_if_safe(staging, source, expected_size, remove)
+            return False, FAILED_DESTINATION_CHANGED
+
+    # --- the one destructive operation ---------------------------------
     try:
         os.replace(staging, destination)
     except OSError as error:

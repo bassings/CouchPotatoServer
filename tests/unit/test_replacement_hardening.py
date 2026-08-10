@@ -331,3 +331,80 @@ class TestASymlinkSwappedInMidFlightCannotBeFollowed:
         """The control: O_NOFOLLOW must not refuse a plain file."""
         ok, reason = replace_atomically(files['src'], files['dst'])
         assert (ok, reason) == (True, REPLACED)
+
+
+class TestTheRevalidationIsGenuinelyTheLastThing:
+    """`about_to_replace()` does I/O -- it writes a log line -- and it used to
+    run BETWEEN the identity check and `os.replace`. So the callback sat
+    inside the very window the check exists to close, and a concurrent writer
+    landing during the log was not caught.
+
+    Order is now announce, revalidate, replace. Announcing first means the
+    record can describe a replacement that does not then happen, so the
+    refusal says so explicitly: an unmatched "about to" is a worse record than
+    an extra line.
+    """
+
+    def test_a_writer_that_lands_during_the_announcement_is_caught(self, files):
+        from couchpotato.core.plugins.renamer.swap import FAILED_DESTINATION_CHANGED
+
+        identity = identity_of(files['dst'])
+        better = b'a 2160p remux another process just installed' * 40
+
+        def _announce_then_someone_else_wins():
+            # Exactly the window: this runs where the log line runs.
+            with open(files['dst'], 'wb') as handle:
+                handle.write(better)
+
+        ok, reason = replace_atomically(
+            files['src'], files['dst'],
+            destination_identity=identity,
+            about_to_replace=_announce_then_someone_else_wins,
+        )
+
+        assert (ok, reason) == (False, FAILED_DESTINATION_CHANGED), (
+            'a writer landing during the announcement was not caught, so the '
+            'check no longer covers the last moment'
+        )
+        with open(files['dst'], 'rb') as handle:
+            assert handle.read() == better, (
+                "the other process's better copy was destroyed"
+            )
+        assert not _stray_parts(str(files['lib']))
+
+    def test_the_announcement_still_runs_before_the_swap(self, files):
+        """It must still describe the destination as it was, not after."""
+        seen = {}
+
+        def _record():
+            with open(files['dst'], 'rb') as handle:
+                seen['at_record_time'] = handle.read()
+
+        ok, _ = replace_atomically(
+            files['src'], files['dst'],
+            destination_identity=identity_of(files['dst']),
+            about_to_replace=_record,
+        )
+
+        assert ok
+        assert seen['at_record_time'] == OLD
+
+    def test_an_aborted_replacement_says_so(self, files, caplog):
+        """The cost of announcing first: the record would otherwise claim a
+        replacement that never happened."""
+        import logging
+
+        def _steal():
+            with open(files['dst'], 'wb') as handle:
+                handle.write(b'someone else')
+
+        with caplog.at_level(logging.WARNING):
+            replace_atomically(
+                files['src'], files['dst'],
+                destination_identity=identity_of(files['dst']),
+                about_to_replace=_steal,
+            )
+
+        assert any('did NOT happen' in r.getMessage() for r in caplog.records), (
+            'the log announced a replacement and never retracted it'
+        )
