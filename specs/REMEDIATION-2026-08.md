@@ -97,7 +97,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [x] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: merged #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs; ~25 review findings across six rounds, all fixed or recorded as T11-T15
-- [ ] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: queued (needs: T3) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo (the `qualities` list order, `isHigher`'s profile fallthrough at `quality/main.py:530-548`, the unconditional skip at `renamer/main.py:154-157`). Needs `/plan-cycle` next
+- [x] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: merged #235, #236, #238, #239, #240, #242 (B0-B4b) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo (the `qualities` list order, `isHigher`'s profile fallthrough at `quality/main.py:530-548`, the unconditional skip at `renamer/main.py:154-157`). Needs `/plan-cycle` next
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
