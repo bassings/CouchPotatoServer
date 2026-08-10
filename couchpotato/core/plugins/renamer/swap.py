@@ -133,7 +133,7 @@ def replace_atomically(source, destination, stage=None,
     function except the successful one.
     """
     if stage is None:
-        stage = shutil.copyfile
+        stage = _copy_refusing_to_follow_a_symlink
 
     # --- refuse before touching anything -------------------------------
     if not os.path.exists(source):
@@ -305,6 +305,26 @@ def _discard_staging_if_safe(staging, source, expected_size, remove):
         # Leaving it is the safe failure. The destination is still intact and
         # the source is still intact; the only cost is a stray .part file.
         pass
+
+
+def _copy_refusing_to_follow_a_symlink(source, staging):
+    """Copy `source` to `staging`, failing if `source` is a symlink.
+
+    The `islink` refusal at the top of `replace_atomically` is a check, and
+    `shutil.copyfile` follows links -- so between them sits a window in which
+    the source can BECOME a symlink and be followed. Narrow, and on the one
+    path in this project that destroys an irreplaceable file.
+
+    `O_NOFOLLOW` closes it rather than narrowing it: the kernel refuses the
+    open with ELOOP, atomically, and everything after reads from that
+    descriptor rather than re-resolving the name. The earlier `islink` check
+    stays, because it gives the caller a precise refusal reason instead of a
+    staging failure.
+    """
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0)
+    fd = os.open(source, flags)
+    with os.fdopen(fd, 'rb') as reader, open(staging, 'wb') as writer:
+        shutil.copyfileobj(reader, writer)
 
 
 def identity_of(path):

@@ -11,7 +11,7 @@ from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
-from couchpotato.core.logger import CPLog, log_suppressed
+from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
 from .index import ReleaseIndex, ReleaseStatusIndex, ReleaseIDIndex, ReleaseDownloadIndex
@@ -869,14 +869,8 @@ class Release(Plugin):
             # appends `filename` -- so the traceback's last line would put the
             # destination into the log, which is what D8 forbids and what
             # `_withoutPaths` was added for on the renamer side.
-            detail = (
-                '[errno %s] %s' % (error.errno, error.strerror or type(error).__name__)
-                if isinstance(error, OSError) and error.errno is not None
-                else '%s: %s' % (type(error).__name__, error) if str(error)
-                else type(error).__name__
-            )
             log.error('Failed detaching a replaced file from release %s: %s',
-                      release_id, detail)
+                      release_id, without_paths(error))
         return False
 
     def withStatus(self, status, with_doc = True):

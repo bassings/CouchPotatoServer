@@ -285,3 +285,49 @@ class TestAnUnestablishedBaselineRefusesRatherThanSkipping:
             destination_identity=identity,
         )
         assert (ok, reason) == (False, FAILED_DESTINATION_CHANGED)
+
+
+class TestASymlinkSwappedInMidFlightCannotBeFollowed:
+    """The `islink` refusal is a CHECK, and `shutil.copyfile` follows links --
+    so between them sat a window where the source could become a symlink and
+    be followed, on the one path that destroys an irreplaceable file.
+
+    Staging now opens with `O_NOFOLLOW`, which closes the window rather than
+    narrowing it: the kernel refuses atomically and everything after reads
+    from that descriptor instead of re-resolving the name.
+    """
+
+    def test_a_source_that_becomes_a_symlink_after_the_check_is_not_followed(self, files, monkeypatch):
+        import couchpotato.core.plugins.renamer.swap as swap_module
+
+        elsewhere = os.path.join(str(files['dl']), 'somewhere-else.mkv')
+        with open(elsewhere, 'wb') as handle:
+            handle.write(b'not the download at all' * 100)
+
+        real_islink = os.path.islink
+        swapped = {}
+
+        def _islink_then_swap(path):
+            answer = real_islink(path)
+            # Answer honestly for the check, then swap the file underneath --
+            # exactly the race the O_NOFOLLOW open exists to lose safely.
+            if str(path) == files['src'] and not swapped:
+                swapped['yes'] = True
+                os.remove(files['src'])
+                os.symlink(elsewhere, files['src'])
+            return answer
+
+        monkeypatch.setattr(swap_module.os.path, 'islink', _islink_then_swap)
+
+        ok, reason = replace_atomically(files['src'], files['dst'])
+
+        assert swapped, 'the race was never triggered; this test proves nothing'
+        assert not ok, 'a symlink swapped in mid-flight was followed and staged'
+        with open(files['dst'], 'rb') as handle:
+            assert handle.read() == OLD, 'the library file was replaced'
+        assert not _stray_parts(str(files['lib']))
+
+    def test_an_ordinary_file_still_stages(self, files):
+        """The control: O_NOFOLLOW must not refuse a plain file."""
+        ok, reason = replace_atomically(files['src'], files['dst'])
+        assert (ok, reason) == (True, REPLACED)

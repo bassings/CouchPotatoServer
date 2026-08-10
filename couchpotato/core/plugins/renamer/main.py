@@ -1,4 +1,5 @@
 """Main Renamer class combining all mixin functionality."""
+import hashlib
 import os
 import time
 import traceback
@@ -7,7 +8,7 @@ import uuid
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp, symlink
-from couchpotato.core.logger import CPLog, log_suppressed
+from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_OUTSIDE_LIBRARY,
@@ -465,32 +466,14 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     @staticmethod
     def _withoutPaths(error):
-        """Describe an OSError without naming the file it happened to.
+        """Delegates to `logger.without_paths`.
 
-        `traceback.format_exc()` embeds `OSError.filename` in its final line
-        regardless of the frame limit, so `[Errno 13] Permission denied:
-        '/mnt/downloads/Some.Movie.2001/incoming.mkv'` reaches the rotating
-        ring verbatim. PrivacyFilter only rewrites a `/home/<name>` prefix, so
-        a NAS mount, a Windows path or anything under /downloads goes straight
-        through -- the leak D8 exists to prevent, arrived at through the one
-        place that formats an exception rather than a message.
-
-        errno and strerror carry the whole remedy anyway. Which file it was is
-        already known from the media id in the surrounding record.
+        Kept as a method because the tests and several call sites use it that
+        way, but the LOGIC lives in one place now: this was duplicated into
+        release/main.py, the copy gated on `errno is not None`, and an OSError
+        carrying only a filename fell through to `str()` and leaked the path.
         """
-        # OSError is the one whose `str()` appends `filename`, so it is
-        # rebuilt from errno and strerror instead. Everything else keeps its
-        # message: the leak is specific to OSError, and dropping every
-        # message to guard against it would cost the diagnosis the log exists
-        # for -- the same trade refused in `log_suppressed`.
-        if isinstance(error, OSError):
-            detail = error.strerror or type(error).__name__
-            if error.errno is not None:
-                return '[errno %s] %s' % (error.errno, detail)
-            return detail
-
-        message = str(error)
-        return '%s: %s' % (type(error).__name__, message) if message else type(error).__name__
+        return without_paths(error)
 
     #: Identity sources that ASSERT which movie this is, as opposed to
     #: guessing. `search` is absent deliberately: it is the best match for a
@@ -974,8 +957,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # PrivacyFilter exists to keep out of logs.
             log_suppressed(
                 log.error,
+                # Distinct per group even when there is no media id. A
+                # shared 'unknown' bucket meant one repeatedly-failing group
+                # silenced every OTHER group that also failed before its id
+                # was available -- which is the same failure this suppression
+                # exists to stop, applied to the wrong axis. The digest is of
+                # the destination, so it distinguishes without being a path.
                 'renamer_replacement_decision_failed:%s' % (
-                    (group.get('media') or {}).get('_id') or 'unknown',
+                    (group.get('media') or {}).get('_id')
+                    or 'nomedia-' + hashlib.sha1(
+                        dst.encode('utf-8', 'replace')
+                    ).hexdigest()[:12],
                 ),
                 'Could not decide on upgrade replacement: %s',
                 self._withoutPaths(error),

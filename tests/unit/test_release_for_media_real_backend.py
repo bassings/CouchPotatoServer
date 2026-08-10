@@ -377,3 +377,53 @@ class TestDetachFileActuallyDetaches:
         after = db.get('id', rel['_id'])
         assert after['files'] == before['files']
         assert after['_rev'] == before['_rev'], 'it rewrote an unchanged document'
+
+
+class TestWithoutPathsNeverStringifiesAnOSError:
+    """`OSError.__str__` appends `filename` whenever it is SET, not only when
+    errno is set:
+
+        >>> e = OSError(); e.filename = '/mnt/nas/Films/Secret Movie.mkv'
+        >>> str(e)
+        "[Errno None] None: '/mnt/nas/Films/Secret Movie.mkv'"
+
+    The first version of this redaction gated on `errno is not None` and fell
+    through to `str()` otherwise, so precisely that object leaked the path.
+    The gate is now on the TYPE, and an OSError is never stringified.
+
+    Tested here rather than only through `detachFile`, because the call-site
+    test used `PermissionError(13, ...)` -- which has an errno, so it could
+    not have caught this.
+    """
+
+    def test_an_errno_less_OSError_does_not_leak_its_filename(self):
+        from couchpotato.core.logger import without_paths
+
+        error = OSError()
+        error.filename = '/mnt/nas/Films/Secret Movie (1999)/Secret Movie.mkv'
+
+        rendered = without_paths(error)
+        assert 'Secret Movie' not in rendered, (
+            'the filename leaked through str(OSError): %r' % rendered
+        )
+        assert '/mnt/nas' not in rendered
+        assert 'OSError' in rendered
+
+    def test_an_OSError_with_an_errno_still_reports_it(self):
+        from couchpotato.core.logger import without_paths
+
+        rendered = without_paths(PermissionError(13, 'Permission denied', '/x/y.mkv'))
+        assert '13' in rendered and 'Permission denied' in rendered
+        assert '/x/y.mkv' not in rendered
+
+    def test_a_non_OSError_keeps_its_message(self):
+        """The bound must not cost the diagnosis -- the leak is specific to
+        OSError, and a RuntimeError's message carries no path."""
+        from couchpotato.core.logger import without_paths
+
+        assert 'database went away' in without_paths(RuntimeError('database went away'))
+
+    def test_an_empty_exception_still_names_its_type(self):
+        from couchpotato.core.logger import without_paths
+
+        assert without_paths(RuntimeError()) == 'RuntimeError'

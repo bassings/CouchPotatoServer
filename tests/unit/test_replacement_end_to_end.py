@@ -230,8 +230,12 @@ class TestAFailedSwapIsNotTreatedAsSuccess:
         # swap. Breaking moveFile here would therefore break nothing and this
         # test would pass against a swap that succeeded.
         import couchpotato.core.plugins.renamer.swap as swap_module
+        # `copyfileobj`, not `copyfile`. Staging now opens the source with
+        # O_NOFOLLOW and copies from the descriptor, so patching `copyfile`
+        # reaches nothing -- the swap would succeed and this test would fail
+        # for a reason unrelated to what it checks.
         monkeypatch.setattr(
-            swap_module.shutil, 'copyfile',
+            swap_module.shutil, 'copyfileobj',
             lambda a, b, **kw: (_ for _ in ()).throw(OSError('mount gone')),
         )
         _run(world)
@@ -397,7 +401,10 @@ class TestTheDownloadIsDisposedOfAfterTheSwapNotDuringIt:
         assert open(world['src'], 'rb').read() == NEW
 
     def test_link_leaves_the_download_as_an_independent_copy(self, world):
-        """`link` is the SHIPPING DEFAULT, so this is the common config.
+        """`link` is the shipping default of the LEGACY `file_action` setting
+        (see swap.py's docstring); `default_file_action`, which this code
+        reads, registers `'move'` (renamer/api.py:223). Naming it the shipping
+        default here was wrong.
 
         It falls through with `copy`: nothing happens to the source. A
         hardlink back is deliberately not recreated -- the swap replaced the
