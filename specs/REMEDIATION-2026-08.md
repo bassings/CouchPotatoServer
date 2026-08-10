@@ -97,7 +97,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 - [x] T2: PR 2 — M1a authentication and web-surface security — state: merged #226
 - [x] T3: PR 3 — M1b data correctness at the SQLite seam — state: merged #227
 - [x] T4: PR 2b — HMAC-signed session cookie (the cookie is still the api_key) — state: merged #229 · spec `specs/PR2B-SESSION-COOKIE.md`, 85 ACs; ~25 review findings across six rounds, all fixed or recorded as T11-T15
-- [x] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: merged #235, #236, #238, #239, #240, #242 (B0-B4b) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo (the `qualities` list order, `isHigher`'s profile fallthrough at `quality/main.py:530-548`, the unconditional skip at `renamer/main.py:154-157`). The `/plan-cycle` this line called for ran on 2026-08-08; the spec carries its ACs and D1-D12
+- [x] T5: PR 4 — FEAT-009 Part B upgrade replacement — state: merged #235, #236, #238, #239, #240, #242 (B0-B4b) · spec extracted to `specs/FEAT-009B-UPGRADE-REPLACEMENT.md` with its three load-bearing claims re-verified against the repo: the `qualities` list order, the profile fallthrough in `QualityPlugin.isHigher`, and the unconditional destination skip in `Renamer._moveRenamedFiles`.
+
+      Cited by SYMBOL rather than by line, because the line numbers this entry
+      originally carried (`quality/main.py:530-548`,
+      `renamer/main.py:154-157`) were moved by T5's own merged work and were
+      pointing at unrelated code by the time the task was ticked. A citation
+      that drifts is worse than none: it reads as precision and sends the next
+      reader to the wrong function. The `/plan-cycle` this line called for ran on 2026-08-08; the spec carries its ACs and D1-D12
 - [ ] T6: PR 5 — M2 performance — state: queued (needs: T5)
 - [ ] T7: PR 6 — M3 documentation, dead code, polish — state: queued (needs: T6)
 - [ ] T8: T3.3 — restore or delete the dead orphan-release cleanup — state: queued (needs: T3)
