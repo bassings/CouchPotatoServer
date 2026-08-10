@@ -129,7 +129,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       CI runs `--fail-on-flaky-tests`, so suppressing it locally would have
       made CI stop reporting it.
 
-- [ ] T16: the CI/local gate is paid for TWICE, serially — state: **blocked-on-human: build the hybrid split from the sketch, or spec it through /plan-cycle first?** (supersedes the original ui-e2e-tests-edge scoping)
+- [x] T16: the CI/local gate is paid for TWICE, serially — state: merged #241 · owner chose "both: path-aware hook + trimmed CI". `scripts/needs_e2e.sh` is the single source of truth for "does this change need a browser", called by the pre-push hook and by CI's `scope` job; browser suites now skip on a non-UI change and a nightly run keeps master honest. Eleven review findings, three of them fail-opens: a SIGPIPE under `pipefail` that skipped the browser suites the MORE files a change touched (correct at 1,000 paths, wrong at 4,000), `couchpotato/static/` missing from the matcher so the JS driving the UI was never gated, and the classifier being read from the PR's own checkout so a PR could defang its own gate. All fixed and mutation-proven
 
       **Re-scoped 2026-08-09 after the owner asked whether moving CI local would be faster. Measured, and it
       would not — the premise inverts.** This repo is PUBLIC on standard `ubuntu-latest`, so its Actions
@@ -170,6 +170,83 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       a cost trade, and the owner owns it.
 
       Decide with T9's measured after-numbers in hand, not these projections.
+
+- [ ] T17: the three SonarQube findings that survived triage — state: queued (no deps)
+
+      From the first real SonarQube analysis of this repo (2026-08-10, project
+      `couchpotato`). Of 84 raw vulnerabilities, 37 were marked false positive
+      with a written reason and an explicit reopen condition, 44 were HTTP
+      findings already accepted, and **these three are genuine**. Each was read
+      at the call site rather than taken from the rule description, and
+      reachability was established for each, because two of the three are
+      narrower than the rule makes them sound.
+
+      Security rating is D and stays D until these move. That is correct: a
+      rating that went green while they were open would be the thing that
+      teaches everyone to ignore it.
+
+      **1. `python:S4830` — `downloaders/synology.py:140`, credentials over an
+      unverified TLS connection.**
+
+          req = requests.post(url, data = args, files = files, verify = False)
+
+      That request is the `SYNO.API.Auth` call: it carries the operator's
+      Synology username and password. `verify=False` disables certificate
+      validation, so anything on the path can present its own certificate and
+      read them. The same file also uses `http://` endpoints.
+
+      Reachability: the downloader ships disabled (`'enabled'` default 0), so
+      this affects operators who have turned it on — which is exactly the set
+      who typed a password into it. Not urgent for everyone, serious for them.
+
+      Fix shape: honour certificate validation by default and make disabling it
+      a deliberate, per-downloader setting with the risk stated, rather than a
+      hard-coded literal. A self-signed NAS certificate is the reason it is
+      there, so removing the escape hatch entirely will break real setups.
+
+      **2. `python:S2612` — `_base/updater/main.py:443`, 0o777 on a failed
+      delete, then unbounded recursion.**
+
+          except OSError as inst:
+              os.chmod(inst.filename, 0o777)
+              self.removeDir(path)
+
+      Two defects in three lines. It makes a path world-writable in response to
+      an error, and it retries by recursing with no depth bound and no
+      guarantee the chmod changed anything — a permission error it cannot fix
+      recurses until the stack ends.
+
+      Reachability: called from the source updater's extract paths
+      (`updater/main.py:363`, `:379`). Production runs the Docker image, so the
+      source updater is not how this deployment updates — but the plugin loads
+      and registers API views, so the path is reachable rather than dead.
+
+      Fix shape: narrow the permission (owner-write, not world), bound the
+      retry to one attempt, and let the second failure propagate. Do not widen
+      permissions to force a delete through.
+
+      **3. `python:S5247` — `plugins/base.py:85`, Jinja autoescape off.**
+
+          env = _JinjaEnv(loader=_JinjaFSLoader(tmpl_dir))
+          return env.get_template(templ).render(**params)
+
+      Jinja defaults `autoescape` to False, so this renders caller-supplied
+      values unescaped. Corroborated independently by the local gate's
+      `ruff S701`.
+
+      **`renderTemplate` has NO callers.** Its only mention in the repository
+      is its own definition — checked across `.py`, `.html` and `.js`. So this
+      is not a live XSS; it is an unsafe helper sitting in the base class every
+      plugin inherits, waiting for somebody to find it and use it.
+
+      Fix shape: delete it. If it is kept, `autoescape=True` and a test that
+      proves a `<script>` in a param comes out escaped. Deleting is preferable
+      — an unused helper with a security-relevant default is a trap with a
+      docstring.
+
+      **Do not resolve these in SonarQube to make the rating move.** Fix the
+      code, re-scan, and let the rating follow. The 37 dismissals each carry a
+      reason and a reopen condition; these three have no reason available.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
