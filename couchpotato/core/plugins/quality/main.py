@@ -57,6 +57,7 @@ class QualityPlugin(Plugin):
         addEvent('quality.isfinish', self.isFinish)
         addEvent('quality.fill', self.fill)
         addEvent('quality.rank', self.rankQuality)
+        addEvent('quality.is_better', self.isBetterQuality)
 
         addApiView('quality.size.save', self.saveSize)
         addApiView('quality.list', self.allView, docs = {
@@ -366,9 +367,21 @@ class QualityPlugin(Plugin):
         if heighest_quality:
             for quality in qualities:
                 if quality.get('identifier') == heighest_quality:
-                    quality['is_3d'] = False
-                    if score[heighest_quality].get('3d'):
-                        quality['is_3d'] = True
+                    # A COPY. `qualities` entries are module-level dicts
+                    # shared by every caller, so setting is_3d on one used to
+                    # set it on all of them: folder_scanner guesses every
+                    # group before the renamer runs, so a 3D release guessed
+                    # for one movie flipped is_3d on every other group holding
+                    # that rung. Harmless while nothing compared them; not
+                    # harmless now that upgrade replacement decides whether to
+                    # DELETE on exactly that field, and the dangerous
+                    # direction (a genuinely 3D copy reading as 2D) would
+                    # authorise replacing a 2D copy with a 3D one.
+                    #
+                    # No caller mutates the returned dict expecting it to
+                    # persist -- checked across all six call sites.
+                    quality = dict(quality)
+                    quality['is_3d'] = bool(score[heighest_quality].get('3d'))
                     return self.setCache(cache_key, quality)
 
         return None

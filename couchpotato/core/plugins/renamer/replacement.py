@@ -46,6 +46,17 @@ REPLACE = 'replace'
 DECLINED_SETTING_OFF = 'declined_setting_off'
 DECLINED_MULTI_FILE_GROUP = 'declined_multi_file_group'
 DECLINED_UNKNOWN_QUALITY = 'declined_unknown_quality'
+# The release list could not be read in full. Distinct from "this media has no
+# releases" (declined_no_owner): an unreadable document may be the very one
+# that claims the destination, so the difference decides whether an operator
+# looks at their database or at their library.
+DECLINED_INCOMPLETE_EVIDENCE = 'declined_incomplete_evidence'
+
+# The decision itself blew up. Named for the same reason as every other
+# outcome here: a raw string duplicated at the call site and again in a test
+# has no shared symbol, so a typo in either survives a rename and nothing
+# catches it.
+DECLINED_ERROR = 'declined_error'
 DECLINED_NOT_BETTER = 'declined_not_better'
 
 

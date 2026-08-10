@@ -5,7 +5,7 @@ import traceback
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
 from couchpotato.core.helpers.variable import sp
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
@@ -22,6 +22,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
     renaming_started = False
     checking_snatched = False
+    _warned_dead_setting = False
 
     def __init__(self):
 
@@ -161,7 +162,34 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             if os.path.exists(dst):
-                log.warning('Destination already exists, keeping it: %s', dst)
+                # The replacement decision is COMPUTED and recorded, and then
+                # deliberately not acted on -- the swap is wired in the next
+                # step. Computing it here first is what proves the gate is
+                # REACHABLE with real scan data: withdrawn attempt #2 was
+                # simultaneously dangerous and inert, and the inertness is
+                # what hid the danger, because the gate never fired in
+                # testing so nobody saw what it did when it fired.
+                outcome = self._replacementOutcome(src, dst, group)
+                # WARNING carries no path; DEBUG does.
+                #
+                # WARNING is the level that ships and rotates unattended, and
+                # `PrivacyFilter` (logger.py) redacts `name=value` secrets,
+                # NOT paths -- so a library path here reaches the ring buffer
+                # and `docker logs` verbatim, on every collision, forever.
+                # The new code just below is careful to key `log_suppressed`
+                # on the media id for exactly that reason, and this line
+                # predating the feature is not a reason to leave it
+                # inconsistent with the code now sitting beside it.
+                #
+                # The path is still needed to diagnose a recurring collision,
+                # so DEBUG keeps it: that is the level somebody turns on while
+                # actually looking.
+                log.warning(
+                    'Destination already exists, keeping it: media %s '
+                    '(upgrade decision: %s)',
+                    (group.get('media') or {}).get('_id'), outcome,
+                )
+                log.debug('The collided destination was: %s', dst)
                 skipped = True
                 continue
 
@@ -184,6 +212,150 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             source_folder = group.get('parentdir')
             if source_folder and os.path.isdir(source_folder):
                 self.deleteFolder(source_folder)
+
+    @staticmethod
+    def _rankViaEvent(quality):
+        """`fireEvent(single=True)` collects only non-None handler results and
+        returns `[]` when there are none -- so `rankQuality` answering None for
+        an UNRECOGNISED identifier arrives here as `[]`, and `[] is None` is
+        False.
+
+        Without this normalisation the unknown-identifier guard in
+        decide_replacement never fires through the real wiring: it was dead in
+        production while passing every unit test, because the tests injected a
+        plain function. Found by review, confirmed by executing fireEvent.
+        """
+        result = fireEvent('quality.rank', quality, single=True)
+        return None if result == [] else result
+
+    def _warnAboutTheDeadSetting(self):
+        """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
+
+        Spec D1. That key carried 'default': True for the life of the fork
+        while being read by nothing, so `setDefault` has already persisted
+        True into real config files. Upgrade replacement therefore reads a NEW
+        key, `upgrade_replace`, which defaults off -- but somebody who set the
+        old one DELIBERATELY would otherwise get silence where they expected
+        behaviour, and silence is the worst answer for a setting whose name
+        promises deletion.
+
+        Once per process, not once per scan: the renamer runs on a timer, and
+        a warning repeated every few minutes is one an operator learns to
+        filter out.
+        """
+        if Renamer._warned_dead_setting:
+            return
+
+        # The latch is set only when the warning is actually EMITTED, not on
+        # the first call. Setting it first looked equivalent and was not:
+        # `self.conf` reads live, so an operator can enable "Delete Others" in
+        # the settings UI without a restart. With the latch already flipped by
+        # an earlier call made while the setting was off, every later call
+        # returns before re-reading the config and the notice never comes --
+        # which is exactly the silence D1 exists to prevent, arrived at by a
+        # different door.
+        if self.conf('remove_lower_quality_copies', default=False):
+            Renamer._warned_dead_setting = True
+            log.warning(
+                'The "Delete Others" setting (remove_lower_quality_copies) is no '
+                'longer read and does nothing. Upgrade replacement is now the '
+                '"Replace lower quality copies" setting (upgrade_replace), which '
+                'is OFF by default and must be enabled deliberately.'
+            )
+
+    def _replacementOutcome(self, src, dst, group):
+        """What WOULD upgrade replacement do with this file? Decide, do not act.
+
+        Returns an outcome value from `renamer.replacement`, or
+        `declined_error` if anything at all goes wrong. This runs inside the
+        ordinary rename path, so it must never raise: a decision that cannot
+        be made is a decision not to replace, and an exception escaping here
+        would abort a scan that was otherwise fine (AC-QA-12).
+        """
+        # Imported here rather than at module scope: release.main imports the
+        # renamer package indirectly, and a top-level import closes the cycle.
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        from couchpotato.core.plugins.renamer.replacement import (
+            DECLINED_ERROR,
+            DECLINED_INCOMPLETE_EVIDENCE,
+            DECLINED_MULTI_FILE_GROUP,
+            DECLINED_SETTING_OFF,
+            decide_replacement,
+        )
+
+        try:
+            self._warnAboutTheDeadSetting()
+            media = group.get('media') or {}
+            media_id = media.get('_id')
+
+            # The DB round trip only happens once the cheap refusals have
+            # passed. `upgrade_replace` is off by default, so otherwise every
+            # ordinary destination collision on every install would pay for a
+            # `get_many` plus a `get` per release to reach a foregone
+            # conclusion. decide_replacement checks these first too; this
+            # mirrors that order rather than trusting it.
+            if not bool(self.conf('upgrade_replace', default=False)):
+                return DECLINED_SETTING_OFF
+            if len((group.get('files') or {}).get('movie') or []) != 1:
+                return DECLINED_MULTI_FILE_GROUP
+
+            # require_complete: an unreadable release document may be the
+            # one that claims this destination, and resolving ownership from a
+            # partial set can attribute the wrong quality to the file about to
+            # be deleted. The SENTINEL means "the set is incomplete" --
+            # distinct from an empty list, which means "this media genuinely
+            # has no releases".
+            releases = fireEvent(
+                'release.for_media', media_id, require_complete=True, single=True,
+            ) if media_id else []
+            # Identity against the sentinel, NOT `is None`. A handler
+            # returning None reaches this side of `fireEvent` as `[]`
+            # (event.py:222), so `is None` was dead here -- the same boundary
+            # that had just been fixed one layer up for `quality.rank`.
+            if releases is INCOMPLETE_RELEASE_SET:
+                return DECLINED_INCOMPLETE_EVIDENCE
+
+            outcome, _existing = decide_replacement(
+                destination=dst,
+                incoming_quality=(group.get('meta_data') or {}).get('quality'),
+                releases=releases or [],
+                size_on_disk=self._sizeOrNone(dst),
+                video_file_count=len((group.get('files') or {}).get('movie') or []),
+                setting_enabled=bool(self.conf('upgrade_replace', default=False)),
+                is_better=lambda a, b: bool(
+                    fireEvent('quality.is_better', a, b, single=True)
+                ),
+                rank=self._rankViaEvent,
+            )
+            return outcome
+        except Exception:
+            # The collided download is deliberately left in place, so a group
+            # that raises here raises again on every scheduled scan. An
+            # unbounded full traceback each time evicts the rotating log,
+            # which is the only diagnostic a self-hosted install has -- so the
+            # failure would erase the evidence of itself. `log_suppressed`
+            # keeps the FIRST occurrence complete and bounds the repeats.
+            #
+            # The key is the media id, never the path: paths are exactly what
+            # PrivacyFilter exists to keep out of logs.
+            log_suppressed(
+                log.error,
+                'renamer_replacement_decision_failed:%s' % (
+                    (group.get('media') or {}).get('_id') or 'unknown',
+                ),
+                'Could not decide on upgrade replacement: %s',
+                traceback.format_exc(),
+            )
+            return DECLINED_ERROR
+
+    @staticmethod
+    def _sizeOrNone(path):
+        """None means "could not stat", which the decision layer treats as a
+        refusal rather than as a size of zero."""
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return None
 
     def _processGroup(self, group, media_folder=None, release_download=None):
         """Process a single scanner group (rename/move files)."""
