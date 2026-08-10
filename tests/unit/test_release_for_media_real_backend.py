@@ -274,3 +274,98 @@ class TestDetachFileDoesNotLogTheLibraryPath:
         # The bound must not cost the diagnosis.
         assert 'Permission denied' in messages and '13' in messages
         assert rel['_id'] in messages
+
+
+class TestDetachFileActuallyDetaches:
+    """`detachFile`'s read-modify-write was only ever exercised through the
+    renamer's stubbed `fireEvent`, which returns True without doing anything,
+    plus one direct test that patches `update_with_retry` to raise. So the
+    mutation itself -- removing the path, recomputing copy_id -- had no
+    coverage at all.
+
+    It is on the path that stops the NEXT upgrade resolving as ambiguous, and
+    it is the CAS pattern this project treats as a known race risk. Driven
+    against a real SQLiteAdapter here.
+    """
+
+    @staticmethod
+    def _with_files(db, media_id, files):
+        from couchpotato.core.plugins.release.main import copyIdentity
+        doc = db.insert({'_t': 'release', 'media_id': media_id, 'status': 'done',
+                         'files': files, 'copy_id': copyIdentity(files)})
+        return doc
+
+    def test_the_path_is_removed_from_the_document(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        a = tmp_path / 'kept.mkv'; a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'; b.write_bytes(b'y' * 20)
+        rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
+
+        assert obj.detachFile(rel['_id'], str(b)) is True
+
+        after = db.get('id', rel['_id'])
+        assert after['files']['movie'] == [str(a)], (
+            'the replaced path is still claimed: %r' % after['files']
+        )
+
+    def test_copy_id_is_recomputed_not_left_stale(self, plugin, tmp_path):
+        """A copy_id beside a removed path describes a set the document no
+        longer claims, which is worse than having none."""
+        obj, db, _fired = plugin
+        a = tmp_path / 'kept.mkv'; a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'; b.write_bytes(b'y' * 20)
+        rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
+        # Read it back rather than trusting insert()'s return value.
+        before = db.get('id', rel['_id']).get('copy_id')
+        assert before and ',' in before, (
+            'the fixture did not store a two-file identity: %r' % before
+        )
+
+        obj.detachFile(rel['_id'], str(b))
+
+        after = db.get('id', rel['_id'])
+        assert after['copy_id'] != before
+        assert after['copy_id'] == '10', (
+            'copy_id was not recomputed from what remains: %r' % after['copy_id']
+        )
+
+    def test_detaching_the_only_file_leaves_no_identity(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        only = tmp_path / 'only.mkv'; only.write_bytes(b'z' * 30)
+        rel = self._with_files(db, 'm-1', {'movie': [str(only)]})
+
+        obj.detachFile(rel['_id'], str(only))
+
+        after = db.get('id', rel['_id'])
+        assert not after.get('files'), 'an empty file type was left behind'
+        assert after.get('copy_id') is None, (
+            'an identity survived a document that claims nothing: %r'
+            % after.get('copy_id')
+        )
+
+    def test_other_file_types_are_untouched(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        movie = tmp_path / 'm.mkv'; movie.write_bytes(b'x' * 10)
+        nfo = tmp_path / 'm.nfo'; nfo.write_bytes(b'n')
+        rel = self._with_files(db, 'm-1', {'movie': [str(movie)], 'nfo': [str(nfo)]})
+
+        obj.detachFile(rel['_id'], str(movie))
+
+        after = db.get('id', rel['_id'])
+        assert after['files'].get('nfo') == [str(nfo)], (
+            'detaching a movie file removed unrelated file types: %r' % after['files']
+        )
+
+    def test_a_path_the_release_never_claimed_changes_nothing(self, plugin, tmp_path):
+        """Short-circuits rather than rewriting an identical document, and
+        still answers True -- "not claimed" is the state the caller wanted."""
+        obj, db, _fired = plugin
+        movie = tmp_path / 'm.mkv'; movie.write_bytes(b'x' * 10)
+        rel = self._with_files(db, 'm-1', {'movie': [str(movie)]})
+        before = db.get('id', rel['_id'])
+
+        assert obj.detachFile(rel['_id'], str(tmp_path / 'never-claimed.mkv')) is True
+
+        after = db.get('id', rel['_id'])
+        assert after['files'] == before['files']
+        assert after['_rev'] == before['_rev'], 'it rewrote an unchanged document'
