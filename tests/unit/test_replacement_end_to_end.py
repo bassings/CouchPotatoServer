@@ -1347,14 +1347,24 @@ class TestTheSettingOffPathDoesNoWork:
             % stats
         )
 
-    def test_no_directory_listing_when_the_setting_is_off(self, world, monkeypatch):
-        """`.cp-upgrade-*.part` is written by `replace_atomically` and nothing
-        else, so on an install that has never enabled `upgrade_replace` the
-        stale-staging scan lists a library directory on every collision to
-        look for something that cannot be there.
+    def test_the_stale_report_runs_even_when_the_setting_is_off(self, world, monkeypatch):
+        """The opposite of what this asserted for one commit, and the reversal
+        is the point.
 
-        Separate from the getsize test above because they are separate calls:
-        watching only one let a mutation that ungated the OTHER survive."""
+        Gating the stale-staging report on `upgrade_replace` saves a listdir
+        on installs that never enabled the feature. It also silences it for
+        the operator who enabled it, had a swap interrupted, and turned it back
+        off BECAUSE of that failure -- leaving a complete download under a
+        hidden name with nothing to point at it. The diagnostic goes dark
+        exactly when it is needed.
+
+        The scan-size check IS gated, and correctly: its answer cannot change
+        an outcome already decided. This one's answer is for a human, and it
+        does not stop being true when a setting changes.
+        """
+        from couchpotato.core.logger import reset_log_suppression
+        reset_log_suppression()
+
         world['state']['conf']['upgrade_replace'] = False
 
         listings = []
@@ -1367,9 +1377,11 @@ class TestTheSettingOffPathDoesNoWork:
         monkeypatch.setattr(os, 'listdir', _record)
         _run(world)
 
-        assert _sha(world['dst']) == world['old_sha']
-        assert os.path.dirname(world['dst']) not in listings, (
-            'the library was listed for a decision already made: %r' % listings
+        assert _sha(world['dst']) == world['old_sha'], 'it replaced with the setting off'
+        assert os.path.dirname(world['dst']) in listings, (
+            'an abandoned staging file would go unreported for an operator '
+            'who turned the feature off after a failed swap -- which is the '
+            'operator most likely to have one'
         )
 
     def test_the_library_IS_listed_when_replacement_is_enabled(self, world, monkeypatch):

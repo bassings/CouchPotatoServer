@@ -181,15 +181,26 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             if os.path.exists(dst):
-                # Only where a staging file could exist. `.cp-upgrade-*.part`
-                # is written by `replace_atomically` and nothing else, so on
-                # an install that has never enabled `upgrade_replace` this
-                # listdir scans a library directory on every collision to find
-                # something that cannot be there. Same principle as
-                # TestTheSettingOffPathDoesNoWork pins for the scan-size
-                # check.
-                if bool(self.conf('upgrade_replace', default=False)):
-                    self._reportStaleStagingFiles(os.path.dirname(dst))
+                # NOT gated on `upgrade_replace`, and that is deliberate --
+                # it was gated for one commit and the gating was wrong.
+                #
+                # The argument for gating is real: `.cp-upgrade-*.part` is
+                # written by `replace_atomically` and nothing else, so on an
+                # install that never enabled the feature this listdir looks
+                # for something that cannot be there.
+                #
+                # But the setting is what an operator turns OFF after a swap
+                # goes wrong. Gate on it and the sequence is: enable, a swap
+                # is interrupted leaving a complete download under a hidden
+                # name, disable the feature because of that failure -- and the
+                # only thing that would have told them where their download
+                # went now stays silent. The diagnostic goes dark precisely
+                # when it is needed.
+                #
+                # One listdir, on a path that has already found a collision
+                # and is about to do filesystem work anyway, is the cheaper
+                # side of that trade by a wide margin.
+                self._reportStaleStagingFiles(os.path.dirname(dst))
                 # The replacement decision is COMPUTED and recorded, and then
                 # deliberately not acted on -- the swap is wired in the next
                 # step. Computing it here first is what proves the gate is
