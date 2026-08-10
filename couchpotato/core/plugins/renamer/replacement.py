@@ -57,6 +57,27 @@ DECLINED_INCOMPLETE_EVIDENCE = 'declined_incomplete_evidence'
 # has no shared symbol, so a typo in either survives a rename and nothing
 # catches it.
 DECLINED_ERROR = 'declined_error'
+
+# The destination resolves outside the configured library root. Refusing to
+# move a file INTO an odd place would be over-reach; refusing to DESTROY one
+# outside the library the operator gave us is not.
+DECLINED_OUTSIDE_LIBRARY = 'declined_outside_library'
+
+# The source is not the size the scanner measured, so the quality rung on it
+# describes an earlier version of the file. Usually a downloader still
+# appending.
+DECLINED_SOURCE_CHANGED = 'declined_source_changed'
+
+# The group's movie identity came from a fuzzy title-and-year search rather
+# than from an assertion about this release. A wrong guess would not mis-file
+# a download here; it would destroy a DIFFERENT movie's library copy.
+DECLINED_UNVERIFIED_IDENTITY = 'declined_unverified_identity'
+
+# The source's byte size is nowhere near the band its claimed quality rung
+# occupies. The scanner prefers a snatched release's CLAIMED quality over its
+# own detection, so a small file labelled 2160p outranks a genuine 1080p copy
+# on paper alone.
+DECLINED_SIZE_CONTRADICTS_QUALITY = 'declined_size_contradicts_quality'
 DECLINED_NOT_BETTER = 'declined_not_better'
 
 

@@ -11,7 +11,7 @@ from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
-from couchpotato.core.logger import CPLog, log_suppressed
+from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
 from .index import ReleaseIndex, ReleaseStatusIndex, ReleaseIDIndex, ReleaseDownloadIndex
@@ -130,6 +130,7 @@ class Release(Plugin):
         addEvent('release.update_status', self.updateStatus)
         addEvent('release.with_status', self.withStatus)
         addEvent('release.for_media', self.forMedia)
+        addEvent('release.detach_file', self.detachFile)
 
         # Clean releases that didn't have activity in the last week
         addEvent('app.load', self.cleanDone, priority = 1000)
@@ -805,6 +806,77 @@ class Release(Plugin):
         except Exception:
             log.error('Failed: %s', traceback.format_exc())
 
+        return False
+
+    def detachFile(self, release_id, path):
+        """Stop a release claiming a file it no longer owns.
+
+        Used after upgrade replacement: `os.replace` has put different bytes
+        at `path`, so the superseded release's claim is now a claim on
+        somebody else's file. Marking it `ignored` does not remove that claim,
+        and `release.for_media` returns ignored releases, so ownership
+        resolution keeps seeing a second claimant for the destination. Left
+        alone, the NEXT upgrade of the same movie resolves as ambiguous and
+        refuses -- the operator's second upgrade silently stops working
+        because of the first.
+
+        `copy_id` goes with the path. It is derived from the sizes of the
+        files listed, so a copy_id retained beside a removed path describes a
+        set the document no longer claims, which is worse than having none.
+
+        Returns True when the document no longer claims the path -- including
+        when it never did, because "not claimed" is the state the caller
+        wanted either way.
+        """
+        if not release_id or not path:
+            return False
+
+        def _mutate(rel):
+            files = rel.get('files') or {}
+            remaining = {}
+            removed = False
+            for file_type, paths in files.items():
+                kept = [p for p in (paths or []) if sp(p) != target]
+                removed = removed or len(kept) != len(paths or [])
+                if kept:
+                    remaining[file_type] = kept
+
+            if not removed:
+                # Nothing to do. Returning False short-circuits the CAS helper
+                # rather than writing an identical document.
+                return False
+
+            rel['files'] = remaining
+            # Recomputed, not deleted: the identity of what REMAINS is still
+            # meaningful, and for an emptied list copyIdentity returns None.
+            rel['copy_id'] = copyIdentity(remaining)
+            rel['last_edit'] = int(time.time())
+
+        try:
+            # Inside the guard, including `sp(path)`. It sat above and an
+            # exception from it -- a non-string path, say -- escaped
+            # uncaught, past `without_paths`, into the event dispatcher, which
+            # logs `traceback.format_exc()`. That is the one formatter that
+            # puts `OSError.filename` in the output, so the leak this function
+            # is careful about would have happened through the one path that
+            # skipped its own handling.
+            target = sp(path)
+            db = get_db()
+            db.update_with_retry(_mutate, release_id)
+            return True
+        except ConflictError:
+            log.warning(
+                'Gave up detaching a replaced file from release %s after '
+                'retries due to persistent contention', release_id,
+            )
+        except Exception as error:
+            # errno/strerror or type+message, never `format_exc()`. This
+            # function receives a real library PATH, and an OSError's __str__
+            # appends `filename` -- so the traceback's last line would put the
+            # destination into the log, which is what D8 forbids and what
+            # `_withoutPaths` was added for on the renamer side.
+            log.error('Failed detaching a replaced file from release %s: %s',
+                      release_id, without_paths(error))
         return False
 
     def withStatus(self, status, with_doc = True):

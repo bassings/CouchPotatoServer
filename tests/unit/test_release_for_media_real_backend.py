@@ -241,3 +241,236 @@ class TestARepeatedlyUnreadableSetDoesNotEraseTheLog:
         assert any('database is locked' in r.getMessage() for r in caplog.records), (
             'a second, unrelated media was silenced by the first'
         )
+
+
+class TestDetachFileDoesNotLogTheLibraryPath:
+    """`detachFile` receives a real destination path, and an OSError's
+    `__str__` appends `filename` -- so `traceback.format_exc()` here would put
+    the library path in the log. That is what D8 forbids and what
+    `_withoutPaths` was added for on the renamer side; this call site was the
+    one that had not caught up.
+    """
+
+    def test_a_failure_reports_the_cause_without_the_path(self, plugin, caplog):
+        import logging
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+        secret = '/mnt/nas/Films/Some Movie (1999)/Some Movie.mkv'
+
+        def _boom(*a, **k):
+            raise PermissionError(13, 'Permission denied', secret)
+
+        db.update_with_retry = _boom
+
+        with caplog.at_level(logging.ERROR):
+            assert obj.detachFile(rel['_id'], secret) is False
+
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert secret not in messages, (
+            'the library path reached the log through the exception: %s' % messages
+        )
+        assert '/mnt/nas' not in messages and 'Some Movie' not in messages
+        # The bound must not cost the diagnosis.
+        assert 'Permission denied' in messages and '13' in messages
+        assert rel['_id'] in messages
+
+
+class TestDetachFileActuallyDetaches:
+    """`detachFile`'s read-modify-write was only ever exercised through the
+    renamer's stubbed `fireEvent`, which returns True without doing anything,
+    plus one direct test that patches `update_with_retry` to raise. So the
+    mutation itself -- removing the path, recomputing copy_id -- had no
+    coverage at all.
+
+    It is on the path that stops the NEXT upgrade resolving as ambiguous, and
+    it is the CAS pattern this project treats as a known race risk. Driven
+    against a real SQLiteAdapter here.
+    """
+
+    @staticmethod
+    def _with_files(db, media_id, files):
+        from couchpotato.core.plugins.release.main import copyIdentity
+        doc = db.insert({'_t': 'release', 'media_id': media_id, 'status': 'done',
+                         'files': files, 'copy_id': copyIdentity(files)})
+        return doc
+
+    def test_the_path_is_removed_from_the_document(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        a = tmp_path / 'kept.mkv'
+        a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'
+        b.write_bytes(b'y' * 20)
+        rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
+
+        assert obj.detachFile(rel['_id'], str(b)) is True
+
+        after = db.get('id', rel['_id'])
+        assert after['files']['movie'] == [str(a)], (
+            'the replaced path is still claimed: %r' % after['files']
+        )
+
+    def test_copy_id_is_recomputed_not_left_stale(self, plugin, tmp_path):
+        """A copy_id beside a removed path describes a set the document no
+        longer claims, which is worse than having none."""
+        obj, db, _fired = plugin
+        a = tmp_path / 'kept.mkv'
+        a.write_bytes(b'x' * 10)
+        b = tmp_path / 'gone.mkv'
+        b.write_bytes(b'y' * 20)
+        rel = self._with_files(db, 'm-1', {'movie': [str(a), str(b)]})
+        # Read it back rather than trusting insert()'s return value.
+        before = db.get('id', rel['_id']).get('copy_id')
+        assert before and ',' in before, (
+            'the fixture did not store a two-file identity: %r' % before
+        )
+
+        obj.detachFile(rel['_id'], str(b))
+
+        after = db.get('id', rel['_id'])
+        assert after['copy_id'] != before
+        assert after['copy_id'] == '10', (
+            'copy_id was not recomputed from what remains: %r' % after['copy_id']
+        )
+
+    def test_detaching_the_only_file_leaves_no_identity(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        only = tmp_path / 'only.mkv'
+        only.write_bytes(b'z' * 30)
+        rel = self._with_files(db, 'm-1', {'movie': [str(only)]})
+
+        obj.detachFile(rel['_id'], str(only))
+
+        after = db.get('id', rel['_id'])
+        assert not after.get('files'), 'an empty file type was left behind'
+        assert after.get('copy_id') is None, (
+            'an identity survived a document that claims nothing: %r'
+            % after.get('copy_id')
+        )
+
+    def test_other_file_types_are_untouched(self, plugin, tmp_path):
+        obj, db, _fired = plugin
+        movie = tmp_path / 'm.mkv'
+        movie.write_bytes(b'x' * 10)
+        nfo = tmp_path / 'm.nfo'
+        nfo.write_bytes(b'n')
+        rel = self._with_files(db, 'm-1', {'movie': [str(movie)], 'nfo': [str(nfo)]})
+
+        obj.detachFile(rel['_id'], str(movie))
+
+        after = db.get('id', rel['_id'])
+        assert after['files'].get('nfo') == [str(nfo)], (
+            'detaching a movie file removed unrelated file types: %r' % after['files']
+        )
+
+    def test_a_path_the_release_never_claimed_changes_nothing(self, plugin, tmp_path):
+        """Short-circuits rather than rewriting an identical document, and
+        still answers True -- "not claimed" is the state the caller wanted."""
+        obj, db, _fired = plugin
+        movie = tmp_path / 'm.mkv'
+        movie.write_bytes(b'x' * 10)
+        rel = self._with_files(db, 'm-1', {'movie': [str(movie)]})
+        before = db.get('id', rel['_id'])
+
+        assert obj.detachFile(rel['_id'], str(tmp_path / 'never-claimed.mkv')) is True
+
+        after = db.get('id', rel['_id'])
+        assert after['files'] == before['files']
+        assert after['_rev'] == before['_rev'], 'it rewrote an unchanged document'
+
+
+class TestWithoutPathsNeverStringifiesAnOSError:
+    """`OSError.__str__` appends `filename` whenever it is SET, not only when
+    errno is set:
+
+        >>> e = OSError(); e.filename = '/mnt/nas/Films/Secret Movie.mkv'
+        >>> str(e)
+        "[Errno None] None: '/mnt/nas/Films/Secret Movie.mkv'"
+
+    The first version of this redaction gated on `errno is not None` and fell
+    through to `str()` otherwise, so precisely that object leaked the path.
+    The gate is now on the TYPE, and an OSError is never stringified.
+
+    Tested here rather than only through `detachFile`, because the call-site
+    test used `PermissionError(13, ...)` -- which has an errno, so it could
+    not have caught this.
+    """
+
+    def test_an_errno_less_OSError_does_not_leak_its_filename(self):
+        from couchpotato.core.logger import without_paths
+
+        error = OSError()
+        error.filename = '/mnt/nas/Films/Secret Movie (1999)/Secret Movie.mkv'
+
+        rendered = without_paths(error)
+        assert 'Secret Movie' not in rendered, (
+            'the filename leaked through str(OSError): %r' % rendered
+        )
+        assert '/mnt/nas' not in rendered
+        assert 'OSError' in rendered
+
+    def test_an_OSError_with_an_errno_still_reports_it(self):
+        from couchpotato.core.logger import without_paths
+
+        rendered = without_paths(PermissionError(13, 'Permission denied', '/x/y.mkv'))
+        assert '13' in rendered and 'Permission denied' in rendered
+        assert '/x/y.mkv' not in rendered
+
+    def test_a_non_OSError_keeps_its_message(self):
+        """The bound must not cost the diagnosis -- the leak is specific to
+        OSError, and a RuntimeError's message carries no path."""
+        from couchpotato.core.logger import without_paths
+
+        assert 'database went away' in without_paths(RuntimeError('database went away'))
+
+    def test_an_empty_exception_still_names_its_type(self):
+        from couchpotato.core.logger import without_paths
+
+        assert without_paths(RuntimeError()) == 'RuntimeError'
+
+
+class TestDetachFileNeverRaisesPastItsOwnHandling:
+    """`sp(path)` sat above the try. An exception from it escaped uncaught,
+    past `without_paths`, into `event.py`'s handler dispatch -- which logs
+    `traceback.format_exc()`, the one formatter that embeds
+    `OSError.filename`. So the leak this function is careful about would have
+    happened through the single path that skipped its own handling.
+    """
+
+    def test_an_unusable_path_is_a_refusal_not_an_exception(self, plugin, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+
+        def _explode(_p):
+            raise TypeError('not a path')
+
+        monkeypatch.setattr(release_main, 'sp', _explode)
+
+        assert obj.detachFile(rel['_id'], object()) is False
+
+    def test_that_failure_does_not_log_a_traceback(self, plugin, monkeypatch, caplog):
+        import logging
+
+        import couchpotato.core.plugins.release.main as release_main
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+        secret = '/mnt/nas/Films/Secret Movie.mkv'
+
+        def _explode(_p):
+            error = OSError()
+            error.filename = secret
+            raise error
+
+        monkeypatch.setattr(release_main, 'sp', _explode)
+
+        with caplog.at_level(logging.ERROR):
+            assert obj.detachFile(rel['_id'], secret) is False
+
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert 'Secret Movie' not in messages, (
+            'the path escaped through the unguarded call: %s' % messages
+        )
+        assert 'Traceback' not in messages

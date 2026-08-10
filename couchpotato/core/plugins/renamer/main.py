@@ -1,12 +1,23 @@
 """Main Renamer class combining all mixin functionality."""
+import hashlib
 import os
+import time
 import traceback
+import uuid
 
 from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent
-from couchpotato.core.helpers.variable import sp
-from couchpotato.core.logger import CPLog, log_suppressed
+from couchpotato.core.helpers.variable import sp, symlink
+from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.media_lock import media_lock
+from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_OUTSIDE_LIBRARY,
+    DECLINED_SIZE_CONTRADICTS_QUALITY,
+    DECLINED_SOURCE_CHANGED,
+    DECLINED_UNVERIFIED_IDENTITY,
+    REPLACE,
+)
+from couchpotato.core.plugins.renamer.swap import identity_of, replace_atomically
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
 from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
@@ -82,6 +93,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             self.renaming_started = True
 
         try:
+            # Once per process, at the top of a scan. It used to sit inside
+            # `_replacementOutcome`, which only runs when a destination
+            # actually COLLIDES -- so an operator who deliberately set the old
+            # key on a library with nothing colliding got exactly the silence
+            # D1 exists to prevent, and got it until something happened to
+            # collide. Inside the try, so that a failure here still releases
+            # `renaming_started` in the finally.
+            self._warnAboutTheDeadSetting()
+
             if not self.conf('from') and not base_folder:
                 return
 
@@ -162,6 +182,26 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             if os.path.exists(dst):
+                # NOT gated on `upgrade_replace`, and that is deliberate --
+                # it was gated for one commit and the gating was wrong.
+                #
+                # The argument for gating is real: `.cp-upgrade-*.part` is
+                # written by `replace_atomically` and nothing else, so on an
+                # install that never enabled the feature this listdir looks
+                # for something that cannot be there.
+                #
+                # But the setting is what an operator turns OFF after a swap
+                # goes wrong. Gate on it and the sequence is: enable, a swap
+                # is interrupted leaving a complete download under a hidden
+                # name, disable the feature because of that failure -- and the
+                # only thing that would have told them where their download
+                # went now stays silent. The diagnostic goes dark precisely
+                # when it is needed.
+                #
+                # One listdir, on a path that has already found a collision
+                # and is about to do filesystem work anyway, is the cheaper
+                # side of that trade by a wide margin.
+                self._reportStaleStagingFiles(os.path.dirname(dst))
                 # The replacement decision is COMPUTED and recorded, and then
                 # deliberately not acted on -- the swap is wired in the next
                 # step. Computing it here first is what proves the gate is
@@ -169,21 +209,109 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # simultaneously dangerous and inert, and the inertness is
                 # what hid the danger, because the gate never fired in
                 # testing so nobody saw what it did when it fired.
-                outcome = self._replacementOutcome(src, dst, group)
-                # WARNING carries no path; DEBUG does.
+                # Identity BEFORE the decision, not after. It is a pure
+                # dict-membership check with no I/O, while
+                # `_replacementOutcome` pays for a `release.for_media` read
+                # and a couple of event dispatches -- and a group whose
+                # identity was guessed can never replace, so that work was
+                # spent to reach a foregone conclusion. Same ordering
+                # principle as the release lookup and the scan-size check.
+                if not self._identityIsAsserted(group):
+                    outcome, superseded = DECLINED_UNVERIFIED_IDENTITY, None
+                else:
+                    outcome, superseded = self._replacementOutcome(src, dst, group)
+
+                # Scan-size FIRST, and its measurement is then reused.
                 #
-                # WARNING is the level that ships and rotates unattended, and
-                # `PrivacyFilter` (logger.py) redacts `name=value` secrets,
-                # NOT paths -- so a library path here reaches the ring buffer
-                # and `docker logs` verbatim, on every collision, forever.
-                # The new code just below is careful to key `log_suppressed`
-                # on the media id for exactly that reason, and this line
-                # predating the feature is not a reason to leave it
-                # inconsistent with the code now sitting beside it.
+                # Ordering: establishing that the file is still what the
+                # scanner measured comes before reasoning about whether its
+                # size supports its claimed rung -- the second question is
+                # meaningless if the answer to the first is no.
                 #
-                # The path is still needed to diagnose a recurring collision,
-                # so DEBUG keeps it: that is the level somebody turns on while
-                # actually looking.
+                # Reuse: both checks stat the source, and on a NAS-mounted
+                # download share (the case this module keeps calling out)
+                # that is two round trips for one number.
+                #
+                # Inside the REPLACE guard, so an install that has not opted
+                # into `upgrade_replace` -- the common case -- pays nothing on
+                # an ordinary collision.
+                measured_source_size = None
+                if outcome == REPLACE:
+                    measured_source_size = self._sourceStillMatchesTheScan(group, src)
+                    if measured_source_size is None:
+                        # The quality rung was derived from the scanner's
+                        # measurement. If the bytes have moved since, the rung
+                        # describes a file that no longer exists.
+                        outcome = DECLINED_SOURCE_CHANGED
+
+                if outcome == REPLACE and not self._sizeSupportsTheClaimedQuality(
+                    group, src, measured_source_size
+                ):
+                    outcome = DECLINED_SIZE_CONTRADICTS_QUALITY
+
+                if outcome == REPLACE and not self._destinationIsInsideTheLibrary(dst):
+                    # A naming template, a crafted title or a `media_folder`
+                    # override can resolve outside the configured library:
+                    # `doReplace` preserves separators and `..`, and
+                    # `os.path.join` honours an absolute component. Refusing
+                    # to move a file INTO an odd place is a mistake; refusing
+                    # to DESTROY a file outside the library is not.
+                    outcome = DECLINED_OUTSIDE_LIBRARY
+
+                if outcome == REPLACE:
+                    ok, reason = replace_atomically(
+                        src, dst,
+                        expected_source_size=measured_source_size,
+                        destination_identity=identity_of(dst),
+                        about_to_replace=lambda: self._announceImminentReplacement(
+                            src, dst, superseded, group,
+                        ),
+                    )
+                    if ok:
+                        # Bookkeeping BEFORE disposal, and the order is not
+                        # free. Both are best-effort, but a kill between them
+                        # leaves different wreckage:
+                        #
+                        #   dispose first  -> download gone, release still
+                        #                     `done` claiming a file that no
+                        #                     longer exists. That is the
+                        #                     unbounded re-download loop D3
+                        #                     exists to prevent, with nothing
+                        #                     left on disk to recover from.
+                        #   supersede first-> release correctly off `done`,
+                        #                     download still present. Untidy
+                        #                     and entirely recoverable.
+                        #
+                        # The swap has already committed either way, so the
+                        # only question is which half-finished state a crash
+                        # leaves behind. Pick the recoverable one.
+                        self._supersedeRelease(superseded, group, dst)
+                        self._disposeOfSourceAfterReplacement(
+                            src, dst, (group.get('media') or {}).get('_id'),
+                        )
+                        moved_any = True
+                        continue
+                    # The swap refused or failed. The library file is intact
+                    # and a complete copy of the download survives -- swap.py
+                    # guarantees both -- so this is an ordinary skip, and the
+                    # reason is carried through rather than flattened.
+                    outcome = reason
+
+                # Two reviews disagreed about this line, so the split is
+                # deliberate rather than a compromise.
+                #
+                # One asked for the path back, because a collision recurring
+                # every scan interval is unreadable without knowing WHICH
+                # file. The other pointed out that a raw library path at
+                # WARNING is exactly what D8 forbids everywhere else in this
+                # method -- PrivacyFilter only masks a `/home/<name>` prefix,
+                # so a NAS mount or library layout goes into the rotating ring
+                # and `docker logs` verbatim.
+                #
+                # Both are right about their own level. WARNING is the level
+                # that ships and rotates unattended, so it names the media and
+                # the decision. DEBUG is the level somebody turns on while
+                # actually diagnosing a collision, and it gets the path.
                 log.warning(
                     'Destination already exists, keeping it: media %s '
                     '(upgrade decision: %s)',
@@ -227,6 +355,501 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         result = fireEvent('quality.rank', quality, single=True)
         return None if result == [] else result
+
+    def _destinationIsInsideTheLibrary(self, destination):
+        """Is `destination` under the configured library root?
+
+        Only asked on the destructive path. The ordinary move already writes
+        wherever the template resolves, and tightening that is a different
+        change with a different blast radius; what must not happen is
+        DESTROYING a file the operator never told us was ours.
+
+        `realpath` on both sides, so a symlinked library root still matches
+        and a `..` in a template cannot escape it. An unreadable or unset root
+        answers False: unable to prove containment is not permission.
+
+        Checked against `conf('to')` and NOT against `media_folder`, and that
+        is the point rather than an oversight.
+
+        `_processGroup` builds the destination from `media_folder or
+        conf('to')`, and `media_folder` arrives from the `renamer.scan` API as
+        a request parameter. Trusting it would mean a caller could nominate
+        any directory and have replacement destroy files there -- which is the
+        exact thing this function exists to refuse. The library root is
+        operator CONFIGURATION; a scan argument is a request, and the two do
+        not carry the same authority.
+
+        A targeted scan whose `media_folder` sits inside the library (the
+        documented shape -- "specific media subfolder") passes normally. One
+        pointing outside gets `declined_outside_library`, which is logged
+        rather than silent, and only the DESTRUCTIVE path is affected: the
+        ordinary move still writes wherever the caller asked.
+        """
+        root = self.conf('to')
+        if not root:
+            return False
+        # `commonpath` is inside the guard too: it raises ValueError on paths
+        # that share no root -- different drives on Windows, or a mix of
+        # absolute and relative -- and everything else on this path is
+        # deliberately hardened so nothing escapes into a scan. An unprovable
+        # containment answers False, which refuses.
+        try:
+            root = os.path.realpath(sp(root))
+            target = os.path.realpath(sp(destination))
+            return os.path.commonpath([root, target]) == root
+        except (OSError, ValueError):
+            return False
+
+    def _releasesForGroup(self, group, media_id):
+        """The group's releases, fetched at most ONCE per group.
+
+        AC-ARCH-5 bounds this at one lookup per group and none per file.
+        `_replacementOutcome` runs per colliding `(src, dst)` pair, so a group
+        with more than one existing destination -- a subtitle beside the movie
+        file, say -- fired a `get_many` plus a `get` per release for each of
+        them, on a timer, to reach the same answer.
+
+        Cached on the group dict rather than on self: a group is one scan's
+        worth of work with a known lifetime, whereas anything on the plugin
+        outlives the scan and would go stale between them.
+        """
+        if not media_id:
+            return []
+        if '_cp_releases' not in group:
+            group['_cp_releases'] = fireEvent(
+                'release.for_media', media_id, require_complete=True, single=True,
+            )
+        return group['_cp_releases']
+
+    #: A staging file older than this is not one somebody is still writing.
+    #: Generous on purpose -- a 60 GB remux across a slow NAS mount is a long
+    #: copy, and reporting a live transfer as wreckage is worse than reporting
+    #: nothing.
+    STALE_STAGING_AGE_SECONDS = 6 * 60 * 60
+
+    def _reportStaleStagingFiles(self, directory):
+        """Say so when a `.cp-upgrade-*.part` has been abandoned.
+
+        If the process is killed between staging and `os.replace`, the staged
+        copy survives under a hidden name the scanner ignores (`.part` is not
+        a media extension) while the library file is still the old one. Left
+        unreported, automation says the download is missing and gives nobody
+        a way to find the complete copy that is sitting right there.
+
+        The NAME is logged, never the directory. The name is a uuid, so it
+        carries nothing private, and it is what an operator needs to run
+        `find` themselves.
+
+        Best-effort and non-fatal: this is a diagnostic, and a diagnostic that
+        can break a scan is worse than no diagnostic.
+        """
+        try:
+            names = [
+                name for name in os.listdir(directory)
+                if name.startswith('.cp-upgrade-') and name.endswith('.part')
+            ]
+        except OSError:
+            return
+
+        for name in names:
+            full = os.path.join(directory, name)
+            try:
+                age = time.time() - os.path.getmtime(full)
+                size = os.path.getsize(full)
+            except OSError:
+                continue
+            if age < self.STALE_STAGING_AGE_SECONDS:
+                continue
+            log_suppressed(
+                log.warning,
+                'renamer_stale_staging:%s' % name,
+                'An abandoned upgrade staging file is taking up %s bytes in '
+                'the library: "%s", last written %s hours ago. It is a '
+                'COMPLETE copy of a download that was never installed -- an '
+                'upgrade was interrupted between staging and the swap. '
+                'Recover it or delete it; nothing else will.',
+                size, name, int(age // 3600),
+            )
+
+    @staticmethod
+    def _withoutPaths(error):
+        """Delegates to `logger.without_paths`.
+
+        Kept as a method because the tests and several call sites use it that
+        way, but the LOGIC lives in one place now: this was duplicated into
+        release/main.py, the copy gated on `errno is not None`, and an OSError
+        carrying only a filename fell through to `str()` and leaked the path.
+        """
+        return without_paths(error)
+
+    #: Identity sources that ASSERT which movie this is, as opposed to
+    #: guessing. `search` is absent deliberately: it is the best match for a
+    #: parsed title and year, which is a guess, and a wrong guess on this path
+    #: destroys a different movie's library copy rather than mis-filing a
+    #: download.
+    ASSERTED_IDENTITY_SOURCES = frozenset(
+        {'download_id', 'cp_tag', 'nfo', 'filename'}
+    )
+
+    @classmethod
+    def _identityIsAsserted(cls, group):
+        """Did we IDENTIFY this movie, or infer it?
+
+        `folder_scanner.determineMedia` has five ways to name a group, and the
+        last is `movie.search` on a title and year parsed out of the filename.
+        For the scanner's original job -- putting a download somewhere -- a
+        wrong guess is a misplaced file. Here it authorises fetching another
+        movie's releases and overwriting that movie's destination.
+
+        A group with no recorded source is refused rather than trusted:
+        `identity_source` is written on every path through determineMedia, so
+        its absence means this group did not come from there and nothing has
+        vouched for it.
+        """
+        return group.get('identity_source') in cls.ASSERTED_IDENTITY_SOURCES
+
+    #: How far below a rung's own size band a file may fall before its claimed
+    #: quality is treated as contradicted. The bands (quality/main.py) are
+    #: broad and overlapping, so this is a sanity check against the absurd --
+    #: a 700 MB file labelled 2160p -- and not an attempt to re-derive quality
+    #: from size, which is `quality.guess`'s job and not ours to second-guess.
+    QUALITY_BAND_FLOOR_FRACTION = 0.5
+
+    @staticmethod
+    def _sizeSupportsTheClaimedQuality(group, source, measured_size=None):
+        """Do the bytes support the rung this file claims?
+
+        `media_parser.getMetaData` PREFERS a snatched release's claimed
+        quality over the scanner's own detection, so a mislabelled or
+        malicious release description reaches the decision as fact. Ranked on
+        that label alone, a small file claiming 2160p outranks a genuine
+        1080p library copy and replaces it.
+
+        Deliberately only catching the absurd. The size bands overlap heavily
+        and encoding efficiency varies, so anything tighter would refuse real
+        upgrades; this exists to stop a file that is nowhere near its claimed
+        rung from destroying one that is.
+
+        True when there is nothing to check against -- an unknown rung, no
+        band, an unmeasurable file. Every one of those is refused elsewhere
+        for its own reason, and inventing an answer here would only make this
+        guard look like it did the work.
+        """
+        quality = (group.get('meta_data') or {}).get('quality') or {}
+        identifier = quality.get('identifier')
+        if not identifier:
+            return True
+
+        band = fireEvent('quality.single', identifier, single=True) or {}
+
+        # `size_min`, NOT `size`. The operator edits size_min/size_max through
+        # the settings UI (`quality.size.save` -> saveSize), and those land as
+        # separate keys on the quality DOCUMENT. `single()` returns
+        # `mergeDicts(static_quality, document)`, and the static `size` tuple
+        # exists only in the static half -- so nothing the operator changes
+        # ever reaches it, and reading `size` here would silently enforce the
+        # shipped defaults against a library they had deliberately retuned.
+        #
+        # `quality.guess` uses size_min/size_max for exactly this comparison
+        # (quality/main.py:470), so this follows the same source of truth
+        # rather than inventing a second one.
+        low = band.get('size_min')
+        if not isinstance(low, (int, float)):
+            low = (band.get('size') or (None, None))[0]
+        if not isinstance(low, (int, float)) or low <= 0:
+            return True
+
+        # Reuse the measurement `_sourceStillMatchesTheScan` already took;
+        # it runs first and stats the same file. Falling back to a fresh stat
+        # keeps this callable on its own, which its unit tests rely on.
+        if measured_size is None:
+            try:
+                measured_size = os.path.getsize(source)
+            except OSError:
+                return True
+        megabytes = measured_size / 1024 / 1024
+
+        return megabytes >= low * Renamer.QUALITY_BAND_FLOOR_FRACTION
+
+    #: How far the source may differ from the scanner's measurement.
+    #:
+    #: `meta_data['size']` is a float in MEGABYTES (`getFileSize` divides by
+    #: 1024 twice), so recovering a byte count needs a tolerance for the
+    #: round trip. One mebibyte is far more than that round trip can lose and
+    #: far less than a still-downloading file differs by -- a partial
+    #: download is short by a good fraction of the whole, not by a kilobyte.
+    #:
+    #: The honest limitation: growth smaller than this is not detected. That
+    #: is accepted, because it is not the failure mode. A file that grew by
+    #: 100 KB between the scan and the rename has not changed quality rung.
+    SCAN_SIZE_TOLERANCE_BYTES = 1024 * 1024
+
+    @classmethod
+    def _sourceStillMatchesTheScan(cls, group, source):
+        """The source's size if it still matches the scan, else None.
+
+        Returning the SIZE rather than a bool is what lets the caller hand it
+        to `replace_atomically` as `expected_source_size`. Without that the
+        swap took its own fresh measurement, self-consistent with whatever it
+        copied, and a downloader appending between this check and that copy
+        was invisible to both.
+
+        The quality rung on this group was derived from that measurement. A
+        downloader still appending between the scan and the rename gives a
+        file whose rung describes an earlier, smaller version of itself, and
+        acting on it replaces a complete library copy on the strength of a
+        rung the bytes have not earned.
+
+        The comparison must be against the SCANNER's figure. Taking a fresh
+        size here and comparing it to another fresh size compares a value with
+        itself and passes forever, which is the shape this check exists to
+        avoid.
+
+        When the scanner recorded nothing usable the comparison is skipped
+        rather than fabricated -- a size invented here would compare equal to
+        itself and read exactly like a guard that works -- but the measurement
+        just taken is still returned, because it is what closes the window
+        above.
+
+        Only meaningful because D7 refuses multi-file groups -- `meta_data`
+        holds ONE size summed across the group's movie files, so with more
+        than one it would not describe this file at all. If that refusal is
+        ever relaxed, this must be revisited before it is.
+        """
+        try:
+            actual = os.path.getsize(source)
+        except OSError:
+            # Unable to measure is not the same as unchanged, and this is the
+            # destructive path.
+            return None
+
+        recorded_mb = (group.get('meta_data') or {}).get('size')
+        if not isinstance(recorded_mb, (int, float)) or recorded_mb <= 0:
+            # Nothing to compare against, but the measurement just taken is
+            # still worth carrying: it closes the window between here and the
+            # staging copy inside replace_atomically.
+            return actual
+
+        expected = recorded_mb * 1024 * 1024
+        if abs(actual - expected) > cls.SCAN_SIZE_TOLERANCE_BYTES:
+            return None
+        return actual
+
+    def _announceImminentReplacement(self, source, destination, superseded, group):
+        """AC-OPS-2: one WARNING in the last moment before the file is gone.
+
+        A crash immediately after `os.replace` leaves the old copy destroyed
+        and nothing after this point having run. This record is therefore the
+        only thing that can explain the deletion afterwards, so it is emitted
+        BEFORE the irreversible step rather than after it.
+
+        D8: media and rungs, never paths. Sizes are numbers, which say a great
+        deal about whether the swap was sane and nothing about the operator's
+        filesystem.
+        """
+        incoming = (group.get('meta_data') or {}).get('quality') or {}
+        log.warning(
+            'About to replace a library copy: media %s, %s (%s bytes) -> '
+            '%s (%s bytes), superseding release %s. This destroys the old file.',
+            (group.get('media') or {}).get('_id'),
+            (superseded or {}).get('quality'),
+            self._sizeOrNone(destination),
+            incoming.get('identifier'),
+            self._sizeOrNone(source),
+            (superseded or {}).get('_id'),
+        )
+
+    def _disposeOfSourceAfterReplacement(self, source, destination, media_id=None):
+        """Now honour `default_file_action` -- on the SOURCE, after the swap.
+
+        Staging deliberately copies, so at this point the download still
+        exists and the library holds a complete new copy. This is where the
+        operator's choice genuinely applies, and doing it here rather than
+        during staging is what stops `symlink_reversed` and the `link`
+        fallback leaving a link to a staging path that `os.replace` has
+        already renamed away.
+
+        Best-effort throughout: the swap has succeeded, and nothing that
+        happens to the download now can justify raising through a completed
+        replacement.
+        """
+        action = self.conf('default_file_action', default='move')
+        try:
+            if action == 'move':
+                os.remove(source)
+            elif action == 'symlink_reversed':
+                # Link FIRST at a temporary name, then rename it over the
+                # source. Removing the source and then linking left a window
+                # where a failed `symlink` -- a FAT/exFAT download mount, a
+                # quota, a permissions problem, all plausible for a downloads
+                # mount that differs from the library mount -- destroyed the
+                # download and created nothing in its place.
+                #
+                # The log below then said "the download is still on disk",
+                # which was false. A message that reassures about data safety
+                # while the data is gone is worse than no message.
+                # Unique per attempt, for the same reason swap.py's staging
+                # path is: two concurrent scans, or a previous crashed run,
+                # must not collide on this name. A fixed name here would have
+                # been the one place in this flow that assumed the
+                # single-process case the rest of it explicitly does not.
+                staging_link = '%s.cp-link-%s.tmp' % (source, uuid.uuid4().hex)
+                try:
+                    symlink(destination, staging_link)
+                    os.replace(staging_link, source)
+                except Exception:
+                    if os.path.lexists(staging_link):
+                        try:
+                            os.remove(staging_link)
+                        except OSError:
+                            pass
+                    raise
+            # 'copy' and 'link' leave the download where it is. A hardlink
+            # back is not recreated: the swap replaced the destination inode,
+            # so the old link would point at the destroyed file and a new one
+            # cannot span filesystems anyway.
+        except Exception as error:
+            log.warning(
+                'Replaced the library copy for media %s, but could not apply '
+                '"%s" to the download afterwards. The library is correct and '
+                'the download is still on disk: %s',
+                media_id, action, self._withoutPaths(error),
+            )
+
+    def _supersedeRelease(self, superseded, group, destination=None):
+        """Take the replaced release off `done` after its file has gone.
+
+        Spec D3. `os.replace` has already destroyed the old file by this
+        point, so "account for the old copy" can only mean a database change
+        -- and leaving the old rung at `done` while it still claims the path
+        is what produced the unbounded re-download loop in FEAT-009 designs #2
+        and #4: `Release.add` keys on `<imdb>.<audio>.<quality>`
+        (release/main.py:222) and would create a SECOND done release beside it.
+
+        Best-effort by design. The bytes are already swapped; failing the
+        whole rename now would not undo that, and raising here would abort a
+        scan that has otherwise succeeded. A stale `done` release is
+        recoverable by the next scan, which is not true of the file.
+        """
+        media = group.get('media') or {}
+        media_id = media.get('_id')
+        incoming = (group.get('meta_data') or {}).get('quality') or {}
+
+        # D8: the record names the MEDIA and the two rungs, never the
+        # destination path. PrivacyFilter only rewrites the `/home/<name>`
+        # prefix (core/logger.py), so a raw path would put library layout and
+        # film titles into the rotating ring and `docker logs` on every
+        # replacement. Whoever diagnoses a bad swap needs to know which movie
+        # and which two rungs; the path adds nothing the database cannot give
+        # them from the id.
+        log.info(
+            'Replaced a library copy: media %s, %s -> %s (release %s superseded)',
+            media_id,
+            (superseded or {}).get('quality'),
+            incoming.get('identifier'),
+            (superseded or {}).get('_id'),
+        )
+
+        if not superseded or not superseded.get('_id'):
+            return
+
+        # Detach FIRST, and the order is load-bearing rather than tidy.
+        #
+        # `Release.updateStatus` BACKFILLS copy_id when it moves a release to
+        # `ignored`, from the sizes of the files the release still lists
+        # (release/main.py). By this point `os.replace` has run, so the path
+        # it lists holds the INCOMING file's bytes -- a legacy release with no
+        # stored copy_id would be given one describing the file that just
+        # replaced it.
+        #
+        # If the detach then failed, that release would sit there claiming the
+        # destination with a copy_id that MATCHES the current bytes: ownership
+        # resolution would read it as the verified owner at the OLD rung, and
+        # authorise a later, worse copy to replace what is actually a better
+        # one. Detaching first makes that state unreachable -- the backfill
+        # finds no files and `copyIdentity` answers None.
+        #
+        # The failure mode this leaves is strictly milder, and it is named
+        # here rather than only in the commit that chose it: these are two
+        # independent best-effort writes with no transaction spanning them, so
+        # a crash BETWEEN them leaves the superseded release detached (no
+        # files, no copy_id) but still at `done` -- an orphaned "done with
+        # nothing" record.
+        #
+        # Recoverable, and not destructive: the file is safely swapped either
+        # way, and the release claims nothing, so it cannot be mistaken for
+        # the owner of anything. The next scan can re-derive it. Compare the
+        # alternative ordering, where the same crash leaves a release claiming
+        # a path with an identity matching bytes it did not produce.
+        self._detachSupersededClaim(superseded, destination)
+
+        try:
+            # `Release.updateStatus` CATCHES database errors and contention
+            # and returns False, and the dispatcher contains handler
+            # exceptions too -- so the try/except below never sees the
+            # ordinary failure. The result has to be read.
+            updated = fireEvent(
+                'release.update_status', superseded['_id'], status = 'ignored',
+                single = True,
+            )
+        except Exception as error:
+            # Logged HERE and then short-circuited: the
+            # shared report below would otherwise fire for the same single
+            # failure and produce two differently-worded ERROR records for it.
+            # One failure, one record -- otherwise the log implies two things
+            # went wrong and neither entry tells the whole story.
+            # `_withoutPaths`, not `format_exc`. The traceback's last line
+            # embeds `OSError.filename` regardless of frame limit, which is
+            # the same leak `_withoutPaths` was added for -- and this file is
+            # otherwise meticulous about it.
+            log.error(
+                'Replaced the file for release %s but could not take it off '
+                '"done": %s', superseded.get('_id'), self._withoutPaths(error),
+            )
+            return
+
+        if updated is False or updated == []:
+            log.error(
+                'Replaced the file for release %s but the status update was '
+                'REFUSED. That release still claims a file that no longer '
+                'exists, so it may be re-downloaded; take it off "done" by '
+                'hand.', superseded.get('_id'),
+            )
+            return
+
+    def _detachSupersededClaim(self, superseded, destination):
+        """Stop the dead release claiming the path it no longer owns.
+
+        Marking it `ignored` changes only the status. The document keeps its
+        `files['movie']` path and its `copy_id`, and `release.for_media`
+        returns ignored releases too -- so ownership resolution still sees a
+        claimant for a destination whose bytes it did not produce. Left in
+        place that makes the NEXT upgrade ambiguous, which resolves as a
+        refusal: the operator's second upgrade silently stops working because
+        of the first one.
+
+        Best-effort, and deliberately after the status update. A file that has
+        already been replaced is not made worse by a stale path.
+        """
+        if not destination:
+            return
+
+        # Read the result rather than catching. `detachFile` wraps its own
+        # database call and RETURNS False, and fireEvent's dispatcher contains
+        # handler exceptions too -- so a try/except here would only ever fire
+        # for something that broke before detachFile's own guard, and would
+        # look like it was handling the ordinary failure while never seeing
+        # it. That is the same mistake `_supersedeRelease` documents 25 lines
+        # up, and it is worth not making twice in one file.
+        detached = fireEvent(
+            'release.detach_file', superseded['_id'], destination, single = True,
+        )
+        if detached is not True:
+            log.warning(
+                'Release %s is off "done" but still lists the replaced path. '
+                'A later upgrade of this movie may refuse as ambiguous until '
+                'that document is corrected.', superseded.get('_id'),
+            )
 
     def _warnAboutTheDeadSetting(self):
         """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
@@ -284,7 +907,6 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         )
 
         try:
-            self._warnAboutTheDeadSetting()
             media = group.get('media') or {}
             media_id = media.get('_id')
 
@@ -295,9 +917,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # conclusion. decide_replacement checks these first too; this
             # mirrors that order rather than trusting it.
             if not bool(self.conf('upgrade_replace', default=False)):
-                return DECLINED_SETTING_OFF
+                return DECLINED_SETTING_OFF, None
             if len((group.get('files') or {}).get('movie') or []) != 1:
-                return DECLINED_MULTI_FILE_GROUP
+                return DECLINED_MULTI_FILE_GROUP, None
 
             # require_complete: an unreadable release document may be the
             # one that claims this destination, and resolving ownership from a
@@ -305,17 +927,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # be deleted. The SENTINEL means "the set is incomplete" --
             # distinct from an empty list, which means "this media genuinely
             # has no releases".
-            releases = fireEvent(
-                'release.for_media', media_id, require_complete=True, single=True,
-            ) if media_id else []
-            # Identity against the sentinel, NOT `is None`. A handler
-            # returning None reaches this side of `fireEvent` as `[]`
-            # (event.py:222), so `is None` was dead here -- the same boundary
-            # that had just been fixed one layer up for `quality.rank`.
+            #
+            # Cached per group (AC-ARCH-5: one lookup per group, none per
+            # file) AND compared against the sentinel by identity, NOT with
+            # `is None`. Both halves matter: the cache came from this branch,
+            # the sentinel from the one it merges into, and taking either side
+            # of this merge whole would have dropped the other -- reinstating
+            # a guard that `fireEvent` filters away, or a lookup per collided
+            # file.
+            releases = self._releasesForGroup(group, media_id)
             if releases is INCOMPLETE_RELEASE_SET:
-                return DECLINED_INCOMPLETE_EVIDENCE
+                return DECLINED_INCOMPLETE_EVIDENCE, None
 
-            outcome, _existing = decide_replacement(
+            outcome, existing = decide_replacement(
                 destination=dst,
                 incoming_quality=(group.get('meta_data') or {}).get('quality'),
                 releases=releases or [],
@@ -327,8 +951,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 ),
                 rank=self._rankViaEvent,
             )
-            return outcome
-        except Exception:
+            return outcome, existing
+        except Exception as error:
             # The collided download is deliberately left in place, so a group
             # that raises here raises again on every scheduled scan. An
             # unbounded full traceback each time evicts the rotating log,
@@ -340,13 +964,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # PrivacyFilter exists to keep out of logs.
             log_suppressed(
                 log.error,
+                # Distinct per group even when there is no media id. A
+                # shared 'unknown' bucket meant one repeatedly-failing group
+                # silenced every OTHER group that also failed before its id
+                # was available -- which is the same failure this suppression
+                # exists to stop, applied to the wrong axis. The digest is of
+                # the destination, so it distinguishes without being a path.
                 'renamer_replacement_decision_failed:%s' % (
-                    (group.get('media') or {}).get('_id') or 'unknown',
+                    (group.get('media') or {}).get('_id')
+                    or 'nomedia-' + hashlib.sha1(
+                        dst.encode('utf-8', 'replace')
+                    ).hexdigest()[:12],
                 ),
                 'Could not decide on upgrade replacement: %s',
-                traceback.format_exc(),
+                self._withoutPaths(error),
             )
-            return DECLINED_ERROR
+            return DECLINED_ERROR, None
 
     @staticmethod
     def _sizeOrNone(path):

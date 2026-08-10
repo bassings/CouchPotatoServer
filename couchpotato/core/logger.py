@@ -109,6 +109,34 @@ def reset_log_suppression():
         _log_suppression_state.clear()
 
 
+def without_paths(error):
+    """Describe an exception without naming any file it mentions.
+
+    `OSError.__str__` appends `filename` whenever it is SET -- not only when
+    errno is set. `OSError()` with just a filename renders as
+    `[Errno None] None: '/mnt/nas/Films/Secret Movie.mkv'`, so any branch that
+    reaches `str()` for an OSError leaks the path, and `traceback.format_exc()`
+    puts that same line in its output regardless of frame limit.
+
+    So OSError is rebuilt from errno and strerror and NEVER stringified.
+    Everything else keeps its message: the leak is specific to OSError, and
+    dropping every message to guard against it would cost the diagnosis the
+    log exists for.
+
+    Lives here rather than on a plugin because it was duplicated once and the
+    copy got it wrong -- it gated on `errno is not None` and fell through to
+    `str()` for exactly the case above.
+    """
+    if isinstance(error, OSError):
+        detail = error.strerror or type(error).__name__
+        if error.errno is not None:
+            return '[errno %s] %s' % (error.errno, detail)
+        return detail
+
+    message = str(error)
+    return '%s: %s' % (type(error).__name__, message) if message else type(error).__name__
+
+
 def log_suppressed(log_method, key, message, *args, window=LOG_SUPPRESSION_WINDOW,
                    now=None):
     """Emit `message` at most twice per `window` per `key`, visibly.
