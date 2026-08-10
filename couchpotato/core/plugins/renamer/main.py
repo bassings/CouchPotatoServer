@@ -751,9 +751,18 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # one. Detaching first makes that state unreachable -- the backfill
         # finds no files and `copyIdentity` answers None.
         #
-        # The failure mode this leaves is strictly milder: a detach that
-        # succeeds while the status update fails leaves a `done` release with
-        # no files, which the loud ERROR below already covers.
+        # The failure mode this leaves is strictly milder, and it is named
+        # here rather than only in the commit that chose it: these are two
+        # independent best-effort writes with no transaction spanning them, so
+        # a crash BETWEEN them leaves the superseded release detached (no
+        # files, no copy_id) but still at `done` -- an orphaned "done with
+        # nothing" record.
+        #
+        # Recoverable, and not destructive: the file is safely swapped either
+        # way, and the release claims nothing, so it cannot be mistaken for
+        # the owner of anything. The next scan can re-derive it. Compare the
+        # alternative ordering, where the same crash leaves a release claiming
+        # a path with an identity matching bytes it did not produce.
         self._detachSupersededClaim(superseded, destination)
 
         try:
