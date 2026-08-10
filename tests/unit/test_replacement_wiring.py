@@ -292,10 +292,26 @@ class TestTheDeadSettingIsAnnouncedOnce:
         assert len(said) == 1, 'warned %d times' % len(said)
 
     def test_nothing_is_said_when_the_operator_never_set_it(self, scene, caplog):
+        """Drives the notice directly, like its two siblings.
+
+        It used to call `_replacementOutcome`, which stopped emitting the
+        notice when it moved to `scan()` -- so it was asserting the absence of
+        something that could no longer be present, and would have passed for
+        any implementation whatsoever. The two tests above were reconciled
+        during that move and this one was missed.
+        """
         scene['state']['conf'] = {'upgrade_replace': False}
-        with caplog.at_level('WARNING'):
-            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
         assert not any('no longer read' in r.getMessage() for r in caplog.records)
+
+    def test_and_that_test_is_not_vacuous(self, scene, caplog):
+        """The control it needed. A negative assertion is only worth
+        something if the positive case reaches the same code and DOES fire."""
+        scene['state']['conf'] = {'remove_lower_quality_copies': True}
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
+        assert any('no longer read' in r.getMessage() for r in caplog.records)
 
 
 class TestTheDecisionNeverBreaksAScan:
