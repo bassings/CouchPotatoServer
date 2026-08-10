@@ -123,3 +123,77 @@ class TestTheFieldIsAlwaysPresent:
         group = _group()
         scanner.determineMedia(group)
         assert 'identity_source' in group
+
+
+class TestTheFilenameScanStopsAtTheFirstIdItFinds:
+    """The `break` left only the inner loop and `imdb_id` was assigned on
+    every pass, so the scan carried on after a hit: the next file without an
+    id overwrote the answer with None, and a stray NFO carrying a DIFFERENT id
+    overwrote it with that. Whichever file type was iterated last won.
+
+    Survivable while the id only decided where a download was filed. Not now:
+    `identity_source` is read as "we ASSERT which movie this is", and upgrade
+    replacement uses that to authorise destroying the file at the
+    destination. An id chosen by iteration order is not an assertion.
+    """
+
+    def _scanner_with(self, scanner, monkeypatch, mapping):
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(
+            module, 'getImdb',
+            lambda path, check_inside=False: None if check_inside else mapping.get(path),
+        )
+        monkeypatch.setattr(type(scanner), 'getReleaseNameYear',
+                            lambda _s, i, file_name=None: {}, raising=False)
+
+    def test_a_later_file_without_an_id_does_not_erase_the_one_found(self, scanner, monkeypatch):
+        self._scanner_with(scanner, monkeypatch, {'/dl/movie.mkv': 'tt0111161'})
+        group = _group(files={
+            'movie': ['/dl/movie.mkv'],
+            'subtitle': ['/dl/movie.srt'],      # no id -- used to clear it
+            'nfo': [],
+        })
+
+        scanner.determineMedia(group)
+
+        assert group['identity_source'] == 'filename', (
+            'the id found in the movie filename was erased by a later file '
+            'with none, and the group fell through to the fuzzy search'
+        )
+
+    def test_a_stray_file_with_a_DIFFERENT_id_does_not_win(self, scanner, monkeypatch):
+        """The dangerous shape: a subtitle or NFO whose name carries another
+        movie's id would have decided which movie's releases get fetched, and
+        therefore whose library copy is at risk."""
+        seen = {}
+        import couchpotato.core.plugins.scanner.folder_scanner as module
+
+        monkeypatch.setattr(type(scanner), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(type(scanner), 'getReleaseNameYear',
+                            lambda _s, i, file_name=None: {}, raising=False)
+
+        ids = {'/dl/movie.mkv': 'tt0111161', '/dl/other.srt': 'tt9999999'}
+
+        def _get_imdb(path, check_inside=False):
+            if check_inside:
+                return None
+            seen.setdefault('order', []).append(path)
+            return ids.get(path)
+
+        monkeypatch.setattr(module, 'getImdb', _get_imdb)
+
+        group = _group(files={'movie': ['/dl/movie.mkv'], 'subtitle': ['/dl/other.srt']})
+        scanner.determineMedia(group)
+
+        assert '/dl/other.srt' not in seen.get('order', []), (
+            'the scan kept going after finding an id and read a file carrying '
+            "a different movie's id: %r" % seen.get('order')
+        )
+        assert group['identity_source'] == 'filename'
+
+    def test_no_id_anywhere_still_records_no_source(self, scanner, monkeypatch):
+        self._scanner_with(scanner, monkeypatch, {})
+        group = _group(files={'movie': ['/dl/movie.mkv'], 'nfo': ['/dl/a.nfo']})
+        scanner.determineMedia(group)
+        assert group['identity_source'] is None

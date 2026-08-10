@@ -241,3 +241,36 @@ class TestARepeatedlyUnreadableSetDoesNotEraseTheLog:
         assert any('database is locked' in r.getMessage() for r in caplog.records), (
             'a second, unrelated media was silenced by the first'
         )
+
+
+class TestDetachFileDoesNotLogTheLibraryPath:
+    """`detachFile` receives a real destination path, and an OSError's
+    `__str__` appends `filename` -- so `traceback.format_exc()` here would put
+    the library path in the log. That is what D8 forbids and what
+    `_withoutPaths` was added for on the renamer side; this call site was the
+    one that had not caught up.
+    """
+
+    def test_a_failure_reports_the_cause_without_the_path(self, plugin, caplog):
+        import logging
+
+        obj, db, _fired = plugin
+        rel = _add_release(db, 'm-1', 'one')
+        secret = '/mnt/nas/Films/Some Movie (1999)/Some Movie.mkv'
+
+        def _boom(*a, **k):
+            raise PermissionError(13, 'Permission denied', secret)
+
+        db.update_with_retry = _boom
+
+        with caplog.at_level(logging.ERROR):
+            assert obj.detachFile(rel['_id'], secret) is False
+
+        messages = ' '.join(r.getMessage() for r in caplog.records)
+        assert secret not in messages, (
+            'the library path reached the log through the exception: %s' % messages
+        )
+        assert '/mnt/nas' not in messages and 'Some Movie' not in messages
+        # The bound must not cost the diagnosis.
+        assert 'Permission denied' in messages and '13' in messages
+        assert rel['_id'] in messages

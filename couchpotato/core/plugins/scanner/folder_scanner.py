@@ -403,13 +403,48 @@ class FolderScannerMixin:
 
         if not imdb_id:
             try:
+                # Two bugs lived here, and `identity_source` made the second
+                # one matter.
+                #
+                # `imdb_id` was assigned UNCONDITIONALLY each pass, and the
+                # `break` left only the INNER loop. So after finding an id in
+                # one file type the scan carried on through the rest -- and
+                # the next file without an id overwrote the answer with None,
+                # while a stray NFO or subtitle carrying a DIFFERENT id
+                # overwrote it with that. Whichever file type happened to be
+                # iterated last won.
+                #
+                # That was survivable while the id only decided where a
+                # download was filed. It is not now: `identity_source` is
+                # read as "we ASSERT which movie this is", and upgrade
+                # replacement uses that to authorise destroying the file at
+                # the destination. An id chosen by iteration order is not an
+                # assertion.
+                #
+                # Assign only on a hit, and leave both loops on the first one.
+                #
+                # The outer `break` is the load-bearing half: with it, the
+                # scan stops before a second file can be read at all. The
+                # conditional assignment is therefore redundant TODAY and
+                # mutation testing says so -- restoring the unconditional
+                # form kills no test while the break stands. It is kept
+                # anyway, because the break is the kind of line somebody
+                # tidies away, and without it the unconditional form silently
+                # restores the erasure.
                 for filetype in files:
                     for filetype_file in files[filetype]:
-                        imdb_id = getImdb(filetype_file)
-                        if imdb_id:
+                        found = getImdb(filetype_file)
+                        if found:
+                            imdb_id = found
                             group['identity_source'] = 'filename'
-                            log.debug('Found movie via imdb in filename: %s', nfo_file)
+                            # `filetype_file`, not `nfo_file` -- the old
+                            # message named a variable from the branch above,
+                            # so it logged None or an unrelated path.
+                            log.debug('Found movie via imdb in filename: %s',
+                                      filetype_file)
                             break
+                    if imdb_id:
+                        break
             except Exception:
                 pass
 

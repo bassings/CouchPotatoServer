@@ -863,9 +863,20 @@ class Release(Plugin):
                 'Gave up detaching a replaced file from release %s after '
                 'retries due to persistent contention', release_id,
             )
-        except Exception:
+        except Exception as error:
+            # errno/strerror or type+message, never `format_exc()`. This
+            # function receives a real library PATH, and an OSError's __str__
+            # appends `filename` -- so the traceback's last line would put the
+            # destination into the log, which is what D8 forbids and what
+            # `_withoutPaths` was added for on the renamer side.
+            detail = (
+                '[errno %s] %s' % (error.errno, error.strerror or type(error).__name__)
+                if isinstance(error, OSError) and error.errno is not None
+                else '%s: %s' % (type(error).__name__, error) if str(error)
+                else type(error).__name__
+            )
             log.error('Failed detaching a replaced file from release %s: %s',
-                      release_id, traceback.format_exc())
+                      release_id, detail)
         return False
 
     def withStatus(self, status, with_doc = True):
