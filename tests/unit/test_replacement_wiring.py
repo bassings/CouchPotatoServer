@@ -33,6 +33,29 @@ from couchpotato.core.plugins.renamer.replacement import (
 )
 
 
+def _isolated_event_registry(monkeypatch):
+    """Give this test its own copy of the event registry.
+
+    A SHALLOW `dict(events)` is not enough, and the difference is invisible
+    until it bites: `addEvent` does `handler_list = events[name]` then
+    `append` and `sort` (event.py:154-156). With a shallow copy the per-name
+    LIST objects are shared with the original, so registering a handler for a
+    name that already exists mutates the real registry -- and the "restore"
+    restores a dict whose lists were changed underneath it.
+
+    The failure is order-dependent: it only shows when something else has
+    already registered that event name in the same process, which is exactly
+    the condition that makes it hard to reproduce and easy to dismiss.
+    """
+    import couchpotato.core.event as event_module
+    monkeypatch.setattr(
+        event_module, 'events',
+        {name: list(handlers) for name, handlers in event_module.events.items()},
+        raising=True,
+    )
+    return event_module
+
+
 @pytest.fixture
 def scene(tmp_path, monkeypatch):
     """A real destination file, a real group, and a release that owns it."""
@@ -52,7 +75,10 @@ def scene(tmp_path, monkeypatch):
         'for_media_calls': [],
         'conf': {
             'upgrade_replace': True,
-            'to': str(tmp_path),          # the library root: see e2e fixture
+            # The configured library root. Replacement refuses a destination
+            # outside it, so a fixture without one exercises that refusal on
+            # every test and proves nothing about the rest.
+            'to': str(tmp_path),
             'default_file_action': 'move',
         },
     }
@@ -106,7 +132,7 @@ class TestTheDecisionIsActuallyReached:
     def test_a_better_copy_reaches_REPLACE_with_real_releases(self, scene):
         """The reachability assertion. If this ever returns a refusal for a
         clearly-better copy, the gate has gone inert again."""
-        outcome, _victim = scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             'src.mkv', scene['dst'], scene['group']('2160p')
         )
         assert outcome == REPLACE
@@ -129,9 +155,9 @@ class TestTheDecisionIsActuallyReached:
         )
         assert outcome == DECLINED_NOT_BETTER
 
-        # A FRESH group: releases are now cached per group (one lookup per
-        # group, not one per colliding file), so reusing the dict above would
-        # reuse its cached answer and this half would prove nothing.
+        # A FRESH group. Releases are cached per group now (one lookup per
+        # group, none per file), so reusing the dict above would reuse its
+        # cached answer and this half would prove nothing.
         scene['state']['releases'] = []          # simulate the inert attempt
         outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('720p')
@@ -154,17 +180,14 @@ class TestTheRankBoundaryNormalisesFireEventsEmptyList:
     """
 
     def test_an_unknown_identifier_normalises_to_None_not_empty_list(self, monkeypatch):
-        from couchpotato.core import event as event_module
         from couchpotato.core.event import addEvent, fireEvent
         from couchpotato.core.plugins.quality.main import QualityPlugin
 
         # The event registry is module-global and shared by every test in the
         # process. Registering a handler on it without restoring leaks a
         # `quality.rank` responder into whatever runs next, so a later test
-        # could pass because THIS one is still answering. Snapshot and restore.
-        monkeypatch.setattr(
-            event_module, 'events', dict(event_module.events), raising=True,
-        )
+        # could pass because THIS one is still answering.
+        _isolated_event_registry(monkeypatch)
 
         quality = QualityPlugin.__new__(QualityPlugin)
         quality.order = []
@@ -182,7 +205,7 @@ class TestTheRankBoundaryNormalisesFireEventsEmptyList:
 class TestTheGateConsultsTheNewKey:
     def test_upgrade_replace_off_refuses(self, scene):
         scene['state']['conf'] = {'upgrade_replace': False}
-        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        outcome, _ = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
         assert outcome == DECLINED_SETTING_OFF
 
     def test_the_dead_key_being_true_does_NOT_enable_anything(self, scene):
@@ -190,7 +213,7 @@ class TestTheGateConsultsTheNewKey:
         persisted True on every existing install. If it could still enable
         replacement, upgrading would start deleting library files."""
         scene['state']['conf'] = {'remove_lower_quality_copies': True}
-        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        outcome, _ = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
         assert outcome == DECLINED_SETTING_OFF
 
 
@@ -199,10 +222,11 @@ class TestTheDeadSettingIsAnnouncedOnce:
     the collision path.
 
     It used to live inside `_replacementOutcome`, which only runs when a
-    destination actually collides. An operator who deliberately set the old
-    key on a library with nothing colliding therefore got precisely the
-    silence D1 exists to prevent, and got it until something happened to
-    collide. It is now emitted once per process at the top of a scan.
+    destination actually collides -- so an operator who deliberately set the
+    old key on a library with nothing colliding got exactly the silence D1
+    exists to prevent, and got it until something happened to collide. It is
+    emitted once per process at the top of a scan now, and
+    `test_the_scan_is_what_announces_it_not_a_collision` pins that call site.
     """
 
     def test_an_operator_who_set_it_is_told_it_does_nothing(self, scene, caplog):
@@ -221,28 +245,57 @@ class TestTheDeadSettingIsAnnouncedOnce:
         said = [r for r in caplog.records if 'no longer read' in r.getMessage()]
         assert len(said) == 1, 'warned %d times' % len(said)
 
-    def test_nothing_is_said_when_the_operator_never_set_it(self, scene, caplog):
-        scene['state']['conf'] = {'upgrade_replace': False}
-        with caplog.at_level(logging.WARNING):
-            scene['plugin']._warnAboutTheDeadSetting()
-        assert not any('no longer read' in r.getMessage() for r in caplog.records)
-
     def test_the_scan_is_what_announces_it_not_a_collision(self, scene):
-        """Anti-inertness. The notice reaching nobody is the bug this moved to
-        fix, so the call site is pinned rather than assumed."""
+        """Anti-inertness. The notice reaching nobody is the bug the move
+        fixed, so the call site is pinned rather than assumed."""
         import inspect
 
         from couchpotato.core.plugins.renamer.main import Renamer
 
-        scan_source = inspect.getsource(Renamer.scan)
-        assert '_warnAboutTheDeadSetting()' in scan_source, (
-            'the deprecation notice is no longer emitted from a scan, so an '
-            'operator whose library has no collisions never hears it'
+        assert '_warnAboutTheDeadSetting()' in inspect.getsource(Renamer.scan), (
+            'the notice is no longer emitted from a scan, so an operator '
+            'whose library has no collisions never hears it'
         )
-        decision_source = inspect.getsource(Renamer._replacementOutcome)
-        assert '_warnAboutTheDeadSetting()' not in decision_source, (
-            'the notice is back on the per-collision path'
+        assert '_warnAboutTheDeadSetting()' not in inspect.getsource(
+            Renamer._replacementOutcome
+        ), 'the notice is back on the per-collision path'
+
+    def test_enabling_it_LATER_in_the_same_process_is_still_announced(self, scene, caplog):
+        """The latch must fire when the warning is due, not on the first call.
+
+        `self.conf` reads live, so "Delete Others" can be switched on in the
+        settings UI without a restart. Latching on the first call meant a scan
+        that ran while the setting was off silenced the notice for the life of
+        the process -- the silence D1 exists to prevent, reached by a
+        different door.
+        """
+        scene['state']['conf'] = {'remove_lower_quality_copies': False}
+        scene['plugin']._warnAboutTheDeadSetting()
+
+        scene['state']['conf'] = {'remove_lower_quality_copies': True}
+        with caplog.at_level(logging.WARNING):
+            scene['plugin']._warnAboutTheDeadSetting()
+
+        assert any('no longer read' in r.getMessage() for r in caplog.records), (
+            'the operator enabled the dead setting and was never told it does '
+            'nothing, because an earlier scan latched the notice off'
         )
+
+    def test_it_is_STILL_only_said_once_after_being_enabled(self, scene, caplog):
+        scene['state']['conf'] = {'remove_lower_quality_copies': False}
+        scene['plugin']._warnAboutTheDeadSetting()
+        scene['state']['conf'] = {'remove_lower_quality_copies': True}
+        with caplog.at_level(logging.WARNING):
+            for _ in range(5):
+                scene['plugin']._warnAboutTheDeadSetting()
+        said = [r for r in caplog.records if 'no longer read' in r.getMessage()]
+        assert len(said) == 1, 'warned %d times' % len(said)
+
+    def test_nothing_is_said_when_the_operator_never_set_it(self, scene, caplog):
+        scene['state']['conf'] = {'upgrade_replace': False}
+        with caplog.at_level('WARNING'):
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+        assert not any('no longer read' in r.getMessage() for r in caplog.records)
 
 
 class TestTheDecisionNeverBreaksAScan:
@@ -255,17 +308,33 @@ class TestTheDecisionNeverBreaksAScan:
             return None
 
         monkeypatch.setattr('couchpotato.core.plugins.renamer.main.fireEvent', _boom)
-        outcome, _victim = scene['plugin']._replacementOutcome(
-            's.mkv', scene['dst'], scene['group']()
-        )
+        outcome, _ = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
         assert outcome == DECLINED_ERROR
 
     def test_a_group_with_no_media_does_not_raise(self, scene):
-        outcome, _victim = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})
+        outcome, _ = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], {'files': {}})
         assert outcome != REPLACE
 
+    def test_a_group_with_media_but_no_id_declines_as_no_owner(self, scene):
+        """AC-QA-12's no-`_id` branch, which nothing reached before.
+
+        `test_a_group_with_no_media_does_not_raise` passes `{'files': {}}`,
+        which has ZERO movie files and is refused at
+        `declined_multi_file_group` long before the media lookup -- so it
+        asserted only that nothing raised, and the branch the AC names was
+        never executed. This group has exactly one movie file and a media dict
+        with no id, which is the shape the AC is about.
+        """
+        group = scene['group']()
+        group['media'] = {}
+        outcome, _ = scene['plugin']._replacementOutcome('s.mkv', scene['dst'], group)
+        assert outcome == DECLINED_NO_OWNER
+        assert scene['state']['for_media_calls'] == [], (
+            'a release lookup was fired for a group with no media id'
+        )
+
     def test_an_unstattable_destination_does_not_raise(self, scene):
-        outcome, _victim = scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', '/definitely/not/here.mkv', scene['group']()
         )
         assert outcome != REPLACE
@@ -296,7 +365,7 @@ class TestTheDecisionNeverBreaksAScan:
         # The destination cannot be stat'ed at all.
         assert scene['plugin']._sizeOrNone('/definitely/not/here.mkv') is None
 
-        outcome, _victim = scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', str(empty_dst), scene['group']('2160p')
         )
         # A real 0-byte file DOES resolve -- that is the control proving the
@@ -304,7 +373,7 @@ class TestTheDecisionNeverBreaksAScan:
         assert outcome == REPLACE
 
         # But an unreadable one must not borrow that zero.
-        outcome, _victim = scene['plugin']._replacementOutcome(
+        outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', '/definitely/not/here.mkv', scene['group']('2160p')
         )
         assert outcome != REPLACE
@@ -322,7 +391,8 @@ class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
     """
 
     def test_an_incomplete_release_list_refuses_rather_than_resolving(self, scene):
-        scene['state']['releases'] = None      # forMedia's "I could not read it all"
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        scene['state']['releases'] = INCOMPLETE_RELEASE_SET
         outcome, _ = scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('2160p')
         )
@@ -333,10 +403,9 @@ class TestIncompleteReleaseEvidenceIsNotTreatedAsAbsence:
         database, the other to their library. Collapsing them into a single
         refusal would lose the only signal that says which."""
         scene['state']['releases'] = []
-        outcome, _ = scene['plugin']._replacementOutcome(
+        assert scene['plugin']._replacementOutcome(
             's.mkv', scene['dst'], scene['group']('2160p')
-        )
-        assert outcome == DECLINED_NO_OWNER
+        )[0] == DECLINED_NO_OWNER
 
     def test_the_renamer_actually_asks_for_a_complete_answer(self, scene):
         """Anti-inertness: forMedia defaults to the partial list, so dropping
@@ -391,7 +460,7 @@ class TestForMediaHonoursRequireComplete:
         assert len(plugin.forMedia('m')) == 2
         assert len(plugin.forMedia('m', require_complete=True)) == 2
 
-    def test_an_unreadable_document_makes_the_strict_answer_None(self, monkeypatch):
+    def test_an_unreadable_document_makes_the_strict_answer_the_sentinel(self, monkeypatch):
         import couchpotato.core.plugins.release.main as release_main
         plugin, db = self._plugin(
             {'a': {'_id': 'a'}, 'b': RuntimeError('disk went away')}, ['a', 'b'],
@@ -401,7 +470,33 @@ class TestForMediaHonoursRequireComplete:
         # Default stays best-effort -- the UI callers depend on this.
         assert len(plugin.forMedia('m')) == 1
         # Strict refuses to answer at all.
-        assert plugin.forMedia('m', require_complete=True) is None
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
+
+    def test_a_KeyError_from_the_REAL_backend_is_a_deletion_not_a_failure(self, monkeypatch):
+        """`RecordDeleted` is CodernityDB's exception. The production backend
+        is SQLiteAdapter, which raises a plain KeyError for a row that is not
+        there (sqlite_adapter.py:411).
+
+        Catching only `RecordDeleted` meant an ordinary concurrent deletion
+        fell through to the generic handler, was counted as UNREADABLE, and
+        made `require_complete` refuse every replacement for that media --
+        turning the safety check into a permanent outage of the feature it was
+        protecting. The existing test passed because it raised the
+        CodernityDB exception, which this backend never produces.
+        """
+        import couchpotato.core.plugins.release.main as release_main
+        plugin, db = self._plugin(
+            {'a': {'_id': 'a'}, 'b': KeyError('Document not found: b')}, ['a', 'b'],
+        )
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        result = plugin.forMedia('m', require_complete=True)
+        assert result is not None and len(result) == 1, (
+            'a deleted row made the whole set look unreadable'
+        )
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert result is not INCOMPLETE_RELEASE_SET
 
     def test_a_deleted_document_does_NOT_count_as_incomplete(self, monkeypatch):
         """RecordDeleted means the document genuinely no longer exists, so
@@ -426,7 +521,8 @@ class TestForMediaHonoursRequireComplete:
         monkeypatch.setattr(release_main, 'get_db', lambda: db)
         monkeypatch.setattr(release_main, 'fireEvent', lambda *a, **k: None)
 
-        assert plugin.forMedia('m', require_complete=True) is None
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
 
 
 class TestTheProductionCollisionPathReachesTheDecision:
@@ -497,6 +593,324 @@ class TestTheProductionCollisionPathReachesTheDecision:
             assert handle.read() == b'x' * 5000, 'a refused replacement still swapped'
         assert src.exists(), 'the incoming file was destroyed'
         assert parent.is_dir(), 'cleanup ran despite a skip'
+
+
+class TestARepeatingFailureDoesNotEraseTheLog:
+    """The collided download is deliberately LEFT IN PLACE on a skip.
+
+    So a group whose release documents are malformed raises here, and raises
+    again on every scheduled scan, for as long as the file sits there. An
+    unbounded full traceback per scan evicts the rotating log, which is the
+    only diagnostic a self-hosted install has: the failure would quietly erase
+    the evidence of itself, along with everything else that happened.
+
+    The first occurrence must stay complete, or the bound has cost the
+    diagnosis it was meant to protect.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _fresh_windows(self):
+        from couchpotato.core.logger import reset_log_suppression
+        reset_log_suppression()
+        yield
+        reset_log_suppression()
+
+    def _exploding(self, scene, monkeypatch):
+        def _boom(event, *a, **k):
+            if event == 'release.for_media':
+                raise RuntimeError('malformed release document')
+            return None
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.main.fireEvent', _boom
+        )
+
+    def test_the_first_failure_is_reported_in_full(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('malformed release document' in m for m in messages), (
+            'the traceback was suppressed on its FIRST occurrence, so the '
+            'bound cost the diagnosis: %r' % messages
+        )
+
+    def test_twenty_scans_do_not_write_twenty_tracebacks(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            for _ in range(20):
+                scene['plugin']._replacementOutcome(
+                    's.mkv', scene['dst'], scene['group']()
+                )
+
+        tracebacks = [
+            r for r in caplog.records
+            if 'malformed release document' in r.getMessage()
+        ]
+        assert len(tracebacks) < 20, (
+            'every scan wrote a full traceback (%d of 20); the rotating log '
+            'is being evicted by the failure it is meant to record'
+            % len(tracebacks)
+        )
+        assert tracebacks, 'nothing was recorded at all'
+
+    def test_the_suppression_key_carries_no_filesystem_path(self, scene, monkeypatch):
+        """PrivacyFilter exists to keep library paths out of logs, and a
+        suppression key is retained state, not a transient message. Keying on
+        the destination would put a private path somewhere the filter does not
+        reach."""
+        keys = []
+        import couchpotato.core.plugins.renamer.main as renamer_main
+        monkeypatch.setattr(
+            renamer_main, 'log_suppressed',
+            lambda method, key, message, *a, **k: keys.append(key),
+        )
+        self._exploding(scene, monkeypatch)
+        scene['plugin']._replacementOutcome('s.mkv', scene['dst'], scene['group']())
+
+        assert keys, 'the failure did not go through log_suppressed at all'
+        assert scene['dst'] not in keys[0]
+        assert 'The Thing' not in keys[0]
+        assert 'media-1' in keys[0], (
+            'the key does not distinguish media, so one broken group would '
+            'silence the diagnosis for every other: %r' % keys[0]
+        )
+
+    def test_a_different_media_is_not_silenced_by_the_first(self, scene, monkeypatch, caplog):
+        self._exploding(scene, monkeypatch)
+        with caplog.at_level(logging.ERROR):
+            for _ in range(6):
+                scene['plugin']._replacementOutcome(
+                    's.mkv', scene['dst'], scene['group']()
+                )
+            other = scene['group']()
+            other['media'] = {'_id': 'media-2'}
+            caplog.clear()
+            scene['plugin']._replacementOutcome('s.mkv', scene['dst'], other)
+
+        assert any(
+            'malformed release document' in r.getMessage() for r in caplog.records
+        ), 'a second, unrelated broken group was silenced by the first'
+
+
+class TestTheIncompleteSignalSurvivesTheRealEventBus:
+    """The signal is a SENTINEL, not None, and this is why.
+
+    `fireEvent(single=True)` collects only non-None handler results and
+    returns `[]` when there are none (event.py:222). So a `forMedia` that
+    answered None reached the renamer as `[]`, `[] is None` was False, and the
+    refusal never fired: replacement proceeded on evidence known to be
+    incomplete, in production, while every unit test passed because they
+    injected a stand-in for `fireEvent` instead of using it.
+
+    That is the THIRD dead guard this boundary has produced in this feature.
+    The fix is structural rather than another careful check: a sentinel object
+    is non-None, so the transport cannot filter it away.
+
+    These tests deliberately go through the real bus. Injecting a stand-in
+    here would reproduce the exact blind spot they exist to close.
+    """
+
+    def test_None_really_is_swallowed_by_the_bus(self, monkeypatch):
+        """The precondition, asserted rather than assumed. If this ever stops
+        being true the sentinel is unnecessary -- and the comment explaining
+        it becomes a lie."""
+        from couchpotato.core.event import addEvent, fireEvent
+
+        _isolated_event_registry(monkeypatch)
+        addEvent('probe.answers_none', lambda *a, **k: None)
+
+        assert fireEvent('probe.answers_none', single=True) == []
+
+    def test_the_sentinel_reaches_the_caller_unchanged(self, monkeypatch):
+        from couchpotato.core.event import addEvent, fireEvent
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        _isolated_event_registry(monkeypatch)
+        addEvent('probe.incomplete', lambda *a, **k: INCOMPLETE_RELEASE_SET)
+
+        assert fireEvent('probe.incomplete', single=True) is INCOMPLETE_RELEASE_SET
+
+    def test_the_sentinel_is_falsy_so_a_careless_caller_still_fails_closed(self):
+        """Belt and braces. Anyone who forgets the identity check and writes
+        `releases or []` gets an empty list -- a refusal -- rather than
+        iterating a sentinel or proceeding on partial evidence."""
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        assert not INCOMPLETE_RELEASE_SET
+        assert (INCOMPLETE_RELEASE_SET or []) == []
+
+    def test_the_renamer_refuses_when_the_bus_delivers_the_sentinel(self, scene):
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+        scene['state']['releases'] = INCOMPLETE_RELEASE_SET
+        outcome, _ = scene['plugin']._replacementOutcome(
+            's.mkv', scene['dst'], scene['group']('2160p')
+        )
+        assert outcome == DECLINED_INCOMPLETE_EVIDENCE
+
+
+class TestAFailingQueryIsARefusalNotAnEscapingException:
+    """`get_many` returns a GENERATOR: `sqlite_adapter.query` yields, so
+    `_query_index` does not execute until the first `next()`. That happens at
+    the `for` statement, which used to sit outside the guard -- so an
+    `OperationalError` from lock contention escaped `forMedia` entirely and a
+    caller that had explicitly asked for a complete answer got an exception
+    instead of the refusal it asked for.
+
+    Nothing unsafe followed (the renamer's broad except turned it into
+    `declined_error`), but a guard that cannot see the failure it exists to
+    report is not doing its job.
+    """
+
+    def _plugin(self, raiser):
+        from couchpotato.core.plugins.release.main import Release
+
+        plugin = Release.__new__(Release)
+
+        class _DB:
+            def get_many(self, *a, **k):
+                def _gen():
+                    raise raiser
+                    yield  # pragma: no cover -- makes this a generator
+                return _gen()
+
+            def get(self, *a, **k):  # pragma: no cover
+                raise AssertionError('should never be reached')
+
+        return plugin, _DB()
+
+    def test_a_query_that_explodes_refuses_under_require_complete(self, monkeypatch):
+        import couchpotato.core.plugins.release.main as release_main
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
+
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        assert plugin.forMedia('m', require_complete=True) is INCOMPLETE_RELEASE_SET
+
+    def test_the_lazy_query_really_does_raise_at_iteration(self, monkeypatch):
+        """Precondition, asserted rather than assumed: if `get_many` ever
+        becomes eager, the guard's placement stops mattering and the comment
+        explaining it becomes wrong."""
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        gen = db.get_many('release', 'm')          # no raise yet
+        try:
+            next(gen)
+        except RuntimeError:
+            pass
+        else:  # pragma: no cover
+            raise AssertionError('the fixture is not lazy, so it cannot model the bug')
+
+    def test_the_default_caller_still_gets_a_list_not_an_exception(self, monkeypatch):
+        """Fifteen other callers want best-effort. An escaping exception would
+        be a behaviour change for all of them."""
+        import couchpotato.core.plugins.release.main as release_main
+
+        plugin, db = self._plugin(RuntimeError('database is locked'))
+        monkeypatch.setattr(release_main, 'get_db', lambda: db)
+
+        assert plugin.forMedia('m') == []
+
+
+class TestTheEventRegistrySnapshotActuallyRestores:
+    """A shallow `dict(events)` looks like isolation and is not.
+
+    `addEvent` does `handler_list = events[name]` then `append` and `sort`
+    (event.py:154-156), so with a shallow copy the per-name LIST objects are
+    shared with the original registry. Registering a handler for a name that
+    ALREADY EXISTS mutates the real one, and the restore puts back a dict
+    whose lists were changed underneath it.
+
+    Order-dependent, which is what makes it worth a test: it only bites once
+    something else has registered that name in the same process, so it hides
+    until an unrelated test is added and then looks like that test's fault.
+    """
+
+    def test_registering_an_EXISTING_event_name_does_not_leak(self, monkeypatch):
+        import couchpotato.core.event as event_module
+        from couchpotato.core.event import addEvent
+
+        # Precondition: the name must already be present, or a shallow copy
+        # would have been sufficient and this proves nothing.
+        with pytest.MonkeyPatch.context() as outer:
+            outer.setattr(event_module, 'events', {'probe.shared': []})
+            addEvent('probe.shared', lambda: 'original')
+            before = len(event_module.events['probe.shared'])
+            assert before == 1
+
+            with pytest.MonkeyPatch.context() as inner:
+                _isolated_event_registry(inner)
+                addEvent('probe.shared', lambda: 'from the isolated test')
+                assert len(event_module.events['probe.shared']) == 2
+
+            after = len(event_module.events['probe.shared'])
+
+        assert after == before, (
+            'the isolated test leaked a handler into the shared registry: '
+            '%d handlers before, %d after' % (before, after)
+        )
+
+    def test_a_brand_new_event_name_also_does_not_leak(self, monkeypatch):
+        """The case a shallow copy DID handle, kept so the fix cannot regress
+        into only covering the new-name path."""
+        import couchpotato.core.event as event_module
+        from couchpotato.core.event import addEvent
+
+        with pytest.MonkeyPatch.context() as outer:
+            outer.setattr(event_module, 'events', {})
+            with pytest.MonkeyPatch.context() as inner:
+                _isolated_event_registry(inner)
+                addEvent('probe.brand_new', lambda: 'x')
+            assert 'probe.brand_new' not in event_module.events
+
+
+class TestTheCollisionWarningCarriesNoPath:
+    """`PrivacyFilter` (logger.py) redacts `name=value` secrets, NOT paths, so
+    a library path at WARNING reaches the rotating ring and `docker logs`
+    verbatim -- on every collision, forever, because the source folder is
+    deliberately left in place and the collision recurs every scan.
+
+    This line predates the feature, which is not a reason to leave it
+    inconsistent with the code now sitting directly beneath it, where
+    `log_suppressed` is keyed on the media id for exactly this reason.
+
+    The path is still what an operator needs to diagnose a recurring
+    collision, so it moves to DEBUG rather than disappearing: that is the
+    level somebody turns on while actually looking.
+    """
+
+    def _collide(self, scene, tmp_path):
+        import os as os_module
+        src = os_module.path.join(str(tmp_path), 'incoming.mkv')
+        with open(src, 'wb') as handle:
+            handle.write(b'y' * 9000)
+        scene['plugin']._moveRenamedFiles({src: scene['dst']}, scene['group']('720p'))
+
+    def test_the_warning_names_the_media_not_the_path(self, scene, caplog, tmp_path):
+        with caplog.at_level(logging.WARNING):
+            self._collide(scene, tmp_path)
+
+        warnings = [
+            r.getMessage() for r in caplog.records
+            if r.levelno >= logging.WARNING and 'Destination already exists' in r.getMessage()
+        ]
+        assert warnings, 'the collision was not reported at WARNING'
+        assert scene['dst'] not in warnings[0], (
+            'a library path reached WARNING, which ships and rotates '
+            'unattended: %s' % warnings[0]
+        )
+        assert 'media-1' in warnings[0], (
+            'the warning names neither path nor media, identifying nothing'
+        )
+
+    def test_DEBUG_keeps_the_path(self, scene, caplog, tmp_path):
+        with caplog.at_level(logging.DEBUG):
+            self._collide(scene, tmp_path)
+
+        assert any(
+            r.levelno == logging.DEBUG and scene['dst'] in r.getMessage()
+            for r in caplog.records
+        ), 'the path is nowhere, so a recurring collision cannot be diagnosed'
 
 
 class TestTheReleaseLookupIsBoundedPerGroup:

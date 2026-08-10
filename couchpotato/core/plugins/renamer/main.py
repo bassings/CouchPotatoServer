@@ -791,8 +791,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         if Renamer._warned_dead_setting:
             return
-        Renamer._warned_dead_setting = True
+
+        # The latch is set only when the warning is actually EMITTED, not on
+        # the first call. Setting it first looked equivalent and was not:
+        # `self.conf` reads live, so an operator can enable "Delete Others" in
+        # the settings UI without a restart. With the latch already flipped by
+        # an earlier call made while the setting was off, every later call
+        # returns before re-reading the config and the notice never comes --
+        # which is exactly the silence D1 exists to prevent, arrived at by a
+        # different door.
         if self.conf('remove_lower_quality_copies', default=False):
+            Renamer._warned_dead_setting = True
             log.warning(
                 'The "Delete Others" setting (remove_lower_quality_copies) is no '
                 'longer read and does nothing. Upgrade replacement is now the '
@@ -809,6 +818,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         be made is a decision not to replace, and an exception escaping here
         would abort a scan that was otherwise fine (AC-QA-12).
         """
+        # Imported here rather than at module scope: release.main imports the
+        # renamer package indirectly, and a top-level import closes the cycle.
+        from couchpotato.core.plugins.release.main import INCOMPLETE_RELEASE_SET
         from couchpotato.core.plugins.renamer.replacement import (
             DECLINED_ERROR,
             DECLINED_INCOMPLETE_EVIDENCE,
@@ -835,11 +847,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             # require_complete: an unreadable release document may be the
             # one that claims this destination, and resolving ownership from a
             # partial set can attribute the wrong quality to the file about to
-            # be deleted. None means "the set is incomplete" -- distinct from
-            # an empty list, which means "this media genuinely has no
-            # releases".
+            # be deleted. The SENTINEL means "the set is incomplete" --
+            # distinct from an empty list, which means "this media genuinely
+            # has no releases".
+            #
+            # Cached per group (AC-ARCH-5: one lookup per group, none per
+            # file) AND compared against the sentinel by identity, NOT with
+            # `is None`. Both halves matter: the cache came from this branch,
+            # the sentinel from the one it merges into, and taking either side
+            # of this merge whole would have dropped the other -- reinstating
+            # a guard that `fireEvent` filters away, or a lookup per collided
+            # file.
             releases = self._releasesForGroup(group, media_id)
-            if releases is None:
+            if releases is INCOMPLETE_RELEASE_SET:
                 return DECLINED_INCOMPLETE_EVIDENCE, None
 
             outcome, existing = decide_replacement(

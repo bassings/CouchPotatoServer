@@ -5,6 +5,15 @@ on:
     branches: [ master, develop ]
   pull_request:
     branches: [ master, develop ]
+  # Nightly, so the browser suites run against master even in a week with no
+  # UI changes. Without this, "coverage follows the change surface" would mean
+  # a long run of Python-only work never exercises the UI at all.
+  schedule:
+    # 15:00 UTC. Australia/Sydney is UTC+10 in winter and UTC+11 under
+    # daylight saving, so this lands at 01:00 or 02:00 local depending on the
+    # season. Off-peak either way, and GitHub cron has no timezone, so the
+    # drift is accepted rather than worked around.
+    - cron: '0 15 * * *'
 
 permissions:
   contents: read
@@ -15,10 +24,91 @@ permissions:
 # deliberately false in docker.yml / release-to-prod.yml, where a cancelled run
 # would leave a half-published image.
 concurrency:
-  group: ci-${{ github.ref }}
+  # `github.event_name` is part of the key, and that is the whole point.
+  #
+  # A `schedule` run against the default branch has `github.ref` of
+  # refs/heads/master -- the SAME ref a `push` to master has. Keyed on ref
+  # alone, the nightly and a master push shared one group with
+  # cancel-in-progress, so a merge landing near 15:00 UTC killed one or the
+  # other. Silently: a cancelled run is not a red run, so nothing pages and
+  # the nightly simply stops happening on the weeks anything gets merged.
+  #
+  # That defeats the reason the nightly exists -- a quiet week of Python-only
+  # work still has to exercise the UI against master, and "quiet" is exactly
+  # when nobody would notice it had not.
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Answers "do the browser suites need to run?" ONCE, via the same script the
+  # pre-push hook calls. Sharing the script is the point: two copies of "what
+  # counts as a UI change" drift, and the quieter side then silently stops
+  # covering something.
+  #
+  # Always YES on master and on the nightly run -- the change-surface rule is a
+  # PR-time optimisation, not a reduction in what master is held to.
+  scope:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      browser: ${{ steps.decide.outputs.browser }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0        # needs_e2e.sh diffs against the base
+    - id: decide
+      # Context values go through `env:`, never spliced into `run:`. Not
+      # exploitable today (the pull_request trigger is filtered to two literal
+      # branches), but it is the shape GitHub's hardening guide flags, and it
+      # is one careless widening of that filter away from being real.
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        BASE_REF: ${{ github.base_ref }}
+      run: |
+        set -euo pipefail
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "not a pull request ($EVENT_NAME) -- browser suites always run"
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # The classifier is taken from the BASE branch, never from the PR.
+        #
+        # `actions/checkout` gives us the PR's own merge ref, so running
+        # ./scripts/needs_e2e.sh from the working tree would let a PR that
+        # edits the classifier decide whether the classifier's own change
+        # needs browser tests. An author could make it `exit 1`
+        # unconditionally, both required browser jobs would skip, and a
+        # skipped job SATISFIES a required check -- so the change that
+        # disabled the gate would merge without ever running it.
+        #
+        # Having `scripts/needs_e2e.sh` inside UI_PATTERNS does not fix that:
+        # the entry only forces a full run while it is still there, and the
+        # PR being defended against is the one that removes it.
+        #
+        # The base copy is what master is already protected by, so it is the
+        # only version with any authority over what merges into master.
+        CLASSIFIER="$(mktemp)"
+        if ! git show "origin/$BASE_REF:scripts/needs_e2e.sh" > "$CLASSIFIER" 2>/dev/null; then
+          # The base branch has no classifier. True for the PR that
+          # INTRODUCES it -- which is how this was found, by the job failing
+          # on its own PR -- and for any branch cut before it landed.
+          #
+          # Run the browser suites. There is no trusted answer available, and
+          # "no trusted answer" resolves the same way every other uncertainty
+          # in this gate does.
+          echo "no classifier on origin/$BASE_REF -- browser suites run"
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        chmod +x "$CLASSIFIER"
+
+        if "$CLASSIFIER" "origin/$BASE_REF"; then
+          echo "browser=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "browser=false" >> "$GITHUB_OUTPUT"
+        fi
+
   lint:
     runs-on: ubuntu-latest
     permissions:
@@ -242,7 +332,26 @@ jobs:
     permissions:
       contents: read
       actions: write
-    needs: [test, ui-unit-tests]
+    needs: [test, ui-unit-tests, scope]
+    # Skipped when nothing browser-visible changed. GitHub reports a skipped
+    # job as satisfying a required status check, which is what keeps such a PR
+    # mergeable -- and that is a deliberate reliance, recorded here because it
+    # is the same GitHub behaviour that once let the accessibility verdict be
+    # ABSENT rather than red on broken branches. It is acceptable only because
+    # the skip is decided by the change surface and master/nightly always run.
+    #
+    # And it is why this condition FAILS CLOSED. Keying on `== 'true'` meant a
+    # scope job that died before writing its output -- failed checkout,
+    # classifier that would not run -- skipped both browser jobs and left the
+    # PR mergeable with no E2E and no accessibility coverage at all. Only an
+    # explicit 'false' is safe to skip on. `!cancelled()` is required because
+    # the implicit success() of `needs:` would otherwise skip this job before
+    # the condition is read.
+    if: >-
+      !cancelled()
+      && needs.test.result == 'success'
+      && needs.ui-unit-tests.result == 'success'
+      && needs.scope.outputs.browser != 'false'
     steps:
     - uses: actions/checkout@v7
     
@@ -376,7 +485,20 @@ jobs:
     permissions:
       contents: read
       actions: write
-    # NO `needs:` -- deliberately. Was `needs: ui-e2e-tests`, added 2026-02-16
+    needs: [scope]
+    # Fail CLOSED. A skipped job satisfies a required status check on GitHub,
+    # so keying on `== 'true'` meant that a scope job which died before writing
+    # its output -- failed checkout, classifier that would not run -- skipped
+    # both browser jobs and left the PR mergeable with no E2E and no
+    # accessibility coverage. Only an explicit 'false' is safe to skip on.
+    # `!cancelled()` is required because the implicit success() of `needs:`
+    # would otherwise skip this job before the condition is read at all.
+    if: >-
+      !cancelled()
+      && needs.scope.outputs.browser != 'false'
+    # `needs: [scope]` ONLY -- scope is seconds, so this still starts almost
+    # immediately and does not re-enter the serial chain CI-003 removed it
+    # from. Was `needs: ui-e2e-tests`, added 2026-02-16
     # in 40539241 with no stated reason and no data dependency: since T1.7 this
     # job starts, seeds and tears down its OWN server on its own runner, so
     # there was no shared state for the edge to sequence. It cost the whole

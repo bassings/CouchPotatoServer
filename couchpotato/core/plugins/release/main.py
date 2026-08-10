@@ -11,7 +11,7 @@ from couchpotato.core.event import fireEvent, addEvent
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.protocol import sort_by_protocol_preference
 from couchpotato.core.helpers.variable import getTitle, tryFloat, tryInt
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.media_lock import media_lock
 from .index import ReleaseIndex, ReleaseStatusIndex, ReleaseIDIndex, ReleaseDownloadIndex
@@ -54,6 +54,36 @@ def copyIdentity(files):
     if not sizes:
         return None
     return ','.join(str(size) for size in sorted(sizes))
+
+
+class IncompleteReleaseSet:
+    """Returned by `forMedia(require_complete=True)` when the set is partial.
+
+    Deliberately NOT None. `fireEvent(single=True)` collects only non-None
+    handler results and returns `[]` when there are none (event.py:222), so a
+    handler answering None arrives at the caller as `[]` -- and `[] is None`
+    is False, which silently turns the refusal into "this media has no
+    releases" and lets the replacement proceed on evidence we know is
+    incomplete.
+
+    That boundary has now produced three dead guards in this feature alone.
+    A sentinel object survives the bus unchanged, so the check cannot be
+    quietly undone by the transport.
+    """
+
+    __slots__ = ()
+
+    def __repr__(self):
+        return '<INCOMPLETE_RELEASE_SET>'
+
+    def __bool__(self):
+        # Falsy, so any caller that forgets the identity check and writes
+        # `releases or []` still fails CLOSED rather than iterating it.
+        return False
+
+
+#: Singleton; compare with `is`.
+INCOMPLETE_RELEASE_SET = IncompleteReleaseSet()
 
 
 class Release(Plugin):
@@ -858,27 +888,92 @@ class Release(Plugin):
     def forMedia(self, media_id, require_complete = False):
         """Releases for a media id, best-effort by default.
 
-        `require_complete=True` returns None instead of a partial list when any
-        existing document could not be READ. Most callers want the partial
+        `require_complete=True` returns `INCOMPLETE_RELEASE_SET` instead of a
+        partial list when any existing document could not be READ. A sentinel
+        rather than None, because None does not survive `fireEvent`. Most callers want the partial
         list -- showing four of five releases in the UI beats showing an
         error. Upgrade replacement does not: an omitted document may be the one
         that claims the destination, and resolving ownership from an
         incomplete set can attribute the wrong quality to the file about to be
         deleted.
 
-        `RecordDeleted` does NOT count as incomplete: that document genuinely
-        no longer exists, so excluding it leaves the set correct.
+        A document that has been DELETED does not count as incomplete: it
+        genuinely no longer exists, so excluding it leaves the set correct.
+        That arrives as `RecordDeleted` from CodernityDB and as a plain
+        `KeyError` from SQLiteAdapter, which is the production backend.
         """
         db = get_db()
-        raw_releases = db.get_many('release', media_id)
 
+        # The QUERY itself is inside the guard, not just the per-document
+        # reads. `get_many` returns a generator (sqlite_adapter.query yields),
+        # so `_query_index` does not run until the first `next()` -- which
+        # happens at the `for` statement. An OperationalError from lock
+        # contention therefore escaped `forMedia` entirely, and a caller
+        # asking for a COMPLETE answer got an exception instead of the
+        # refusal it asked for.
         releases = []
         unreadable = 0
+        try:
+            # `with_doc=False` explicitly, and it is worth being precise
+            # about what that does and does not buy, because the first
+            # version of this comment claimed more than the code delivers.
+            #
+            # DOES: `get_many` defaults to True (sqlite_adapter.py:989), and
+            # with it the generator re-fetches each document itself via
+            # `self.get('id', ...)`, catching only KeyError
+            # (sqlite_adapter.py:646-653). Any other read failure took the
+            # whole set down and skipped the per-document accounting below.
+            # With False we get raw index rows and do the reads ourselves,
+            # inside the try that can see them fail.
+            #
+            # DOES NOT: avoid JSON parsing. `_query_index` is eager --
+            # `[self._doc_from_row(row) for row in rows]`
+            # (sqlite_adapter.py:920) -- so a document whose stored JSON will
+            # not parse fails the whole query no matter what `with_doc` says.
+            # That is caught by the guard below and answers
+            # INCOMPLETE_RELEASE_SET, which is fail-closed and correct, but it
+            # is a whole-set refusal rather than an isolated one and
+            # `database.delete_corrupted` does not fire for it.
+            #
+            # Not worth chasing further here: the schema rejects malformed
+            # JSON at write time (see
+            # tests/unit/test_release_for_media_real_backend.py), so that path
+            # needs file-level damage to reach at all.
+            raw_releases = list(db.get_many('release', media_id, with_doc=False))
+        except Exception:
+            # Bounded, for the reason the renamer's decision failure is:
+            # sustained lock contention repeats on every scan, and an
+            # unbounded traceback each time evicts the rotating log that is
+            # the only diagnostic a self-hosted install has. This path is
+            # HOTTER than that one -- `forMedia` has sixteen callers and runs
+            # on ordinary page loads, not just on a rename collision.
+            #
+            # Keyed on the media id, never a path.
+            log_suppressed(
+                log.error,
+                'release_for_media_unreadable:%s' % (media_id or 'unknown',),
+                'Could not read the release list for media %s: %s',
+                media_id, traceback.format_exc(),
+            )
+            if require_complete:
+                return INCOMPLETE_RELEASE_SET
+            return []
+
         for r in raw_releases:
             try:
                 doc = db.get('id', r.get('_id'))
                 releases.append(doc)
-            except RecordDeleted:
+            except (RecordDeleted, KeyError):
+                # `RecordDeleted` is CodernityDB's; the production backend is
+                # SQLiteAdapter, which raises a plain KeyError for a row that
+                # is not there (sqlite_adapter.py:411). Catching only the
+                # former meant an ordinary concurrent deletion fell through to
+                # the generic handler below, counted as UNREADABLE, and made
+                # `require_complete` refuse every replacement for that media.
+                #
+                # Both mean the same thing and neither is incompleteness: the
+                # document genuinely no longer exists, so excluding it leaves
+                # the set correct.
                 pass
             except (ValueError, EOFError):
                 unreadable += 1
@@ -892,7 +987,7 @@ class Release(Plugin):
                 'Refusing to answer with a partial release list for media %s: '
                 '%s document(s) could not be read.', media_id, unreadable,
             )
-            return None
+            return INCOMPLETE_RELEASE_SET
 
         # tryFloat, not tryInt: scores are floats (score/main.py adds
         # seeders * 100 / 15), so truncating would tie releases whose scores

@@ -74,3 +74,9 @@ mutants/
 .e2e-*
 .claude/worktrees/
 .claude/active-plan
+
+# SonarQube: scanner working directory and the coverage reports it ingests.
+# Added BEFORE the first scan -- generating them first is how a coverage
+# artefact ends up committed.
+.scannerwork/
+coverage/
