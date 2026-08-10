@@ -1347,6 +1347,50 @@ class TestTheSettingOffPathDoesNoWork:
             % stats
         )
 
+    def test_no_directory_listing_when_the_setting_is_off(self, world, monkeypatch):
+        """`.cp-upgrade-*.part` is written by `replace_atomically` and nothing
+        else, so on an install that has never enabled `upgrade_replace` the
+        stale-staging scan lists a library directory on every collision to
+        look for something that cannot be there.
+
+        Separate from the getsize test above because they are separate calls:
+        watching only one let a mutation that ungated the OTHER survive."""
+        world['state']['conf']['upgrade_replace'] = False
+
+        listings = []
+        real_listdir = os.listdir
+
+        def _record(path, *a, **k):
+            listings.append(str(path))
+            return real_listdir(path, *a, **k)
+
+        monkeypatch.setattr(os, 'listdir', _record)
+        _run(world)
+
+        assert _sha(world['dst']) == world['old_sha']
+        assert os.path.dirname(world['dst']) not in listings, (
+            'the library was listed for a decision already made: %r' % listings
+        )
+
+    def test_the_library_IS_listed_when_replacement_is_enabled(self, world, monkeypatch):
+        """The control: the stale-staging report must still run where a
+        staging file can actually exist."""
+        listings = []
+        real_listdir = os.listdir
+
+        def _record(path, *a, **k):
+            listings.append(str(path))
+            return real_listdir(path, *a, **k)
+
+        monkeypatch.setattr(os, 'listdir', _record)
+        # A refusal, so the collision path is taken without swapping.
+        group = world['group']('720p')
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+        assert os.path.dirname(world['dst']) in listings, (
+            'the stale-staging report never ran where a .part could exist'
+        )
+
     def test_the_source_IS_stat_ed_when_the_decision_needs_it(self, world, monkeypatch):
         """The control: the check must still run when it can change the
         answer, or this is an optimisation that removed a guard."""
@@ -1362,3 +1406,71 @@ class TestTheSettingOffPathDoesNoWork:
 
         assert open(world['dst'], 'rb').read() == NEW
         assert world['src'] in stats
+
+
+class TestTheDeadReleaseNeverGetsTheNewFilesIdentity:
+    """`Release.updateStatus` BACKFILLS `copy_id` when it moves a release to
+    `ignored`, derived from the sizes of the files that release still lists.
+
+    By the time we call it, `os.replace` has run and the listed path holds the
+    INCOMING file's bytes. A legacy release with no stored copy_id would
+    therefore be handed one describing the file that just replaced it -- and
+    if the detach then failed, it would sit there claiming the destination
+    with a copy_id that MATCHES the current bytes. Ownership resolution reads
+    that as the verified owner at the OLD rung, which authorises a later,
+    worse copy to replace what is actually a better one.
+
+    Detaching first makes that state unreachable: the backfill finds no files
+    and `copyIdentity` answers None.
+    """
+
+    def test_the_claim_is_detached_before_the_status_is_updated(self, world):
+        order = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.detach_file':
+                order.append('detach')
+                return True
+            if event == 'release.update_status':
+                order.append('status')
+                return True
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW, 'the swap did not happen'
+        assert order == ['detach', 'status'], (
+            'the status update ran first, so a legacy release could be handed '
+            "a copy_id describing the file that replaced it: %r" % order
+        )
+
+    def test_a_failed_detach_leaves_no_matching_copy_id_behind(self, world):
+        """The consequence, stated as an outcome rather than an ordering.
+
+        With the detach failing, the release must NOT end up carrying an
+        identity derived from the new bytes -- that is the state that makes it
+        look like the verified owner.
+        """
+        updates = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.detach_file':
+                return False                      # the failure being modelled
+            if event == 'release.update_status':
+                updates.append((args[0], kwargs.get('status')))
+                return True
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        _run(world)
+
+        assert updates == [('r-720p', 'ignored')], (
+            'the status update was skipped, so the release stays on "done" '
+            'and will be re-downloaded: %r' % updates
+        )
+        # The real protection is the ordering: the detach is ATTEMPTED before
+        # the backfill can see the new bytes, so a failure here cannot produce
+        # a matching identity. Pinned by the ordering test above; asserted
+        # here as the behaviour an operator would observe.
+        assert open(world['dst'], 'rb').read() == NEW

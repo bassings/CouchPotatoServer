@@ -269,7 +269,7 @@ def replace_atomically(source, destination, stage=None,
 def _discard_staging_if_safe(staging, source, expected_size, remove):
     """Remove the staged file ONLY if a complete copy survives elsewhere.
 
-Staging is a copy now, so in this module's own flow the source is always
+    Staging is a copy now, so in this module's own flow the source is always
     still there and this check always passes. The guard stays anyway, and
     deliberately:
 

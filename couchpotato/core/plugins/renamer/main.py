@@ -181,7 +181,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 continue
 
             if os.path.exists(dst):
-                self._reportStaleStagingFiles(os.path.dirname(dst))
+                # Only where a staging file could exist. `.cp-upgrade-*.part`
+                # is written by `replace_atomically` and nothing else, so on
+                # an install that has never enabled `upgrade_replace` this
+                # listdir scans a library directory on every collision to find
+                # something that cannot be there. Same principle as
+                # TestTheSettingOffPathDoesNoWork pins for the scan-size
+                # check.
+                if bool(self.conf('upgrade_replace', default=False)):
+                    self._reportStaleStagingFiles(os.path.dirname(dst))
                 # The replacement decision is COMPUTED and recorded, and then
                 # deliberately not acted on -- the swap is wired in the next
                 # step. Computing it here first is what proves the gate is
@@ -332,12 +340,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         root = self.conf('to')
         if not root:
             return False
+        # `commonpath` is inside the guard too: it raises ValueError on paths
+        # that share no root -- different drives on Windows, or a mix of
+        # absolute and relative -- and everything else on this path is
+        # deliberately hardened so nothing escapes into a scan. An unprovable
+        # containment answers False, which refuses.
         try:
             root = os.path.realpath(sp(root))
             target = os.path.realpath(sp(destination))
+            return os.path.commonpath([root, target]) == root
         except (OSError, ValueError):
             return False
-        return os.path.commonpath([root, target]) == root
 
     def _releasesForGroup(self, group, media_id):
         """The group's releases, fetched at most ONCE per group.
@@ -704,6 +717,28 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
         if not superseded or not superseded.get('_id'):
             return
+
+        # Detach FIRST, and the order is load-bearing rather than tidy.
+        #
+        # `Release.updateStatus` BACKFILLS copy_id when it moves a release to
+        # `ignored`, from the sizes of the files the release still lists
+        # (release/main.py). By this point `os.replace` has run, so the path
+        # it lists holds the INCOMING file's bytes -- a legacy release with no
+        # stored copy_id would be given one describing the file that just
+        # replaced it.
+        #
+        # If the detach then failed, that release would sit there claiming the
+        # destination with a copy_id that MATCHES the current bytes: ownership
+        # resolution would read it as the verified owner at the OLD rung, and
+        # authorise a later, worse copy to replace what is actually a better
+        # one. Detaching first makes that state unreachable -- the backfill
+        # finds no files and `copyIdentity` answers None.
+        #
+        # The failure mode this leaves is strictly milder: a detach that
+        # succeeds while the status update fails leaves a `done` release with
+        # no files, which the loud ERROR below already covers.
+        self._detachSupersededClaim(superseded, destination)
+
         try:
             # `Release.updateStatus` CATCHES database errors and contention
             # and returns False, and the dispatcher contains handler
@@ -737,8 +772,6 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'hand.', superseded.get('_id'),
             )
             return
-
-        self._detachSupersededClaim(superseded, destination)
 
     def _detachSupersededClaim(self, superseded, destination):
         """Stop the dead release claiming the path it no longer owns.
