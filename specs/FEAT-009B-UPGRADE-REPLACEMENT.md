@@ -544,6 +544,7 @@ mutation appear KILLED when the code under test never changed.
 
 Mutation runs therefore use `python -B` with `__pycache__` cleared, and the
 harness asserts that the file hash changed rather than trusting the edit.
+
 ### D12: the incomplete signal is a sentinel, because None cannot survive the bus
 
 Amends D9, which described the signal as `None`. That was accurate when it was

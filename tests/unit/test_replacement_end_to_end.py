@@ -1474,3 +1474,92 @@ class TestTheDeadReleaseNeverGetsTheNewFilesIdentity:
         # a matching identity. Pinned by the ordering test above; asserted
         # here as the behaviour an operator would observe.
         assert open(world['dst'], 'rb').read() == NEW
+
+
+class TestTheSourceIsStatedOnceNotTwice:
+    """`_sourceStillMatchesTheScan` and `_sizeSupportsTheClaimedQuality` both
+    need the source's size, and both used to stat it. On a NAS-mounted
+    download share -- the case this module keeps calling out -- that is two
+    round trips for one number.
+
+    The ordering is also deliberate: whether the file is still what the
+    scanner measured comes FIRST, because whether its size supports its
+    claimed rung is meaningless if the answer to that is no.
+    """
+
+    def test_the_band_check_reuses_the_measurement_instead_of_re_stating(self, world, monkeypatch):
+        """Scoped to the two DECISION guards, not the whole flow.
+
+        The swap takes its own measurement before copying (it must -- it is
+        about to verify what it wrote), and the forensic record reports the
+        size at the moment it fires. Both are legitimate and neither is what
+        this change was about; asserting a total across the whole call would
+        have counted them and said nothing about the duplication.
+        """
+        stats = []
+        real_getsize = os.path.getsize
+
+        def _record(path, *a, **k):
+            if str(path) == world['src']:
+                stats.append(str(path))
+            return real_getsize(path, *a, **k)
+
+        # A real band, or `_sizeSupportsTheClaimedQuality` returns True before
+        # it ever needs a size -- and the test would pass without exercising
+        # the line it exists to check. Mutation testing caught exactly that.
+        actual_mb = os.path.getsize(world['src']) / 1024 / 1024
+
+        def _fire(event, *args, **kwargs):
+            if event == 'quality.single':
+                return {'identifier': args[0], 'size_min': actual_mb / 2,
+                        'size_max': actual_mb * 10}
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        monkeypatch.setattr(os.path, 'getsize', _record)
+
+        group = world['group']()
+        group['meta_data']['size'] = actual_mb
+        stats.clear()
+
+        measured = world['plugin']._sourceStillMatchesTheScan(group, world['src'])
+        assert measured is not None, 'the scan check refused; fixture is wrong'
+        assert len(stats) == 1
+
+        assert world['plugin']._sizeSupportsTheClaimedQuality(
+            group, world['src'], measured
+        ) is True, 'the band refused; the fixture is not exercising the reuse path'
+        assert len(stats) == 1, (
+            'the band check stat-ed the source again instead of reusing the '
+            'measurement it was handed: %d stats' % len(stats)
+        )
+
+    def test_the_band_check_still_works_when_called_on_its_own(self, world):
+        """The fallback stat. Unit tests drive this helper directly, and a
+        reuse-only version would have quietly stopped measuring anything."""
+        assert world['plugin']._sizeSupportsTheClaimedQuality(
+            world['group'](), world['src']
+        ) is True
+
+    def test_a_changed_source_is_refused_before_the_band_is_consulted(self, world):
+        """Ordering, asserted through the outcome. A file that is BOTH changed
+        since the scan and below its band must report the changed-source
+        cause: the band question is meaningless once the bytes have moved."""
+        consulted = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'quality.single':
+                consulted.append(args[0])
+                return {'identifier': args[0], 'size': (10_000, 100_000)}
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        group = world['group']()
+        group['meta_data']['size'] = 999999.0          # nothing like the file
+
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+        assert _sha(world['dst']) == world['old_sha']
+        assert not consulted, (
+            'the band was consulted for a file already known to have changed'
+        )

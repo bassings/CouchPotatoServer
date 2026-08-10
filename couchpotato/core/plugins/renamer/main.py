@@ -202,13 +202,20 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if outcome == REPLACE and not self._identityIsAsserted(group):
                     outcome = DECLINED_UNVERIFIED_IDENTITY
 
-                if outcome == REPLACE and not self._sizeSupportsTheClaimedQuality(group, src):
-                    outcome = DECLINED_SIZE_CONTRADICTS_QUALITY
-
-                # Inside the REPLACE guard, like the checks around it. It
-                # stats the source, and on every install that has not opted
-                # into `upgrade_replace` -- the common case -- the answer was
-                # computed and thrown away on every ordinary collision.
+                # Scan-size FIRST, and its measurement is then reused.
+                #
+                # Ordering: establishing that the file is still what the
+                # scanner measured comes before reasoning about whether its
+                # size supports its claimed rung -- the second question is
+                # meaningless if the answer to the first is no.
+                #
+                # Reuse: both checks stat the source, and on a NAS-mounted
+                # download share (the case this module keeps calling out)
+                # that is two round trips for one number.
+                #
+                # Inside the REPLACE guard, so an install that has not opted
+                # into `upgrade_replace` -- the common case -- pays nothing on
+                # an ordinary collision.
                 measured_source_size = None
                 if outcome == REPLACE:
                     measured_source_size = self._sourceStillMatchesTheScan(group, src)
@@ -217,6 +224,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         # measurement. If the bytes have moved since, the rung
                         # describes a file that no longer exists.
                         outcome = DECLINED_SOURCE_CHANGED
+
+                if outcome == REPLACE and not self._sizeSupportsTheClaimedQuality(
+                    group, src, measured_source_size
+                ):
+                    outcome = DECLINED_SIZE_CONTRADICTS_QUALITY
 
                 if outcome == REPLACE and not self._destinationIsInsideTheLibrary(dst):
                     # A naming template, a crafted title or a `media_folder`
@@ -486,7 +498,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     QUALITY_BAND_FLOOR_FRACTION = 0.5
 
     @staticmethod
-    def _sizeSupportsTheClaimedQuality(group, source):
+    def _sizeSupportsTheClaimedQuality(group, source, measured_size=None):
         """Do the bytes support the rung this file claims?
 
         `media_parser.getMetaData` PREFERS a snatched release's claimed
@@ -529,10 +541,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         if not isinstance(low, (int, float)) or low <= 0:
             return True
 
-        try:
-            megabytes = os.path.getsize(source) / 1024 / 1024
-        except OSError:
-            return True
+        # Reuse the measurement `_sourceStillMatchesTheScan` already took;
+        # it runs first and stats the same file. Falling back to a fresh stat
+        # keeps this callable on its own, which its unit tests rely on.
+        if measured_size is None:
+            try:
+                measured_size = os.path.getsize(source)
+            except OSError:
+                return True
+        megabytes = measured_size / 1024 / 1024
 
         return megabytes >= low * Renamer.QUALITY_BAND_FLOOR_FRACTION
 
