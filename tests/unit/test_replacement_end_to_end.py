@@ -1582,3 +1582,50 @@ class TestTheSourceIsStatedOnceNotTwice:
         assert not consulted, (
             'the band was consulted for a file already known to have changed'
         )
+
+
+class TestAGuessedIdentityCostsNothing:
+    """`_identityIsAsserted` is a pure dict-membership check with no I/O, and
+    a group whose identity was guessed can never replace -- so running the
+    decision first spent a `release.for_media` read and a couple of event
+    dispatches to reach a foregone conclusion.
+
+    Same ordering principle the release lookup and the scan-size check are
+    already held to.
+    """
+
+    def test_a_searched_identity_does_no_database_work(self, world):
+        fetched = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.for_media':
+                fetched.append(args[0] if args else None)
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        group = world['group']()
+        group['identity_source'] = 'search'
+
+        world['plugin']._moveRenamedFiles({world['src']: world['dst']}, group)
+
+        assert _sha(world['dst']) == world['old_sha'], 'it replaced on a guess'
+        assert fetched == [], (
+            'the release list was fetched for a group that could never '
+            'replace: %r' % fetched
+        )
+
+    def test_an_asserted_identity_still_reaches_the_decision(self, world):
+        """The control: hoisting the check must not skip the decision for
+        groups that are allowed to replace."""
+        fetched = []
+
+        def _fire(event, *args, **kwargs):
+            if event == 'release.for_media':
+                fetched.append(args[0] if args else None)
+            return world['fire'](event, *args, **kwargs)
+
+        world['set_fire'](_fire)
+        _run(world)
+
+        assert open(world['dst'], 'rb').read() == NEW
+        assert fetched == ['media-1']

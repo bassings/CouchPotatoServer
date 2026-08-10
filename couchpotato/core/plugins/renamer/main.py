@@ -209,10 +209,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # simultaneously dangerous and inert, and the inertness is
                 # what hid the danger, because the gate never fired in
                 # testing so nobody saw what it did when it fired.
-                outcome, superseded = self._replacementOutcome(src, dst, group)
-
-                if outcome == REPLACE and not self._identityIsAsserted(group):
-                    outcome = DECLINED_UNVERIFIED_IDENTITY
+                # Identity BEFORE the decision, not after. It is a pure
+                # dict-membership check with no I/O, while
+                # `_replacementOutcome` pays for a `release.for_media` read
+                # and a couple of event dispatches -- and a group whose
+                # identity was guessed can never replace, so that work was
+                # spent to reach a foregone conclusion. Same ordering
+                # principle as the release lookup and the scan-size check.
+                if not self._identityIsAsserted(group):
+                    outcome, superseded = DECLINED_UNVERIFIED_IDENTITY, None
+                else:
+                    outcome, superseded = self._replacementOutcome(src, dst, group)
 
                 # Scan-size FIRST, and its measurement is then reused.
                 #
