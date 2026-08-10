@@ -409,6 +409,53 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       is retained as the TAIL fix — it is the only step here that has ever
       stalled (610s of a 697s job).
 
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T5, T6, T7, T8, T17)
+
+      **Runs LAST, and it is not a duplicate of T7 even though it sounds like
+      one.** T7 is a scoped pass over the specific items this plan's reviews
+      already named (M9, M10, L7, the copy set). T18 is the sweep for what
+      nobody named — the residue this remediation itself created, which by
+      definition is not on any earlier list.
+
+      Sequenced after the others deliberately: doing it earlier deletes things
+      the remaining tasks still need, and every task between now and then adds
+      more residue.
+
+      **Seed evidence, measured rather than assumed:**
+
+      | Candidate | Size | The question |
+      |---|---|---|
+      | `couchpotato/core/**/static/*.js` | 4,487 lines | Legacy `/old/` UI. `legacy-asset-live-chain` says the userscript add-via-URL still keeps part of it alive. Which part, exactly? |
+      | `libs/CodernityDB/` | 7,147 lines | Kept for one-time migration per CLAUDE.md. Has every install migrated? If the answer is unknowable, it stays and the docs say why |
+      | `Plugin.renderTemplate` | 1 method | Zero callers anywhere (`.py`, `.html`, `.js`). Also T17's third finding |
+      | `remove_lower_quality_copies` | 1 setting | Deliberately inert, warns once. Delete once operators have had a release to notice |
+      | `specs/` | 56 files | Which describe shipped behaviour, and which are abandoned drafts that read as current intent? |
+      | `QA/` | 9 files | Point-in-time findings. `review-cycle-run-recovery` in memory is explicitly "delete after a clean review cycle" |
+
+      **The docs half matters as much as the code half**, and this repo has a
+      rule for it: assert only what the repo proves. This session alone found
+      an AC describing a signal two commits after it changed, a spec claiming
+      "four" while naming three, a comment claiming `with_doc=False` isolates
+      corrupt documents when it does not, and a test docstring describing a bug
+      that had been fixed. Every one of those was written by somebody
+      confident, and every one would have sent the next reader somewhere the
+      behaviour is not.
+
+      So the pass covers CLAUDE.md, AGENTS.md, `docs/`, `specs/` and the
+      long-form task write-ups in THIS file — several of which now describe
+      decisions that were superseded by the work that followed them.
+
+      **Method, because a delete-everything sweep is how load-bearing code
+      dies.** For each candidate: prove it is unreachable (grep is a hint, not
+      a proof — `couchpotato/__init__.py` re-exports are load-bearing for
+      plugins and the loader hides ImportError at DEBUG, per
+      `loader-silent-import-swallow`), delete it, and run the full gate. If it
+      cannot be proven unreachable, it stays and the reason is written down
+      next to it. "Probably unused" is not a finding, it is a guess.
+
+      Nothing here is urgent. It is the difference between a codebase that has
+      been remediated and one that looks like it has.
+
 T4 carries the deferred review finding M2 (the startup `auth_required`
 migration is executed by no test; its only guard is a source-order string
 search). T7 carries the accessibility and product sets recorded in
