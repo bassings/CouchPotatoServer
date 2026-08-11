@@ -407,54 +407,53 @@ class TestAnUnreadableStoreIsNotAnAbsentSecret:
     The first version of the D14 change conflated them and turned
     `test_session_secret_store.py::test_login_issues_no_cookie_when_the_secret_
     cannot_be_read` red, which is the only reason this class exists.
+
+    Both tests below break the read at `SQLiteAdapter._query_index`, not at
+    `Settings.getProperty`. `getProperty` swallows whatever `_query_index`
+    raises in its own `except Exception:` and returns None, so patching
+    `getProperty` to raise bypasses that handler -- a fault a real store never
+    produces -- and never reaches `ensure_session_secret`'s read
+    (`_session_secret_row`, straight against the adapter), which is the one
+    that has to fail for either assertion below to mean anything. T13 deleted
+    `session_secret_store_is_readable()` for exactly this reason: it read via
+    `getProperty` too, and answered "readable" for a store whose real reads
+    raised.
     """
 
     def test_a_login_against_a_raising_store_issues_no_cookie(self, env, monkeypatch):
-        monkeypatch.setattr(
-            Settings, 'getProperty',
-            lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
+        with monkeypatch.context() as m:
+            m.setattr(
+                SQLiteAdapter, '_query_index',
+                lambda self, *args, **kwargs: (_ for _ in ()).throw(RuntimeError('store down')))
 
-        session = TestClient(env.app, follow_redirects=False)
-        response = session.post('/login/', data={'username': '', 'password': PASSWORD})
+            session = TestClient(env.app, follow_redirects=False)
+            response = session.post('/login/', data={'username': '', 'password': PASSWORD})
 
         assert 'set-cookie' not in {k.lower() for k in response.headers}
 
     def test_a_login_against_a_raising_store_writes_nothing(self, env, monkeypatch):
-        """The dangerous half: a blind write over a row we cannot see."""
+        """The dangerous half: a blind write over a row we cannot see.
+
+        `secret_rows` reads through `_query_index` itself, so it is called
+        before the patch is applied and again after the `with` block has
+        undone it -- evaluating it while the patch is live would raise
+        instead of comparing.
+        """
         before = secret_rows(env.db)
         assert before, 'no secret to overwrite, so this proves nothing'
 
-        monkeypatch.setattr(
-            Settings, 'getProperty',
-            lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
+        with monkeypatch.context() as m:
+            m.setattr(
+                SQLiteAdapter, '_query_index',
+                lambda self, *args, **kwargs: (_ for _ in ()).throw(RuntimeError('store down')))
 
-        TestClient(env.app, follow_redirects=False).post(
-            '/login/', data={'username': '', 'password': PASSWORD})
+            TestClient(env.app, follow_redirects=False).post(
+                '/login/', data={'username': '', 'password': PASSWORD})
 
         assert secret_rows(env.db) == before, (
             'a login rewrote the signing secret while the property store was '
             'raising, so a transient fault signs every device out'
         )
-
-    def test_the_probe_reports_a_raising_store_as_unreadable(self, env, monkeypatch):
-        from couchpotato import session_secret_store_is_readable
-
-        assert session_secret_store_is_readable() is True
-
-        monkeypatch.setattr(
-            Settings, 'getProperty',
-            lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
-
-        assert session_secret_store_is_readable() is False
-
-    def test_an_absent_secret_still_reads_as_readable(self, env):
-        """Both directions: absent must NOT look like broken, or D14's whole
-        recovery never fires."""
-        from couchpotato import session_secret_store_is_readable
-
-        delete_the_secret(env.db)
-
-        assert session_secret_store_is_readable() is True
 
 
 class TestAFailedRecoveryDoesNotPretendToSucceed:

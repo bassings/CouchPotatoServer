@@ -566,6 +566,25 @@ def ensure_session_secret(db=None) -> str:
     verified login: the write goes through the same compare-and-swap writer
     that makes concurrent creates safe, and a login is a rare ceremony that has
     already spent ~166 ms in bcrypt.
+
+    **This is the AC-SEC-33 enforcement point.** The read this function does
+    (`_session_secret_row`, straight against the adapter) is not wrapped in
+    anything that swallows exceptions, unlike `Settings.getProperty` (which
+    `get_session_secret` goes through). So a store that genuinely cannot be
+    read makes THIS function raise, before it ever reaches the insert/update
+    that would create a fresh secret. `login_post` is the only caller that
+    can reach this after `not secret`, and its `except Exception` around the
+    call is where "fail closed on a raising store" actually happens -- there
+    is deliberately no separate readability probe: T13 removed one
+    (`session_secret_store_is_readable`), because it read via `Env.prop` ->
+    `Settings.getProperty`, whose blanket `except Exception:` swallows the
+    ordinary read fault and returns None -- so for the fault shape that
+    matters (a store whose reads simply raise), the probe answered
+    "readable" and never protected anything. (`getProperty` does have one
+    narrower path that DOES propagate -- a `ValueError` on the first read
+    followed by a failing retry in its own recovery branch, which is not the
+    case this probe existed to catch.) The real protection was always this
+    function's propagation, not the probe.
     """
     db = get_db() if db is None else db
 
@@ -640,27 +659,6 @@ def rotate_session_secret(db=None) -> str:
                  'The api_key is unchanged, so scripts, the userscript and '
                  'every downloader keep working.')
         return secret
-
-
-def session_secret_store_is_readable() -> bool:
-    """Can we tell "this install has no secret" from "we cannot see"?
-
-    The two are indistinguishable from `get_session_secret`, which answers None
-    to both -- and D14's login bootstrap must act on only ONE of them. A row
-    that is absent should be created; a store that RAISED must be left alone,
-    because writing a fresh secret over a row we cannot read would invalidate
-    every live session on the strength of a transient fault, and AC-SEC-33 and
-    AC-ARCH-6 both say a raising store means fail closed rather than fix it.
-
-    Uses the same read path `get_session_secret` uses, deliberately: a probe
-    down a different path would answer a different question, which is exactly
-    how the first version of this got it wrong.
-    """
-    try:
-        Env.prop(SESSION_SECRET_PROPERTY)
-    except Exception:
-        return False
-    return True
 
 
 def get_session_secret():
@@ -986,7 +984,8 @@ LOGIN_MESSAGES = {
         'error',
         'Your password was correct, but the server could not start a session, '
         'so you are not signed in. This is a server problem, not your '
-        'password. Check that the database is writable, then try again.',
+        'password. Check that the database is readable and writable, then '
+        'try again.',
     ),
     'rate_limited_signout': (
         'error',
@@ -1361,20 +1360,22 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         # of this source a valid session on every install.
         secret = get_session_secret()
 
-        if not secret and session_secret_store_is_readable():
+        if not secret:
             # D14. THE ONLY REQUEST PATH THAT MAY CREATE A SECRET, and it is
             # reached only here: after `check_password` has accepted the
-            # submitted password, and only when the store is READABLE and
-            # simply has no secret in it.
+            # submitted password.
             #
-            # That second condition is not belt-and-braces. `get_session_secret`
-            # answers None both to "this install has never had a secret" and to
-            # "the property store just raised", and those need opposite
-            # responses: create in the first, fail closed in the second.
-            # Creating on a raising store would write a fresh secret over a row
-            # nobody could read, signing every live session out on the strength
-            # of a transient fault -- and AC-SEC-33 says a raising store issues
-            # no cookie. Conflating them is what the first version of this did.
+            # `ensure_session_secret` is both the create-if-absent call AND the
+            # AC-SEC-33 enforcement point (see its docstring): a store that
+            # simply has no secret returns normally with a fresh one, while a
+            # store that cannot be READ raises out of `_session_secret_row`
+            # before any write is attempted, straight into the `except` below.
+            # There is deliberately no separate readability check here -- T13
+            # removed `session_secret_store_is_readable()`, which read via the
+            # same `Env.prop` / `Settings.getProperty` path as `get_session_secret`
+            # above and inherited its blanket `except Exception: return None`,
+            # so it answered "readable" for a store that was, measured, on
+            # fire. It was never load-bearing: this `try/except` was.
             #
             # D2 said "never on a request path" for two measured reasons, and
             # neither survives the move: `Settings.setProperty`'s unguarded
@@ -1397,14 +1398,15 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             try:
                 secret = ensure_session_secret()
             except Exception:
-                # Fail closed, and say so. Redirecting with no cookie sends the
-                # operator back to the login page, which is honest: they are
-                # not signed in. Signing with '' or a constant to avoid the
-                # loop would hand a valid session to every reader of this file.
+                # AC-SEC-33's fail-closed branch. Redirecting with no cookie
+                # sends the operator back to the login page, which is honest:
+                # they are not signed in. Signing with '' or a constant to
+                # avoid the loop would hand a valid session to every reader of
+                # this file.
                 log.error('A correct password was accepted but the session '
                           'signing secret could not be created, so no session '
                           'was issued and the login cannot complete. Check '
-                          'that the database is writable. %s',
+                          'that the database is readable and writable. %s',
                           traceback.format_exc())
                 secret = None
 
@@ -1417,27 +1419,30 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             # down. Failing closed is unchanged -- still no cookie.
             return render_login_page(reason='session_not_created', status_code=503)
 
-        if secret:
-            remember_me = tryInt(form.get('remember_me', 0)) > 0
-            lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
-            # `max_age` is UNCHANGED from before this PR: 30 days when
-            # "remember me" is ticked, absent otherwise so the cookie dies
-            # with the browser process. Absent is the more conservative of
-            # the two and it is what operators already have; the reason it
-            # was called out as a defect was that the value stayed valid
-            # SERVER-side regardless, and that is what the signed expiry
-            # above fixes. Max-Age was never enforcement anyway -- a replay
-            # simply omits it.
-            #
-            # Every other attribute comes from `session_cookie_attributes`,
-            # which the logout deletion uses too so the two cannot drift.
-            response.set_cookie(
-                SESSION_COOKIE_NAME,
-                mint_session_token(secret, lifetime),
-                max_age=lifetime if remember_me else None,
-                **session_cookie_attributes(),
-            )
-            _expire_legacy_root_cookie(response)
+        # Reached only when `secret` is truthy: the `if not secret:` above
+        # already returned. A second `if secret:` guard here always evaluated
+        # the same and was dead weight -- exactly the shape D17 argues should
+        # be deleted rather than repaired (T13 follow-up).
+        remember_me = tryInt(form.get('remember_me', 0)) > 0
+        lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
+        # `max_age` is UNCHANGED from before this PR: 30 days when
+        # "remember me" is ticked, absent otherwise so the cookie dies
+        # with the browser process. Absent is the more conservative of
+        # the two and it is what operators already have; the reason it
+        # was called out as a defect was that the value stayed valid
+        # SERVER-side regardless, and that is what the signed expiry
+        # above fixes. Max-Age was never enforcement anyway -- a replay
+        # simply omits it.
+        #
+        # Every other attribute comes from `session_cookie_attributes`,
+        # which the logout deletion uses too so the two cannot drift.
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            mint_session_token(secret, lifetime),
+            max_age=lifetime if remember_me else None,
+            **session_cookie_attributes(),
+        )
+        _expire_legacy_root_cookie(response)
 
         return response
 
@@ -1535,7 +1540,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             log.error('Sign-out FAILED: the session signing secret could not '
                       'be rotated, so every existing session is STILL VALID on '
                       'every device. Nothing has been signed out. Check that '
-                      'the database is writable and try again. %s',
+                      'the database is readable and writable and try again. %s',
                       traceback.format_exc())
             # A real page rather than the plain-text 500 this used to be
             # (spec gap 7). The BEHAVIOUR is unchanged and deliberately so --
