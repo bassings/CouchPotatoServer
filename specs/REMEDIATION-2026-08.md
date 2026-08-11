@@ -485,41 +485,68 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       risks a regression in the one function that must not lose a write. Its
       own small change, with its own review.
 
-- [ ] T14: the password-change rotation commits before the save does — state: queued (no deps)
+- [x] T14: the password-change rotation commits before the save does — state: **fixed** (2026-08-11), rotation moved off `Core.md5Password` onto a new `.committed` event `Settings.saveView` fires only after `self.save()` succeeds
 
-      P2 review finding on #229, **attempted and withdrawn**, so it is a task
-      rather than a fix.
+      P2 review finding on #229, **attempted and withdrawn twice** before this
+      pass, so it was a task rather than a fix.
 
-      `Core.md5Password` is the VALUE hook: it runs while the settings save is
-      still in progress, before `Settings.save()` writes `config.ini`. Rotating
-      there means a save that then fails -- read-only config directory, a
-      permissions change, an I/O error -- has already signed the operator out
+      `Core.md5Password` was the VALUE hook: it ran while the settings save was
+      still in progress, before `Settings.save()` wrote `config.ini`. Rotating
+      there meant a save that then failed -- read-only config directory, a
+      permissions change, an I/O error -- had already signed the operator out
       of every device for a change that was never persisted, and after a
-      restart the OLD password is still authoritative.
+      restart the OLD password was still authoritative.
 
-      **The fix is available and clean.**
-      `fireEvent('setting.save.<section>.<option>.after')` fires AFTER
-      `self.save()` (`core/settings.py:514`), so a save that raises never
-      reaches it. Moving the rotation there couples it to the commit rather
-      than the attempt, and takes the rotation out of the value hook where an
-      exception risks the auth_required lockout that T-M6 is also about.
+      **The fix this entry originally proposed does not work, and that is very
+      likely why the first two attempts produced nothing usable.**
+      `fireEvent()` auto-fires `'<name>.after'` as an intrinsic side effect of
+      EVERY dispatch (`couchpotato/core/event.py`), including the value-hook
+      call itself -- so a handler wired to `setting.save.core.password.after`
+      runs a FIRST time immediately after the value hook, before
+      `self.set()`/`self.save()` in `saveView`, and only a second time for
+      real afterwards. A consume-and-clear rotation hook acts on the first,
+      premature firing and never sees the second. Measured directly against
+      this branch's own harness: wiring the rotation to `.after` still rotated
+      the secret when `self.save()` was made to raise -- the exact defect this
+      task exists to close, reproduced by the fix this entry described as
+      "available and clean".
 
-      One wrinkle to design around: the `.after` hook receives no value, so it
-      cannot tell a password being SET from one being CLEARED, and D10 says
-      clearing must not rotate. A flag set in `md5Password` and consumed by the
-      after-hook works, but must be assigned unconditionally so a failed save
-      cannot leave it set for the next one.
+      **The actual fix** adds a new event, `setting.save.<section>.<option>.committed`,
+      which `Settings.saveView` (`core/settings.py`) fires explicitly, once,
+      only after `self.save()` returns without raising. `fireEvent` never
+      auto-derives that name from anything else, so it is the one signal in
+      `saveView` guaranteed to fire exactly once and only post-commit.
+      `Core.rotateSessionSecretAfterSave` is wired to it instead of `.after`.
 
-      **Why it is deferred.** Three attempts to measure in this area produced
-      nothing usable: the ordering test passes on the current code, and I could
-      not prove it is non-vacuous -- a successful save through the same harness
-      would not demonstrably rotate either, so the test may be asserting
-      nothing. Shipping a guard that looks like coverage and is not is worse
-      than shipping none. Project rule 11 already applies to this function on
-      this branch.
+      The wrinkle this entry flagged held: the `.committed` event receives no
+      value, so it cannot tell a password being SET from one being CLEARED,
+      and D10 says clearing must not rotate. `Core.md5Password` sets a flag,
+      consumed by the new hook. It is a per-thread `threading.local()`
+      declared as a CLASS attribute rather than instance state: thread-local
+      because `saveView` dispatches through `run_in_threadpool`, so two
+      concurrent password-change requests must not read or clear each other's
+      flag; class-scoped so it exists without `__init__` running, which
+      several of this project's own tests rely on (`Core.__new__(Core)`).
+      Assigned unconditionally (`bool(value)`, never `if value: ... = True`),
+      so a failed SET cannot leave a stale True for a later CLEAR to inherit.
 
-      Do it with a working harness: assert first that a SUCCESSFUL save
-      rotates, then that a failing one does not.
+      Existing `.after` consumers elsewhere (`automation.py`, `manage.py`,
+      `rtorrent_.py`, `updater/main.py`, `searcher/base.py` -- all
+      cron-recompute hooks) are double-fired by the same `fireEvent` quirk and
+      were deliberately left alone: recomputing an idempotent cron schedule
+      twice is wasteful, not incorrect, and touching five unrelated plugins was
+      out of this task's scope. Worth a pass if `.after` semantics are ever
+      revisited generally.
+
+      Tests: `tests/unit/test_password_rotation_after_commit.py` (new -- a
+      working rotation instrument proven first per this entry's own
+      instruction, exactly-once-per-save as a regression guard against the
+      "looks green for the wrong reason" shape above, failure injected at the
+      real `self.save()` commit point, the flag's leak-across-attempts guard,
+      and clearing never rotating or creating a secret row on a fresh
+      install), plus `tests/unit/test_session_revocation.py` updated where it
+      drove the password-change event directly and so needed the `.committed`
+      event fired alongside it to still exercise real behaviour.
 
 - [x] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: **probe removed** (2026-08-11, option 2)
 

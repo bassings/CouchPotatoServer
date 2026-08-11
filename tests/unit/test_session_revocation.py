@@ -233,6 +233,26 @@ def is_signed_in(session) -> bool:
     return False
 
 
+def change_password(value):
+    """Mirror `Settings.saveView`'s real event sequence for `core.password`
+    (settings.py), rather than `env.settings.saveView(...)` -- `FakeSettings`
+    has no real `self.p` (ConfigParser), which `saveView`'s own
+    `isOptionWritable` needs, so calling it directly raises `AttributeError`.
+
+    Firing only the value hook, as every test here used to, is no longer
+    enough. T14 moved rotation to `setting.save.core.password.committed`,
+    fired by `saveView` only once `self.save()` has returned without raising
+    -- deliberately NOT `.after`, which `fireEvent` auto-fires as an
+    intrinsic side effect of firing the value-hook event itself, before any
+    save happens at all (`couchpotato/core/event.py`). So the two calls below
+    are not interchangeable with one: the first alone reproduces exactly the
+    "rotates before the commit" defect T14 fixes.
+    """
+    stored = fireEvent('setting.save.core.password', value, single=True)
+    fireEvent('setting.save.core.password.committed', single=True)
+    return stored
+
+
 class TestLogoutRevokesRatherThanForgets:
     """AC-SEC-36 / D1."""
 
@@ -569,7 +589,11 @@ class TestChangingThePasswordEndsEverySession:
         thief = replay(env, token)
         assert is_signed_in(thief)
 
-        fireEvent('setting.save.core.password', 'a-new-password', single=True)
+        # Driven through the real `Settings.saveView` (T14: rotation lives on
+        # `setting.save.core.password.committed`, fired only after the save
+        # commits -- firing the value hook alone, as this test used to,
+        # no longer triggers it).
+        change_password('a-new-password')
 
         assert not is_signed_in(thief), (
             'changing the password left every existing session valid. Someone '
@@ -594,7 +618,7 @@ class TestChangingThePasswordEndsEverySession:
         description = password['description'].lower()
 
         owner, token = log_in(env)
-        fireEvent('setting.save.core.password', 'a-new-password', single=True)
+        change_password('a-new-password')
         assert not verify_session_token(token, env.settings.getProperty(SESSION_SECRET_PROPERTY))
 
         assert 'sign' in description or 'log' in description, description
@@ -616,7 +640,7 @@ class TestChangingThePasswordEndsEverySession:
         empty.create(str(tmp_path / 'empty-db'))
         Env.set('db', empty)
         try:
-            fireEvent('setting.save.core.password', '', single=True)
+            change_password('')
 
             rows = [row for row in empty._query_index('property', key=SESSION_SECRET_PROPERTY)
                     if row.get('identifier') == SESSION_SECRET_PROPERTY]
@@ -628,16 +652,15 @@ class TestChangingThePasswordEndsEverySession:
     def test_a_failure_to_rotate_does_not_stop_the_password_being_hashed(self, env):
         """Precedence: losing the password write is worse than a stale secret.
 
-        `md5Password` returns the stored hash. If rotation raised through it,
-        the settings save would fail and -- because the same hook writes
-        `auth_required` -- the operator could be left with authentication on
-        and no password stored, which is the recorded unrecoverable lockout.
+        T14 moved rotation to `rotateSessionSecretAfterSave`
+        (`setting.save.core.password.committed`), which runs AFTER the
+        password is already hashed and stored -- so a rotation failure there
+        can no longer abort the save the way it could when rotation lived in
+        the value hook, and this now has to be proven through the real save
+        path rather than by calling `md5Password` alone.
         """
-        from couchpotato.core._base._core import Core
-
-        core = Core.__new__(Core)
         with patch('couchpotato.rotate_session_secret', side_effect=RuntimeError('store down')):
-            stored = core.md5Password('a-new-password')
+            stored = change_password('a-new-password')  # must not raise
 
         assert stored.startswith(('$2a$', '$2b$', '$2y$')), stored
 
@@ -705,7 +728,7 @@ class TestExactlyOneFunctionWritesTheSecret:
             owner.post('/logout/')
             assert len(calls) == 2, 'logout did not use the writer'
 
-            fireEvent('setting.save.core.password', 'a-new-password', single=True)
+            change_password('a-new-password')
             assert len(calls) == 3, 'the password change did not use the writer'
         finally:
             fresh.close()

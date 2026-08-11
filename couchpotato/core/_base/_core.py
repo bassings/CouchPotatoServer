@@ -28,7 +28,32 @@ class Core(Plugin):
     ]
     shutdown_started = False
 
+    # Set by `md5Password`, consumed by `rotateSessionSecretAfterSave`. A
+    # CLASS attribute, not one assigned in `__init__`, for two reasons:
+    #
+    # 1. Thread-local, not instance state. `Settings.saveView` dispatches
+    #    through FastAPI's `run_in_threadpool` (REG-002), so one password-save
+    #    request runs value-hook -> write -> after-hook on a single thread, but
+    #    two concurrent requests land on two different threadpool threads.
+    #    Plain instance state would let a slower request's after-hook read a
+    #    flag a faster, unrelated request had just overwritten -- rotating for
+    #    the wrong save, or silently skipping its own. `threading.local()`
+    #    removes that interleaving: each thread sees only what it wrote.
+    # 2. Declared at class scope so it exists without `__init__` running.
+    #    Plenty of this project's own tests build a bare `Core.__new__(Core)`
+    #    to exercise `md5Password` in isolation (`test_password_storage.py`,
+    #    `test_auth_required_gate.py`) -- an instance attribute set only in
+    #    `__init__` would make those raise `AttributeError` on first use.
+    _pending_rotation = threading.local()
+
     def __init__(self):
+        # Defensive reset: a prior password-save on THIS thread that never
+        # reached `rotateSessionSecretAfterSave` (e.g. a test harness that
+        # called `md5Password` directly, or a process that never got the
+        # matching `.committed` event) must not leak into the next real save
+        # this instance handles.
+        self._pending_rotation.rotate = False
+
         addApiView('app.shutdown', self.shutdown, docs = {
             'desc': 'Shutdown the app.',
             'return': {'type': 'string: shutdown'}
@@ -55,6 +80,7 @@ class Core(Plugin):
         addEvent('app.load.after', self.dependencies)
 
         addEvent('setting.save.core.password', self.md5Password)
+        addEvent('setting.save.core.password.committed', self.rotateSessionSecretAfterSave)
         addEvent('setting.save.core.auth_required', self.guardAuthRequired)
         addEvent('setting.save.core.api_key', self.checkApikey)
 
@@ -163,7 +189,8 @@ class Core(Plugin):
                       'Check Settings > Server > Require login. %s',
                       traceback.format_exc())
 
-        # End every existing session (D6/AC-SEC-38).
+        # End every existing session (D6/AC-SEC-38) -- but only once the new
+        # password has actually COMMITTED, not merely been submitted.
         #
         # Changing a password is usually a RESPONSE to something -- a shared
         # laptop, a screenshot, a suspicion. Before this, every cookie issued
@@ -172,29 +199,87 @@ class Core(Plugin):
         # whoever prompted it. Rotating the signing secret is what makes the
         # change mean something, and the field's own description now says so.
         #
-        # Only when a password is actually SET. Clearing it turns
-        # `auth_required` off two lines above, so every request is already
-        # served without a session and there is nothing to revoke -- and
-        # writing a secret row anyway would put one on installs that never
-        # enabled authentication, which AC-QA-21 and AC-SEC-46 both forbid.
+        # This hook cannot do the rotation itself. It is the VALUE hook, which
+        # `Settings.saveView` calls BEFORE `self.save()` writes config.ini
+        # (settings.py:507-512). Rotating here would sign every device out for
+        # a password change that a subsequent failed save -- read-only config
+        # directory, a permissions change, a full volume, any I/O error --
+        # then never persists. After a restart the OLD password is still
+        # authoritative, and every session opened under it is already gone:
+        # nothing changed, and everyone is logged out. So this only RECORDS
+        # the intent; `rotateSessionSecretAfterSave`, wired to
+        # `setting.save.core.password.committed`, does the rotation once
+        # `saveView` reaches that event -- which it only does after `save()`
+        # returned without raising.
         #
-        # Guarded, and the guard direction matters: this method's RETURN VALUE
-        # is the stored password hash. An exception escaping here would abort
-        # the settings save after the `auth_required = 1` above had already
-        # been set in the parser, which is the "authentication on, no password
-        # stored" lockout that the rest of this file exists to prevent. A stale
-        # signing secret is recoverable by signing out; that state is not.
-        if value:
-            try:
-                from couchpotato import rotate_session_secret
-                rotate_session_secret()
-            except Exception:
-                log.error('Password saved, but the session signing secret '
-                          'could not be rotated -- sessions opened with the '
-                          'OLD password are still valid. Sign out to force a '
-                          'rotation, or restart. %s', traceback.format_exc())
+        # NOT wired to `.after`, despite the name suggesting exactly this.
+        # `fireEvent` auto-fires `'<name>.after'` for EVERY dispatch, including
+        # the value-hook call itself (`event.py`) -- so a handler on
+        # `setting.save.core.password.after` runs BEFORE `self.save()` too, as
+        # a side effect of firing THIS hook, defeating the whole point.
+        # Measured: rotation happened even when `self.save()` was made to
+        # raise. `.committed`, fired explicitly by `saveView` after `self.save()`
+        # succeeds, is not a name `fireEvent` auto-derives from anything, so it
+        # is the one signal here guaranteed to fire exactly once and only
+        # post-commit. See the comment at that `fireEvent` call in settings.py.
+        #
+        # Assigned UNCONDITIONALLY (`bool(value)`, never `if value: ... =
+        # True`). `self.save()` raising means `saveView` never reaches the
+        # `.committed` event, so a failed save leaves this thread's flag
+        # exactly as this call set it. Only an unconditional assignment
+        # guarantees the NEXT call to this hook on this thread -- whatever
+        # value it carries, including a clear -- overwrites that leftover
+        # before `.committed` is ever reached again, rather than a stale True
+        # from a failed SET surviving to make a later CLEAR rotate.
+        #
+        # Only SET should rotate. Clearing the password turns `auth_required`
+        # off two lines above, so every request is already served without a
+        # session and there is nothing to revoke -- and rotating anyway would
+        # put a secret row on installs that never enabled authentication,
+        # which AC-QA-21 and AC-SEC-46 both forbid.
+        self._pending_rotation.rotate = bool(value)
 
         return hash_password(md5(value)) if value else ''
+
+    def rotateSessionSecretAfterSave(self):
+        """Rotate the session secret once the password change has committed.
+
+        Wired to `setting.save.core.password.committed`, which `Settings.saveView`
+        fires only after `self.save()` has written config.ini without raising
+        -- so a save that fails never reaches this, and the operator is never
+        signed out for a password change that was not actually persisted.
+        Deliberately NOT `.after`: `fireEvent` auto-fires that name for every
+        dispatch, including the value hook's OWN call, so it actually runs
+        before `self.save()` too. See the comment on `md5Password`'s rotation
+        block and the `fireEvent('...committed', ...)` call in settings.py.
+        `md5Password` is the value hook that records intent, in a thread-local
+        rather than instance attribute; see the class-level `_pending_rotation`
+        comment for why.
+
+        Consume-and-clear: read the flag, reset it, THEN act on the value read
+        -- so an exception raised while rotating cannot leave the flag set for
+        a later, unrelated `.committed` firing on this thread to pick up.
+
+        Guarded, and the guard direction is now the OPPOSITE of what it was
+        when rotation lived in the value hook: this runs entirely after the
+        password write has already succeeded, so nothing here can abort that
+        save. A rotation failure here only leaves the OLD signing secret live
+        -- recoverable by signing out (which itself rotates) or a restart --
+        never "authentication on, no password stored".
+        """
+        pending = getattr(self._pending_rotation, 'rotate', False)
+        self._pending_rotation.rotate = False
+        if not pending:
+            return
+
+        try:
+            from couchpotato import rotate_session_secret
+            rotate_session_secret()
+        except Exception:
+            log.error('Password saved, but the session signing secret '
+                      'could not be rotated -- sessions opened with the '
+                      'OLD password are still valid. Sign out to force a '
+                      'rotation, or restart. %s', traceback.format_exc())
 
     def guardAuthRequired(self, value):
         """Refuse to turn "Require login" on while no password is stored.

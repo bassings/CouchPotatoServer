@@ -514,6 +514,25 @@ class Settings:
         fireEvent('setting.save.%s.%s.after' % (section, option), single=True)
         fireEvent('setting.save.%s.*.after' % section, single=True)
 
+        # `.after`, above, is NOT "runs once, after the save" -- despite the
+        # name and despite running on this line after `self.save()`.
+        # `fireEvent`'s own tail (`event.py`: `if not options['is_after_event']:
+        # fireEvent('%s.after' % name, is_after_event=True)`) auto-derives and
+        # fires `'<name>.after'` for EVERY dispatch, including the value-hook
+        # call three lines up -- so a handler on
+        # `'setting.save.<section>.<option>.after'` actually runs TWICE per
+        # save: once immediately after the value hook (BEFORE `self.set()` and
+        # `self.save()` above), and once again here. A hook that reacts once
+        # and consumes state (T14: `Core.rotateSessionSecretAfterSave`,
+        # rotating the session secret only once a password change has
+        # committed) sees the premature firing and never the real one --
+        # measured: the secret rotated even when `self.save()` was made to
+        # raise, because rotation had already happened before that line ran.
+        # `.committed` is a name `fireEvent` has never auto-derived from
+        # anything, so it is the only signal here guaranteed to fire exactly
+        # once, and only after `self.save()` has returned without raising.
+        fireEvent('setting.save.%s.%s.committed' % (section, option), single=True)
+
         # Report what was ACTUALLY STORED, not merely that a write happened.
         #
         # A hook may rewrite the submitted value -- `Core.guardAuthRequired`
