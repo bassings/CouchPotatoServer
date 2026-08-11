@@ -117,13 +117,15 @@ class TestItErrsTowardsRunning:
 
 
 def _skip_prefixes():
-    """Every path prefix in the script's own UI_PATTERNS.
+    """Every path prefix in the script's own SKIP_PATTERNS.
 
     Read from the script rather than hardcoded, so the drift guard cannot
-    fall behind the pattern it is guarding. It checked only
-    `couchpotato/ui/` before -- and `couchpotato/static/` was the prefix this
-    very PR had to add after it shipped missing, which is exactly the entry a
-    single hardcoded string would keep missing.
+    fall behind the pattern it is guarding. Under the old allowlist this
+    parse silently returned a single entry for a long while, and the entry
+    it was missing was the one that mattered; a hardcoded list would have
+    kept agreeing with itself. The same failure mode applies to the
+    skip-list, where a missed prefix runs the browser suites needlessly and
+    an extra one skips them wrongly.
     """
     import re
     line = [
@@ -613,9 +615,10 @@ class TestTheClassifierIsTakenFromTheBaseBranch:
     both required browser jobs skip, a skipped job satisfies a required check,
     and the change that disabled the gate merges without ever running it.
 
-    Listing `scripts/needs_e2e.sh` in UI_PATTERNS does not close this. That
-    entry only forces a full run while it is still there, and the PR being
-    defended against is the one that removes it.
+    The inverted rule does not close this either. `scripts/` is absent from
+    SKIP_PATTERNS, so a change to the classifier runs the browser suites --
+    but only while it is still absent, and the PR being defended against is
+    the one that adds it.
     """
 
     def test_the_scope_job_runs_the_base_copy_not_the_checkout(self):

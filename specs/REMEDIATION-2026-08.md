@@ -180,12 +180,13 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
 - [x] T19: the change-surface gate does not see backend code the UI depends on — state: **rule INVERTED** (owner decision 2026-08-10). See below
 
-      Raised reviewing T16's own plan entry, and correct. `UI_PATTERNS` matches
-      `couchpotato/ui/`, `couchpotato/static/`, `couchpotato/templates/`,
-      `tests/e2e/` and the harness files. It does NOT match the backend routes
-      and API handlers those pages call — so a change to, say, a partial's
-      handler or an API view can break the rendered page while the browser
-      suites are skipped on the PR that does it.
+      Raised reviewing T16's own plan entry, and correct. As shipped by T16,
+      the allowlist `UI_PATTERNS` matched `couchpotato/ui/`,
+      `couchpotato/static/`, `couchpotato/templates/`, `tests/e2e/` and the
+      harness files. It did NOT match the backend routes and API handlers
+      those pages call — so a change to, say, a partial's handler or an API
+      view could break the rendered page while the browser suites were
+      skipped on the PR that did it.
 
       T16 is not reopened: #241 is merged and did what it set out to do. This
       is the next iteration of the same question, which is "what can change

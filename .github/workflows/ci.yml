@@ -82,9 +82,10 @@ jobs:
         # skipped job SATISFIES a required check -- so the change that
         # disabled the gate would merge without ever running it.
         #
-        # Having `scripts/needs_e2e.sh` inside UI_PATTERNS does not fix that:
-        # the entry only forces a full run while it is still there, and the
-        # PR being defended against is the one that removes it.
+        # The inverted rule does not fix that either. `scripts/` is absent
+        # from SKIP_PATTERNS, so a change here runs the browser suites --
+        # but only while it is still absent, and the PR being defended
+        # against is the one that adds it.
         #
         # The base copy is what master is already protected by, so it is the
         # only version with any authority over what merges into master.
