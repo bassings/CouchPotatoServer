@@ -464,7 +464,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       task. Reachable only via the SOURCE updater, which the Docker
       deployment does not use.
 
-- [x] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: **rejected with evidence** (2026-08-11), the primitive cannot express this function
+- [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued, **narrowed** (2026-08-11) — the rejection rested on a false premise, corrected below
 
       Non-blocking review nit on #229, verified and deferred rather than done.
 
@@ -500,17 +500,30 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
          holds. The primitive covers the update half and cannot cover the
          insert half at all.
 
-      2. **The insert branch is reachable mid-retry, so re-checking it on
-         each attempt is load-bearing rather than ceremony.** The obvious
-         partial refactor — keep the lookup and insert, delegate only the
-         update loop — trades away the case where the row VANISHES between
-         attempts. That is not hypothetical: `Settings.getProperty`'s
-         `except ValueError:` branch fires `database.delete_corrupted` on
-         this exact property row (`core/settings.py:669`), and it is a
-         READER path, so `_SESSION_SECRET_WRITE_LOCK` does not serialise it
-         against a write in progress. Today the retry re-reads, finds
-         nothing, and inserts — recovering. Under the primitive it would
-         raise `KeyError`.
+      2. ~~The insert branch is reachable mid-retry~~ — **WRONG, and
+         corrected rather than quietly dropped.** The first version of this
+         entry argued the row could VANISH between attempts via
+         `Settings.getProperty`'s `except ValueError:` firing
+         `database.delete_corrupted` from a reader path the write lock does
+         not serialise. Review (#249) contradicted it, one reviewer having
+         verified the call chain existed and the other having checked
+         whether it WORKS. The second was right. Driven:
+
+             get(with_storage=False) -> TypeError: unexpected keyword
+             _delete_id_index        -> AttributeError: no attribute
+             row still present after "delete"? -> v1
+
+         `Database.deleteCorrupted` cannot delete on this adapter, and
+         nothing else deletes a property row. So the mid-retry-vanish case
+         is unreachable and the per-attempt re-check is defensive, not
+         load-bearing.
+
+         **What that changes:** the consolidation is no longer blocked by a
+         correctness argument. Point 1 still stands — the primitive is half
+         a function's worth of reuse — so this is now a judgement call about
+         splitting one write path across two mechanisms, to be made with its
+         own TDD cycle rather than settled in a docs PR. Reopened, not
+         closed. See T22 for the dead `deleteCorrupted`.
 
       A variant catching `KeyError` to fall back to insert restores the
       recovery, but it is the same length as the loop it replaces, converts
@@ -518,11 +531,11 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `KeyError` raised for a different reason by the `get()` inside the
       primitive.
 
-      So the trade is: lose a reachable recovery path, or add complexity, in
-      the one function that must not lose a write — for zero behaviour gain.
-      The hand-rolled loop stays. What was missing was not the refactor but
-      the REASON, which is now in the function's docstring so the next
-      reviewer does not re-open it.
+      The lesson worth keeping is not about the retry loop. A rationale was
+      written into a docstring and a spec on a reachability claim that was
+      never driven, and it took a reviewer disagreeing with another reviewer
+      to catch it. A wrong reason is worse than no reason: it would have
+      blocked a legitimate consolidation for as long as anyone believed it.
 
 - [x] T14: the password-change rotation commits before the save does — state: **fixed** (2026-08-11), rotation moved off `Core.md5Password` onto a new `.committed` event `Settings.saveView` fires only after `self.save()` succeeds
 
@@ -846,6 +859,37 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       nor the marker, which is correct. Prove it by killing between the two
       writes, not by reasoning about it: the previous three attempts in this
       area all failed on harnesses that could not distinguish the states.
+
+- [ ] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: queued (no deps)
+
+      Found by review disagreement on #249: one reviewer verified the call
+      chain existed, the other checked whether it works. Driven against a
+      real adapter:
+
+          get(with_storage=False) -> TypeError: unexpected keyword 'with_storage'
+          _delete_id_index        -> AttributeError: no attribute
+          row still present after "delete"? -> v1
+
+      `core/database.py:330-331` calls `db.get('id', _id, with_storage=False)`
+      — `SQLiteAdapter.get` takes `(index_name, key, with_doc=False)` — and
+      then `db._delete_id_index(...)`, which exists nowhere in the tree.
+      Both are CodernityDB survivors. The pair sits inside a blanket
+      `except Exception:` logging at DEBUG, so every failure is invisible.
+
+      Consequence: `database.delete_corrupted` is a no-op. Every caller that
+      fires it believes a corrupt document has been removed, and it has not
+      — `Settings.getProperty` fires it on a corrupt property row and then
+      returns None, so the corrupt row is read again on the next call, for
+      the life of the install. This is the same shape as the guard that
+      cannot fail, one layer down: a recovery that reports success by
+      logging nothing.
+
+      Decide between: implement it against the real adapter API (`db.get`
+      then `db.delete`), or delete it and remove the event, which is honest
+      if nothing should be auto-deleting documents. **Deleting rows in
+      response to a read is a destructive path** — whichever way, it needs
+      the data-risk ranking applied, and a test proving the corrupt row is
+      actually gone rather than that the call returned.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
 

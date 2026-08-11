@@ -521,25 +521,34 @@ def _write_session_secret(secret: str, db=None, attempts: int = 3) -> str:
     Retrying against a re-read row is the fix, and it lives here because
     `couchpotato/core/settings.py` stays out of this diff.
 
-    **Not `SQLiteAdapter.update_with_retry`, and that was measured (T15).**
-    That primitive is the right one for read-modify-write callers, and this
-    loop does look like a duplicate of it. It is not interchangeable:
+    **Not `SQLiteAdapter.update_with_retry` (T15), on narrower grounds than
+    an earlier version of this docstring claimed.**
 
-    - It is update-only and keyed by `_id` -- it raises
-      `KeyError: Document not found` when the document is absent. This
-      function is an UPSERT keyed by a queried `identifier`, so the primitive
-      cannot cover the insert half at all.
-    - Delegating only the update half would drop the case where the row
-      vanishes BETWEEN attempts, and that case is reachable:
-      `Settings.getProperty`'s `except ValueError:` branch fires
-      `database.delete_corrupted` on this very property row
-      (`core/settings.py`), from a READER path that
-      `_SESSION_SECRET_WRITE_LOCK` does not serialise against a write in
-      progress. Re-reading each attempt is what recovers; the primitive
-      would raise instead.
+    That primitive is update-only and keyed by `_id`: an absent document
+    raises `KeyError: Document not found` (measured). This function is an
+    UPSERT keyed by a queried `identifier`, so the primitive covers the
+    update half and cannot cover the insert half.
 
-    So the re-check of `existing is None` on every attempt is load-bearing,
-    not ceremony. Do not fold this into the primitive without solving both.
+    An earlier draft also argued the insert branch was reachable MID-RETRY,
+    via `Settings.getProperty`'s `except ValueError:` firing
+    `database.delete_corrupted` on this row from a reader path the write
+    lock does not serialise. **That was wrong, and it is corrected here
+    rather than quietly dropped.** `Database.deleteCorrupted` cannot delete
+    anything on this adapter: it calls `db.get(..., with_storage=False)`,
+    which `SQLiteAdapter.get` does not accept, and then
+    `db._delete_id_index(...)`, which does not exist. Both raise inside a
+    blanket `except Exception:` that logs at DEBUG. Driven:
+
+        get(with_storage=False) -> TypeError: unexpected keyword 'with_storage'
+        _delete_id_index        -> AttributeError: no attribute
+        row still present after "delete"? -> v1
+
+    Nothing else deletes a property row (`Settings.delete` operates on
+    `config.ini`). So the per-attempt re-check of `existing is None` is
+    defensive, NOT load-bearing, and consolidating the update half with the
+    primitive is not blocked by a correctness argument -- only by it being
+    half a function's worth of reuse that splits this write path across two
+    mechanisms. Tracked in T15; see T22 for the dead `deleteCorrupted`.
     """
     from couchpotato.core.db.sqlite_adapter import ConflictError
 
