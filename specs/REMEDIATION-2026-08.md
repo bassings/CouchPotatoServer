@@ -625,6 +625,44 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       is retained as the TAIL fix — it is the only step here that has ever
       stalled (610s of a 697s job).
 
+- [ ] T20: the Discord notifier reports success on a rejected notification — state: queued (no deps)
+
+      Raised reviewing T17 (#246) and explicitly held out of it as out of
+      scope: T17 was the three SonarQube findings, and this changes
+      notification delivery semantics.
+
+      `couchpotato/core/notifications/discord.py`, in `notify`:
+
+          r = requests.post(...)
+          r.status_code
+
+      Two defects, one cosmetic and one not.
+
+      1. The bare `r.status_code` is a no-op — the value is never read.
+         It reads as leftover debug code. Note it is NOT quite dead: it
+         is the only thing that would raise on a torn response object,
+         and deleting it is safe but should be done knowing that.
+
+      2. `requests.post` does not raise on a non-2xx response, and
+         nothing checks the status, so a webhook answering 400, 401, 404
+         or 429 falls through to `return True`. The caller believes the
+         notification was delivered when Discord rejected it. A rate-limited
+         or revoked webhook therefore fails silently and permanently, which
+         is the worst shape for a notifier: the operator learns nothing is
+         arriving only by noticing its absence.
+
+      Fix shape: `raise_for_status()`, matching the pattern the Synology
+      work in T17 already establishes in this repo, so the existing
+      `except` returns False and logs. Check the sibling notifiers for the
+      same shape before assuming it is Discord-only.
+
+      **Not folded into T17 deliberately.** Two of T17's own fixes each
+      introduced a defect in adjacent code (the timeout made an
+      `UnboundLocalError` reachable; the retry bound regressed multi-entry
+      cleanup), so a third adjacent change to the same file, altering what
+      `notify` returns, is exactly the shape that keeps going wrong. It
+      gets its own task and its own tests.
+
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
