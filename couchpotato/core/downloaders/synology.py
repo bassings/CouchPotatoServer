@@ -4,7 +4,7 @@ import traceback
 from couchpotato.core._base.downloader.main import DownloaderBase
 from couchpotato.core.helpers.encoding import isInt
 from couchpotato.core.helpers.variable import cleanHost
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 import requests
 
 
@@ -106,7 +106,7 @@ class SynologyRPC:
     """SynologyRPC lite library"""
 
     def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None,
-                 ssl = False, verify = True):
+                 ssl = False, verify = True, now = None):
 
         super().__init__()
 
@@ -130,19 +130,34 @@ class SynologyRPC:
         # nothing said so. Make both unsafe states loud. Never name the
         # host, a path, or a credential VALUE here -- only the setting that
         # fixes it (PrivacyFilter/CLAUDE.md's log-privacy floor).
+        #
+        # Routed through log_suppressed rather than logged unconditionally:
+        # a fresh SynologyRPC is built on every download, so an unbounded
+        # warning would fire on every single one -- which trains the
+        # operator to scroll past the exact line added so they wouldn't
+        # miss it. log_suppressed keeps the signal (first occurrence in
+        # full, a "further messages withheld" notice, then the next
+        # occurrence after the window in full WITH the withheld count)
+        # without the noise. Two independent keys so the two warnings don't
+        # suppress each other. `now` is forwarded, not defaulted away, so
+        # the window is testable without sleeping or patching the clock.
         has_credentials = bool(username and password)
         if scheme == 'http' and has_credentials:
-            log.warning(
+            log_suppressed(
+                log.warning, 'synology_plaintext_credentials',
                 'Synology login will send the configured username and '
                 'password over an unencrypted connection. Enable the "ssl" '
-                'setting to protect them.'
+                'setting to protect them.',
+                now = now,
             )
         elif scheme == 'https' and not verify:
-            log.warning(
+            log_suppressed(
+                log.warning, 'synology_ssl_verify_disabled',
                 'Synology https connection has certificate verification '
                 'disabled, so it cannot confirm it is talking to the right '
                 'server. Enable the "ssl_verify" setting unless you have a '
-                'specific reason to leave it off.'
+                'specific reason to leave it off.',
+                now = now,
             )
 
     def _login(self):
