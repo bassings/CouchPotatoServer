@@ -457,12 +457,19 @@ class SourceUpdater(BaseUpdater):
             if os.path.islink(inst.filename):
                 raise
 
-            # Grant owner-write only, never group/other -- 0o777 previously
-            # made the path world-writable in response to an error. Retry
-            # exactly once: a permission error this doesn't fix propagates
-            # instead of recursing until the stack ends.
+            # Grant the OWNER read+write+execute, never group/other -- 0o777
+            # previously made the path world-writable in response to an
+            # error. S_IRWXU, not S_IWUSR: rmtree needs owner EXECUTE to
+            # descend into a directory and WRITE to unlink its contents, so
+            # write alone still fails to remove a directory with mode 0o400
+            # or 0o000 (measured). The S2612 finding was "world-writable",
+            # not "more than write" -- do not re-narrow this to S_IWUSR, it
+            # looks more conservative and is actually broken for the
+            # directories this function exists to remove. Retry exactly
+            # once: a permission error this doesn't fix propagates instead
+            # of recursing until the stack ends.
             current_mode = os.stat(inst.filename).st_mode
-            os.chmod(inst.filename, current_mode | stat.S_IWUSR)
+            os.chmod(inst.filename, current_mode | stat.S_IRWXU)
             shutil.rmtree(path)
 
     def getVersion(self):

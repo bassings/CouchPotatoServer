@@ -66,33 +66,6 @@ class TestRemoveDirPermissionRetry:
         assert call_count['n'] == 2, 'must retry exactly once, not recurse unbounded'
         mock_chmod.assert_called_once()
 
-    def test_chmod_grants_owner_write_only_not_group_or_other(self, tmp_path):
-        updater = _bare_updater()
-        target = str(tmp_path / 'locked')
-
-        attempts = {'n': 0}
-
-        def fake_rmtree(path):
-            attempts['n'] += 1
-            if attempts['n'] == 1:
-                raise PermissionError(13, 'Permission denied', target)
-            return None  # second attempt succeeds
-
-        with patch('couchpotato.core._base.updater.main.shutil.rmtree', side_effect = fake_rmtree), \
-             patch('couchpotato.core._base.updater.main.os.path.isdir', return_value = True), \
-             patch('couchpotato.core._base.updater.main.os.stat') as mock_stat, \
-             patch('couchpotato.core._base.updater.main.os.chmod') as mock_chmod:
-            mock_stat.return_value.st_mode = 0o100444  # r--r--r--
-
-            updater.removeDir(target)  # must not raise -- second attempt succeeds
-
-        assert mock_chmod.call_count == 1
-        mode_arg = mock_chmod.call_args[0][1]
-        assert mode_arg & stat.S_IWUSR, 'owner write must be granted'
-        assert not (mode_arg & stat.S_IWGRP), 'must not widen group write'
-        assert not (mode_arg & stat.S_IWOTH), 'must not widen other write'
-        assert mode_arg != 0o777
-
     def test_none_filename_propagates_without_chmod(self, tmp_path):
         updater = _bare_updater()
         target = str(tmp_path / 'locked')
@@ -160,3 +133,104 @@ class TestRemoveDirPermissionRetry:
 
         mock_rmtree.assert_called_once_with(target)
         mock_chmod.assert_not_called()
+
+
+class TestRemoveDirGrantsTraversalNotJustWrite:
+    """2026-08-11 review finding, and a correction to this file's own prior
+    instruction: narrowing the chmod to owner-WRITE-only
+    (`current_mode | stat.S_IWUSR`) regressed `removeDir`'s actual purpose.
+    `shutil.rmtree` needs owner read+write+EXECUTE on a directory to list
+    and unlink its contents -- write alone is not enough to descend into or
+    clear it. Measured on a real filesystem, no mocks (uid 501, macOS
+    APFS):
+
+        mode 0o500  S_IWUSR -> deleted OK        S_IRWXU -> deleted OK
+        mode 0o400  S_IWUSR -> FAILED             S_IRWXU -> deleted OK
+        mode 0o000  S_IWUSR -> FAILED             S_IRWXU -> deleted OK
+
+    `stat.S_IRWXU` (owner rwx) still never touches group/other -- that was
+    the actual point of the S2612 finding (0o777 made the path WORLD-
+    writable), not "grant the single narrowest bit possible". Do not
+    re-narrow this to `S_IWUSR`: it looks more conservative and is actually
+    broken for the directories this function exists to remove.
+
+    The PREVIOUS version of this test (removed here) mocked
+    `shutil.rmtree`, `os.stat` AND `os.chmod`, so its four assertions held
+    equally for the broken `S_IWUSR` and the correct `S_IRWXU` -- it could
+    not have failed on this regression, because it measured the argument
+    handed to a fake rather than whether anything became removable.
+    Rewritten against a real filesystem: build a genuinely locked
+    directory, call the real `removeDir` with nothing mocked, and assert
+    the tree is actually gone.
+
+    Root bypasses permission checks entirely (plausible for the Alpine
+    container image this project ships, which may run as root) -- a
+    permission-based test would pass unconditionally and silently prove
+    nothing there, so it is skipped in that case rather than reported as a
+    false green.
+    """
+
+    @pytest.fixture(autouse = True)
+    def _skip_as_root(self):
+        if hasattr(os, 'geteuid') and os.geteuid() == 0:
+            pytest.skip('running as root: file/directory modes are not enforced')
+
+    @pytest.mark.parametrize('locked_mode', [0o500, 0o400, 0o000], ids = ['0o500', '0o400', '0o000'])
+    def test_directory_is_actually_removed_regardless_of_starting_mode(self, tmp_path, locked_mode):
+        updater = _bare_updater()
+
+        tree = tmp_path / 'locked'
+        tree.mkdir()
+        (tree / 'file.txt').write_text('content')
+        os.chmod(str(tree), locked_mode)
+
+        try:
+            updater.removeDir(str(tree))
+        finally:
+            # Best-effort: if the assertion below is about to fail, leave
+            # tmp_path in a state its own teardown can still clean up.
+            if tree.exists():
+                os.chmod(str(tree), 0o700)
+
+        assert not tree.exists(), (
+            'removeDir must actually delete a directory whose permissions it can fix -- '
+            'S_IWUSR alone cannot, because rmtree needs owner EXECUTE to traverse a directory too'
+        )
+
+    def test_never_grants_group_or_other_write(self, tmp_path, monkeypatch):
+        """Group/other write must never be granted -- 0o777 was the actual
+        S2612 defect. Captures every mode actually passed to os.chmod on a
+        real (failing-then-fixed) directory, without mocking shutil.rmtree
+        itself."""
+        updater = _bare_updater()
+
+        tree = tmp_path / 'locked'
+        tree.mkdir()
+        (tree / 'file.txt').write_text('content')
+        os.chmod(str(tree), 0o400)
+
+        captured_modes = []
+        real_chmod = os.chmod
+
+        def spy_chmod(path, mode, *args, **kwargs):
+            captured_modes.append(mode)
+            return real_chmod(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr('couchpotato.core._base.updater.main.os.chmod', spy_chmod)
+
+        try:
+            updater.removeDir(str(tree))
+        finally:
+            # Best-effort: a mutated implementation under test can leave the
+            # directory locked (0o400), which pytest's own tmp_path cleanup
+            # cannot remove either -- widen it back so teardown succeeds
+            # regardless of what this test's assertions find.
+            if tree.exists():
+                os.chmod(str(tree), 0o700)
+
+        assert captured_modes, 'chmod should have been called to fix the permission error'
+        for mode in captured_modes:
+            assert not (mode & stat.S_IWGRP), 'must not widen group write'
+            assert not (mode & stat.S_IWOTH), 'must not widen other write'
+            assert mode != 0o777
+        assert not tree.exists(), 'the directory must actually end up removed'
