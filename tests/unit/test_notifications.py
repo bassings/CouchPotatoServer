@@ -211,17 +211,34 @@ class TestDiscord:
         assert result is False
 
     def test_notify_connection_error(self):
-        """Discord notifier has a bug: UnboundLocalError on 'r' when requests.post raises.
-        This test documents the bug — it raises instead of returning False."""
+        """A request that never returns a response fails gracefully.
+
+        This test used to assert `pytest.raises(UnboundLocalError)`,
+        documenting a bug instead of fixing it: the `except` block logged
+        `r.status_code`, but `r` is only bound if `requests.post` RETURNS,
+        so any raise inside the call blew up while building the log line.
+
+        That stayed latent while nothing forced the call to raise. Adding
+        a request timeout made it reachable on precisely the case the
+        timeout exists for -- an unresponsive webhook host -- so the
+        pinned-bug assertion had to become a real one. `notify` returns
+        False and says why.
+        """
         d = self._make()
         with patch.object(d, 'conf', side_effect=lambda k, **kw: {
             'webhook_url': 'https://discord.com/api/webhooks/123/abc',
             'include_imdb': False, 'bot_name': 'CP',
             'avatar_url': '', 'discord_tts': False
         }.get(k, kw.get('default', ''))), \
-             patch('couchpotato.core.notifications.discord.requests.post', side_effect=Exception('timeout')):
-            with pytest.raises(UnboundLocalError):
-                d.notify(message='test')
+             patch('couchpotato.core.notifications.discord.requests.post',
+                   side_effect=Exception('timeout')), \
+             patch('couchpotato.core.notifications.discord.log') as mock_log:
+            result = d.notify(message='test')
+
+        assert result is False
+        assert mock_log.warning.called, 'the failure must be logged, not swallowed'
+        assert 'timeout' in str(mock_log.warning.call_args), (
+            'the log must name the exception that was actually caught')
 
 
 # ===========================================================================
