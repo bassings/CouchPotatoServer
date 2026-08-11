@@ -99,6 +99,23 @@ class TestOnlyProvablyIrrelevantPathsSkip:
         """One relevant file among documentation is still a reason to run."""
         assert classify(repo, 'docs/notes.md', 'couchpotato/core/thing.py') == 0
 
+    @pytest.mark.parametrize('path', [
+        'libs/README.md',
+        'couchpotato/core/plugins/renamer/NOTES.md',
+    ])
+    def test_a_nested_markdown_file_RUNS_them(self, repo, path):
+        """`[^/]*\\.md$` is root-level only, and that is deliberate.
+
+        A `.md` sitting inside a code tree has not been reasoned about, so it
+        takes the safe direction. This pins it: broadening the pattern to a
+        bare `\\.md$` to make "markdown always skips" true would fail here,
+        which is the point -- the comment in the script says do not do that,
+        and a comment cannot fail.
+        """
+        assert classify(repo, path) == 0, (
+            '%s skipped, so the .md branch is no longer root-only' % path
+        )
+
     def test_an_unrecognised_path_RUNS_them(self, repo):
         """The direction that matters. Under the allowlist an unknown path
         skipped; now it runs, which is how every other uncertainty in this

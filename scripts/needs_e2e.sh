@@ -59,6 +59,12 @@ fi
 # What changed is the failure DIRECTION -- an unrecognised path now runs the
 # suites instead of skipping them, which is how every other uncertainty in
 # this script already resolves.
+#
+# `[^/]*\.md$` is ROOT-LEVEL markdown only -- it matches `README.md` but not
+# `libs/README.md`, because `[^/]*` cannot cross a directory separator. That
+# is deliberate, not an oversight: a nested `.md` sits inside a code tree we
+# have not reasoned about, so it runs the suites. Do not "fix" this to a bare
+# `\.md$` without checking what else that would start skipping.
 SKIP_PATTERNS='^(docs/|specs/|QA/|tests/unit/|\.claude/|[^/]*\.md$)'
 
 # Files that could NOT be shown to be irrelevant.
