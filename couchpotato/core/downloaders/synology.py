@@ -12,6 +12,16 @@ log = CPLog(__name__)
 
 autoload = 'Synology'
 
+# python:S113 -- requests.post with no timeout can hang the calling thread
+# forever against an unresponsive NAS, which on an unattended home server
+# reads as "downloads silently stopped" with nothing in the log. 60s rather
+# than the house default of 30s (Plugin.urlopen, rtorrent_.py's
+# _RPC_TIMEOUT): _req also carries file uploads (the nzb/torrent payload
+# itself), so the shorter value risks breaking a slow-but-working setup,
+# which would be a fix that causes an outage. Matches sabnzbd.py's own
+# API-call timeout.
+_REQUEST_TIMEOUT = 60
+
 
 class Synology(DownloaderBase):
 
@@ -182,7 +192,7 @@ class SynologyRPC:
     def _req(self, url, args, files = None):
         response = {'success': False}
         try:
-            req = requests.post(url, data = args, files = files, verify = self.verify)
+            req = requests.post(url, data = args, files = files, verify = self.verify, timeout = _REQUEST_TIMEOUT)
             req.raise_for_status()
             response = json.loads(req.text)
             if response['success']:

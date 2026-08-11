@@ -8,6 +8,16 @@ scheme and the verification flag are tested and fixed together.
 Reachability (per specs/REMEDIATION-2026-08.md T17): the downloader ships
 disabled by default, so this affects operators who have deliberately turned
 it on -- exactly the set who typed a password into it.
+
+T17 follow-up C (python:S113): the same `requests.post` call had no timeout,
+so an unresponsive NAS parks the calling thread forever -- on an unattended
+home server, that reads as "downloads silently stopped" with nothing in the
+log. Fixed with a named module-level constant rather than a bare number, at
+60s (matching sabnzbd.py's API-call timeout) rather than the house default
+of 30s (Plugin.urlopen, rtorrent_.py's _RPC_TIMEOUT), because _req also
+carries file uploads (the nzb/torrent payload itself) -- the shorter value
+risks breaking a slow-but-working setup, which would be a fix that causes
+an outage.
 """
 from unittest.mock import MagicMock, patch
 
@@ -86,6 +96,31 @@ class TestSynologyRPCVerifyPassedToRequests:
             rpc._login()
 
         assert mock_post.call_args.kwargs['verify'] is True
+
+
+class TestSynologyRPCTimeout:
+    """python:S113 -- requests.post with no timeout can hang forever against
+    an unresponsive NAS. Assert on the actual value reaching requests.post,
+    not merely that the kwarg is present: a guard that only checks presence
+    cannot tell a real 60s bound from an accidental 0."""
+
+    def test_login_passes_the_named_timeout_constant(self):
+        rpc = SynologyRPC('mynas', 5000, username = 'op', password = 'hunter2')
+
+        mock_response = MagicMock()
+        mock_response.text = '{"success": true, "data": {"sid": "abc"}}'
+        with patch.object(synology_module.requests, 'post', return_value = mock_response) as mock_post:
+            rpc._login()
+
+        assert mock_post.call_args.kwargs['timeout'] == synology_module._REQUEST_TIMEOUT
+        assert mock_post.call_args.kwargs['timeout'] == 60
+
+    def test_timeout_constant_is_the_longer_house_value(self):
+        """60s, not the 30s house default (Plugin.urlopen, rtorrent's
+        _RPC_TIMEOUT) -- _req carries file uploads (the nzb/torrent
+        payload), so the shorter value risks breaking a slow-but-working
+        setup."""
+        assert synology_module._REQUEST_TIMEOUT == 60
 
 
 # ===========================================================================
