@@ -14,6 +14,14 @@ exclude = [
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "UP", "B"]
+# S113 only (requests call with no timeout), not the whole S (bandit) family:
+# a full `select = [..., "S"]` was measured at 148 findings across the repo,
+# which would fail the build on merit-unrelated noise -- exactly the
+# "make the number green" pressure CLAUDE.md's SonarQube rule (§3) warns
+# against, just moved to ruff. S113 alone is narrow, unambiguous (a hang has
+# one cause: no timeout), and was the rule that would have caught T17's
+# Synology/Discord/Telegram findings before they needed a manual scan.
+extend-select = ["S113"]
 
 ignore = [
     # Bare except — legacy code uses these everywhere
