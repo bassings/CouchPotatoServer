@@ -383,21 +383,59 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
         call rather than the house default of 30, because `_req` uploads the
         nzb/torrent payload and a too-short timeout would be a fix that
         causes an outage.
-      - `ruff S202`, `updater/main.py:370,374`: `tarfile.extractall()`, the
-        path-traversal class. **Measured, not assumed: a false positive on
-        this project.** Built a tar containing a `../escaped.txt` member and
-        ran the repo's exact call on Python 3.14:
+      - `ruff S202`, `updater/main.py:370` and `:374`: the path-traversal
+        class. **Measured, not assumed: a false positive at both lines —
+        but for two DIFFERENT reasons, and an earlier version of this entry
+        got that wrong.** It described both lines as `tarfile.extractall()`
+        and gave them a single reopen condition, having measured only the
+        tar one. `:370` is `zip_file.extractall()`; only `:374` is tarfile.
+        Both were then driven properly:
 
-            extractall RAISED: OutsideDestinationError: '../escaped.txt'
-            would be extracted to '.../escaped.txt', which is outside the
-            destination
+        `:374`, tarfile — a tar carrying a `../escaped.txt` member:
 
-        3.14 applies the `data` extraction filter by default, so the
-        traversal is already refused, and 3.14 is what production ships and
-        the only version CI tests. Deliberately NOT changed — adding
-        `filter='data'` would be harmless but justified only by "a scanner
-        said so". **Reopen if this project ever supports Python < 3.14**, at
-        which point the call becomes a genuine arbitrary-file-write.
+            OutsideDestinationError: '../escaped.txt' would be extracted to
+            '.../escaped.txt', which is outside the destination
+
+        Python 3.14 applies the `data` extraction filter by default, and
+        3.14 is what production ships and the only version CI tests.
+        **Reopen `:374` if this project ever supports Python < 3.14**, at
+        which point that call becomes a genuine arbitrary-file-write.
+
+        `:370`, zipfile — a zip carrying both `../escaped.txt` and
+        `/abs_escaped.txt`: both landed INSIDE the destination
+        (`out/escaped.txt`, `out/abs_escaped.txt`), and neither
+        `./escaped.txt` nor `/abs_escaped.txt` was created. `zipfile`
+        sanitises member names itself and has done since long before 3.14,
+        so **the Python-version condition does NOT apply to this line** —
+        it is contained by the library regardless of interpreter version.
+
+        Neither changed. Adding `filter='data'` would be harmless but is
+        justified only by "a scanner said so". The lesson worth keeping is
+        the doc error rather than the finding: citing two lines from one
+        measurement produced a confidently wrong reopen condition, which is
+        the failure mode §7 warns about — a wrong doc costs more than a
+        vague one.
+
+      **Spec bug (recorded, per the harness rule that a review finding with
+      no AC behind it is a spec bug).** T17 was written, built and reviewed
+      with **zero** `AC-<LENS>-<n>` acceptance criteria, so the review had
+      only the task's prose to check the built thing against. Every finding
+      below therefore had to be discovered rather than verified against a
+      contract, including the two serious ones. Tasks added mid-plan skip
+      the planning cycle, which is exactly when criteria get written; that
+      is the gap, not this task in particular.
+
+      **Carried forward, not fixed here.** `removeDir`'s single retry can
+      now raise where the old unbounded recursion might eventually have
+      succeeded, and it sits AFTER `replaceWith()` has already overwritten
+      the application directory (`updater/main.py:380`), before
+      `version_file` is written (`:383`). The updater then believes it is
+      still on the old version and re-applies next check. Speculative: a
+      multi-entry blocked tree was never constructed, so the frequency is
+      unmeasured. Non-destructive on the data-risk ranking (the recoverable
+      end), which is why it is recorded rather than fixed under a security
+      task. Reachable only via the SOURCE updater, which the Docker
+      deployment does not use.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
