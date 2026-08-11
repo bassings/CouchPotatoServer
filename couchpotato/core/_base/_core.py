@@ -50,6 +50,18 @@ class Core(Plugin):
     #    to exercise `md5Password` in isolation (`test_password_storage.py`,
     #    `test_auth_required_gate.py`) -- an instance attribute set only in
     #    `__init__` would make those raise `AttributeError` on first use.
+    #
+    # The trade that buys, stated so a future test does not trip on it:
+    # being class-scoped, every `Core` shares this, so the flag a bare
+    # `Core.__new__(Core)` leaves behind sits on that thread's slot until
+    # something consumes it -- `__init__`'s reset below only runs for real
+    # `Core()` construction. Harmless in production, where the only writer
+    # is `md5Password` and it assigns unconditionally on every save. It
+    # matters for a TEST that calls `rotateSessionSecretAfterSave()` without
+    # first calling `md5Password` on the same thread: it would inherit
+    # whatever an unrelated earlier test left, and become order-dependent.
+    # Set the intent explicitly in such a test rather than relying on the
+    # flag being false.
     _pending_rotation = threading.local()
 
     def __init__(self):

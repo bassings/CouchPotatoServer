@@ -530,6 +530,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Assigned unconditionally (`bool(value)`, never `if value: ... = True`),
       so a failed SET cannot leave a stale True for a later CLEAR to inherit.
 
+      **Residual window, recorded not fixed: T21.** A kill between the
+      atomic `save()` and the rotation's database write leaves the new
+      password live and the old signing secret intact, so a password change
+      that DID persist revokes nothing until the cookie's own expiry. Much
+      narrower than what this task fixed (a precise instant, versus any I/O
+      error) and nothing is lost or locked out, but it is silent. Design and
+      severity in T21.
+
       Existing `.after` consumers elsewhere (`automation.py`, `manage.py`,
       `updater/main.py`, `searcher/base.py` -- all cron-recompute hooks
       registered on a specific `<section>.<option>.after`) are double-fired by
@@ -756,6 +764,49 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       cleanup), so a third adjacent change to the same file, altering what
       `notify` returns, is exactly the shape that keeps going wrong. It
       gets its own task and its own tests.
+
+- [ ] T21: a kill between the password save and the rotation loses the revocation — state: queued (no deps)
+
+      Raised on #248 (T14) by two reviewers independently, one rating it P1
+      and one Low. Recorded rather than folded in, because T14's diff already
+      reshapes the auth path and this needs a startup reconciliation of its
+      own.
+
+      T14 moved the rotation AFTER `self.save()` commits, which fixes the
+      common case: any I/O error on the save no longer signs every device out
+      for a password change that was never persisted. The residual window is
+      narrower and the opposite way round. If the process is killed between
+      `save()` returning (`settings.py:512`, `config.ini` now holds the NEW
+      password) and `rotate_session_secret()` completing its database write,
+      a restart finds the new password live and the OLD signing secret
+      intact. `ensure_session_secret` reuses it, so a cookie captured before
+      the change stays valid until its own expiry — 24 hours, or 30 days with
+      "remember me". A password change that DID persist silently revoked
+      nothing, which is the AC-SEC-38 guarantee the feature exists to provide.
+
+      Severity, honestly: much smaller than what T14 fixed. That fired on any
+      save failure; this needs a kill inside a specific instant between two
+      writes. Nobody is locked out and nothing is lost. But it is silent, and
+      the operator's belief that they revoked access is exactly what they
+      acted on.
+
+      **Fix shape, and the reason this is tractable rather than a
+      two-phase-commit rabbit hole:** `Settings.save` is already atomic
+      (temp file, fsync, rename — `settings.py:268`), and `md5Password`
+      already writes a second key (`auth_required`) into the in-memory parser
+      specifically so the caller's single `save()` persists both together or
+      neither. A rotation marker can ride the same write: set
+      `session_rotation_pending` in the parser next to `auth_required`, so
+      the one atomic save persists the new password AND the intent to
+      rotate. `rotateSessionSecretAfterSave` clears it after rotating.
+      Startup reconciles: marker present means the rotation did not complete,
+      so rotate now.
+
+      That does not eliminate a window so much as move it somewhere
+      recoverable — a kill before the atomic save leaves neither the password
+      nor the marker, which is correct. Prove it by killing between the two
+      writes, not by reasoning about it: the previous three attempts in this
+      area all failed on harnesses that could not distinguish the states.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
 
