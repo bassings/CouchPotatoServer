@@ -1,4 +1,5 @@
 from base64 import b32decode, b16encode
+import os
 import random
 import re
 
@@ -116,6 +117,26 @@ class DownloaderBase(Provider):
 
     def processComplete(self, release_download, delete_files):
         return
+
+    def getVerifySsl(self):
+        """ Whether TLS certificate verification should be performed for
+        this downloader's https connections.
+
+        A downloader with no `ssl_verify` config option at all (self.conf
+        returns the `default` we pass, per Plugin.conf's contract) must
+        fail OPEN to verification-on -- only an explicit false value turns
+        it off. Getting this backwards would silently disable certificate
+        checking for every downloader that inherits this and never defines
+        the setting. """
+        if not self.conf('ssl_verify', default = True):
+            return False
+
+        # Use a CA bundle if one is configured and actually present on disk.
+        ca_bundle = self.conf('ssl_ca_bundle')
+        if ca_bundle and os.path.exists(ca_bundle):
+            return ca_bundle
+
+        return True
 
     def isCorrectProtocol(self, protocol):
         is_correct = protocol in self.protocol

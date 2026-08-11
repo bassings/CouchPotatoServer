@@ -48,7 +48,8 @@ class Synology(DownloaderBase):
 
         try:
             # Send request to Synology
-            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'), self.conf('destination'))
+            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'), self.conf('destination'),
+                                ssl = self.conf('ssl'), verify = self.getVerifySsl())
             if data['protocol'] == 'torrent_magnet':
                 log.info('Adding torrent URL %s', data['url'])
                 response = srpc.create_task(url = data['url'])
@@ -71,7 +72,8 @@ class Synology(DownloaderBase):
 
         host = cleanHost(self.conf('host'), protocol = False).split(':')
         try:
-            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'))
+            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'),
+                                ssl = self.conf('ssl'), verify = self.getVerifySsl())
             test_result = srpc.test()
         except Exception:
             return False
@@ -103,17 +105,24 @@ class SynologyRPC:
 
     """SynologyRPC lite library"""
 
-    def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None):
+    def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None,
+                 ssl = False, verify = True):
 
         super().__init__()
 
-        self.download_url = 'http://%s:%s/webapi/DownloadStation/task.cgi' % (host, port)
-        self.auth_url = 'http://%s:%s/webapi/auth.cgi' % (host, port)
+        scheme = 'https' if ssl else 'http'
+        self.download_url = '%s://%s:%s/webapi/DownloadStation/task.cgi' % (scheme, host, port)
+        self.auth_url = '%s://%s:%s/webapi/auth.cgi' % (scheme, host, port)
         self.sid = None
         self.username = username
         self.password = password
         self.destination = destination
         self.session_name = 'DownloadStation'
+        # Certificate verification for requests.post -- True/False, or a CA
+        # bundle path. Default True: this carries the operator's username
+        # and password on the SYNO.API.Auth login, so a caller that forgets
+        # to pass this explicitly must not silently disable verification.
+        self.verify = verify
 
     def _login(self):
         if self.username and self.password:
@@ -137,7 +146,7 @@ class SynologyRPC:
     def _req(self, url, args, files = None):
         response = {'success': False}
         try:
-            req = requests.post(url, data = args, files = files, verify = False)
+            req = requests.post(url, data = args, files = files, verify = self.verify)
             req.raise_for_status()
             response = json.loads(req.text)
             if response['success']:
@@ -222,6 +231,29 @@ config = [{
                     'default': 0,
                     'type': 'enabler',
                     'radio_group': 'nzb,torrent',
+                },
+                {
+                    'name': 'ssl',
+                    'label': 'SSL Enabled',
+                    'default': 0,
+                    'type': 'bool',
+                    'advanced': True,
+                    'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>',
+                },
+                {
+                    'name': 'ssl_verify',
+                    'label': 'SSL Verify',
+                    'default': 1,
+                    'type': 'bool',
+                    'advanced': True,
+                    'description': 'Verify SSL certificate on https connections',
+                },
+                {
+                    'name': 'ssl_ca_bundle',
+                    'label': 'SSL CA Bundle',
+                    'type': 'string',
+                    'advanced': True,
+                    'description': 'Path to a directory (or file) containing trusted certificate authorities',
                 },
                 {
                     'name': 'host',
