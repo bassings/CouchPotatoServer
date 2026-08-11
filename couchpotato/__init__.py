@@ -1540,7 +1540,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             log.error('Sign-out FAILED: the session signing secret could not '
                       'be rotated, so every existing session is STILL VALID on '
                       'every device. Nothing has been signed out. Check that '
-                      'the database is writable and try again. %s',
+                      'the database is readable and writable and try again. %s',
                       traceback.format_exc())
             # A real page rather than the plain-text 500 this used to be
             # (spec gap 7). The BEHAVIOUR is unchanged and deliberately so --
