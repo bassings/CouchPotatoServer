@@ -157,7 +157,10 @@ class SynologyRPC:
                 log.warning, 'synology_plaintext_credentials',
                 'Synology login will send the configured username and '
                 'password over an unencrypted connection. Enable the "ssl" '
-                'setting to protect them.',
+                'setting (under Advanced) to protect them -- this also '
+                'requires changing the port in the "host" setting to '
+                'DSM\'s https port, usually 5001, or the connection will '
+                'fail.',
                 now = now,
             )
         elif scheme == 'https' and not verify:
@@ -286,7 +289,9 @@ config = [{
                     'advanced': True,
                     'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>. '
                                    'Leaving this off sends your username and password to DownloadStation '
-                                   '<strong>unencrypted</strong>.',
+                                   '<strong>unencrypted</strong>. Also requires changing the port in the '
+                                   '<strong>host</strong> setting to DSM\'s https port (usually <strong>5001</strong>) '
+                                   '-- with the default plaintext port, https connections will fail.',
                 },
                 {
                     'name': 'ssl_verify',

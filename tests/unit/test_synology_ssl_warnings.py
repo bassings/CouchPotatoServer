@@ -31,10 +31,43 @@ credentials and verify-disabled don't mask each other, with `now` injected
 through `SynologyRPC`'s own `now=` parameter rather than sleeping or
 patching `time.monotonic` (patching the clock has already produced a
 recorded false positive on this repo -- it also freezes `date.today()`).
+
+T17 follow-up D (2026-08-11 review, finding 4): the plaintext-credentials
+warning told the operator to "Enable the ssl setting", but `host` defaults
+to `localhost:5000` -- DSM's PLAINTEXT port -- and DSM serves https on 5001.
+Flipping only `ssl` produces `https://host:5000`, which `download()` cannot
+reach and swallows as "Exception while adding torrent", returned as a bare
+False. An operator who does exactly what the warning says gets broken
+downloads with no diagnosis, and the rational response is to turn `ssl`
+back off -- landing them back in the state the warning existed to move them
+out of. The warning now names the port change explicitly (never the
+operator's OWN host value -- 5001 is DSM's documented default, not
+configuration read back to them) and that the setting sits behind the
+Advanced toggle, which defaults off.
+
+T17 follow-up E (2026-08-11 review, finding 5): `ssl_verify = ` (present but
+BLANK in config.ini) coerces to False -- verification OFF -- independently
+measured by three review lenses against a REAL `Settings` instance and
+`config.ini`, not a fake `conf()` lambda. `Settings.get()` only returns the
+caller's `default` on the EXCEPTION path (the option genuinely absent), so
+`getVerifySsl()`'s `default = True` fail-open covers a MISSING option but
+not a blanked one -- a present-but-empty value reaches
+`_coerce_value('', 'bool')`, which maps `''` to `False`.
+
+This is deliberately NOT a bug being fixed here: the warning is the answer
+to a blank value ending up unsafe, not more parsing (blank and explicit-off
+are indistinguishable after coercion, so there is nothing to parse
+differently). What follows PINS that answer against a real Settings/
+config.ini, so a future change to `_coerce_value` that flips this in either
+direction is caught here rather than discovered in production. The upgrade
+path was separately confirmed safe and is not retested here: with all three
+keys absent, `ssl` reads None (http, unchanged) and `ssl_verify` reads True.
 """
 import logging
 
-from couchpotato.core.downloaders.synology import SynologyRPC
+import pytest
+
+from couchpotato.core.downloaders.synology import Synology, SynologyRPC
 
 # Deliberately distinctive so a leak can't hide as a substring of unrelated
 # log text (a short username/password like 'op'/'x' could coincidentally
@@ -55,6 +88,25 @@ class TestPlaintextCredentialWarning:
             SynologyRPC(_HOST, 5000, username = _USERNAME, password = _PASSWORD, ssl = False)
 
         assert len(_warning_records(caplog)) == 1
+
+    def test_warning_explains_the_port_must_change_too(self, caplog):
+        """The remediation the warning asks for ("enable ssl") breaks
+        downloads on its own: host defaults to DSM's plaintext port 5000,
+        DSM serves https on 5001, and flipping only `ssl` produces
+        `https://host:5000`, which fails. An operator who does exactly what
+        the warning says without also changing the port ends up with
+        broken downloads and no diagnosis -- worse than the warning never
+        having fired."""
+        with caplog.at_level(logging.WARNING):
+            SynologyRPC(_HOST, 5000, username = _USERNAME, password = _PASSWORD, ssl = False)
+
+        message = _warning_records(caplog)[0].getMessage()
+        assert '5001' in message, 'must name the https port DSM actually needs'
+        assert 'port' in message
+        assert 'Advanced' in message, (
+            'the setting is behind the Advanced toggle (default off) -- '
+            '"enable ssl" is not self-evidently findable otherwise'
+        )
 
     def test_no_warning_for_plaintext_with_no_credentials_configured(self, caplog):
         with caplog.at_level(logging.WARNING):
@@ -204,3 +256,48 @@ class TestSuppressionOfRepeatedWarnings:
         assert _USERNAME not in caplog.text
         assert _PASSWORD not in caplog.text
         assert _HOST not in caplog.text
+
+
+class TestBlankSslVerifyMeansVerificationOff:
+    """Finding 5 -- pinned against a REAL Settings instance and config.ini,
+    matching how the three review lenses measured it, not a fake conf()
+    lambda that could quietly disagree with the real coercion layer."""
+
+    @pytest.fixture
+    def synology_with_blank_ssl_verify(self, config_file):
+        from couchpotato.core.settings import Settings
+        from couchpotato.environment import Env
+
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from env_helper import env_restored  # noqa: E402
+
+        with env_restored():
+            s = Settings()
+            s.setFile(config_file)
+            s.addSection('synology')
+            s.p.set('synology', 'ssl', '1')
+            s.p.set('synology', 'ssl_verify', '')  # present but BLANK
+            s.setType('synology', 'ssl', 'bool')
+            s.setType('synology', 'ssl_verify', 'bool')
+            Env.set('settings', s)
+
+            yield Synology.__new__(Synology)
+
+    def test_blank_ssl_verify_coerces_to_verification_off(self, synology_with_blank_ssl_verify):
+        assert synology_with_blank_ssl_verify.getVerifySsl() is False
+
+    def test_blank_ssl_verify_fires_the_verification_disabled_warning(
+        self, synology_with_blank_ssl_verify, caplog,
+    ):
+        with caplog.at_level(logging.WARNING):
+            SynologyRPC(
+                'mynas', 5001, ssl = True,
+                verify = synology_with_blank_ssl_verify.getVerifySsl(),
+                now = 0,
+            )
+
+        records = _warning_records(caplog)
+        assert len(records) == 1
+        assert 'ssl_verify' in records[0].getMessage()
