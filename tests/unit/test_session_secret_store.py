@@ -675,8 +675,28 @@ class TestFailClosedWhenTheSecretIsUnavailable:
 
     @pytest.fixture
     def broken_store(self, env, monkeypatch):
-        monkeypatch.setattr(Settings, 'getProperty',
-                            lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
+        """Breaks the read at the ADAPTER, the level every consumer shares.
+
+        `Settings.getProperty` calls `db.get('property', ...)`, and
+        `ensure_session_secret`'s `_session_secret_row` calls `db.query('property',
+        ...)` directly -- both end up in `SQLiteAdapter._query_index` for a
+        named index. Patching `_query_index` therefore breaks both real read
+        paths from one fault, the way a genuinely unreadable store would.
+
+        This is deliberately NOT a patch of `Settings.getProperty` itself:
+        that method's own `except Exception:` swallows whatever `_query_index`
+        raises and returns None, so patching `getProperty` to raise bypasses
+        that handler and never gets exercised by a real fault -- which is
+        exactly the defect T13 removed `session_secret_store_is_readable()`
+        for. A version of this fixture that patched `getProperty` let
+        `test_login_issues_no_cookie_when_the_secret_cannot_be_read` below pass
+        while a login against a raising store actually issued a cookie: proven
+        by running it after T13's other changes landed, before this fixture
+        was fixed.
+        """
+        monkeypatch.setattr(
+            SQLiteAdapter, '_query_index',
+            lambda self, *args, **kwargs: (_ for _ in ()).throw(RuntimeError('store down')))
         return env
 
     def test_login_issues_no_cookie_when_the_secret_cannot_be_read(self, broken_store):
@@ -690,6 +710,39 @@ class TestFailClosedWhenTheSecretIsUnavailable:
             'unreadable, so it was signed with something that is not a secret'
         )
         assert 'set-cookie' not in response.headers
+
+    def test_login_against_a_raising_store_creates_no_secret(self, env, monkeypatch):
+        """The other half of AC-SEC-33: no cookie is necessary but not
+        sufficient. Writing a fresh secret over a row that could not be read
+        would invalidate every OTHER live session on the strength of a
+        transient fault, even though this particular login gets no cookie --
+        so this is pinned independently rather than inferred from the cookie
+        assertion above.
+
+        Checks `secret_rows` before patching `_query_index` and again after
+        undoing the patch, deliberately: `secret_rows` itself reads through
+        `_query_index`, so evaluating it while the patch is still active would
+        raise instead of asserting.
+        """
+        from couchpotato.core.helpers.variable import md5
+        env.data['password'] = md5('hunter2')
+
+        assert secret_rows(env.db) == [], (
+            'a secret already existed before the login attempt, so this test '
+            'cannot tell a write from a pre-existing row'
+        )
+
+        monkeypatch.setattr(
+            SQLiteAdapter, '_query_index',
+            lambda self, *args, **kwargs: (_ for _ in ()).throw(RuntimeError('store down')))
+
+        client().post('/login/', data={'username': 'admin', 'password': 'hunter2'})
+
+        monkeypatch.undo()
+        assert secret_rows(env.db) == [], (
+            'a login against a store that cannot be READ wrote a secret to it '
+            '-- signing every device out on the strength of a transient fault'
+        )
 
     def test_a_previously_valid_cookie_is_refused_when_the_secret_cannot_be_read(self, env, monkeypatch):
         secret = ensure_session_secret(env.db)

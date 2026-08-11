@@ -130,6 +130,12 @@ def _session_not_created_page(client, settings):
     `render_login_page` directly: the point of this guard is that some real
     path produces the message, and a direct call would prove only that the
     constant exists.
+
+    `ensure_session_secret` is patched to raise rather than the store itself,
+    because this test is about the MESSAGE the 503 page carries once secret
+    creation has failed, not about which real fault fails it -- that guard
+    lives in `test_session_secret_store.py::TestFailClosedWhenTheSecretIsUnavailable`,
+    against a genuinely broken `SQLiteAdapter`.
     """
     import couchpotato
     from couchpotato.core.helpers.variable import md5
@@ -137,14 +143,15 @@ def _session_not_created_page(client, settings):
     settings['password'] = md5(PASSWORD)
 
     original_get = couchpotato.get_session_secret
-    original_readable = couchpotato.session_secret_store_is_readable
+    original_ensure = couchpotato.ensure_session_secret
     couchpotato.get_session_secret = lambda: None
-    couchpotato.session_secret_store_is_readable = lambda: False
+    couchpotato.ensure_session_secret = lambda *args, **kwargs: (
+        (_ for _ in ()).throw(RuntimeError('store down')))
     try:
         response = client.post('/login/', data={'username': '', 'password': PASSWORD})
     finally:
         couchpotato.get_session_secret = original_get
-        couchpotato.session_secret_store_is_readable = original_readable
+        couchpotato.ensure_session_secret = original_ensure
 
     assert response.status_code == 503, response.status_code
     return response
@@ -649,13 +656,19 @@ class TestACorrectPasswordThatCannotStartASessionSaysSo:
     """
 
     def _login_with_a_broken_store(self, client, monkeypatch, settings):
+        """`ensure_session_secret` is patched to raise rather than the store
+        itself: these tests are about what the PAGE says once creation has
+        failed, not about which fault fails it (that is
+        `test_session_secret_store.py::TestFailClosedWhenTheSecretIsUnavailable`,
+        against a genuinely broken `SQLiteAdapter`)."""
         from couchpotato.core.helpers.variable import md5
         settings['password'] = md5(PASSWORD)
 
         import couchpotato
         monkeypatch.setattr(couchpotato, 'get_session_secret', lambda: None)
-        monkeypatch.setattr(couchpotato, 'session_secret_store_is_readable',
-                            lambda: False)
+        monkeypatch.setattr(
+            couchpotato, 'ensure_session_secret',
+            lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('store down')))
 
         return client.post('/login/', data={'username': '', 'password': PASSWORD})
 

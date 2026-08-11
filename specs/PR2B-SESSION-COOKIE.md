@@ -511,9 +511,9 @@ the lockout shape this spec exists to prevent, arriving by a different door.
   (AC-SEC-33) red on the first attempt — correctly, because creating a fresh
   secret over a row nobody can read signs every device out on the strength of a
   transient fault, and AC-ARCH-6 forbids the store's failure being "fixed" by
-  writing. The boundary is `session_secret_store_is_readable()`, which probes
-  down the SAME path `get_session_secret` uses; a probe down a different path
-  answers a different question.
+  writing. The boundary was `session_secret_store_is_readable()`, which probed
+  down the SAME path `get_session_secret` uses. **T13 (2026-08) found that
+  boundary could not do its job and removed it — see D17.**
 
 - **The rejection reasons are logged at INFO, not ERROR, and each carries its
   own suppression key.** INFO because a refused cookie is the ordinary outcome
@@ -596,8 +596,10 @@ writes a fresh secret over a row nobody can read, signing every live session out
 on the strength of a transient fault.
 
 **Amended:** the bootstrap fires only when the store is readable and simply has
-no secret in it. Implemented as `if not secret and
-session_secret_store_is_readable():` in `login_post`.
+no secret in it. Implemented (at the time) as `if not secret and
+session_secret_store_is_readable():` in `login_post`. **Superseded by D17: the
+"readable" half of that condition turned out to be unimplementable as a
+separate check, and the code no longer has one.**
 
 Recorded as a decision-quality note, not only a code note: an orchestrator
 decision that read as complete was not, and the check that caught it was running
@@ -609,6 +611,78 @@ Tranche E added one line (an `auth_off` marker) and asked whether it breaches
 AC-SIMP-3. Same ruling as `scripts/seed_e2e_data.py` and
 `scripts/check_test_traps.py`: AC-SIMP-3 governs "non-test, non-spec, non-docs"
 files. **No third amendment is needed; the nine-file product set holds.**
+
+## D17 (T13, 2026-08) — `session_secret_store_is_readable()` removed: it could not do its job
+
+D15 (both entries above) built the D14 amendment around a readability probe on
+the theory that "readable, but empty" and "raised" are answerable by asking
+`Env.prop(SESSION_SECRET_PROPERTY)` and seeing whether it raises. Measured
+against a store whose reads genuinely raise:
+
+    getProperty returned: None   <-- did NOT raise
+
+`Settings.getProperty` wraps its own read in a blanket `except Exception:`
+that logs at DEBUG and returns `None` — a design predating this PR, kept so a
+missing property never crashes an unrelated settings read. `Env.prop` calls
+straight through it, so nothing the probe called ever raised in production,
+and `session_secret_store_is_readable()` answered `True` unconditionally: for
+an absent secret AND for a store that was, measured, unreadable. Its own test
+passed only by monkeypatching `Settings.getProperty` itself to raise, which
+replaces the method wholesale and so never exercises the `except` inside it —
+proving the probe against a fault shape a real store cannot produce.
+
+**Three attempts to fix the probe by repointing it were each worse than
+leaving it broken** (rule 11): pointing the probe at the adapter without also
+moving `get_session_secret` made the two reads disagree, so a login issued a
+cookie while the secret was unreadable; pointing both at the adapter broke 22
+tests elsewhere that depended on `get_session_secret`'s existing
+swallow-and-return-None contract for the verification path (AC-ARCH-6 — that
+path must never write, and never raise into a request that carries no
+credential).
+
+**The actual fix is smaller: delete the probe.** Trace what it was gating.
+`login_post` calls `ensure_session_secret()` only after `not secret`; that
+function reads via `_session_secret_row`, straight against the
+`SQLiteAdapter` — no swallowing `except` between it and the caller. A store
+that cannot be read makes it raise, before any write is attempted, straight
+into the `try/except` already wrapped around the call in `login_post`. That
+`except` — logging the failure and leaving `secret = None`, which falls
+through to the 503 page — was always the real AC-SEC-33 enforcement. The
+probe's `True` answer for a raising store never mattered, because
+`ensure_session_secret` still failed the way AC-SEC-33 requires; the probe
+was dead weight that also lied about its own contract.
+
+**Behaviour is unchanged**, and that is the point of removing it rather than
+repairing it. With the probe: `not secret and session_secret_store_is_readable()`
+was `True and True` for both an absent and a raising store, so
+`ensure_session_secret()` ran either way. Without it: `not secret` alone
+reaches the same call, the same way, for the same two cases. Deleting a
+condition that always evaluated the same is behaviour-preserving by
+construction, not by re-review of every caller.
+
+`session_secret_store_is_readable()` is gone from `couchpotato/__init__.py`.
+The AC-SEC-33 enforcement point is documented where it is now true:
+`ensure_session_secret`'s docstring, and the `except Exception:` around its
+call in `login_post`.
+
+**A test was found vacuous by the same shape of measurement, and fixed rather
+than trusted:** `test_login_issues_no_cookie_when_the_secret_cannot_be_read`'s
+`broken_store` fixture patched `Settings.getProperty`, which
+`_session_secret_row` never calls — so the fixture broke the path
+`get_session_secret` reads and left the adapter path `ensure_session_secret`
+reads fully working. Run against the code with the probe already removed, the
+"broken" store happily served the existing secret row through
+`_session_secret_row` and the test's own claim (no cookie issued) went red:
+a cookie WAS issued. Fixed by patching `SQLiteAdapter._query_index` instead —
+the one primitive both `Settings.getProperty` (via `db.get`) and
+`_session_secret_row` (via `db.query`) resolve to for the `property` index, so
+one fault now genuinely breaks both real read paths, the way an unreadable
+store actually would. The equivalent fixture in
+`tests/unit/test_session_secret_recovery.py` had the identical defect and got
+the identical fix. A new test,
+`test_login_against_a_raising_store_creates_no_secret`, pins the half that
+mattered most and had no test of its own: that a raising store is not written
+to, independent of whether a cookie was issued.
 
 ## Known intermittent: `tests/e2e/suggestions.spec.ts:99`
 
