@@ -25,6 +25,27 @@ from couchpotato.core.downloaders import synology as synology_module
 from couchpotato.core.downloaders.synology import Synology, SynologyRPC
 
 
+def _option(name):
+    options = synology_module.config[0]['groups'][0]['options']
+    return next(o for o in options if o['name'] == name)
+
+
+class TestSynologySslOptionDescription:
+    """2026-08-11 review finding 4: the description is where an operator
+    will actually read this, since the log warning is disconnected from the
+    settings UI by definition (it fires from a background thread, not while
+    they're looking at the form)."""
+
+    def test_explains_the_port_must_change_too(self):
+        description = _option('ssl')['description']
+
+        assert '5001' in description, 'must name the https port DSM actually needs'
+        assert 'port' in description.lower()
+        assert '<strong>unencrypted</strong>' in description, (
+            'the pre-existing "sends your password unencrypted" warning must survive'
+        )
+
+
 # ===========================================================================
 # SynologyRPC -- scheme + verify wiring
 # ===========================================================================
@@ -175,6 +196,58 @@ class TestSynologyDownloaderWiresSsl:
         with patch.object(downloader, 'conf', side_effect = self._conf()), \
              patch.object(synology_module, 'SynologyRPC', _CapturingRPC):
             downloader.test()
+
+        assert captured['kwargs'].get('ssl') is False
+        assert captured['kwargs'].get('verify') is True
+
+    def test_download_builds_synologyrpc_with_resolved_ssl_and_verify(self):
+        """`test()` is only the connectivity check. `download()` is the path
+        that actually sends the operator's DSM username and password on
+        every snatch -- and it has its OWN SynologyRPC(...) call site, so a
+        test that only drives test() proves nothing about it. Confirmed
+        independently: dropping `ssl=`/`verify=` from download()'s call site
+        left the full suite green before this test existed."""
+        downloader = Synology.__new__(Synology)
+
+        captured = {}
+
+        class _CapturingRPC(SynologyRPC):
+            def __init__(self, *args, **kwargs):
+                captured['args'] = args
+                captured['kwargs'] = kwargs
+                super().__init__(*args, **kwargs)
+
+            def create_task(self, **kwargs):
+                return True
+
+        data = {'name': 'Movie', 'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:ABC'}
+
+        with patch.object(downloader, 'conf', side_effect = self._conf(ssl = True, ssl_verify = False)), \
+             patch.object(synology_module, 'SynologyRPC', _CapturingRPC):
+            downloader.download(data = data)
+
+        assert captured['kwargs'].get('ssl') is True
+        assert captured['kwargs'].get('verify') is False
+
+    def test_download_defaults_to_verifying_plaintext_http(self):
+        downloader = Synology.__new__(Synology)
+
+        captured = {}
+
+        class _CapturingRPC(SynologyRPC):
+            def __init__(self, *args, **kwargs):
+                captured['args'] = args
+                captured['kwargs'] = kwargs
+                super().__init__(*args, **kwargs)
+
+            def create_task(self, **kwargs):
+                return True
+
+        data = {'name': 'Movie', 'protocol': 'torrent_magnet', 'url': 'magnet:?xt=urn:btih:ABC'}
+
+        with patch.object(downloader, 'conf', side_effect = self._conf()), \
+             patch.object(synology_module, 'SynologyRPC', _CapturingRPC):
+            downloader.download(data = data)
 
         assert captured['kwargs'].get('ssl') is False
         assert captured['kwargs'].get('verify') is True
