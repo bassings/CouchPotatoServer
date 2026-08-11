@@ -1,11 +1,23 @@
 """The signing secret: where it lives, who may write it, and what happens
 when it is not there.
 
-Driven against a REAL `SQLiteAdapter` and the REAL `Settings.getProperty`, not
-a dict double. The defects this file exists to catch all live in the seam
-between the two: a stub that tolerated raw bytes would hide the fact that
-`setProperty` mangles them, and a stub with no `_rev` would hide the
+Driven against a REAL `SQLiteAdapter`, not a dict double. The defects this
+file exists to catch all live in the seam between the adapter and
+`Settings.getProperty`: a stub that tolerated raw bytes would hide the fact
+that `setProperty` mangles them, and a stub with no `_rev` would hide the
 compare-and-swap that turns a lost race into a duplicate row.
+
+Two read paths reach that adapter, and a broken-store test has to name the
+one it means (T13/D17): `get_current_user`'s verification reads through the
+REAL `Settings.getProperty`, so breaking THAT is the correct fault for the
+verification-path tests below. `ensure_session_secret`'s bootstrap
+(`_session_secret_row`) reads the adapter directly and never touches
+`getProperty` -- breaking `getProperty` alone leaves that read working and
+proves nothing about it, which is exactly how
+`test_login_issues_no_cookie_when_the_secret_cannot_be_read` passed once
+while a raising store issued a cookie. Those tests break
+`SQLiteAdapter._query_index` instead, the layer both paths resolve to for the
+`property` index.
 
 Companion to `test_session_token.py`, which covers the pure sign/verify seam.
 """
@@ -525,6 +537,13 @@ class TestVerificationNeverWrites:
         writes = []
         monkeypatch.setattr('couchpotato._write_session_secret',
                             lambda *args, **kwargs: writes.append(args))
+        # `Settings.getProperty` is the RIGHT fault here, not the discredited
+        # one: `get_current_user` reads via `Env.prop` -> `getProperty`, so
+        # this breaks the actual path being exercised. It is only the wrong
+        # fault for `ensure_session_secret`'s bootstrap read
+        # (`_session_secret_row`, straight against the adapter), which is why
+        # the login-creation tests in `TestFailClosedWhenTheSecretIsUnavailable`
+        # break `SQLiteAdapter._query_index` instead (T13/D17).
         monkeypatch.setattr(Settings, 'getProperty',
                             lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
 
@@ -712,12 +731,21 @@ class TestFailClosedWhenTheSecretIsUnavailable:
         assert 'set-cookie' not in response.headers
 
     def test_login_against_a_raising_store_creates_no_secret(self, env, monkeypatch):
-        """The other half of AC-SEC-33: no cookie is necessary but not
-        sufficient. Writing a fresh secret over a row that could not be read
-        would invalidate every OTHER live session on the strength of a
-        transient fault, even though this particular login gets no cookie --
-        so this is pinned independently rather than inferred from the cookie
-        assertion above.
+        """The other half of AC-SEC-33 for the CREATE-on-unreadable-store case:
+        no cookie is necessary but not sufficient. There is no pre-existing
+        secret here (asserted below) -- a store that raises on read must not
+        be treated as merely absent and bootstrapped into, because the next
+        successful login could then find EITHER row non-deterministically,
+        and because a login that "succeeded" against a store it could not
+        actually read is not a login anyone should trust. So this is pinned
+        independently rather than inferred from the cookie assertion above.
+
+        The OVERWRITE case -- a secret already exists and a raising store
+        must not have it replaced under it, which would invalidate every
+        OTHER live session on the strength of a transient fault -- is covered
+        separately by
+        `test_session_secret_recovery.py::TestAnUnreadableStoreIsNotAnAbsentSecret::test_a_login_against_a_raising_store_writes_nothing`,
+        whose fixture requires a pre-existing row for exactly that reason.
 
         Checks `secret_rows` before patching `_query_index` and again after
         undoing the patch, deliberately: `secret_rows` itself reads through
@@ -749,6 +777,11 @@ class TestFailClosedWhenTheSecretIsUnavailable:
         token = mint_session_token(secret, SESSION_LIFETIME)
         assert get_current_user(_request(token)) is True
 
+        # `Settings.getProperty` is the real path this assertion drives:
+        # `get_current_user` -> `get_session_secret` -> `Env.prop` ->
+        # `getProperty`. Not the discredited pattern (T13/D17) -- that applies
+        # to `ensure_session_secret`'s bootstrap read, which never calls
+        # `getProperty` at all.
         monkeypatch.setattr(Settings, 'getProperty',
                             lambda self, identifier: (_ for _ in ()).throw(RuntimeError('store down')))
 

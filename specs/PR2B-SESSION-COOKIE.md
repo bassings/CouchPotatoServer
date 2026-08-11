@@ -190,7 +190,7 @@ They are decided here so the implementer does not decide them silently.
 - AC-SEC-30: The cookie is not the `api_key` and the old branch is gone rather than kept as a fallback: after login the cookie value does not contain `Env.setting('api_key')` as a substring (asserted against a realistic 32-character key), and `get_current_user` refuses a cookie whose value equals the `api_key`. Proven load-bearing by reinstating the `hmac.compare_digest(user, api_key)` branch at `couchpotato/__init__.py:199-202` and watching a named test go red. [merged with AC-QA-1, AC-QA-2, AC-QA-3, AC-SIMP-9]
 - AC-SEC-31: Forgery is refused in every shape, each a separate named test rather than a loop over one assertion: no signature; empty signature; truncated signature; a signature produced with a different secret; a payload mutated while keeping the original signature; a cookie whose payload is valid but whose signature is the payload itself. [merged with AC-QA-9]
 - AC-SEC-32: The signing secret is generated with the `secrets` module, carries at least 32 bytes of entropy, and two freshly created installs produce different secrets. It is never derived from `api_key`, `uuid4().hex`, `md5()`, time, the password hash, or any hardcoded literal. A test asserts the length and uniqueness properties and, via `inspect.getsource` (the idiom at `tests/unit/test_http_client.py:244`), that the generator is `secrets`.
-- AC-SEC-33: Fail closed when the secret is unavailable: if the property read or write raises, login issues no cookie and every session validation returns not-authenticated; the code never signs or verifies with an empty string, `None` or a constant fallback; one ERROR is logged naming the `config.ini` recovery path. Proven by monkeypatching `Settings.getProperty` to raise and asserting no `Set-Cookie` and refusal of a previously valid cookie. [merged with AC-QA-20, AC-ARCH-6, AC-OPS-42, AC-OPS-43, AC-DATA-6]
+- AC-SEC-33: Fail closed when the secret is unavailable: if the property read or write raises, login issues no cookie and every session validation returns not-authenticated; the code never signs or verifies with an empty string, `None` or a constant fallback; one ERROR is logged naming the `config.ini` recovery path. **Proof method (revised by T13/D17 — the original prescribed a fixture that could not prove this):** for the login-issuance half, break the read at `SQLiteAdapter._query_index` (the layer both `Settings.getProperty`, via `db.get`, and `_session_secret_row`, via `db.query`, resolve to for the `property` index — a patch of `Settings.getProperty` alone leaves `_session_secret_row`'s adapter read working and does not exercise this AC at all) and assert BOTH halves: no `Set-Cookie` is issued, AND no secret is written to the store. For the previously-valid-cookie half, `Settings.getProperty` is the real path `get_current_user` reads through, so patching it there is the correct fault and stays as-is. [merged with AC-QA-20, AC-ARCH-6, AC-OPS-42, AC-OPS-43, AC-DATA-6]
 - AC-SEC-34: The signature comparison is constant-time (`hmac.compare_digest` or equivalent), asserted at the verification function's source, and a plain `==` in that position fails the test. Both the signature check and any token-identifier check are covered.
 - AC-SEC-35: Expiry is enforced by the server, not the browser: the signed payload carries an absolute expiry checked on every request, so a cookie whose embedded expiry has passed is refused even when the client replays it with `Max-Age` and `Expires` stripped. Both D3 lifetimes have a boundary test (just inside accepted, just outside refused), driven by an injected clock, never by `sleep` and never by patching `time.time` globally. [merged with AC-QA-7, AC-QA-8, AC-A11Y-11]
 - AC-SEC-36: Logout revokes rather than forgets: a cookie captured before the logout route is replayed on a fresh client afterwards and is refused. A test asserting only the `Set-Cookie` deletion header does not satisfy this, because that is the behaviour the spec calls the defect. The test goes red if the D1 rotation is removed. [merged with AC-PROD-1, AC-QA-5, AC-DATA-7, AC-OPS-53]
@@ -624,12 +624,28 @@ against a store whose reads genuinely raise:
 `Settings.getProperty` wraps its own read in a blanket `except Exception:`
 that logs at DEBUG and returns `None` — a design predating this PR, kept so a
 missing property never crashes an unrelated settings read. `Env.prop` calls
-straight through it, so nothing the probe called ever raised in production,
-and `session_secret_store_is_readable()` answered `True` unconditionally: for
-an absent secret AND for a store that was, measured, unreadable. Its own test
+straight through it, so for the ordinary read fault (the store simply raises)
+the probe's own `except` was unreachable and `session_secret_store_is_readable()`
+answered `True` — for BOTH an absent secret and a store that was, measured,
+unreadable, which is the exact ambiguity it existed to resolve. Its own test
 passed only by monkeypatching `Settings.getProperty` itself to raise, which
 replaces the method wholesale and so never exercises the `except` inside it —
-proving the probe against a fault shape a real store cannot produce.
+proving the probe against a fault shape the ordinary broken-store case does
+not produce.
+
+**Correction, found by an adversarial re-drive of this exact claim:**
+`getProperty` is not unconditionally safe. Its `except ValueError:` recovery
+branch (`core/settings.py:648-650`, the corrupt-document path) makes its own,
+unwrapped `db.get(...)` call; if THAT call also raises, nothing catches it and
+the exception reaches `Env.prop` and the probe after all. Measured: a first
+read raising `ValueError` followed by a failing retry propagates out of
+`getProperty`. So the probe was not unconditionally `True` — it was `True`
+for the fault shape that matters (a store whose reads simply raise), which is
+the case a locked-out operator actually hits, and only reachable-`False` down
+a narrower path (corruption discovered, then the corruption-recovery read
+itself failing) that is not the case this probe existed to catch. The T13
+conclusion is unaffected by the correction; the original wording overstated
+what was measured.
 
 **Three attempts to fix the probe by repointing it were each worse than
 leaving it broken** (rule 11): pointing the probe at the adapter without also

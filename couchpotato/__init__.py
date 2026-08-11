@@ -570,16 +570,21 @@ def ensure_session_secret(db=None) -> str:
     **This is the AC-SEC-33 enforcement point.** The read this function does
     (`_session_secret_row`, straight against the adapter) is not wrapped in
     anything that swallows exceptions, unlike `Settings.getProperty` (which
-    `get_session_secret` goes through and which logs at DEBUG and returns None
-    on any fault). So a store that genuinely cannot be read makes THIS function
-    raise, before it ever reaches the insert/update that would create a fresh
-    secret. `login_post` is the only caller that can reach this after
-    `not secret`, and its `except Exception` around the call is where "fail
-    closed on a raising store" actually happens -- there is deliberately no
-    separate readability probe: T13 removed one (`session_secret_store_is_readable`)
-    because `Env.prop` never raises in production (the same blanket `except` it
-    goes through), so the probe answered "readable" unconditionally and the
-    real protection was always this propagation, not the probe.
+    `get_session_secret` goes through). So a store that genuinely cannot be
+    read makes THIS function raise, before it ever reaches the insert/update
+    that would create a fresh secret. `login_post` is the only caller that
+    can reach this after `not secret`, and its `except Exception` around the
+    call is where "fail closed on a raising store" actually happens -- there
+    is deliberately no separate readability probe: T13 removed one
+    (`session_secret_store_is_readable`), because it read via `Env.prop` ->
+    `Settings.getProperty`, whose blanket `except Exception:` swallows the
+    ordinary read fault and returns None -- so for the fault shape that
+    matters (a store whose reads simply raise), the probe answered
+    "readable" and never protected anything. (`getProperty` does have one
+    narrower path that DOES propagate -- a `ValueError` on the first read
+    followed by a failing retry in its own recovery branch, which is not the
+    case this probe existed to catch.) The real protection was always this
+    function's propagation, not the probe.
     """
     db = get_db() if db is None else db
 
@@ -979,7 +984,8 @@ LOGIN_MESSAGES = {
         'error',
         'Your password was correct, but the server could not start a session, '
         'so you are not signed in. This is a server problem, not your '
-        'password. Check that the database is writable, then try again.',
+        'password. Check that the database is readable and writable, then '
+        'try again.',
     ),
     'rate_limited_signout': (
         'error',
@@ -1400,7 +1406,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
                 log.error('A correct password was accepted but the session '
                           'signing secret could not be created, so no session '
                           'was issued and the login cannot complete. Check '
-                          'that the database is writable. %s',
+                          'that the database is readable and writable. %s',
                           traceback.format_exc())
                 secret = None
 
@@ -1413,27 +1419,30 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
             # down. Failing closed is unchanged -- still no cookie.
             return render_login_page(reason='session_not_created', status_code=503)
 
-        if secret:
-            remember_me = tryInt(form.get('remember_me', 0)) > 0
-            lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
-            # `max_age` is UNCHANGED from before this PR: 30 days when
-            # "remember me" is ticked, absent otherwise so the cookie dies
-            # with the browser process. Absent is the more conservative of
-            # the two and it is what operators already have; the reason it
-            # was called out as a defect was that the value stayed valid
-            # SERVER-side regardless, and that is what the signed expiry
-            # above fixes. Max-Age was never enforcement anyway -- a replay
-            # simply omits it.
-            #
-            # Every other attribute comes from `session_cookie_attributes`,
-            # which the logout deletion uses too so the two cannot drift.
-            response.set_cookie(
-                SESSION_COOKIE_NAME,
-                mint_session_token(secret, lifetime),
-                max_age=lifetime if remember_me else None,
-                **session_cookie_attributes(),
-            )
-            _expire_legacy_root_cookie(response)
+        # Reached only when `secret` is truthy: the `if not secret:` above
+        # already returned. A second `if secret:` guard here always evaluated
+        # the same and was dead weight -- exactly the shape D17 argues should
+        # be deleted rather than repaired (T13 follow-up).
+        remember_me = tryInt(form.get('remember_me', 0)) > 0
+        lifetime = SESSION_LIFETIME_REMEMBERED if remember_me else SESSION_LIFETIME
+        # `max_age` is UNCHANGED from before this PR: 30 days when
+        # "remember me" is ticked, absent otherwise so the cookie dies
+        # with the browser process. Absent is the more conservative of
+        # the two and it is what operators already have; the reason it
+        # was called out as a defect was that the value stayed valid
+        # SERVER-side regardless, and that is what the signed expiry
+        # above fixes. Max-Age was never enforcement anyway -- a replay
+        # simply omits it.
+        #
+        # Every other attribute comes from `session_cookie_attributes`,
+        # which the logout deletion uses too so the two cannot drift.
+        response.set_cookie(
+            SESSION_COOKIE_NAME,
+            mint_session_token(secret, lifetime),
+            max_age=lifetime if remember_me else None,
+            **session_cookie_attributes(),
+        )
+        _expire_legacy_root_cookie(response)
 
         return response
 
