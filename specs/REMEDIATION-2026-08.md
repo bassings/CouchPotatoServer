@@ -425,6 +425,33 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the planning cycle, which is exactly when criteria get written; that
       is the gap, not this task in particular.
 
+      **Portability trap, measured — worth more than the finding that
+      surfaced it.** Review raised the TOCTOU window between `removeDir`'s
+      `os.path.islink` check and its `os.chmod`. Real, but both atomic
+      remedies fail, and one fails in the worst possible way:
+
+      - `O_NOFOLLOW` + `fchmod` (the idiom `renamer/swap.py` already uses)
+        cannot open the directory at all — `PermissionError` — because
+        lacking read permission is the exact condition being repaired.
+      - `os.chmod(..., follow_symlinks=False)` works on macOS and **does
+        not exist on Alpine**:
+
+            macOS  : chmod follow_symlinks supported: True
+            Alpine : chmod follow_symlinks supported: False
+
+        (measured in `python:3.14-alpine`, the image this project ships.)
+
+      So that "obvious" fix would have passed every local test and raised
+      `NotImplementedError` in a delete path on production. This is §11's
+      "match the environment to production" in its most expensive form: a
+      green local run in an environment that cannot express the failure.
+      **Check `os.supports_follow_symlinks` before reaching for it here.**
+
+      The check-then-act stays. `chmod` requires ownership, so the worst
+      outcome is owner-rwx on a file the process already owns. Reopen if a
+      portable atomic chmod-without-follow appears, or if this ever runs
+      where the process does not own the tree it is deleting.
+
       **Carried forward, not fixed here.** `removeDir`'s single retry can
       now raise where the old unbounded recursion might eventually have
       succeeded, and it sits AFTER `replaceWith()` has already overwritten
