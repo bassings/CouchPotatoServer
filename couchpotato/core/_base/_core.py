@@ -31,14 +31,20 @@ class Core(Plugin):
     # Set by `md5Password`, consumed by `rotateSessionSecretAfterSave`. A
     # CLASS attribute, not one assigned in `__init__`, for two reasons:
     #
-    # 1. Thread-local, not instance state. `Settings.saveView` dispatches
-    #    through FastAPI's `run_in_threadpool` (REG-002), so one password-save
-    #    request runs value-hook -> write -> after-hook on a single thread, but
-    #    two concurrent requests land on two different threadpool threads.
-    #    Plain instance state would let a slower request's after-hook read a
-    #    flag a faster, unrelated request had just overwritten -- rotating for
-    #    the wrong save, or silently skipping its own. `threading.local()`
-    #    removes that interleaving: each thread sees only what it wrote.
+    # 1. Thread-local, not instance state -- defence-in-depth, NOT closing a
+    #    reachable race today. `Settings.saveView` runs value-hook -> write ->
+    #    `.committed` on one thread per call, and TWO calls cannot interleave
+    #    through the shipped HTTP path: `callApiHandler` (`couchpotato/api.py`)
+    #    holds `api_locks['settings.save']` -- one lock per ROUTE, shared by
+    #    every settings save -- across the whole handler, and `saveView` is
+    #    reached nowhere else in this tree. So plain instance state would be
+    #    safe under the current wiring; it is thread-local anyway because that
+    #    safety depends entirely on the lock staying exactly as it is, and on
+    #    nothing ever calling `saveView` a second way. `threading.local()`
+    #    removes the interleaving unconditionally rather than via that lock,
+    #    at no cost. Proven with a real two-thread probe (bypassing the lock
+    #    entirely, since the lock is what makes the race unreachable via HTTP):
+    #    `test_password_rotation_after_commit.py::TestThePendingRotationFlagIsPerThreadNotShared`.
     # 2. Declared at class scope so it exists without `__init__` running.
     #    Plenty of this project's own tests build a bare `Core.__new__(Core)`
     #    to exercise `md5Password` in isolation (`test_password_storage.py`,
@@ -236,7 +242,8 @@ class Core(Plugin):
         # off two lines above, so every request is already served without a
         # session and there is nothing to revoke -- and rotating anyway would
         # put a secret row on installs that never enabled authentication,
-        # which AC-QA-21 and AC-SEC-46 both forbid.
+        # which AC-QA-21 and AC-SEC-46 (`specs/PR2B-SESSION-COOKIE.md`) both
+        # forbid.
         self._pending_rotation.rotate = bool(value)
 
         return hash_password(md5(value)) if value else ''

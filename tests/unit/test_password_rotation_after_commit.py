@@ -133,7 +133,8 @@ def env(tmp_path):
 
 @pytest.fixture
 def fresh_env(tmp_path):
-    """An install that has never had a session secret at all (D12/AC-SEC-46)."""
+    """An install that has never had a session secret at all
+    (D12/AC-SEC-46, `specs/PR2B-SESSION-COOKIE.md`)."""
     yield from _build_env(tmp_path, bootstrap_secret=False)
 
 
@@ -177,37 +178,58 @@ class TestASuccessfulSaveActuallyRotates:
 
 class TestARealSaveFiresTheRotationExactlyOnce:
     """Regression guard for the specific way the FIRST version of this file
-    passed for the wrong reason.
+    passed for the wrong reason -- and, per review (M1, 2026-08-11), the
+    specific way a NAIVE version of THIS guard also passes for the wrong
+    reason, which is why it is written the way it now is.
 
-    Wired to `.after` instead of `.committed`, `TestASuccessfulSaveActuallyRotates`
-    above still went green -- `fireEvent` auto-fires `'<name>.after'` for every
-    dispatch (`event.py`), including the value hook's own call, so the handler
-    ran once BEFORE `self.set()`/`self.save()` and once again after. A
-    consume-and-clear hook only acts on the first of those, so the save
-    "rotated" -- just at the same premature moment as the original defect --
-    and nothing about that first pass distinguished it from the correct
-    behaviour. Counting calls is what tells them apart.
+    The first attempt at this class counted calls to `rotate_session_secret`
+    and asserted exactly one. That does not distinguish the two wirings at
+    all: `rotateSessionSecretAfterSave` consumes and clears the flag on its
+    FIRST firing (`_core.py`), so under `.after` -- fired once BEFORE
+    `self.set()`/`self.save()` and once again after, per the module docstring
+    -- the premature firing consumes the flag, rotates, and the second firing
+    then finds nothing pending and returns early. The call COUNT is 1 under
+    both the correct wiring and the `.after` regression; only the ORDER
+    differs (rotate-then-save under the regression, save-then-rotate when
+    correct). Measured directly: rewiring `.committed` back to `.after` left
+    the original, count-based version of this test GREEN.
+
+    The tests that DO catch the `.after` regression are
+    `TestAFailedSaveDoesNotRotate::test_a_save_that_raises_at_self_save_does_not_rotate`
+    (rotation has already happened by the time the injected failure would
+    have mattered) and
+    `TestThePendingFlagCannotLeakAcrossAttempts::test_a_failed_set_does_not_make_the_next_clear_rotate`.
+    Both need a failure injected to notice the reordering. This class exists
+    so there is a THIRD, more direct guard that asserts the ordering itself,
+    without needing to inject anything failing.
     """
 
-    def test_one_password_save_calls_rotate_session_secret_once(self, env, monkeypatch):
+    def test_the_save_commits_before_the_rotation_runs(self, env, monkeypatch):
         import couchpotato
 
-        calls = []
+        sequence = []
+        real_save = env.settings.save
         real_rotate = couchpotato.rotate_session_secret
 
-        def spy(*args, **kwargs):
-            calls.append(1)
+        def spy_save():
+            sequence.append('save')
+            return real_save()
+
+        def spy_rotate(*args, **kwargs):
+            sequence.append('rotate')
             return real_rotate(*args, **kwargs)
 
-        monkeypatch.setattr(couchpotato, 'rotate_session_secret', spy)
+        monkeypatch.setattr(env.settings, 'save', spy_save)
+        monkeypatch.setattr(couchpotato, 'rotate_session_secret', spy_rotate)
 
         env.settings.saveView(section='core', name='password', value='hunter3')
 
-        assert len(calls) == 1, (
-            'a single password save called rotate_session_secret %d times; '
-            'this is the exact double-firing shape (`.after` firing once '
-            'before the commit and once after it) that made the previous '
-            'wiring look correct while rotating at the wrong time' % len(calls)
+        assert sequence == ['save', 'rotate'], (
+            'config.ini was written and the secret was rotated in the order '
+            '%r, not save-then-rotate. Rotating before (or without) the save '
+            'that actually commits is the exact defect this task fixes -- a '
+            'save that then failed would already have signed every device '
+            'out for a password change that was never persisted.' % sequence
         )
 
 
@@ -260,6 +282,55 @@ class TestAFailedSaveDoesNotRotate:
         assert on_disk.get('password') == original_stored, (
             'config.ini on disk changed even though Settings.save() raised -- '
             'the failure was not actually happening at the commit point'
+        )
+
+
+class TestARotationFailureDoesNotEscapeTheHook:
+    """M2 (review): the `try/except` inside `rotateSessionSecretAfterSave`,
+    exercised directly rather than through `fireEvent`.
+
+    Every OTHER test in this file that patches `rotate_session_secret` to
+    raise reaches `rotateSessionSecretAfterSave` through `fireEvent`, whose
+    own dispatch loop already catches every handler exception
+    (`couchpotato/core/event.py`, `runHandler` / `createHandle`'s
+    `try/except Exception: log.error(...)`). Through that path alone, the
+    `try/except` inside the hook itself is unobservable: deleting it there
+    still leaves the exception caught one frame up, by `fireEvent`. Verified
+    by review measurement: 41 tests stayed green with the inner `try/except`
+    deleted.
+
+    Kept anyway, as deliberate defence-in-depth: `rotateSessionSecretAfterSave`
+    is a plain public method, exactly like `md5Password` -- which several of
+    this project's own tests already call directly, bypassing `fireEvent`
+    entirely (`test_password_storage.py`, `test_auth_required_gate.py`). Any
+    future caller that reaches this method the same way -- a different
+    dispatch mechanism, a migration script, a test -- gets no protection from
+    `fireEvent`'s catch, and the guarantee the method's own docstring makes
+    ("a rotation failure here only leaves the OLD signing secret live... never
+    'authentication on, no password stored'") would silently stop holding for
+    that caller. This test is what makes deleting the `try/except` a red
+    build again, by calling the method directly.
+    """
+
+    def test_a_rotation_failure_does_not_raise_out_of_the_hook_called_directly(self, monkeypatch, caplog):
+        import logging
+
+        from couchpotato.core._base._core import Core
+
+        core = Core.__new__(Core)
+        core.md5Password('a-new-password')  # records intent on the real thread-local
+
+        def explode():
+            raise RuntimeError('store down')
+
+        monkeypatch.setattr('couchpotato.rotate_session_secret', explode)
+
+        with caplog.at_level(logging.ERROR):
+            core.rotateSessionSecretAfterSave()  # must not raise
+
+        assert any('rotat' in record.getMessage().lower() for record in caplog.records), (
+            'a rotation failure was swallowed with no trace -- nothing tells '
+            'the operator they are still signed in under the OLD secret'
         )
 
 
@@ -322,7 +393,9 @@ class TestClearingNeverRotates:
     """D10: clearing turns `auth_required` off, so every request is already
     served without a session -- there is nothing to revoke, and rotating
     anyway risks the other half of D10, a secret row on an install that never
-    enabled authentication (AC-QA-21, AC-SEC-46)."""
+    enabled authentication (AC-QA-21, AC-SEC-46 -- both
+    `specs/PR2B-SESSION-COOKIE.md`; AC-QA-21 is a different requirement in
+    `specs/FEAT-009B-UPGRADE-REPLACEMENT.md`)."""
 
     def test_clearing_does_not_rotate_an_existing_secret(self, env):
         before = env.settings.getProperty(SESSION_SECRET_PROPERTY)
@@ -344,6 +417,94 @@ class TestClearingNeverRotates:
         assert result.get('success') is not False, result
         assert _secret_rows(fresh_env.db) == [], (
             'clearing a password on an install that never enabled '
-            'authentication wrote a session_secret row -- D12/AC-SEC-46 both '
-            'forbid this'
+            'authentication wrote a session_secret row -- D12 and AC-SEC-46 '
+            '(`specs/PR2B-SESSION-COOKIE.md`) both forbid this'
+        )
+
+
+class TestThePendingRotationFlagIsPerThreadNotShared:
+    """L1 (review): the `_pending_rotation` class comment's own claim, made
+    testable -- and qualified, because review measurement showed the claim
+    was overstated as first written.
+
+    `_pending_rotation` is `threading.local()` specifically so two threads
+    handling DIFFERENT password saves at once cannot read or clear each
+    other's intent. **Through the real HTTP path today, that interleaving is
+    NOT reachable**: `callApiHandler` (`couchpotato/api.py`) holds
+    `api_locks['settings.save']` -- a single lock keyed by ROUTE name, shared
+    by every settings save regardless of section/option -- across the WHOLE
+    handler call, and `saveView` is registered and reached nowhere else in
+    this tree (`grep -rn "saveView(" couchpotato/` outside `tests/` returns
+    only its own definition). So two `settings.save` requests cannot execute
+    `saveView` concurrently at all right now; the lock already serialises
+    them before the thread-local would ever matter.
+
+    Kept anyway, deliberately claiming less than "this closes a live
+    production race": it is free, correct regardless, and does not depend on
+    `api_locks` staying exactly as it is -- a future per-section lock (rather
+    than per-route), or any code that reaches `saveView` other than through
+    `callApiHandler` (a migration script, a different dispatch mechanism),
+    would silently reopen this exact interleaving with nothing here to catch
+    it if the flag were shared state instead.
+
+    This test bypasses `api_locks` entirely -- it calls `md5Password` /
+    `rotateSessionSecretAfterSave` directly on two real OS threads with no
+    lock at all -- because that is the only way to exercise the property the
+    class comment claims, given the lock closes off the real path today.
+    """
+
+    def test_a_concurrent_clear_on_another_thread_does_not_steal_a_sets_rotation(self, monkeypatch):
+        import threading as _threading
+
+        from couchpotato.core._base._core import Core
+
+        # Bare instance, like several existing tests in this suite
+        # (`test_password_storage.py`, `test_auth_required_gate.py`): no
+        # `__init__`, so `core._pending_rotation` resolves to the shared
+        # CLASS attribute -- which is the point, since that attribute is what
+        # is under test here.
+        core = Core.__new__(Core)
+
+        calls = []
+        monkeypatch.setattr('couchpotato.rotate_session_secret', lambda: calls.append('SET') or 'fake-secret')
+
+        # Two Events, not one Barrier: a Barrier only guarantees both threads
+        # have REACHED a point, not that the CLEAR's write has landed before
+        # the SET's read afterwards -- a single barrier here left the two
+        # post-barrier statements racing each other with no ordering
+        # guarantee at all, which made an earlier version of this test pass
+        # by luck under BOTH the correct code and a shared-flag mutant.
+        # `clear_done` forces a strict happens-before: the CLEAR's write is
+        # guaranteed complete before the SET thread ever reads the flag.
+        clear_may_proceed = _threading.Event()
+        clear_done = _threading.Event()
+        errors = []
+
+        def set_password():
+            core.md5Password('a-new-password')  # this thread's intent: True
+            clear_may_proceed.set()
+            assert clear_done.wait(timeout=5), 'the CLEAR thread never finished'
+            try:
+                core.rotateSessionSecretAfterSave()
+            except Exception as exc:  # pragma: no cover - surfaced via `errors`
+                errors.append(exc)
+
+        def clear_password_on_another_thread():
+            assert clear_may_proceed.wait(timeout=5), 'the SET thread never signalled'
+            core.md5Password('')  # a DIFFERENT thread's intent: False
+            clear_done.set()
+
+        t_set = _threading.Thread(target=set_password)
+        t_clear = _threading.Thread(target=clear_password_on_another_thread)
+        t_set.start()
+        t_clear.start()
+        t_set.join(timeout=5)
+        t_clear.join(timeout=5)
+
+        assert not errors, errors
+        assert calls == ['SET'], (
+            'a password SET on one thread lost its own rotation to an '
+            'unrelated CLEAR that ran on a different thread (%r) -- the '
+            'password changed but no session was revoked, which is exactly '
+            'the interleaving `threading.local()` exists to prevent' % calls
         )

@@ -531,12 +531,28 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       so a failed SET cannot leave a stale True for a later CLEAR to inherit.
 
       Existing `.after` consumers elsewhere (`automation.py`, `manage.py`,
-      `rtorrent_.py`, `updater/main.py`, `searcher/base.py` -- all
-      cron-recompute hooks) are double-fired by the same `fireEvent` quirk and
-      were deliberately left alone: recomputing an idempotent cron schedule
-      twice is wasteful, not incorrect, and touching five unrelated plugins was
-      out of this task's scope. Worth a pass if `.after` semantics are ever
-      revisited generally.
+      `updater/main.py`, `searcher/base.py` -- all cron-recompute hooks
+      registered on a specific `<section>.<option>.after`) are double-fired by
+      the same `fireEvent` quirk and were deliberately left alone: recomputing
+      an idempotent cron schedule twice is wasteful, not incorrect, and
+      touching four unrelated plugins was out of this task's scope. Worth a
+      pass if `.after` semantics are ever revisited generally.
+
+      **`rtorrent_.py` does NOT belong on that list**, measured after an
+      earlier draft of this entry put it there. `rtorrent_.settingsChanged`
+      registers on the literal wildcard `setting.save.rtorrent.*.after`
+      (closing the active rTorrent connection, not a cron recompute), and
+      `fireEvent`'s auto-derivation only ever produces `'%s.after' % name` for
+      the CONCRETE name it was called with -- `saveView`'s value hook fires
+      `'setting.save.rtorrent.<option>'`, never the literal string
+      `'setting.save.rtorrent.*'`, so nothing auto-derives the wildcard early.
+      It is reached only once, by `saveView`'s own explicit
+      `fireEvent('setting.save.%s.*.after' % section, single=True)` (settings.py:515),
+      genuinely after the save. Instrumenting a real `saveView` call
+      confirmed the counts directly: `{'per_option_after': 2, 'wildcard_after':
+      1, 'committed': 1}`. The distinction is the useful part for whoever next
+      touches `.after` generally: a per-option `.after` double-fires, a
+      wildcard `*.after` does not.
 
       Tests: `tests/unit/test_password_rotation_after_commit.py` (new -- a
       working rotation instrument proven first per this entry's own

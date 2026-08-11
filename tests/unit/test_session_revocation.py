@@ -247,6 +247,23 @@ def change_password(value):
     save happens at all (`couchpotato/core/event.py`). So the two calls below
     are not interchangeable with one: the first alone reproduces exactly the
     "rotates before the commit" defect T14 fixes.
+
+    **This is a COPY of `saveView`'s event sequence, not `saveView` itself**
+    (review L3, 2026-08-11). If `Settings.saveView` ever stopped firing
+    `.committed` -- a typo, a refactor, a merge conflict -- every test built
+    on this helper would keep passing while real password changes silently
+    stopped revoking sessions, because this function would still fire it
+    regardless. The only place that verifies `saveView` ITSELF still fires
+    `.committed` is `test_password_rotation_after_commit.py`, which drives the
+    real method end to end (`TestASuccessfulSaveActuallyRotates`,
+    `TestARealSaveFiresTheRotationExactlyOnce`). Do not trim those as
+    "redundant with this file": they are the only guard standing between a
+    drifted `saveView` and a false-green AC-SEC-38 suite here. (`FakeSettings`
+    in this module has no real `self.p` ConfigParser, which `saveView`'s
+    `isOptionWritable` needs, so pointing these tests at the real method
+    directly is not a small change -- see the class docstring above
+    `TestChangingThePasswordEndsEverySession` for the trade this file makes
+    instead.)
     """
     stored = fireEvent('setting.save.core.password', value, single=True)
     fireEvent('setting.save.core.password.committed', single=True)
@@ -582,7 +599,16 @@ class TestLogoutWritesNothingWhenAuthenticationIsOff:
 
 
 class TestChangingThePasswordEndsEverySession:
-    """AC-SEC-38 / D6."""
+    """AC-SEC-38 / D6.
+
+    Driven through `change_password()`, a hand-rolled copy of `saveView`'s
+    event sequence -- `FakeSettings` here has no real `self.p` (ConfigParser),
+    which `saveView`'s own `isOptionWritable` needs, so calling the real
+    method directly raises `AttributeError` (measured). See `change_password`'s
+    docstring for the resulting trade: this file proves the session-revocation
+    BEHAVIOUR against the copied sequence; `test_password_rotation_after_commit.py`
+    is what proves `saveView` itself still produces that sequence.
+    """
 
     def test_a_cookie_issued_before_a_password_change_is_refused_after_it(self, env):
         owner, token = log_in(env)
@@ -649,15 +675,24 @@ class TestChangingThePasswordEndsEverySession:
             empty.close()
             Env.set('db', env.db)
 
-    def test_a_failure_to_rotate_does_not_stop_the_password_being_hashed(self, env):
-        """Precedence: losing the password write is worse than a stale secret.
+    def test_a_rotation_failure_does_not_raise_out_of_the_save_sequence(self, env):
+        """The save-SEQUENCE-level guarantee, not the hook's own guard.
 
-        T14 moved rotation to `rotateSessionSecretAfterSave`
-        (`setting.save.core.password.committed`), which runs AFTER the
-        password is already hashed and stored -- so a rotation failure there
-        can no longer abort the save the way it could when rotation lived in
-        the value hook, and this now has to be proven through the real save
-        path rather than by calling `md5Password` alone.
+        Renamed from `test_a_failure_to_rotate_does_not_stop_the_password_being_hashed`
+        (review M2, 2026-08-11): that name promised a test of the `try/except`
+        inside `rotateSessionSecretAfterSave`, but `change_password` reaches
+        that hook only through `fireEvent`, whose OWN dispatch loop already
+        catches every handler exception (`couchpotato/core/event.py`). So this
+        passes -- and always would -- regardless of whether the hook's own
+        `try/except` exists; it is observing `fireEvent`'s catch-all, not the
+        hook's. What it still legitimately pins: a rotation failure does not
+        surface as an error on the request that changed the password, and the
+        value hook's own return (the stored hash) is unaffected by what
+        happens to rotation afterwards.
+
+        The hook's OWN `try/except` -- reached by calling it directly, the way
+        `fireEvent` does not have to be involved -- is tested in
+        `test_password_rotation_after_commit.py::TestARotationFailureDoesNotEscapeTheHook`.
         """
         with patch('couchpotato.rotate_session_secret', side_effect=RuntimeError('store down')):
             stored = change_password('a-new-password')  # must not raise
