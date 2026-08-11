@@ -4,21 +4,40 @@ failed `shutil.rmtree` by making the offending path world-writable
 guarantee the chmod fixed anything -- so a permission error it cannot clear
 recurses until the stack blows up.
 
-Fixed shape: grant owner-write only (never widen group/other), retry
-`rmtree` exactly once, and let a second failure propagate. A `filename`-less
-OSError (which can happen) must propagate without touching `os.chmod` at all.
-And (T17 follow-up B): if the failing entry is a SYMLINK, `os.stat`/`os.chmod`
-both follow it by default -- so chmod-ing `inst.filename` would silently
-reach the link's TARGET, potentially outside the tree being deleted.
-`removeDir` is called on freshly-extracted archive content
-(`SourceUpdater.doUpdate`), which is attacker-influenced input, so this is a
-first-class symlink-following risk per CLAUDE.md even though the practical
-blast radius is small (chmod requires ownership, so the worst case is adding
-owner-write to a file the CouchPotato user already owns). The fix refuses to
-chmod a symlink at all: a symlink's own permission bits never block
+Fixed shape: grant owner rwx (never widen group/other), and let a failure
+`removeDir` cannot fix propagate. A `filename`-less OSError (which can
+happen) must propagate without touching `os.chmod` at all. And (T17
+follow-up B): if the failing entry is a SYMLINK, `os.stat`/`os.chmod` both
+follow it by default -- so chmod-ing `inst.filename` would silently reach
+the link's TARGET, potentially outside the tree being deleted. `removeDir`
+is called on freshly-extracted archive content (`SourceUpdater.doUpdate`),
+which is attacker-influenced input, so this is a first-class
+symlink-following risk per CLAUDE.md even though the practical blast
+radius is small (chmod requires ownership, so the worst case is adding
+owner-write to a file the CouchPotato user already owns). The fix refuses
+to chmod a symlink at all: a symlink's own permission bits never block
 `shutil.rmtree` from removing it (only the *containing directory*'s
-permissions matter for unlink), so there is nothing legitimate a chmod on it
-would accomplish.
+permissions matter for unlink), so there is nothing legitimate a chmod on
+it would accomplish.
+
+2026-08-11 review, finding 3: an earlier version of this fix bounded the
+retry to a single attempt (see git history), which regressed cleanup of any
+tree with MORE than one blocked directory -- the old unbounded recursion
+repaired one entry per level and eventually succeeded; a single retry
+repairs only the first entry it meets and propagates uncaught on the
+second. Measured on HEAD before this fix, real filesystem, no mocks:
+
+    1 blocked dirs  single-retry -> deleted OK
+    2 blocked dirs  single-retry -> FAILED: PermissionError
+    3 blocked dirs  single-retry -> FAILED: PermissionError
+
+That matters because `removeDir` runs (`SourceUpdater.doUpdate`) AFTER
+`replaceWith()` has already overwritten the application directory and
+BEFORE `version_file` is written -- so a cleanup failure here makes the
+updater report failure and re-apply an already-installed update. Fixed by
+bounding the retry to ENTRIES REPAIRED rather than an attempt count or
+recursion depth: each distinct failing `inst.filename` is chmod-ed at most
+once. See `removeDir`'s own docstring for the termination argument.
 
 Reachability (noted in specs/REMEDIATION-2026-08.md T17): this is called from
 SourceUpdater's extract paths, which only run for a source install doing a
@@ -44,7 +63,22 @@ def _bare_updater():
 
 class TestRemoveDirPermissionRetry:
 
-    def test_retries_exactly_once_then_propagates_second_failure(self, tmp_path):
+    def test_an_entry_that_cannot_be_repaired_propagates_rather_than_looping(self, tmp_path):
+        """The SAME entry keeps failing (chmod cannot fix whatever this is
+        -- a different user's file, a filesystem that ignores mode bits...).
+        removeDir must repair it once, retry once, see the identical
+        filename fail again, and stop -- not loop.
+
+        The fake is DELIBERATELY BOUNDED (five failures, then a sixth call
+        that would succeed) rather than an unconditional always-raise: an
+        always-raise fake would hang for real if `removeDir`'s
+        once-per-entry guard (`if inst.filename in repaired: raise`) were
+        ever removed, which is exactly the mutation this test exists to
+        catch -- "do not write a test that could hang" cuts against making
+        the fake itself unbounded. With the guard, removeDir must stop
+        after the SECOND failure on the identical filename (2 rmtree calls,
+        1 chmod call) rather than retrying it three more times to reach
+        the fake's eventual "success"."""
         updater = _bare_updater()
         target = str(tmp_path / 'locked')
 
@@ -52,7 +86,9 @@ class TestRemoveDirPermissionRetry:
 
         def fake_rmtree(path):
             call_count['n'] += 1
-            raise PermissionError(13, 'Permission denied', target)
+            if call_count['n'] <= 5:
+                raise PermissionError(13, 'Permission denied', target)
+            return None  # never reached if the guard behaves correctly
 
         with patch('couchpotato.core._base.updater.main.shutil.rmtree', side_effect = fake_rmtree), \
              patch('couchpotato.core._base.updater.main.os.path.isdir', return_value = True), \
@@ -63,7 +99,10 @@ class TestRemoveDirPermissionRetry:
             with pytest.raises(PermissionError):
                 updater.removeDir(target)
 
-        assert call_count['n'] == 2, 'must retry exactly once, not recurse unbounded'
+        assert call_count['n'] == 2, (
+            'must repair the failing entry once, retry once, then propagate on the '
+            'SAME filename failing again -- not keep retrying it'
+        )
         mock_chmod.assert_called_once()
 
     def test_none_filename_propagates_without_chmod(self, tmp_path):
@@ -234,3 +273,106 @@ class TestRemoveDirGrantsTraversalNotJustWrite:
             assert not (mode & stat.S_IWOTH), 'must not widen other write'
             assert mode != 0o777
         assert not tree.exists(), 'the directory must actually end up removed'
+
+
+class TestRemoveDirHandlesMultipleBlockedEntries:
+    """2026-08-11 review finding 3: a single blanket retry only repairs the
+    FIRST blocked directory it meets in a tree, then propagates uncaught on
+    the second -- measured on HEAD (single-retry) before this fix, real
+    filesystem, no mocks:
+
+        1 blocked dirs  single-retry -> deleted OK
+        2 blocked dirs  single-retry -> FAILED: PermissionError
+        3 blocked dirs  single-retry -> FAILED: PermissionError
+
+    That matters because removeDir runs (SourceUpdater.doUpdate) AFTER
+    replaceWith() has already overwritten the application directory and
+    BEFORE version_file is written -- a cleanup failure here makes the
+    updater report failure and re-apply an already-installed update.
+
+    Fixed by bounding the retry to entries repaired rather than an attempt
+    count. Tested here on a real filesystem (no mocks) across both layouts
+    a tree can actually have: multiple blocked SIBLINGS and multiple
+    blocked NESTED directories, at 1/2/3/5 blocked entries each.
+
+    Root bypasses permission checks entirely -- skipped there, same as the
+    class above, rather than reporting a false green.
+    """
+
+    @pytest.fixture(autouse = True)
+    def _skip_as_root(self):
+        if hasattr(os, 'geteuid') and os.geteuid() == 0:
+            pytest.skip('running as root: file/directory modes are not enforced')
+
+    def _make_sibling_tree(self, tmp_path, n_blocked):
+        tree = tmp_path / 'tree'
+        tree.mkdir()
+        blocked = []
+        for i in range(n_blocked):
+            sub = tree / ('sub%d' % i)
+            sub.mkdir()
+            (sub / 'f.txt').write_text('content')
+            blocked.append(sub)
+        for b in blocked:
+            os.chmod(str(b), 0o400)
+        return tree, blocked
+
+    def _make_nested_tree(self, tmp_path, n_blocked):
+        tree = tmp_path / 'tree'
+        tree.mkdir()
+        current = tree
+        blocked = []
+        for i in range(n_blocked):
+            current = current / ('lvl%d' % i)
+            current.mkdir()
+            (current / 'f.txt').write_text('content')
+            blocked.append(current)
+        # Lock innermost-first: locking an ancestor before its descendant
+        # is created underneath it would block the setup itself.
+        for b in reversed(blocked):
+            os.chmod(str(b), 0o400)
+        return tree, blocked
+
+    def _cleanup(self, tree, blocked):
+        # Best-effort, OUTERMOST-first (opposite of the locking order):
+        # checking whether a NESTED entry still exists requires traversing
+        # its ancestors, and Path.exists() silently returns False (not
+        # raise) when a locked ancestor blocks that traversal -- so
+        # repairing innermost-first would skip the very entries still
+        # blocked by their still-locked parent. Fix the parent's
+        # permissions before asking whether the child is even reachable.
+        if tree.exists():
+            os.chmod(str(tree), 0o700)
+        for b in blocked:
+            if b.exists():
+                os.chmod(str(b), 0o700)
+
+    @pytest.mark.parametrize('n_blocked', [1, 2, 3, 5])
+    def test_multiple_blocked_sibling_directories_are_removed(self, tmp_path, n_blocked):
+        updater = _bare_updater()
+        tree, blocked = self._make_sibling_tree(tmp_path, n_blocked)
+
+        try:
+            updater.removeDir(str(tree))
+        finally:
+            self._cleanup(tree, blocked)
+
+        assert not tree.exists(), (
+            'removeDir must remove a tree with %d blocked SIBLING directories, '
+            'not just the first one it meets' % n_blocked
+        )
+
+    @pytest.mark.parametrize('n_blocked', [1, 2, 3, 5])
+    def test_multiple_blocked_nested_directories_are_removed(self, tmp_path, n_blocked):
+        updater = _bare_updater()
+        tree, blocked = self._make_nested_tree(tmp_path, n_blocked)
+
+        try:
+            updater.removeDir(str(tree))
+        finally:
+            self._cleanup(tree, blocked)
+
+        assert not tree.exists(), (
+            'removeDir must remove a tree with %d blocked NESTED directories, '
+            'not just the first one it meets' % n_blocked
+        )

@@ -34,8 +34,16 @@ class TelegramBot(Notification):
         # Cosntruct message
         payload = {'chat_id': usr_id, 'text': message, 'parse_mode': 'Markdown'}
 
-        # Send message user Telegram's Bot API
-        response = requests.post(self.TELEGRAM_API % (token, "sendMessage"), data=payload, timeout=_REQUEST_TIMEOUT)
+        # Send message user Telegram's Bot API. Wrapped: an unresponsive
+        # host raises (ReadTimeout, ConnectionError, ...), which the S113
+        # timeout fix above made reachable -- uncaught, that propagates out
+        # of notify() as a generic "Failed running event handler" traceback
+        # instead of this module's own diagnostic.
+        try:
+            response = requests.post(self.TELEGRAM_API % (token, "sendMessage"), data=payload, timeout=_REQUEST_TIMEOUT)
+        except Exception as e:
+            log.error('Could not send notification to TelegramBot (token=%s): %s', token, e)
+            return False
 
         # Error logging
         sent_successfuly = True

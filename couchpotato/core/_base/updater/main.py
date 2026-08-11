@@ -437,40 +437,68 @@ class SourceUpdater(BaseUpdater):
         return True
 
     def removeDir(self, path):
-        try:
-            if os.path.isdir(path):
-                shutil.rmtree(path)
-        except OSError as inst:
-            # inst.filename can be None on some OSErrors -- there's nothing
-            # to chmod, so let it propagate rather than crash on chmod(None).
-            if not inst.filename:
-                raise
+        """ Remove `path` recursively, repairing permissions that block the
+        removal along the way.
 
-            # os.stat/os.chmod both follow symlinks by default, so chmod-ing
-            # inst.filename if it's a symlink would silently reach the
-            # link's TARGET -- potentially outside the tree being deleted.
-            # This runs on freshly-extracted archive content, attacker-
-            # influenced input, so refuse rather than follow it. A symlink's
-            # own permission bits never block rmtree from removing it (only
-            # the containing directory's permissions matter for unlink), so
-            # there is nothing a chmod here would legitimately fix.
-            if os.path.islink(inst.filename):
-                raise
+        A tree can have more than one directory whose permissions block
+        `rmtree` -- sibling or nested -- and a single blanket retry only
+        fixes the first one it meets, then propagates on the second
+        (measured: 2026-08-11 review, finding 3). So the retry is bounded
+        by ENTRIES REPAIRED, not by an attempt count or by recursion depth
+        (the original S2612 defect): each failing `inst.filename` is
+        chmod-ed at most once, tracked in `repaired`, and re-raised if it
+        comes up again. That is also the termination argument -- every
+        loop iteration either returns (rmtree succeeded), raises (the
+        entry that just failed has already been repaired and is still
+        failing, so nothing left to try), or adds exactly one new member
+        to `repaired`, which is bounded by the number of filesystem
+        entries under `path`. No recursion, so no stack exhaustion. """
+        repaired = set()
 
-            # Grant the OWNER read+write+execute, never group/other -- 0o777
-            # previously made the path world-writable in response to an
-            # error. S_IRWXU, not S_IWUSR: rmtree needs owner EXECUTE to
-            # descend into a directory and WRITE to unlink its contents, so
-            # write alone still fails to remove a directory with mode 0o400
-            # or 0o000 (measured). The S2612 finding was "world-writable",
-            # not "more than write" -- do not re-narrow this to S_IWUSR, it
-            # looks more conservative and is actually broken for the
-            # directories this function exists to remove. Retry exactly
-            # once: a permission error this doesn't fix propagates instead
-            # of recursing until the stack ends.
-            current_mode = os.stat(inst.filename).st_mode
-            os.chmod(inst.filename, current_mode | stat.S_IRWXU)
-            shutil.rmtree(path)
+        while True:
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                return
+            except OSError as inst:
+                # inst.filename can be None on some OSErrors -- there's
+                # nothing to chmod, so propagate rather than crash on
+                # chmod(None).
+                if not inst.filename:
+                    raise
+
+                # os.stat/os.chmod both follow symlinks by default, so
+                # chmod-ing inst.filename if it's a symlink would silently
+                # reach the link's TARGET -- potentially outside the tree
+                # being deleted. This runs on freshly-extracted archive
+                # content, attacker-influenced input, so refuse rather than
+                # follow it. A symlink's own permission bits never block
+                # rmtree from removing it (only the containing directory's
+                # permissions matter for unlink), so there is nothing a
+                # chmod here would legitimately fix.
+                if os.path.islink(inst.filename):
+                    raise
+
+                # Already repaired this exact entry and it is STILL
+                # failing -- chmod cannot fix whatever this is (a
+                # different user's file, a filesystem that ignores mode
+                # bits, ...), so stop here rather than loop forever.
+                if inst.filename in repaired:
+                    raise
+                repaired.add(inst.filename)
+
+                # Grant the OWNER read+write+execute, never group/other --
+                # 0o777 previously made the path world-writable in
+                # response to an error. S_IRWXU, not S_IWUSR: rmtree needs
+                # owner EXECUTE to descend into a directory and WRITE to
+                # unlink its contents, so write alone still fails to
+                # remove a directory with mode 0o400 or 0o000 (measured).
+                # The S2612 finding was "world-writable", not "more than
+                # write" -- do not re-narrow this to S_IWUSR, it looks
+                # more conservative and is actually broken for the
+                # directories this function exists to remove.
+                current_mode = os.stat(inst.filename).st_mode
+                os.chmod(inst.filename, current_mode | stat.S_IRWXU)
 
     def getVersion(self):
 

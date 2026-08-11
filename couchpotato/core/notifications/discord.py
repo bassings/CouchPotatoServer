@@ -35,7 +35,12 @@ class Discord(Notification):
             r = requests.post(self.conf('webhook_url'), data=json.dumps(dict(content=message, username=self.conf('bot_name'), avatar_url=self.conf('avatar_url'), tts=self.conf('discord_tts'))), headers=headers, timeout=_REQUEST_TIMEOUT)
             r.status_code
         except Exception as e:
-            log.warning('Error Sending Discord response error code: {0}'.format(r.status_code))
+            # `r` is only assigned if requests.post() RETURNS -- a timeout
+            # or connection error raises before that, so referencing
+            # r.status_code here (the previous code) raised
+            # UnboundLocalError instead of logging anything. Log the
+            # exception that was actually caught.
+            log.warning('Error sending Discord notification: {0}'.format(e))
             return False
         return True
 
