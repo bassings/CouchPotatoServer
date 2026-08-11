@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import stat
 import tarfile
 import time
 import traceback
@@ -440,8 +441,18 @@ class SourceUpdater(BaseUpdater):
             if os.path.isdir(path):
                 shutil.rmtree(path)
         except OSError as inst:
-            os.chmod(inst.filename, 0o777)
-            self.removeDir(path)
+            # inst.filename can be None on some OSErrors -- there's nothing
+            # to chmod, so let it propagate rather than crash on chmod(None).
+            if not inst.filename:
+                raise
+
+            # Grant owner-write only, never group/other -- 0o777 previously
+            # made the path world-writable in response to an error. Retry
+            # exactly once: a permission error this doesn't fix propagates
+            # instead of recursing until the stack ends.
+            current_mode = os.stat(inst.filename).st_mode
+            os.chmod(inst.filename, current_mode | stat.S_IWUSR)
+            shutil.rmtree(path)
 
     def getVersion(self):
 
