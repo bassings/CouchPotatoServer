@@ -228,7 +228,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       unrecognised path RUNS the suites, which is how every other uncertainty
       in this script already resolves.
 
-- [ ] T17: the three SonarQube findings that survived triage — state: queued (no deps)
+- [x] T17: the three SonarQube findings that survived triage — state: **fixed in code** (2026-08-11)
 
       From the first real SonarQube analysis of this repo (2026-08-10, project
       `couchpotato`). Of 84 raw vulnerabilities, 37 were marked false positive
@@ -321,6 +321,57 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       **Do not resolve these in SonarQube to make the rating move.** Fix the
       code, re-scan, and let the rating follow. The 37 dismissals each carry a
       reason and a reopen condition; these three have no reason available.
+
+      **Outcome.** All three fixed in code; nothing was touched in SonarQube.
+      Re-scan after merge and let the rating follow the code.
+
+      1. S4830: `ssl`/`ssl_verify`/`ssl_ca_bundle` added to Synology, matching
+         rtorrent's existing options rather than inventing a shape.
+         `getVerifySsl` hoisted to `DownloaderBase` so there is ONE
+         implementation — with the trap that made hoisting worth care: a
+         downloader with no `ssl_verify` option gets `None`, which the
+         original returns `False` for, so a naive hoist would have silently
+         disabled certificate checking for every downloader inheriting it.
+         The base version treats absent as verify-ON, and that is the guard
+         the mutation testing was aimed at.
+
+         **What this does NOT do, stated plainly:** `ssl` still defaults to
+         0, so a default install still sends the operator's Synology username
+         and password over plaintext http. Flipping that default would break
+         every install pointing at DSM's port 5000, so the risk is now
+         *visible and fixable* rather than eliminated. That is why the
+         warnings below are part of the fix and not a nicety.
+
+      2. S2612: owner-write only (never group/other), retry bounded to one
+         attempt, `None` filename propagates. Also refuses to chmod a
+         SYMLINK — `os.stat`/`os.chmod` both follow links, and this runs on
+         freshly-extracted archive content, so the original would reach a
+         target outside the tree being deleted.
+
+      3. S5247: `autoescape=True`. Method kept, not deleted: no in-repo
+         caller exists, but it is public on `Plugin` and inherited by
+         third-party plugins, so "no callers here" is not evidence of none.
+
+      **The unsafe states are no longer silent**, which was the real defect
+      behind (1): a WARNING fires when credentials are about to cross a
+      plaintext connection, and when https verification is off. Both route
+      through `log_suppressed` with independent keys — a fresh `SynologyRPC`
+      is built per download, so an unbounded warning would fire on every one
+      and train the operator to scroll past the line added so they would not
+      miss it. Neither names a host, path or credential value.
+
+      Two lessons recorded rather than the fix alone:
+      - A present-but-blank `ssl_verify` coerces to `False`. `Settings.get`
+        returns the caller's `default` only on the *exception* path, so
+        `default=True` does not cover a blank value, and after coercion `''`
+        and `'0'` are indistinguishable. The answer is the warning, not more
+        parsing.
+      - The key-independence test first passed against a deliberately
+        broken build. It asserted only `len(records) == 2`, and a shared
+        suppression key also produces two records (one full message, one
+        "withheld" notice), so the count could not tell correct behaviour
+        from the regression. Strengthened to assert each record's content.
+        A textbook incidentally-passing guard, found only by mutating it.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
