@@ -124,6 +124,27 @@ class SynologyRPC:
         # to pass this explicitly must not silently disable verification.
         self.verify = verify
 
+        # `ssl` defaulting off is correct -- DSM listens on 5000 for http out
+        # of the box, and flipping the default would break every existing
+        # install -- but it means the unsafe state is the DEFAULT state, and
+        # nothing said so. Make both unsafe states loud. Never name the
+        # host, a path, or a credential VALUE here -- only the setting that
+        # fixes it (PrivacyFilter/CLAUDE.md's log-privacy floor).
+        has_credentials = bool(username and password)
+        if scheme == 'http' and has_credentials:
+            log.warning(
+                'Synology login will send the configured username and '
+                'password over an unencrypted connection. Enable the "ssl" '
+                'setting to protect them.'
+            )
+        elif scheme == 'https' and not verify:
+            log.warning(
+                'Synology https connection has certificate verification '
+                'disabled, so it cannot confirm it is talking to the right '
+                'server. Enable the "ssl_verify" setting unless you have a '
+                'specific reason to leave it off.'
+            )
+
     def _login(self):
         if self.username and self.password:
             args = {'api': 'SYNO.API.Auth', 'account': self.username, 'passwd': self.password, 'version': 2,
@@ -238,7 +259,9 @@ config = [{
                     'default': 0,
                     'type': 'bool',
                     'advanced': True,
-                    'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>',
+                    'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>. '
+                                   'Leaving this off sends your username and password to DownloadStation '
+                                   '<strong>unencrypted</strong>.',
                 },
                 {
                     'name': 'ssl_verify',
