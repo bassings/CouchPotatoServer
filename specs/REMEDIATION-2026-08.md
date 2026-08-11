@@ -521,7 +521,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Do it with a working harness: assert first that a SUCCESSFUL save
       rotates, then that a failing one does not.
 
-- [ ] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: queued (no deps)
+- [x] T13: `session_secret_store_is_readable()` cannot detect an unreadable store — state: **probe removed** (2026-08-11, option 2)
 
       Review Medium on #229, confirmed by execution and then **attempted and
       reverted**, which is why it is a task rather than a fix.
@@ -562,6 +562,37 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       Option 2 is smaller and matches what already happens. Either way it is
       its own change on the authentication path, with its own review.
+
+      **Done, option 2.** The probe is gone; `ensure_session_secret`'s own
+      propagation is documented as the AC-SEC-33 enforcement point, at the
+      function and at `login_post`'s `except`, and the call-site comment no
+      longer describes a condition that does not exist. Recorded as D17 in
+      `specs/PR2B-SESSION-COOKIE.md`.
+
+      Behaviour-preserving under a REAL fault, and that was checked rather
+      than asserted: `SQLiteAdapter.get` and `.query` both route through
+      `_query_index`, so a store that cannot be read fails BOTH the
+      `getProperty` path and `_session_secret_row`, and no cookie is issued
+      with or without the probe.
+
+      **The test carrying the property was itself vacuous, which is the find
+      worth keeping.** `broken_store` patched `Settings.getProperty` to
+      raise — a fault that cannot occur, since that method's own blanket
+      `except` swallows what the layer beneath throws. It therefore never
+      exercised `ensure_session_secret`'s read at all. Proof it mattered:
+      with the old fixture retained, removing the probe made
+      `test_login_issues_no_cookie_when_the_secret_cannot_be_read` FAIL,
+      because the synthetic fault left the adapter read working, so a secret
+      was created and a cookie issued. The fixture now breaks
+      `_query_index`, the layer both real paths share.
+
+      A second test pins the other half independently: a login against a
+      raising store must write NO secret. No cookie is necessary but not
+      sufficient — writing a fresh secret over a row nobody could read signs
+      every OTHER device out, and inferring that from the cookie assertion
+      would leave it unguarded. Confirmed distinct: a mutation that mints an
+      in-memory fallback secret fails the cookie test and leaves the
+      no-write test green.
 
 - [ ] T11: a focus move that fails entirely tells only the developer console — state: queued (no deps)
 
