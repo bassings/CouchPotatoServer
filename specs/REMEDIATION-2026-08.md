@@ -464,7 +464,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       task. Reachable only via the SOURCE updater, which the Docker
       deployment does not use.
 
-- [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
+- [x] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: **rejected with evidence** (2026-08-11), the primitive cannot express this function
 
       Non-blocking review nit on #229, verified and deferred rather than done.
 
@@ -484,6 +484,45 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       size, on a branch where rule 11 already applies, buys no behaviour and
       risks a regression in the one function that must not lose a write. Its
       own small change, with its own review.
+
+      **Investigated and REJECTED, with the measurements, so this is not
+      re-raised.** The duplication is real; the conclusion that it can be
+      removed is not. `update_with_retry` cannot express what
+      `_write_session_secret` does, on two counts:
+
+      1. **It is update-only, keyed by `_id`.** Driven against a real
+         adapter:
+
+             absent doc -> KeyError: 'Document not found: no-such-id'
+
+         `_write_session_secret` is an UPSERT keyed by a queried
+         `identifier` (`_session_secret_row`), not by an `_id` it already
+         holds. The primitive covers the update half and cannot cover the
+         insert half at all.
+
+      2. **The insert branch is reachable mid-retry, so re-checking it on
+         each attempt is load-bearing rather than ceremony.** The obvious
+         partial refactor — keep the lookup and insert, delegate only the
+         update loop — trades away the case where the row VANISHES between
+         attempts. That is not hypothetical: `Settings.getProperty`'s
+         `except ValueError:` branch fires `database.delete_corrupted` on
+         this exact property row (`core/settings.py:669`), and it is a
+         READER path, so `_SESSION_SECRET_WRITE_LOCK` does not serialise it
+         against a write in progress. Today the retry re-reads, finds
+         nothing, and inserts — recovering. Under the primitive it would
+         raise `KeyError`.
+
+      A variant catching `KeyError` to fall back to insert restores the
+      recovery, but it is the same length as the loop it replaces, converts
+      a re-read into exception-driven control flow, and risks masking a
+      `KeyError` raised for a different reason by the `get()` inside the
+      primitive.
+
+      So the trade is: lose a reachable recovery path, or add complexity, in
+      the one function that must not lose a write — for zero behaviour gain.
+      The hand-rolled loop stays. What was missing was not the refactor but
+      the REASON, which is now in the function's docstring so the next
+      reviewer does not re-open it.
 
 - [x] T14: the password-change rotation commits before the save does — state: **fixed** (2026-08-11), rotation moved off `Core.md5Password` onto a new `.committed` event `Settings.saveView` fires only after `self.save()` succeeds
 

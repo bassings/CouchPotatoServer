@@ -520,6 +520,26 @@ def _write_session_secret(secret: str, db=None, attempts: int = 3) -> str:
     write (measured: after the conflict, `get()` returned the older value).
     Retrying against a re-read row is the fix, and it lives here because
     `couchpotato/core/settings.py` stays out of this diff.
+
+    **Not `SQLiteAdapter.update_with_retry`, and that was measured (T15).**
+    That primitive is the right one for read-modify-write callers, and this
+    loop does look like a duplicate of it. It is not interchangeable:
+
+    - It is update-only and keyed by `_id` -- it raises
+      `KeyError: Document not found` when the document is absent. This
+      function is an UPSERT keyed by a queried `identifier`, so the primitive
+      cannot cover the insert half at all.
+    - Delegating only the update half would drop the case where the row
+      vanishes BETWEEN attempts, and that case is reachable:
+      `Settings.getProperty`'s `except ValueError:` branch fires
+      `database.delete_corrupted` on this very property row
+      (`core/settings.py`), from a READER path that
+      `_SESSION_SECRET_WRITE_LOCK` does not serialise against a write in
+      progress. Re-reading each attempt is what recovers; the primitive
+      would raise instead.
+
+    So the re-check of `existing is None` on every attempt is load-bearing,
+    not ceremony. Do not fold this into the primitive without solving both.
     """
     from couchpotato.core.db.sqlite_adapter import ConflictError
 
