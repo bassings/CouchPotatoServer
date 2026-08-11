@@ -373,6 +373,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
         from the regression. Strengthened to assert each record's content.
         A textbook incidentally-passing guard, found only by mutating it.
 
+      **Two findings in the neighbourhood, measured while fixing the above.**
+      Recorded here so neither is rediscovered and re-argued later.
+
+      - `ruff S113`, `synology.py`: `requests.post` had no timeout, so an
+        unresponsive NAS parks the thread indefinitely and downloads stop
+        with nothing in the log. Fixed here, since it is the same call the
+        S4830 work already edited. 60s, matching `sabnzbd.py`'s file-carrying
+        call rather than the house default of 30, because `_req` uploads the
+        nzb/torrent payload and a too-short timeout would be a fix that
+        causes an outage.
+      - `ruff S202`, `updater/main.py:370,374`: `tarfile.extractall()`, the
+        path-traversal class. **Measured, not assumed: a false positive on
+        this project.** Built a tar containing a `../escaped.txt` member and
+        ran the repo's exact call on Python 3.14:
+
+            extractall RAISED: OutsideDestinationError: '../escaped.txt'
+            would be extracted to '.../escaped.txt', which is outside the
+            destination
+
+        3.14 applies the `data` extraction filter by default, so the
+        traversal is already refused, and 3.14 is what production ships and
+        the only version CI tests. Deliberately NOT changed — adding
+        `filter='data'` would be harmless but justified only by "a scanner
+        said so". **Reopen if this project ever supports Python < 3.14**, at
+        which point the call becomes a genuine arbitrary-file-write.
+
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
       Non-blocking review nit on #229, verified and deferred rather than done.
