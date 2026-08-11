@@ -446,6 +446,17 @@ class SourceUpdater(BaseUpdater):
             if not inst.filename:
                 raise
 
+            # os.stat/os.chmod both follow symlinks by default, so chmod-ing
+            # inst.filename if it's a symlink would silently reach the
+            # link's TARGET -- potentially outside the tree being deleted.
+            # This runs on freshly-extracted archive content, attacker-
+            # influenced input, so refuse rather than follow it. A symlink's
+            # own permission bits never block rmtree from removing it (only
+            # the containing directory's permissions matter for unlink), so
+            # there is nothing a chmod here would legitimately fix.
+            if os.path.islink(inst.filename):
+                raise
+
             # Grant owner-write only, never group/other -- 0o777 previously
             # made the path world-writable in response to an error. Retry
             # exactly once: a permission error this doesn't fix propagates
