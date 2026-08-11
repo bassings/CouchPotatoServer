@@ -82,7 +82,10 @@ class Plugin:
 
     def renderTemplate(self, parent_file, templ, **params):
         tmpl_dir = str(Path(parent_file).parent)
-        env = _JinjaEnv(loader=_JinjaFSLoader(tmpl_dir))
+        # autoescape=True: caller-supplied params must not render as raw HTML
+        # (python:S5247). No in-repo caller exists today, but this is a
+        # public method inherited by every plugin, in-tree or third-party.
+        env = _JinjaEnv(loader=_JinjaFSLoader(tmpl_dir), autoescape=True)
         t = env.get_template(templ)
         return t.render(**params)
 
