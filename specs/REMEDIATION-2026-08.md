@@ -586,6 +586,26 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       was created and a cookie issued. The fixture now breaks
       `_query_index`, the layer both real paths share.
 
+      **Spec bug, same as T17.** T13 shipped with no `AC-<LENS>-<n>`
+      criteria of its own, so review had only the task prose to check
+      against. Tasks added mid-plan skip the planning cycle where criteria
+      are written; that is the gap, not this task.
+
+      **A claim of mine in the first draft was false, and the adversarial
+      reviewer caught it as unproven before I disproved it.** I wrote that
+      `Env.prop` NEVER raises in production and that the probe answered
+      `True` unconditionally. Measured:
+
+          getProperty RAISED: RuntimeError: store down on the retry
+
+      `Settings.getProperty`'s `except ValueError:` recovery branch makes
+      its own `db.get` call outside any handler, so a corrupt-document read
+      followed by a failing retry propagates. The T13 conclusion is
+      unchanged — the probe was blind to the ordinary raising-store fault,
+      which is the one it existed to catch — but "unfalsified" is not
+      "true", and §7 says assert only what the repo proves. Corrected in
+      the code, in D17, and here.
+
       A second test pins the other half independently: a login against a
       raising store must write NO secret. No cookie is necessary but not
       sufficient — writing a fresh secret over a row nobody could read signs
