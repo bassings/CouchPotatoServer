@@ -228,7 +228,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       unrecognised path RUNS the suites, which is how every other uncertainty
       in this script already resolves.
 
-- [ ] T17: the three SonarQube findings that survived triage — state: queued (no deps)
+- [x] T17: the three SonarQube findings that survived triage — state: **fixed in code** (2026-08-11)
 
       From the first real SonarQube analysis of this repo (2026-08-10, project
       `couchpotato`). Of 84 raw vulnerabilities, 37 were marked false positive
@@ -321,6 +321,148 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       **Do not resolve these in SonarQube to make the rating move.** Fix the
       code, re-scan, and let the rating follow. The 37 dismissals each carry a
       reason and a reopen condition; these three have no reason available.
+
+      **Outcome.** All three fixed in code; nothing was touched in SonarQube.
+      Re-scan after merge and let the rating follow the code.
+
+      1. S4830: `ssl`/`ssl_verify`/`ssl_ca_bundle` added to Synology, matching
+         rtorrent's existing options rather than inventing a shape.
+         `getVerifySsl` hoisted to `DownloaderBase` so there is ONE
+         implementation — with the trap that made hoisting worth care: a
+         downloader with no `ssl_verify` option gets `None`, which the
+         original returns `False` for, so a naive hoist would have silently
+         disabled certificate checking for every downloader inheriting it.
+         The base version treats absent as verify-ON, and that is the guard
+         the mutation testing was aimed at.
+
+         **What this does NOT do, stated plainly:** `ssl` still defaults to
+         0, so a default install still sends the operator's Synology username
+         and password over plaintext http. Flipping that default would break
+         every install pointing at DSM's port 5000, so the risk is now
+         *visible and fixable* rather than eliminated. That is why the
+         warnings below are part of the fix and not a nicety.
+
+      2. S2612: owner-write only (never group/other), retry bounded to one
+         attempt, `None` filename propagates. Also refuses to chmod a
+         SYMLINK — `os.stat`/`os.chmod` both follow links, and this runs on
+         freshly-extracted archive content, so the original would reach a
+         target outside the tree being deleted.
+
+      3. S5247: `autoescape=True`. Method kept, not deleted: no in-repo
+         caller exists, but it is public on `Plugin` and inherited by
+         third-party plugins, so "no callers here" is not evidence of none.
+
+      **The unsafe states are no longer silent**, which was the real defect
+      behind (1): a WARNING fires when credentials are about to cross a
+      plaintext connection, and when https verification is off. Both route
+      through `log_suppressed` with independent keys — a fresh `SynologyRPC`
+      is built per download, so an unbounded warning would fire on every one
+      and train the operator to scroll past the line added so they would not
+      miss it. Neither names a host, path or credential value.
+
+      Two lessons recorded rather than the fix alone:
+      - A present-but-blank `ssl_verify` coerces to `False`. `Settings.get`
+        returns the caller's `default` only on the *exception* path, so
+        `default=True` does not cover a blank value, and after coercion `''`
+        and `'0'` are indistinguishable. The answer is the warning, not more
+        parsing.
+      - The key-independence test first passed against a deliberately
+        broken build. It asserted only `len(records) == 2`, and a shared
+        suppression key also produces two records (one full message, one
+        "withheld" notice), so the count could not tell correct behaviour
+        from the regression. Strengthened to assert each record's content.
+        A textbook incidentally-passing guard, found only by mutating it.
+
+      **Two findings in the neighbourhood, measured while fixing the above.**
+      Recorded here so neither is rediscovered and re-argued later.
+
+      - `ruff S113`, `synology.py`: `requests.post` had no timeout, so an
+        unresponsive NAS parks the thread indefinitely and downloads stop
+        with nothing in the log. Fixed here, since it is the same call the
+        S4830 work already edited. 60s, matching `sabnzbd.py`'s file-carrying
+        call rather than the house default of 30, because `_req` uploads the
+        nzb/torrent payload and a too-short timeout would be a fix that
+        causes an outage.
+      - `ruff S202`, `updater/main.py:370` and `:374`: the path-traversal
+        class. **Measured, not assumed: a false positive at both lines —
+        but for two DIFFERENT reasons, and an earlier version of this entry
+        got that wrong.** It described both lines as `tarfile.extractall()`
+        and gave them a single reopen condition, having measured only the
+        tar one. `:370` is `zip_file.extractall()`; only `:374` is tarfile.
+        Both were then driven properly:
+
+        `:374`, tarfile — a tar carrying a `../escaped.txt` member:
+
+            OutsideDestinationError: '../escaped.txt' would be extracted to
+            '.../escaped.txt', which is outside the destination
+
+        Python 3.14 applies the `data` extraction filter by default, and
+        3.14 is what production ships and the only version CI tests.
+        **Reopen `:374` if this project ever supports Python < 3.14**, at
+        which point that call becomes a genuine arbitrary-file-write.
+
+        `:370`, zipfile — a zip carrying both `../escaped.txt` and
+        `/abs_escaped.txt`: both landed INSIDE the destination
+        (`out/escaped.txt`, `out/abs_escaped.txt`), and neither
+        `./escaped.txt` nor `/abs_escaped.txt` was created. `zipfile`
+        sanitises member names itself and has done since long before 3.14,
+        so **the Python-version condition does NOT apply to this line** —
+        it is contained by the library regardless of interpreter version.
+
+        Neither changed. Adding `filter='data'` would be harmless but is
+        justified only by "a scanner said so". The lesson worth keeping is
+        the doc error rather than the finding: citing two lines from one
+        measurement produced a confidently wrong reopen condition, which is
+        the failure mode §7 warns about — a wrong doc costs more than a
+        vague one.
+
+      **Spec bug (recorded, per the harness rule that a review finding with
+      no AC behind it is a spec bug).** T17 was written, built and reviewed
+      with **zero** `AC-<LENS>-<n>` acceptance criteria, so the review had
+      only the task's prose to check the built thing against. Every finding
+      below therefore had to be discovered rather than verified against a
+      contract, including the two serious ones. Tasks added mid-plan skip
+      the planning cycle, which is exactly when criteria get written; that
+      is the gap, not this task in particular.
+
+      **Portability trap, measured — worth more than the finding that
+      surfaced it.** Review raised the TOCTOU window between `removeDir`'s
+      `os.path.islink` check and its `os.chmod`. Real, but both atomic
+      remedies fail, and one fails in the worst possible way:
+
+      - `O_NOFOLLOW` + `fchmod` (the idiom `renamer/swap.py` already uses)
+        cannot open the directory at all — `PermissionError` — because
+        lacking read permission is the exact condition being repaired.
+      - `os.chmod(..., follow_symlinks=False)` works on macOS and **does
+        not exist on Alpine**:
+
+            macOS  : chmod follow_symlinks supported: True
+            Alpine : chmod follow_symlinks supported: False
+
+        (measured in `python:3.14-alpine`, the image this project ships.)
+
+      So that "obvious" fix would have passed every local test and raised
+      `NotImplementedError` in a delete path on production. This is §11's
+      "match the environment to production" in its most expensive form: a
+      green local run in an environment that cannot express the failure.
+      **Check `os.supports_follow_symlinks` before reaching for it here.**
+
+      The check-then-act stays. `chmod` requires ownership, so the worst
+      outcome is owner-rwx on a file the process already owns. Reopen if a
+      portable atomic chmod-without-follow appears, or if this ever runs
+      where the process does not own the tree it is deleting.
+
+      **Carried forward, not fixed here.** `removeDir`'s single retry can
+      now raise where the old unbounded recursion might eventually have
+      succeeded, and it sits AFTER `replaceWith()` has already overwritten
+      the application directory (`updater/main.py:380`), before
+      `version_file` is written (`:383`). The updater then believes it is
+      still on the old version and re-applies next check. Speculative: a
+      multi-entry blocked tree was never constructed, so the frequency is
+      unmeasured. Non-destructive on the data-risk ranking (the recoverable
+      end), which is why it is recorded rather than fixed under a security
+      task. Reachable only via the SOURCE updater, which the Docker
+      deployment does not use.
 
 - [ ] T15: `_write_session_secret` hand-rolls a CAS retry the adapter already provides — state: queued (no deps)
 
@@ -482,6 +624,44 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       headlined is worth ~27s (4%) and the edge is worth ~516s (79%). The cache
       is retained as the TAIL fix — it is the only step here that has ever
       stalled (610s of a 697s job).
+
+- [ ] T20: the Discord notifier reports success on a rejected notification — state: queued (no deps)
+
+      Raised reviewing T17 (#246) and explicitly held out of it as out of
+      scope: T17 was the three SonarQube findings, and this changes
+      notification delivery semantics.
+
+      `couchpotato/core/notifications/discord.py`, in `notify`:
+
+          r = requests.post(...)
+          r.status_code
+
+      Two defects, one cosmetic and one not.
+
+      1. The bare `r.status_code` is a no-op — the value is never read.
+         It reads as leftover debug code. Note it is NOT quite dead: it
+         is the only thing that would raise on a torn response object,
+         and deleting it is safe but should be done knowing that.
+
+      2. `requests.post` does not raise on a non-2xx response, and
+         nothing checks the status, so a webhook answering 400, 401, 404
+         or 429 falls through to `return True`. The caller believes the
+         notification was delivered when Discord rejected it. A rate-limited
+         or revoked webhook therefore fails silently and permanently, which
+         is the worst shape for a notifier: the operator learns nothing is
+         arriving only by noticing its absence.
+
+      Fix shape: `raise_for_status()`, matching the pattern the Synology
+      work in T17 already establishes in this repo, so the existing
+      `except` returns False and logs. Check the sibling notifiers for the
+      same shape before assuming it is Discord-only.
+
+      **Not folded into T17 deliberately.** Two of T17's own fixes each
+      introduced a defect in adjacent code (the timeout made an
+      `UnboundLocalError` reachable; the retry bound regressed multi-entry
+      cleanup), so a third adjacent change to the same file, altering what
+      `notify` returns, is exactly the shape that keeps going wrong. It
+      gets its own task and its own tests.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
 

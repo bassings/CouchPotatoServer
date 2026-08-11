@@ -2093,6 +2093,41 @@ class TestRTorrentDownloaderConnect:
         assert called_url == 'https://myhost/plugins/httprpc/action.php'
 
 
+class TestRTorrentGetVerifySsl:
+    """T17 fix 1: getVerifySsl is hoisted to DownloaderBase so rtorrent and
+    Synology share one implementation. rtorrent must no longer carry its own
+    copy -- inheriting it is the whole point, since a second copy is how one
+    drifts from the other."""
+
+    def test_rtorrent_does_not_redefine_get_verify_ssl(self):
+        assert 'getVerifySsl' not in rtorrent_module.rTorrent.__dict__
+
+    def _conf(self, **overrides):
+        values = {'ssl_verify': True, 'ssl_ca_bundle': ''}
+        values.update(overrides)
+        return lambda k, **kw: values.get(k, kw.get('default', ''))
+
+    def _make_downloader(self):
+        return rtorrent_module.rTorrent.__new__(rtorrent_module.rTorrent)
+
+    def test_verifies_by_default(self):
+        rt = self._make_downloader()
+        with patch.object(rt, 'conf', side_effect = self._conf()):
+            assert rt.getVerifySsl() is True
+
+    def test_explicit_off_is_honoured(self):
+        rt = self._make_downloader()
+        with patch.object(rt, 'conf', side_effect = self._conf(ssl_verify = False)):
+            assert rt.getVerifySsl() is False
+
+    def test_existing_ca_bundle_is_used(self, tmp_path):
+        bundle = tmp_path / 'ca.pem'
+        bundle.write_text('cert')
+        rt = self._make_downloader()
+        with patch.object(rt, 'conf', side_effect = self._conf(ssl_ca_bundle = str(bundle))):
+            assert rt.getVerifySsl() == str(bundle)
+
+
 class TestRTorrentDownload:
     """Tests for rTorrent.download() -- magnet and torrent-file add paths."""
 

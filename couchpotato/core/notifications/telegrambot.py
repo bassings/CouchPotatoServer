@@ -7,6 +7,12 @@ log = CPLog(__name__)
 
 autoload = 'TelegramBot'
 
+# python:S113 -- requests.post with no timeout can hang the calling thread
+# forever against an unresponsive Telegram host. 30s (the house default:
+# Plugin.urlopen, rtorrent_.py's _RPC_TIMEOUT), not Synology's longer 60s --
+# this carries a short JSON payload, not a file upload.
+_REQUEST_TIMEOUT = 30
+
 class TelegramBot(Notification):
 
     TELEGRAM_API = "https://api.telegram.org/bot%s/%s"
@@ -28,8 +34,16 @@ class TelegramBot(Notification):
         # Cosntruct message
         payload = {'chat_id': usr_id, 'text': message, 'parse_mode': 'Markdown'}
 
-        # Send message user Telegram's Bot API
-        response = requests.post(self.TELEGRAM_API % (token, "sendMessage"), data=payload)
+        # Send message user Telegram's Bot API. Wrapped: an unresponsive
+        # host raises (ReadTimeout, ConnectionError, ...), which the S113
+        # timeout fix above made reachable -- uncaught, that propagates out
+        # of notify() as a generic "Failed running event handler" traceback
+        # instead of this module's own diagnostic.
+        try:
+            response = requests.post(self.TELEGRAM_API % (token, "sendMessage"), data=payload, timeout=_REQUEST_TIMEOUT)
+        except Exception as e:
+            log.error('Could not send notification to TelegramBot (token=%s): %s', token, e)
+            return False
 
         # Error logging
         sent_successfuly = True

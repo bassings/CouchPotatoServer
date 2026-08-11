@@ -4,13 +4,23 @@ import traceback
 from couchpotato.core._base.downloader.main import DownloaderBase
 from couchpotato.core.helpers.encoding import isInt
 from couchpotato.core.helpers.variable import cleanHost
-from couchpotato.core.logger import CPLog
+from couchpotato.core.logger import CPLog, log_suppressed
 import requests
 
 
 log = CPLog(__name__)
 
 autoload = 'Synology'
+
+# python:S113 -- requests.post with no timeout can hang the calling thread
+# forever against an unresponsive NAS, which on an unattended home server
+# reads as "downloads silently stopped" with nothing in the log. 60s rather
+# than the house default of 30s (Plugin.urlopen, rtorrent_.py's
+# _RPC_TIMEOUT): _req also carries file uploads (the nzb/torrent payload
+# itself), so the shorter value risks breaking a slow-but-working setup,
+# which would be a fix that causes an outage. Matches sabnzbd.py's own
+# API-call timeout.
+_REQUEST_TIMEOUT = 60
 
 
 class Synology(DownloaderBase):
@@ -48,7 +58,8 @@ class Synology(DownloaderBase):
 
         try:
             # Send request to Synology
-            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'), self.conf('destination'))
+            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'), self.conf('destination'),
+                                ssl = self.conf('ssl'), verify = self.getVerifySsl())
             if data['protocol'] == 'torrent_magnet':
                 log.info('Adding torrent URL %s', data['url'])
                 response = srpc.create_task(url = data['url'])
@@ -71,7 +82,8 @@ class Synology(DownloaderBase):
 
         host = cleanHost(self.conf('host'), protocol = False).split(':')
         try:
-            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'))
+            srpc = SynologyRPC(host[0], host[1], self.conf('username'), self.conf('password'),
+                                ssl = self.conf('ssl'), verify = self.getVerifySsl())
             test_result = srpc.test()
         except Exception:
             return False
@@ -103,17 +115,63 @@ class SynologyRPC:
 
     """SynologyRPC lite library"""
 
-    def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None):
+    def __init__(self, host = 'localhost', port = 5000, username = None, password = None, destination = None,
+                 ssl = False, verify = True, now = None):
 
         super().__init__()
 
-        self.download_url = 'http://%s:%s/webapi/DownloadStation/task.cgi' % (host, port)
-        self.auth_url = 'http://%s:%s/webapi/auth.cgi' % (host, port)
+        scheme = 'https' if ssl else 'http'
+        self.download_url = '%s://%s:%s/webapi/DownloadStation/task.cgi' % (scheme, host, port)
+        self.auth_url = '%s://%s:%s/webapi/auth.cgi' % (scheme, host, port)
         self.sid = None
         self.username = username
         self.password = password
         self.destination = destination
         self.session_name = 'DownloadStation'
+        # Certificate verification for requests.post -- True/False, or a CA
+        # bundle path. Default True: this carries the operator's username
+        # and password on the SYNO.API.Auth login, so a caller that forgets
+        # to pass this explicitly must not silently disable verification.
+        self.verify = verify
+
+        # `ssl` defaulting off is correct -- DSM listens on 5000 for http out
+        # of the box, and flipping the default would break every existing
+        # install -- but it means the unsafe state is the DEFAULT state, and
+        # nothing said so. Make both unsafe states loud. Never name the
+        # host, a path, or a credential VALUE here -- only the setting that
+        # fixes it (PrivacyFilter/CLAUDE.md's log-privacy floor).
+        #
+        # Routed through log_suppressed rather than logged unconditionally:
+        # a fresh SynologyRPC is built on every download, so an unbounded
+        # warning would fire on every single one -- which trains the
+        # operator to scroll past the exact line added so they wouldn't
+        # miss it. log_suppressed keeps the signal (first occurrence in
+        # full, a "further messages withheld" notice, then the next
+        # occurrence after the window in full WITH the withheld count)
+        # without the noise. Two independent keys so the two warnings don't
+        # suppress each other. `now` is forwarded, not defaulted away, so
+        # the window is testable without sleeping or patching the clock.
+        has_credentials = bool(username and password)
+        if scheme == 'http' and has_credentials:
+            log_suppressed(
+                log.warning, 'synology_plaintext_credentials',
+                'Synology login will send the configured username and '
+                'password over an unencrypted connection. Enable the "ssl" '
+                'setting (under Advanced) to protect them -- this also '
+                'requires changing the port in the "host" setting to '
+                'DSM\'s https port, usually 5001, or the connection will '
+                'fail.',
+                now = now,
+            )
+        elif scheme == 'https' and not verify:
+            log_suppressed(
+                log.warning, 'synology_ssl_verify_disabled',
+                'Synology https connection has certificate verification '
+                'disabled, so it cannot confirm it is talking to the right '
+                'server. Enable the "ssl_verify" setting unless you have a '
+                'specific reason to leave it off.',
+                now = now,
+            )
 
     def _login(self):
         if self.username and self.password:
@@ -137,7 +195,7 @@ class SynologyRPC:
     def _req(self, url, args, files = None):
         response = {'success': False}
         try:
-            req = requests.post(url, data = args, files = files, verify = False)
+            req = requests.post(url, data = args, files = files, verify = self.verify, timeout = _REQUEST_TIMEOUT)
             req.raise_for_status()
             response = json.loads(req.text)
             if response['success']:
@@ -222,6 +280,33 @@ config = [{
                     'default': 0,
                     'type': 'enabler',
                     'radio_group': 'nzb,torrent',
+                },
+                {
+                    'name': 'ssl',
+                    'label': 'SSL Enabled',
+                    'default': 0,
+                    'type': 'bool',
+                    'advanced': True,
+                    'description': 'Use HyperText Transfer Protocol Secure, or <strong>https</strong>. '
+                                   'Leaving this off sends your username and password to DownloadStation '
+                                   '<strong>unencrypted</strong>. Also requires changing the port in the '
+                                   '<strong>host</strong> setting to DSM\'s https port (usually <strong>5001</strong>) '
+                                   '-- with the default plaintext port, https connections will fail.',
+                },
+                {
+                    'name': 'ssl_verify',
+                    'label': 'SSL Verify',
+                    'default': 1,
+                    'type': 'bool',
+                    'advanced': True,
+                    'description': 'Verify SSL certificate on https connections',
+                },
+                {
+                    'name': 'ssl_ca_bundle',
+                    'label': 'SSL CA Bundle',
+                    'type': 'string',
+                    'advanced': True,
+                    'description': 'Path to a directory (or file) containing trusted certificate authorities',
                 },
                 {
                     'name': 'host',

@@ -314,20 +314,6 @@ class rTorrent(DownloaderBase):
             self.conf('password')
         )
 
-    def getVerifySsl(self):
-        # Ensure verification has been enabled
-        if not self.conf('ssl_verify'):
-            return False
-
-        # Use ca bundle if defined
-        ca_bundle = self.conf('ssl_ca_bundle')
-
-        if ca_bundle and os.path.exists(ca_bundle):
-            return ca_bundle
-
-        # Use default ssl verification
-        return True
-
     def connect(self, reconnect = False):
         # Already connected?
         if not reconnect and self.rt is not None:
