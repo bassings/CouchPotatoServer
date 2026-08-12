@@ -183,7 +183,7 @@ class Hadouken(DownloaderBase):
                 'seed_ratio': torrent.get_seed_ratio(),
                 'original_status': torrent.state,
                 'timeleft': -1,
-                'folder': sp(torrent.save_path if len(torrent_files == 1) else os.path.join(torrent.save_path, torrent.name)),
+                'folder': sp(torrent.save_path if len(torrent_files) == 1 else os.path.join(torrent.save_path, torrent.name)),
                 'files': torrent_files
             })
 

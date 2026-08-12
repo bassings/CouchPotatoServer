@@ -2799,3 +2799,86 @@ class TestHadoukenDownloadFile:
         mock_api.add_file.assert_not_called()
         assert mock_log_error.call_count == 1
         assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+
+class FakeHadoukenTorrent:
+    """Minimal stand-in for TorrentItem[v4|v5] -- plain attributes plus the
+    two computed-status methods, matching exactly what getAllDownloadStatus
+    reads off a torrent. Not a MagicMock: a MagicMock tolerates the
+    `len(torrent_files == 1)` bug silently (its `.upper()`/comparisons never
+    raise), which would hide the exact defect this test exists to catch."""
+
+    def __init__(self, info_hash, name, save_path, state = 1):
+        self.info_hash = info_hash
+        self.name = name
+        self.save_path = save_path
+        self.state = state
+
+    def get_status(self):
+        return 'busy'
+
+    def get_seed_ratio(self):
+        return 0
+
+
+class TestHadoukenGetAllDownloadStatus:
+    """T24: hadouken.py:186 transposed `len(torrent_files == 1)` for
+    `len(torrent_files) == 1` -- comparing a list to an int is always False,
+    and len(False) raises TypeError, so getAllDownloadStatus crashed on the
+    first torrent in the queue, every time."""
+
+    def _make_hadouken(self, conf_values = None):
+        from couchpotato.core.downloaders.hadouken import Hadouken
+        conf_values = conf_values or {}
+        hd = Hadouken.__new__(Hadouken)
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        hd.conf = conf
+        return hd
+
+    def test_getAllDownloadStatus_single_file_torrent_folder_is_save_path(self, tmp_path):
+        """A single-file torrent's folder is just save_path -- not
+        save_path/name."""
+        save_path = str(tmp_path)
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+
+        torrent = FakeHadoukenTorrent(
+            info_hash = 'abc123', name = 'Movie.mkv', save_path = save_path,
+        )
+        mock_api.get_by_hash_list.return_value = [torrent]
+        mock_api.get_files_by_hash.return_value = ['Movie.mkv']
+
+        with patch.object(hd, 'connect', return_value = True):
+            result = hd.getAllDownloadStatus(['ABC123'])
+
+        assert len(result) == 1
+        assert result[0]['folder'] == save_path
+        assert result[0]['files'] == [os.path.join(save_path, 'Movie.mkv')]
+
+    def test_getAllDownloadStatus_multi_file_torrent_folder_is_save_path_plus_name(self, tmp_path):
+        """A multi-file torrent's folder is save_path/name -- the files sit
+        in a subfolder named after the torrent, not directly under
+        save_path."""
+        save_path = str(tmp_path)
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+
+        torrent = FakeHadoukenTorrent(
+            info_hash = 'def456', name = 'MovieSet', save_path = save_path,
+        )
+        mock_api.get_by_hash_list.return_value = [torrent]
+        mock_api.get_files_by_hash.return_value = ['a.mkv', 'b.srt']
+
+        with patch.object(hd, 'connect', return_value = True):
+            result = hd.getAllDownloadStatus(['DEF456'])
+
+        assert len(result) == 1
+        assert result[0]['folder'] == os.path.join(save_path, 'MovieSet')
+        assert sorted(result[0]['files']) == sorted([
+            os.path.join(save_path, 'a.mkv'), os.path.join(save_path, 'b.srt'),
+        ])

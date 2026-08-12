@@ -22,7 +22,7 @@ class PutIO(DownloaderBase):
         })
         addEvent('putio.download', self.putioDownloader)
 
-        return super().__init__()
+        super().__init__()
 
     # This is a recusive function to check for the folders
     def recursionFolder(self, client, folder = 0, tfolder = ''):
