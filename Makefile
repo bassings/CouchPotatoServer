@@ -124,7 +124,11 @@ sonar-token-check: ## Fail fast if the analysis token is missing or empty
 	@# passes `test -r` and then fails inside the scanner AFTER coverage has
 	@# run, which is precisely the waste this check exists to prevent. Assert
 	@# the assignment exists AND has a value.
-	@grep -qE '^SONAR_TOKEN=.+' "$(SONAR_TOKEN_FILE)" || { \
+	@# `[^[:space:]]`, not `.+`: `.+` matches a value of pure whitespace, which
+	@# sources cleanly and then fails deep inside the scanner AFTER coverage --
+	@# the same late failure this check exists to prevent. POSIX class rather
+	@# than `\S`, which is a GNU extension BSD grep does not honour.
+	@grep -qE '^SONAR_TOKEN=[^[:space:]]' "$(SONAR_TOKEN_FILE)" || { \
 		echo "$(SONAR_TOKEN_FILE) does not define a non-empty SONAR_TOKEN=..."; \
 		exit 1; }
 
