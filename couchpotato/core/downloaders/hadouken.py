@@ -54,7 +54,16 @@ class Hadouken(DownloaderBase):
             if auth_type == 'api_key':
                 header = 'Token ' + self.conf('api_key')
             elif auth_type == 'user_pass':
-                header = 'Basic ' + b64encode(self.conf('auth_user') + ':' + self.conf('auth_pass'))
+                # RFC 7617: HTTP Basic auth encodes the user:pass pair to
+                # octets, then base64s the octets -- the header must end up
+                # a str for the '+' concatenation below. UTF-8 is the
+                # deliberate choice here (not latin-1): a non-ASCII
+                # username/password encodes to a different byte sequence
+                # under latin-1, which would base64-encode cleanly (no
+                # crash) but fail auth against a UTF-8-expecting server in
+                # a way indistinguishable from a wrong password.
+                credentials = (self.conf('auth_user') + ':' + self.conf('auth_pass')).encode('utf-8')
+                header = 'Basic ' + b64encode(credentials).decode('utf-8')
 
             url = 'http://' + str(host[0]) + ':' + str(host[1]) + '/api'
             client = JsonRpcClient(url, header)

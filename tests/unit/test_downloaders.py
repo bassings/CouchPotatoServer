@@ -2702,6 +2702,136 @@ class TestDelugeCheckTorrent:
         assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
 
 
+class TestHadoukenConnect:
+    """T28: hadouken.py:57 handed b64encode a str ('user:pass'), which raises
+    TypeError -- b64encode requires bytes -- so `auth_type = 'user_pass'`
+    has never been able to connect. `api_key` auth takes a different branch
+    and was unaffected. connect() had NO test coverage at all before this
+    class, which is how three separate crashes (T24, T27, T28) shipped from
+    this one file undetected.
+
+    Nothing here mocks JsonRpcClient or HadoukenAPIv4/v5: both are
+    __init__-only (build a urllib opener, store the client) and make no
+    network call, so connect() is driven for real end to end and the
+    Authorization header is read off the real opener it built.
+    """
+
+    def _make_hadouken(self, conf_values = None):
+        from couchpotato.core.downloaders.hadouken import Hadouken
+        conf_values = conf_values or {}
+        hd = Hadouken.__new__(Hadouken)
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        hd.conf = conf
+        return hd
+
+    def _auth_header(self, hd):
+        headers = dict(hd.hadouken_api.rpc.opener.addheaders)
+        return headers.get('Authorization')
+
+    def test_connect_user_pass_builds_basic_auth_header(self):
+        """RFC 7617: the user:pass pair is encoded to octets, then base64,
+        before going on the wire. Expected value below is a literal
+        computed independently in a separate interpreter (base64 of
+        b'operator:sw0rdfish'), NOT via the module's own b64encode call --
+        a test that recomputes the implementation's expression proves
+        nothing about whether that expression is correct."""
+        hd = self._make_hadouken({
+            'host': 'localhost:5050',
+            'version': 'v5',
+            'auth_type': 'user_pass',
+            'auth_user': 'operator',
+            'auth_pass': 'sw0rdfish',
+        })
+
+        result = hd.connect()
+
+        assert result is True
+        assert self._auth_header(hd) == 'Basic b3BlcmF0b3I6c3cwcmRmaXNo'
+
+    def test_connect_user_pass_non_ascii_password_uses_utf8(self):
+        """A non-ASCII password is where the encoding choice becomes
+        observable: utf-8 and latin-1 disagree on the byte sequence for
+        accented characters, so this fails under a wrong encoding choice
+        even though the ASCII-only test above would not (ASCII is a subset
+        of both). Expected value is again an independently-computed
+        literal."""
+        hd = self._make_hadouken({
+            'host': 'localhost:5050',
+            'version': 'v5',
+            'auth_type': 'user_pass',
+            'auth_user': 'Ünïcödé',
+            'auth_pass': 'pässwörd',
+        })
+
+        result = hd.connect()
+
+        assert result is True
+        assert self._auth_header(hd) == 'Basic w5xuw69jw7Zkw6k6cMOkc3N3w7ZyZA=='
+
+    def test_connect_user_pass_header_carries_no_plaintext_credentials(self):
+        """Credentials must not leak: the header is base64, not plaintext,
+        so neither raw credential appears as a literal substring of it."""
+        hd = self._make_hadouken({
+            'host': 'localhost:5050',
+            'version': 'v5',
+            'auth_type': 'user_pass',
+            'auth_user': 'operator',
+            'auth_pass': 'sw0rdfish',
+        })
+
+        hd.connect()
+
+        header = self._auth_header(hd)
+        assert 'operator' not in header
+        assert 'sw0rdfish' not in header
+
+    def test_connect_api_key_still_builds_token_header(self):
+        """The already-working v5 api_key branch must not regress."""
+        hd = self._make_hadouken({
+            'host': 'localhost:5050',
+            'version': 'v5',
+            'auth_type': 'api_key',
+            'api_key': 'abc123',
+        })
+
+        result = hd.connect()
+
+        assert result is True
+        assert self._auth_header(hd) == 'Token abc123'
+
+    def test_connect_v4_raises_typeerror_pre_existing_unrelated_bug(self):
+        """NOT part of T28, and NOT fixed here -- pinned as documented
+        current behaviour per this task's brief ("if you find a fourth
+        [crash], report it, do not fix it").
+
+        `HadoukenAPIv4` (hadouken.py) does not inherit `HadoukenAPI` and
+        defines no `__init__` of its own, so `HadoukenAPIv4(client)` in
+        connect()'s v4 branch raises TypeError immediately on construction
+        -- `object.__init__` takes no positional args. `self.rpc` is
+        therefore never set, so every HadoukenAPIv4 method (add_file,
+        get_by_hash_list, pause, ...) would AttributeError even if
+        construction somehow succeeded. The whole v4 protocol version is
+        currently unusable, independent of anything b64encode-related --
+        this is unrelated to T28's fix and this test would have failed
+        identically before it.
+
+        Discovered only because this task drove connect() for real instead
+        of mocking HadoukenAPIv4/v5 out -- exactly the test gap T28's brief
+        called out (connect() had no coverage at all). Left broken and
+        reported rather than fixed, per scope."""
+        hd = self._make_hadouken({
+            'host': 'localhost:5050',
+            'version': 'v4',
+            'api_key': 'v4key456',
+        })
+
+        with pytest.raises(TypeError, match = 'HadoukenAPIv4'):
+            hd.connect()
+
+
 class TestHadoukenDownloadFile:
     """Tests for Hadouken.download()'s torrent-FILE add path."""
 
