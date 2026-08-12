@@ -666,7 +666,7 @@ class Settings:
             prop = propert['doc']['value']
         except ValueError:
             propert = db.get('property', identifier)
-            fireEvent('database.delete_corrupted', propert.get('_id'))
+            fireEvent('database.corrupted_document', propert.get('_id'))
         except Exception:
             self.log.debug('Property "%s" not yet stored, will use default' % identifier)
 

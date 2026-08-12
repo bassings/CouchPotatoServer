@@ -860,7 +860,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       writes, not by reasoning about it: the previous three attempts in this
       area all failed on harnesses that could not distinguish the states.
 
-- [ ] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: queued (no deps)
+- [x] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: **fixed** (2026-08-12), report-only (owner decision, not the "implement the delete" option below)
 
       Found by review disagreement on #249: one reviewer verified the call
       chain existed, the other checked whether it works. Driven against a
@@ -891,7 +891,134 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the data-risk ranking applied, and a test proving the corrupt row is
       actually gone rather than that the call returned.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T22 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17 and T19 have since merged and are dropped from the list.)
+      **Decided: report, do not delete (owner, 2026-08-12).** The trigger is
+      a JSON decode failure on a stored document -- the raw row is still
+      there, in principle repairable by hand. Implementing the delete would
+      convert "sits there unreadable and noisy" into "permanently gone" for
+      a recovery mechanism nothing has needed working: the no-op has been in
+      production for the whole SQLite era with no report of the missing
+      auto-delete, and the data-risk ranking puts an irreplaceable loss
+      above making a dead code path correct. `deleteCorrupted` /
+      `database.delete_corrupted` are renamed to `reportCorrupted` /
+      `database.corrupted_document` (the old name promised a deletion it
+      never performed, which is a trap on its own); the new handler logs at
+      ERROR, names the document id, says plainly it was not deleted, and is
+      bounded via `log_suppressed` keyed per document id so one corrupt row
+      hit on every read does not flood the ring buffer. All four call sites
+      (`settings.py`, `release/main.py` x2, `media/_base/media/main.py`)
+      updated; tree-wide grep confirms no other live reference to the old
+      names. Tests: `tests/unit/test_corrupted_document_reporting.py` (15
+      cases) -- proves the document survives against a real `SQLiteAdapter`,
+      `db.delete` is never invoked, the ERROR record names the id and says
+      "not deleted", suppression is per-id (two ids logged independently,
+      repeats of one id withheld per `log_suppressed`'s contract), and a
+      home-directory path in the traceback is redacted by `PrivacyFilter`.
+      Every guard mutation-tested: reintroducing the delete, downgrading the
+      log level, flattening the suppression key to a constant, and
+      pre-interpolating the message all break the corresponding test; each
+      mutation was hash-confirmed to land and the file was byte-identical
+      after restore.
+
+- [ ] T23: the corrupt-document handling family is unreachable, and the schema is why — state: queued (no deps)
+
+      Found reviewing #250 (T22). A reviewer argued that
+      `Settings.getProperty`'s `except ValueError:` branch can never reach
+      its `fireEvent`, because the recovery `db.get('property', identifier)`
+      re-queries the same corrupt row and `_query_index` parses eagerly via
+      `_doc_from_row`, so it raises the identical `ValueError` a second time
+      and propagates out of `getProperty` uncaught. Reading the adapter,
+      that is correct.
+
+      **But the real reason is one layer deeper, and it was measured.** A
+      document whose JSON will not parse cannot be STORED at all:
+
+          UPDATE documents SET data = '{not valid json' WHERE _id = ...
+          -> OperationalError: malformed JSON
+
+      That is not a `CHECK` on the table (there is none). It is the 16
+      expression indexes over `json_extract(data, ...)`. Proven by removing
+      them: with every expression index dropped, the same corrupt write
+      SUCCEEDS. The indexes are the guard.
+
+      So the whole `(ValueError, EOFError)` family — four call sites in
+      `settings.py`, `release/main.py` x2 and `media/_base/media/main.py` —
+      is unreachable on this adapter, and T22's honest reporter is honest
+      about something that cannot currently happen. That is still the right
+      shape (it was going to be honest about something that could not happen
+      either way, and the old version was destructive-by-name), but the
+      reachability should be recorded rather than implied.
+
+      Two things to decide, and neither is urgent:
+
+      1. Does the guard hold under maintenance? The indexes are what enforce
+         it, so any path that drops or rebuilds them — a migration, a repair,
+         a restore — opens a window where malformed JSON can land and then
+         cannot be read. Worth knowing before someone writes such a
+         migration, not after.
+      2. If the family stays unreachable, the four call sites and the
+         reporter are dead code, and `T18`'s sweep should either remove them
+         or the entry should say why they are kept as a backstop against
+         corruption arriving by a route the indexes do not cover (file-level
+         damage, a restored backup written by an older schema).
+
+      Do not "fix" the `getProperty` recovery branch in isolation: it is
+      error handling for a condition that cannot occur, and repairing
+      unreachable code was exactly the trap T15 fell into.
+
+- [ ] T24: `hadouken.py` calls `len()` on a boolean — state: queued (no deps)
+
+      `couchpotato/core/downloaders/hadouken.py:186`:
+
+          'folder': sp(torrent.save_path if len(torrent_files == 1) else ...)
+
+      `torrent_files == 1` compares a list to an int, which is always
+      `False`, and `len(False)` raises `TypeError: object of type 'bool' has
+      no len()`. It is a transposition of `len(torrent_files) == 1`. Any
+      call reaching this line crashes rather than returning a status.
+
+      SonarQube BLOCKER `python:S2159`, found by the first re-scan after
+      T17. The test suite did not find it, which says the hadouken status
+      path has no test executing this branch — fix and cover together, and
+      check the sibling downloaders for the same transposition before
+      assuming it is isolated. (`python:S2734` at `putio/main.py:25`, a
+      return value in `__init__`, is the other BLOCKER and can ride along.)
+
+- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps)
+
+      `couchpotato/ui/templates/wizard.html`, all 39 instances of SonarQube's
+      `Web:InputWithoutLabelCheck`. This is the NEW UI, not the legacy tree
+      being retired, and this project states a WCAG 2.2 AA floor enforced as
+      automated tests in both themes and at phone width.
+
+      **The interesting part is not the labels, it is that the a11y gate is
+      green.** Either the axe-core suite never visits the wizard, or it
+      visits a state where those inputs are not rendered, or axe and Sonar
+      disagree about what counts. Establish WHICH before fixing anything: if
+      the suite cannot reach the wizard, the labels are a symptom and the
+      coverage gap is the defect — the same "guard that looks like it is
+      protecting something" shape this plan keeps finding.
+
+      Do not add labels and call it done while the gate still cannot see
+      the page.
+
+- [ ] T26: the analyser has never had coverage data, so the trend it exists for is blank — state: queued (no deps)
+
+      `sonar-project.properties` sets `sonar.python.coverage.reportPaths=coverage.xml`,
+      but the first re-scan reported `coverage 0.0` because no `coverage.xml`
+      was generated before running it. Every scan so far has published a zero.
+
+      Coverage-as-a-trend is one of the two things the analyser is for (the
+      other being issues that survive between sessions), so this is not
+      cosmetic: a flat zero is indistinguishable from real zero coverage, and
+      it makes the one metric that would show the suite improving useless.
+
+      The fix is the invocation, not the config: generate `coverage.xml` in
+      the same run that scans. The properties file already records why
+      unit-only coverage would understate this project (the adapter and
+      plugin loading are exercised by integration tests), so decide what to
+      include before publishing a number people will read as the truth.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T24, T25, T26 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -990,6 +1117,37 @@ missing without a note.
 `/plan-cycle` FIRST so its lenses write numbered `AC-<LENS>-<n>` criteria into
 this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
+
+## Scanning discipline (added 2026-08-11, after it was skipped)
+
+T17 was closed saying "re-scan after merge and let the rating follow the
+code". **No scan was run.** Four PRs merged after it, and the dashboard
+kept showing all three vulnerabilities as open at their pre-fix line
+numbers — so anyone reading SonarQube would have concluded T17 never
+happened. The owner asked whether scans were being run; they were not.
+
+The first re-scan (master `04121da4`) confirmed the fixes:
+
+    vulnerabilities   3 -> 0
+    security rating   D -> A
+
+and it moved because the code changed, not because anything was
+dismissed. It also surfaced three findings nothing else had: a BLOCKER
+`len()`-on-a-boolean crash (T24), 39 unlabelled inputs in the new UI
+behind a green a11y gate (T25), and coverage published as 0.0 for want
+of a report file (T26).
+
+**So: scan after a merge that changed analysed code.** Locally, never in
+CI — the runners cannot reach the server, and the answer to that is not
+to expose it. Use `SONAR_TOKEN` (the analysis token), never the admin
+token, and pass it via the environment so it stays out of the process
+list and shell history:
+
+    export $(grep -E '^SONAR_TOKEN=' ~/.sonar-token)
+    npx --yes sonarqube-scanner -Dsonar.host.url=http://<server>:9000
+
+A scan is a measurement, not a gate. Findings are claims to be read at
+the call site, and nothing is resolved or dismissed to move a number.
 
 ## Conductor log
 

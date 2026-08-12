@@ -9,9 +9,10 @@ With `with_doc=True` -- the default the caller inherited by not passing one --
 and catches only `KeyError` (sqlite_adapter.py:646-653). A corrupt document
 raises `JSONDecodeError`, a `ValueError`, which escapes. So the per-document
 loop in `forMedia`, including the branch that increments `unreadable` and
-fires `database.delete_corrupted`, never ran for the one failure mode it
-names: a single bad document made the ENTIRE release set unreadable and the
-self-healing event never fired.
+fires `database.corrupted_document` (renamed from `database.delete_corrupted`
+by T22 -- it reports the document, it does not delete it), never ran for
+the one failure mode it names: a single bad document made the ENTIRE
+release set unreadable and the self-healing event never fired.
 
 The fake said everything was fine. This file exists because that is the
 category of defect a fake is structurally unable to report, and because
@@ -133,12 +134,12 @@ class TestOneUnreadableDocumentIsIsolatedNotFatalToTheWholeSet:
 
         obj.forMedia('m-1')
 
-        deletes = [f for f in fired if f[0] == 'database.delete_corrupted']
-        assert deletes, (
+        reports = [f for f in fired if f[0] == 'database.corrupted_document']
+        assert reports, (
             'the unreadable document was never reported for cleanup, so it '
             'stays broken and this repeats on every scan: %r' % (fired,)
         )
-        assert deletes[0][1][0] == bad['_id']
+        assert reports[0][1][0] == bad['_id']
 
     def test_strict_mode_refuses_because_ONE_document_was_unreadable(self, plugin):
         obj, db, _fired = plugin

@@ -11,6 +11,7 @@ from couchpotato.api import addApiView
 from couchpotato.core.event import addEvent, fireEvent, fireEventAsync
 from couchpotato.core.helpers.encoding import toUnicode, sp
 from couchpotato.core.helpers.variable import getImdb, tryInt, randomString
+from couchpotato.core.logger import log_suppressed
 
 
 log = CPLog(__name__)
@@ -82,7 +83,7 @@ class Database:
 
         addEvent('database.setup.after', self.startup_compact)
         addEvent('database.setup_index', self.setupIndex)
-        addEvent('database.delete_corrupted', self.deleteCorrupted)
+        addEvent('database.corrupted_document', self.reportCorrupted)
 
         addEvent('app.migrate', self.migrate)
         addEvent('app.after_shutdown', self.close)
@@ -321,16 +322,50 @@ class Database:
 
         return results
 
-    def deleteCorrupted(self, _id, traceback_error = ''):
+    def reportCorrupted(self, _id, traceback_error = ''):
+        """A document failed to parse. Report it loudly. Do NOT delete it.
 
-        db = self.getDB()
+        Renamed from `deleteCorrupted` (T22, specs/REMEDIATION-2026-08.md).
+        The old name promised a deletion it never performed: it called
+        `db.get(..., with_storage=False)` -- `SQLiteAdapter.get` takes
+        `with_doc`, not `with_storage` -- and then `db._delete_id_index(...)`,
+        which exists nowhere on this adapter. Both are CodernityDB survivors
+        from 2014, and both raised inside a blanket `except Exception:`
+        logging at DEBUG, so the failure was invisible for the entire life
+        of the SQLite adapter. Driven against a real adapter:
 
-        try:
-            log.debug('Deleted corrupted document "%s": %s', _id, traceback_error)
-            corrupted = db.get('id', _id, with_storage = False)
-            db._delete_id_index(corrupted.get('_id'), corrupted.get('_rev'), None)
-        except Exception:
-            log.debug('Failed deleting corrupted: %s', traceback.format_exc())
+            get(with_storage=False) -> TypeError: unexpected keyword
+            _delete_id_index        -> AttributeError: no attribute
+
+        **Implementing the delete instead of fixing the name was considered
+        and REJECTED.** The trigger is a JSON decode failure
+        (`ValueError`/`EOFError`) on a stored document -- a movie, a
+        release, or a setting whose stored data will not parse -- and the
+        raw row is still in the database, in principle repairable by hand.
+        Deleting it on a READ path (this fires from `Settings.getProperty`,
+        release/media listing) would convert "a document sits there
+        unreadable and noisy" into "the document is permanently gone",
+        which moves the loss UP CLAUDE.md's data-risk ranking
+        (irreplaceable: media entries, releases, settings) for a recovery
+        mechanism nothing has needed working: it has been a no-op for the
+        whole SQLite era with no report of the missing auto-delete being
+        missed. Do not reintroduce a delete here without re-reading this.
+
+        Bounded via `log_suppressed`, keyed per document id (not globally):
+        this fires from hot read paths, so a single corrupt document would
+        otherwise log on every request that touches it and flood the
+        rotating log, which is the only diagnostic a self-hosted install
+        has.
+        """
+        log_suppressed(
+            log.error,
+            'corrupted_document:%s' % (_id,),
+            'Document "%s" could not be parsed and has NOT been deleted -- '
+            'the raw row is still in the database and may be repairable by '
+            'hand. Inspect or repair it via the database.document.* API or '
+            'the SQLite file directly; nothing deletes it automatically. %s',
+            _id, traceback_error,
+        )
 
     def reindex(self, **kwargs):
         """API view kept for compatibility; there is nothing to reindex.
