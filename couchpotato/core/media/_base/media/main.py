@@ -239,7 +239,7 @@ class MediaPlugin(MediaBase):
                     except (RecordDeleted, RecordNotFound):
                         log.debug('Record not found, skipping: %s', ms['_id'])
                     except (ValueError, EOFError):
-                        fireEvent('database.delete_corrupted', ms.get('_id'), traceback_error = traceback.format_exc(0))
+                        fireEvent('database.corrupted_document', ms.get('_id'), traceback_error = traceback.format_exc(0))
                 else:
                     # The type filter belongs on BOTH branches. Nested under
                     # `if with_doc:` it was silently dropped here, so a

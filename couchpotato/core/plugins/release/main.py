@@ -175,7 +175,7 @@ class Release(Plugin):
                 except Exception:
                     log.error('Failed fixing mis-status tag: %s', traceback.format_exc())
             except ValueError:
-                fireEvent('database.delete_corrupted', release.get('key'), traceback_error = traceback.format_exc(0))
+                fireEvent('database.corrupted_document', release.get('key'), traceback_error = traceback.format_exc(0))
                 damaged += 1
             except RecordDeleted:
                 try:
@@ -944,7 +944,7 @@ class Release(Plugin):
             # That is caught by the guard below and answers
             # INCOMPLETE_RELEASE_SET, which is fail-closed and correct, but it
             # is a whole-set refusal rather than an isolated one and
-            # `database.delete_corrupted` does not fire for it.
+            # `database.corrupted_document` does not fire for it.
             #
             # Not worth chasing further here: the schema rejects malformed
             # JSON at write time (see
@@ -988,7 +988,7 @@ class Release(Plugin):
                 pass
             except (ValueError, EOFError):
                 unreadable += 1
-                fireEvent('database.delete_corrupted', r.get('_id'), traceback_error = traceback.format_exc(0))
+                fireEvent('database.corrupted_document', r.get('_id'), traceback_error = traceback.format_exc(0))
             except Exception:
                 unreadable += 1
                 log.debug('Skipping unreadable release %s: %s', r.get('_id', '?'), traceback.format_exc())

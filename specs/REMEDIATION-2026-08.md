@@ -860,7 +860,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       writes, not by reasoning about it: the previous three attempts in this
       area all failed on harnesses that could not distinguish the states.
 
-- [ ] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: queued (no deps)
+- [x] T22: `Database.deleteCorrupted` cannot delete anything on the SQLite adapter — state: **fixed** (2026-08-12), report-only (owner decision, not the "implement the delete" option below)
 
       Found by review disagreement on #249: one reviewer verified the call
       chain existed, the other checked whether it works. Driven against a
@@ -891,7 +891,35 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the data-risk ranking applied, and a test proving the corrupt row is
       actually gone rather than that the call returned.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T22 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17 and T19 have since merged and are dropped from the list.)
+      **Decided: report, do not delete (owner, 2026-08-12).** The trigger is
+      a JSON decode failure on a stored document -- the raw row is still
+      there, in principle repairable by hand. Implementing the delete would
+      convert "sits there unreadable and noisy" into "permanently gone" for
+      a recovery mechanism nothing has needed working: the no-op has been in
+      production for the whole SQLite era with no report of the missing
+      auto-delete, and the data-risk ranking puts an irreplaceable loss
+      above making a dead code path correct. `deleteCorrupted` /
+      `database.delete_corrupted` are renamed to `reportCorrupted` /
+      `database.corrupted_document` (the old name promised a deletion it
+      never performed, which is a trap on its own); the new handler logs at
+      ERROR, names the document id, says plainly it was not deleted, and is
+      bounded via `log_suppressed` keyed per document id so one corrupt row
+      hit on every read does not flood the ring buffer. All four call sites
+      (`settings.py`, `release/main.py` x2, `media/_base/media/main.py`)
+      updated; tree-wide grep confirms no other live reference to the old
+      names. Tests: `tests/unit/test_corrupted_document_reporting.py` (15
+      cases) -- proves the document survives against a real `SQLiteAdapter`,
+      `db.delete` is never invoked, the ERROR record names the id and says
+      "not deleted", suppression is per-id (two ids logged independently,
+      repeats of one id withheld per `log_suppressed`'s contract), and a
+      home-directory path in the traceback is redacted by `PrivacyFilter`.
+      Every guard mutation-tested: reintroducing the delete, downgrading the
+      log level, flattening the suppression key to a constant, and
+      pre-interpolating the message all break the corresponding test; each
+      mutation was hash-confirmed to land and the file was byte-identical
+      after restore.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews

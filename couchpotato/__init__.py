@@ -531,13 +531,18 @@ def _write_session_secret(secret: str, db=None, attempts: int = 3) -> str:
 
     An earlier draft also argued the insert branch was reachable MID-RETRY,
     via `Settings.getProperty`'s `except ValueError:` firing
-    `database.delete_corrupted` on this row from a reader path the write
-    lock does not serialise. **That was wrong, and it is corrected here
-    rather than quietly dropped.** `Database.deleteCorrupted` cannot delete
-    anything on this adapter: it calls `db.get(..., with_storage=False)`,
-    which `SQLiteAdapter.get` does not accept, and then
-    `db._delete_id_index(...)`, which does not exist. Both raise inside a
-    blanket `except Exception:` that logs at DEBUG. Driven:
+    `database.corrupted_document` (formerly `database.delete_corrupted`,
+    renamed by T22) on this row from a reader path the write lock does not
+    serialise. **That was wrong, and it is corrected here rather than
+    quietly dropped.** `Database.reportCorrupted` (formerly
+    `deleteCorrupted`) never deleted anything on this adapter and does not
+    now either -- T22 fixed the name and the visibility, deliberately NOT
+    the missing delete (a corrupt document is repairable by hand; an
+    automatic delete on a read path is not). At the time this loop was
+    written the old handler called `db.get(..., with_storage=False)`, which
+    `SQLiteAdapter.get` does not accept, and then `db._delete_id_index(...)`,
+    which does not exist. Both raised inside a blanket `except Exception:`
+    that logged at DEBUG. Driven:
 
         get(with_storage=False) -> TypeError: unexpected keyword 'with_storage'
         _delete_id_index        -> AttributeError: no attribute
@@ -548,7 +553,7 @@ def _write_session_secret(secret: str, db=None, attempts: int = 3) -> str:
     defensive, NOT load-bearing, and consolidating the update half with the
     primitive is not blocked by a correctness argument -- only by it being
     half a function's worth of reuse that splits this write path across two
-    mechanisms. Tracked in T15; see T22 for the dead `deleteCorrupted`.
+    mechanisms. Tracked in T15; T22 (the dead `deleteCorrupted`) is done.
     """
     from couchpotato.core.db.sqlite_adapter import ConflictError
 

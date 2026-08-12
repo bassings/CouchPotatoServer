@@ -325,7 +325,8 @@ class TestTheSecretCannotBeWrittenThroughTheApi:
 
         Without this, refusing EVERY update and delete would pass every
         assertion above -- and `database.document.*` is how the corrupted-row
-        recovery in `deleteCorrupted` is driven by hand.
+        recovery `reportCorrupted` (formerly `deleteCorrupted`) points the
+        operator at is driven by hand.
         """
         env.settings.setProperty('last_backup', '2026-08-07')
         row = [r for r in env.db._query_index('property', key='last_backup')
