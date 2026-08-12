@@ -2835,6 +2835,27 @@ class TestHadoukenConnect:
 class TestHadoukenDownloadFile:
     """Tests for Hadouken.download()'s torrent-FILE add path."""
 
+    def test_connect_user_pass_refuses_when_the_username_was_never_saved(self):
+        """A half-filled user_pass config must be REFUSED, not crashed on.
+
+        `auth_user`/`auth_pass` declare no `'default'` in hadouken.py's
+        config block, so `conf()` returns None for a field never saved.
+        Before this guard `None + ':'` raised TypeError inside connect(),
+        before any request -- reachable on any setup where user_pass was
+        selected and only one field filled in. Raised in review of #259,
+        where I had wrongly recorded it as unreachable behind the RPC bug.
+        """
+        hd = self._make_hadouken({'version': 'v5', 'auth_type': 'user_pass',
+                                  'host': 'localhost:7070',
+                                  'auth_user': None, 'auth_pass': 'secret'})
+        assert hd.connect() is False
+
+    def test_connect_user_pass_refuses_when_the_password_was_never_saved(self):
+        hd = self._make_hadouken({'version': 'v5', 'auth_type': 'user_pass',
+                                  'host': 'localhost:7070',
+                                  'auth_user': 'admin', 'auth_pass': None})
+        assert hd.connect() is False
+
     def _make_hadouken(self, conf_values = None):
         from couchpotato.core.downloaders.hadouken import Hadouken
         conf_values = conf_values or {}

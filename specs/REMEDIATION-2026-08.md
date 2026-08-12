@@ -1120,6 +1120,15 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       T18 as obviously-dead code — because someone may have it configured
       and working to that extent. Fix T28, do not remove the module.
 
+      > **SUPERSEDED — the paragraph above is wrong. See T30 and "The
+      > hadouken question".** It was written before `JsonRpcClient.invoke`
+      > was measured. That posts a `str` body, which Python 3 rejects, so
+      > no RPC succeeds on either version: nothing could add a torrent and
+      > nobody can have been using this. The "do not remove the module"
+      > conclusion does not survive, and the recommendation is now to
+      > remove. Left in place rather than rewritten so the correction is
+      > visible, but do not read it on its own.
+
       The real lesson is the test gap, not any one bug: nothing constructed
       a real `TorrentItemv4`/`v5` or exercised `connect()`, which is how
       three crashes shipped. T24 and T27 added coverage for their own lines;
@@ -1209,9 +1218,19 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       fix `invoke` without fixing the scheme in the same change. Same
       finding as T17's Synology `S4830`, in a second downloader.
 
-      Also unreachable-but-real: `self.conf('auth_user')` returns `None`
-      when never saved, so `None + ':'` raises the same TypeError class one
-      line above T28's fix. Cheap to cover when this is touched.
+      **NOT unreachable, and an earlier draft of this entry said it was.**
+      `self.conf('auth_user')` returns `None` when never saved — the option
+      declares no `'default'` in this file's config block — so `None + ':'`
+      raised `TypeError: can only concatenate str (not "NoneType") to str`
+      inside `connect()`, BEFORE any request. I recorded it as gated behind
+      this task's RPC bug without tracing it; review of #259 corrected me.
+      That is the second unverified reachability claim I published in that
+      PR, in a PR whose subject was correcting one.
+
+      Fixed in #259 rather than deferred here, since it was the very line
+      being edited: a half-filled `user_pass` config is now refused with a
+      logged error naming what is missing, matching how the two guards
+      above it report a bad config.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T29, T30 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
