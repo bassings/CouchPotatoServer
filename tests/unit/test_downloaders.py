@@ -2853,7 +2853,6 @@ class TestHadoukenConnect:
         assert hd.connect() is False
 
 
-
 class TestHadoukenDownloadFile:
     """Tests for Hadouken.download()'s torrent-FILE add path."""
 
