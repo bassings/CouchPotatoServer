@@ -1001,7 +1001,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Do not add labels and call it done while the gate still cannot see
       the page.
 
-- [ ] T26: the analyser has never had coverage data, so the trend it exists for is blank — state: queued (no deps)
+- [x] T26: the analyser has never had coverage data, so the trend it exists for is blank — state: **fixed** (2026-08-11), 0.0 → 53.3%
 
       `sonar-project.properties` sets `sonar.python.coverage.reportPaths=coverage.xml`,
       but the first re-scan reported `coverage 0.0` because no `coverage.xml`
@@ -1018,7 +1018,33 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       plugin loading are exercised by integration tests), so decide what to
       include before publishing a number people will read as the truth.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T24, T25, T26 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+      **Done.** The config was never wrong — `sonar.python.coverage.reportPaths`
+      and `sonar.javascript.lcov.reportPaths` were both already set, and the
+      properties file even documented the two commands. The reports simply
+      were not generated before scanning, every time. Measured after
+      generating both and re-scanning master:
+
+          coverage        0.0  ->  53.3
+          line_coverage        ->  52.8
+          lines_to_cover       ->  20917
+          uncovered_lines      ->  9872
+
+      Plausibility checked rather than assumed, which is what that file asks
+      for: Python alone measures 56.74%, the properties file records a
+      previous scan at 51.8%, and 53.3% is the expected blend once the
+      untested legacy JS is included.
+
+      **Mechanised, because a remembered step is exactly what failed.**
+      `make coverage` generates both reports and fails if either is empty;
+      `make sonar` depends on it so they cannot be skipped, and reads the
+      token from a file into the environment so it never reaches the process
+      list. `make sonar-token-check` runs FIRST, so a missing token fails in
+      0.04s instead of after the four-minute coverage run — a target that
+      wastes an evening gets abandoned rather than fixed. Not wired into
+      `verify` and not in CI: it is reporting, not a gate, and the runners
+      cannot reach the server.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T24, T25 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews

@@ -14,7 +14,7 @@
 # it is the target that CREATES the environment.
 PYTHON ?= $(shell if [ -x .venv/bin/python ]; then echo .venv/bin/python; else echo python3; fi)
 
-.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup
+.PHONY: help setup verify verify-fast test-py test-ui test-e2e lint security-lint check-traps check-secrets check-secrets-history mutation mutation-py mutation-js mutation-changed backup coverage sonar sonar-token-check
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -87,6 +87,44 @@ check-traps: ## False-green guard (jsdom layout reads, exit-code-eating pipes, w
 # Pinned version: an unpinned :latest changes the ruleset under you, so a clean
 # scan today can fail tomorrow with no code change. Bump deliberately.
 GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.30.1
+
+# Self-hosted SonarQube. Reporting only -- NOT a gate, and deliberately not in
+# CI: the runners cannot reach the server, and the answer to that is not to
+# expose it. See specs/REMEDIATION-2026-08.md, "Scanning discipline".
+SONAR_HOST_URL ?= http://172.16.11.10:9000
+SONAR_TOKEN_FILE ?= $(HOME)/.sonar-token
+
+coverage: ## Generate the coverage reports SonarQube ingests (Python + JS)
+	@# Both, not one. Sonar blends them, and a MISSING report is silent -- it
+	@# lands as a plausible-looking 0%, not an error. That is exactly how this
+	@# project published 0.0% coverage on every scan until 2026-08-11.
+	$(PYTHON) -m pytest tests/unit/ tests/integration/ -q \
+		--cov=couchpotato --cov=scripts --cov-report=xml:coverage.xml
+	npx vitest run --coverage
+	@test -s coverage.xml || { echo "coverage.xml missing or empty"; exit 1; }
+	@test -s coverage/lcov.info || { echo "coverage/lcov.info missing or empty"; exit 1; }
+
+sonar-token-check: ## Fail fast if the analysis token is missing
+	@# FIRST prerequisite of `sonar`, deliberately: `coverage` takes minutes,
+	@# and discovering a missing token after it has run is the sort of thing
+	@# that gets a target abandoned rather than fixed.
+	@test -r "$(SONAR_TOKEN_FILE)" || { \
+		echo "No token at $(SONAR_TOKEN_FILE). Use the ANALYSIS token (sqa_/sqp_),"; \
+		echo "never the admin token -- that one can rewrite issue history."; exit 1; }
+
+sonar: sonar-token-check coverage ## Scan into self-hosted SonarQube (reporting only, never a gate)
+	@# Depends on `coverage` so the reports cannot be forgotten -- forgetting
+	@# them is the whole defect this target exists to prevent (T26).
+	@# Token via the environment only, so it stays out of the process list and
+	@# shell history. Never pass -Dsonar.token= on the command line.
+	@set -a; . "$(SONAR_TOKEN_FILE)"; set +a; \
+		npx --yes sonarqube-scanner -Dsonar.host.url=$(SONAR_HOST_URL)
+	@echo ""
+	@echo "Scan uploaded. It is a MEASUREMENT, not a verdict:"
+	@echo "  * read findings at the call site before believing them;"
+	@echo "  * never resolve or dismiss one to move a number;"
+	@echo "  * check coverage actually arrived -- a false 0% looks like data."
+	@echo "  $(SONAR_HOST_URL)/dashboard?id=couchpotato"
 
 check-secrets: ## Secret scan of the working tree (same command CI runs)
 	docker run --rm -v "$(PWD):/repo" -w /repo $(GITLEAKS_IMAGE) \
