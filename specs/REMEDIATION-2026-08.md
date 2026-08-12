@@ -965,7 +965,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       error handling for a condition that cannot occur, and repairing
       unreachable code was exactly the trap T15 fell into.
 
-- [ ] T24: `hadouken.py` calls `len()` on a boolean — state: queued (no deps)
+- [x] T24: `hadouken.py` calls `len()` on a boolean — state: **fixed** (2026-08-12), but see T27 — the downloader is still broken upstream of it
 
       `couchpotato/core/downloaders/hadouken.py:186`:
 
@@ -1044,7 +1044,44 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `verify` and not in CI: it is reporting, not a gate, and the runners
       cannot reach the server.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T24, T25 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T27: hadouken's `TorrentItem` subclasses shadow the base class's properties — state: queued (no deps)
+
+      Found by the implementer while fixing T24, flagged rather than folded
+      in, and it is the bigger of the two.
+
+      `TorrentItem` (`couchpotato/core/downloaders/hadouken.py:359`) declares
+      `info_hash`, `save_path`, `name` and `state` as `@property`.
+      `TorrentItemv4` (`:468`) and `TorrentItemv5` (`:385`) redefine all four
+      as **plain methods with no decorator**. The subclass wins in the MRO,
+      so on a real instance the attribute is a bound method, not a value.
+      Driven on a minimal repro of the same shape:
+
+          type(v.info_hash)   -> method
+          v.info_hash.upper() -> AttributeError: 'function' object has no
+                                 attribute 'upper'
+          v.info_hash()       -> 'abc123'      (the value, only if CALLED)
+
+      `getAllDownloadStatus` does `torrent.info_hash.upper()` at `:180` and
+      passes `torrent.info_hash` into `get_files_by_hash` at `:173`, both
+      BEFORE the `len()` line T24 repaired. So the function raises earlier
+      than the bug T24 fixed, and **T24 alone does not make this downloader
+      work** — that is why T24 is ticked with a pointer here rather than as
+      "hadouken status fixed".
+
+      Same root cause as T24, one layer up: this downloader has no test that
+      constructs a real `TorrentItemv4`/`v5`, so two guaranteed crashes have
+      sat in it undisturbed. T24 added coverage for the one line in its
+      scope using a plain fake torrent, which is deliberately narrow and
+      does NOT exercise these classes.
+
+      Fix shape: decide whether the base class's `@property` declarations or
+      the subclasses' plain methods are the intended interface, make both
+      subclasses match, and update the four call sites in
+      `getAllDownloadStatus` accordingly. Then test against a real
+      `TorrentItemv4` and `TorrentItemv5` built from representative API
+      payloads, not a fake — a fake torrent is exactly what let this survive.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T27 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
