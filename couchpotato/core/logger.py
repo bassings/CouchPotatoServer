@@ -160,9 +160,24 @@ def log_suppressed(log_method, key, message, *args, window=LOG_SUPPRESSION_WINDO
       3. nothing else -- until the window passes, when the next occurrence is
          emitted in full WITH the number that were withheld.
 
-    `args` are passed through un-interpolated: `CPLog` is `%`-style and
-    `PrivacyFilter` redacts `record.msg % record.args` itself, so formatting
-    here would route secrets and private paths around the filter.
+    `args` are passed through un-interpolated, because `CPLog` is `%`-style
+    and that is the contract callers expect.
+
+    An earlier version of this line claimed formatting here would "route
+    secrets and private paths around the filter". **That is not true of
+    `PrivacyFilter` as written, and the overclaim is corrected rather than
+    left standing.** The filter does its own `record.msg % record.args` and
+    then regexes the RESULT, so redaction is identical either way. Measured:
+
+        args form        : token=xxx here
+        pre-interpolated : token=xxx here
+        args form        : path /Volumes/Storage<home>/private/thing.mkv
+        pre-interpolated : path /Volumes/Storage<home>/private/thing.mkv
+
+    Keep passing args anyway: it preserves lazy formatting, and a filter
+    that ever inspected `record.args` separately would depend on it. But do
+    not rely on interpolation timing as a privacy control -- the redaction
+    is the control, and it is worth re-measuring if that filter changes.
 
     `now` is injectable so the window is testable without sleeping and without
     patching a module-level `time.time` -- which on this repo also freezes
