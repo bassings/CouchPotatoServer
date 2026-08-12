@@ -1198,7 +1198,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
           -> TypeError: POST data should be bytes, an iterable of bytes,
              or a file object. It cannot be of type str.
 
-      `hadouken.py:272`. Every operation on both protocol versions routes
+      `JsonRpcClient.invoke`. Every operation on both protocol versions routes
       through `JsonRpcClient.invoke`, so `download()`, `getAllDownloadStatus`,
       `pause`, `removeFailed` and `processComplete` all fail before any
       network call. The tests added by T24/T27/T28 never invoke an RPC —
@@ -1211,7 +1211,8 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       **A credential exposure is gated behind this, and the ORDER matters.**
       Review of #259 also raised, correctly, that `connect()` strips any
-      supplied scheme and hard-codes `http://` (`:68`), so once Basic auth
+      supplied scheme and hard-codes `http://` when building the v5 client
+      URL, so once Basic auth
       works the operator's username and password go over the wire in
       trivially reversible base64. That is not currently reachable — the
       RPC dies first — but **fixing this task makes it live**. So: do not

@@ -2831,10 +2831,6 @@ class TestHadoukenConnect:
         with pytest.raises(TypeError, match = 'HadoukenAPIv4'):
             hd.connect()
 
-
-class TestHadoukenDownloadFile:
-    """Tests for Hadouken.download()'s torrent-FILE add path."""
-
     def test_connect_user_pass_refuses_when_the_username_was_never_saved(self):
         """A half-filled user_pass config must be REFUSED, not crashed on.
 
@@ -2855,6 +2851,11 @@ class TestHadoukenDownloadFile:
                                   'host': 'localhost:7070',
                                   'auth_user': 'admin', 'auth_pass': None})
         assert hd.connect() is False
+
+
+
+class TestHadoukenDownloadFile:
+    """Tests for Hadouken.download()'s torrent-FILE add path."""
 
     def _make_hadouken(self, conf_values = None):
         from couchpotato.core.downloaders.hadouken import Hadouken
