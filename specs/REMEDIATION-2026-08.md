@@ -1081,7 +1081,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `TorrentItemv4` and `TorrentItemv5` built from representative API
       payloads, not a fake — a fake torrent is exactly what let this survive.
 
-- [ ] T28: hadouken's user_pass auth cannot connect — `b64encode` is handed a str — state: queued (no deps)
+- [x] T28: hadouken's user_pass auth cannot connect — `b64encode` is handed a str — state: **fixed** (2026-08-12)
 
       Third guaranteed crash found in this one file, flagged by the T27
       implementer rather than folded in. `hadouken.py:57`:
@@ -1120,12 +1120,120 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       T18 as obviously-dead code — because someone may have it configured
       and working to that extent. Fix T28, do not remove the module.
 
+      > **SUPERSEDED — the paragraph above is wrong. See T30 and "The
+      > hadouken question".** It was written before `JsonRpcClient.invoke`
+      > was measured. That posts a `str` body, which Python 3 rejects, so
+      > no RPC succeeds on either version: nothing could add a torrent and
+      > nobody can have been using this. The "do not remove the module"
+      > conclusion does not survive, and the recommendation is now to
+      > remove. Left in place rather than rewritten so the correction is
+      > visible, but do not read it on its own.
+
       The real lesson is the test gap, not any one bug: nothing constructed
       a real `TorrentItemv4`/`v5` or exercised `connect()`, which is how
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T28 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: queued (no deps)
+
+      Fourth guaranteed crash from this file, found by the T28 implementer
+      driving `connect()`'s v4 branch for real instead of mocking the API
+      class out — which is precisely the gap that hid the other three.
+
+          HadoukenAPIv5(HadoukenAPI)   -> inherits __init__, constructs fine
+          class HadoukenAPIv4:         -> inherits object, defines no __init__
+          HadoukenAPIv4('client')      -> TypeError: HadoukenAPIv4() takes no arguments
+
+      `connect()` does `HadoukenAPIv4(client)` at `:47`, so a v4 install
+      cannot get past `connect()` at all — regardless of auth mode. And
+      because `self.rpc` is never set, every method on the class would fail
+      afterwards even if construction succeeded.
+
+      Almost certainly a one-word fix (`class HadoukenAPIv4(HadoukenAPI):`),
+      but **verify rather than assume**: check `HadoukenAPI.__init__` takes
+      what the v4 call site passes, and that v4 does not rely on differing
+      from the base elsewhere. Pinned as current behaviour by
+      `test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`; that
+      test must be inverted, not deleted, when this is fixed.
+
+      **What actually works, measured — the earlier note in T28 was right
+      but incomplete.** Corrected here rather than left standing:
+
+      | configuration | state |
+      |---|---|
+      | v4, any auth | unusable — `connect()` raises (this task) |
+      | v5 + `api_key` | connects; **every operation then fails** (T30) |
+      | v5 + `user_pass` | connects after T28; **every operation then fails** (T30) |
+
+      **This table replaces a WRONG one, and the correction matters more
+      than the table.** An earlier version claimed v5 + `api_key` "works:
+      connect, download, and status". Review of #259 disproved it and I
+      confirmed by driving it: `JsonRpcClient.invoke` passes a `str` body to
+      `opener.open`, which Python 3 rejects, so NO RPC succeeds on either
+      protocol version (T30). `download()` and `getAllDownloadStatus()` both
+      route through it.
+
+      So **no configuration of this downloader has ever worked**, and the
+      "do not delete it, someone may be using it" argument I made twice was
+      built on that wrong table. Nobody can be using it: it cannot add a
+      torrent, cannot report status, and cannot connect at all on v4.
+
+      **On the frame.** Four guaranteed crashes in one file is well past the
+      point where patching individually deserves justifying. The
+      justification is that each of the four arrived with tests, so the
+      module is acquiring the coverage whose absence caused all of them:
+      T24 covered the status dict, T27 the `TorrentItem` subclasses, T28
+      `connect()`'s v5 branches. This task finishes `connect()`. Every one
+      of these is a Python 3 migration artefact — `b64encode` str/bytes,
+      property semantics, a dropped base class — which is what an
+      unexercised module looks like after a language migration.
+
+- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **blocked-on-human**, see the question below
+
+      Fifth guaranteed crash in this file, raised in review of #259 and
+      confirmed by driving it:
+
+          urllib.request.Request(url, data = json.dumps(data))
+          opener.open(request)
+          -> TypeError: POST data should be bytes, an iterable of bytes,
+             or a file object. It cannot be of type str.
+
+      `JsonRpcClient.invoke`. Every operation on both protocol versions routes
+      through `JsonRpcClient.invoke`, so `download()`, `getAllDownloadStatus`,
+      `pause`, `removeFailed` and `processComplete` all fail before any
+      network call. The tests added by T24/T27/T28 never invoke an RPC —
+      they inspect the constructed client — which is why none of them caught
+      it.
+
+      Likely also broken alongside it: `HadoukenAPIv5.add_file` passes
+      `b64encode(data)` (bytes) into `json.dumps`, which cannot serialise
+      bytes. Not separately verified; check it when this is fixed.
+
+      **A credential exposure is gated behind this, and the ORDER matters.**
+      Review of #259 also raised, correctly, that `connect()` strips any
+      supplied scheme and hard-codes `http://` when building the v5 client
+      URL, so once Basic auth
+      works the operator's username and password go over the wire in
+      trivially reversible base64. That is not currently reachable — the
+      RPC dies first — but **fixing this task makes it live**. So: do not
+      fix `invoke` without fixing the scheme in the same change. Same
+      finding as T17's Synology `S4830`, in a second downloader.
+
+      **NOT unreachable, and an earlier draft of this entry said it was.**
+      `self.conf('auth_user')` returns `None` when never saved — the option
+      declares no `'default'` in this file's config block — so `None + ':'`
+      raised `TypeError: can only concatenate str (not "NoneType") to str`
+      inside `connect()`, BEFORE any request. I recorded it as gated behind
+      this task's RPC bug without tracing it; review of #259 corrected me.
+      That is the second unverified reachability claim I published in that
+      PR, in a PR whose subject was correcting one.
+
+      Fixed in #259 rather than deferred here, since it was the very line
+      being edited: a half-filled `user_pass` config is now refused with a
+      logged error naming what is missing, matching how the two guards
+      above it report a bad config.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T29, T30 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1255,6 +1363,55 @@ list and shell history:
 
 A scan is a measurement, not a gate. Findings are claims to be read at
 the call site, and nothing is resolved or dismissed to move a number.
+
+status: blocked-on-human: hadouken has five guaranteed crashes and no
+working configuration. Fix it properly (T29 + T30, plus the credential
+exposure they unblock), or remove the downloader? T29/T30 stay queued
+until this is answered — see "The hadouken question" below.
+
+## The hadouken question (2026-08-12)
+
+Five guaranteed crashes have come out of `couchpotato/core/downloaders/hadouken.py`,
+each found by fixing the one before it:
+
+| # | defect | reach | state |
+|---|---|---|---|
+| T24 | `len()` on a boolean | v4+v5 status | fixed |
+| T27 | subclasses shadow the base `@property` members | v4+v5 status | fixed |
+| T28 | `b64encode` handed a `str` | v5 `user_pass` connect | fixed |
+| T29 | `HadoukenAPIv4` cannot be constructed | ALL v4 | open |
+| T30 | `invoke` posts a `str` body | EVERY operation, both versions | open |
+
+**No configuration has ever worked.** It cannot add a torrent, cannot
+report status, and cannot connect at all on v4. Every defect is a Python
+3 migration artefact — str/bytes, property semantics, a dropped base
+class — which is what an unexercised module looks like after a language
+migration.
+
+I argued twice against removing it, on the grounds that an operator might
+have it partially working. That argument was wrong: it rested on a table
+I published before measuring `invoke`, and review disproved it. Nobody can
+be using this.
+
+So the decision is the owner's, and it is a product decision rather than
+an engineering one:
+
+1. **Fix it.** T29 and T30, plus the hard-coded `http://` that T30 would
+   otherwise turn into a live credential exposure, plus whatever the next
+   layer down produces — the base rate in this file is one new crash per
+   fix. Nothing verifies the result short of a real Hadouken instance,
+   which we do not have.
+2. **Remove it.** It is a downloader that has never functioned in this
+   fork. Removal is honest about that, and T18's sweep is the natural
+   home. It IS user-facing: the option disappears from the settings UI,
+   and anyone with it configured (and silently broken) would notice the
+   entry go.
+
+My recommendation is **remove**, with the reasoning that a downloader
+nobody can have used is not a feature being withdrawn, and that keeping
+it means committing to maintain a protocol client we cannot test against
+real hardware. But the counter-argument is real: someone may want it, and
+deleting is harder to undo than leaving it broken.
 
 ## Conductor log
 
