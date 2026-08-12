@@ -1247,7 +1247,46 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `couchpotato/core/downloaders/hadouken.py` is deleted, nothing was
       patched.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: queued (no deps)
+
+      Found while removing hadouken, by an implementer driving the orphan
+      `[hadouken]` config section rather than reasoning about it. General,
+      pre-existing, and NOT specific to hadouken — it affects any section in
+      `config.ini` whose plugin is not registered.
+
+      Driven against a real `Settings` with an unregistered section:
+
+          orphan section present in getValues()?  True
+            api_key   -> 'SECRET_API_KEY_VALUE'
+            auth_pass -> 'SECRET_PASSWORD_VALUE'
+            SECRETS LEAKED UNMASKED? True
+
+      `Settings.getValues` masks only when
+      `self.getType(section, option) == 'password'`, and `getType` reads
+      `self.types`, which is populated by `setType` during a plugin's
+      `registerDefaults`. No plugin, no registered type, no masking — so the
+      raw value goes into the response that the `settings` API view returns.
+
+      Reachable for: any install carrying config for a plugin that was
+      removed, renamed, or failed to load. Note the loader swallows
+      ImportError at DEBUG, so a plugin that fails to import silently
+      produces exactly this state for its own saved credentials.
+
+      Removing hadouken makes it permanent for anyone who had one saved,
+      which is how it surfaced — but fixing it there would be the wrong
+      layer. The fix belongs in `getValues`: an unregistered section's
+      values should be masked by default rather than exposed by default,
+      since an unknown type is precisely when we cannot know it is safe.
+      Beware the obvious over-correction — masking everything unregistered
+      would also mask harmless values an operator may need to read to
+      recover, so decide deliberately between masking all of it and masking
+      on a name heuristic (`*_key`, `*_pass*`, `*token*`, `secret`), and say
+      which and why.
+
+      Not blocking the hadouken removal: the exposure predates it and is
+      not made worse in kind, only more permanent for one section.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
