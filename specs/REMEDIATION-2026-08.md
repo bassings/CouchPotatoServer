@@ -1081,7 +1081,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `TorrentItemv4` and `TorrentItemv5` built from representative API
       payloads, not a fake — a fake torrent is exactly what let this survive.
 
-- [ ] T28: hadouken's user_pass auth cannot connect — `b64encode` is handed a str — state: queued (no deps)
+- [x] T28: hadouken's user_pass auth cannot connect — `b64encode` is handed a str — state: **fixed** (2026-08-12)
 
       Third guaranteed crash found in this one file, flagged by the T27
       implementer rather than folded in. `hadouken.py:57`:
@@ -1125,7 +1125,53 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T28 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: queued (no deps)
+
+      Fourth guaranteed crash from this file, found by the T28 implementer
+      driving `connect()`'s v4 branch for real instead of mocking the API
+      class out — which is precisely the gap that hid the other three.
+
+          HadoukenAPIv5(HadoukenAPI)   -> inherits __init__, constructs fine
+          class HadoukenAPIv4:         -> inherits object, defines no __init__
+          HadoukenAPIv4('client')      -> TypeError: HadoukenAPIv4() takes no arguments
+
+      `connect()` does `HadoukenAPIv4(client)` at `:47`, so a v4 install
+      cannot get past `connect()` at all — regardless of auth mode. And
+      because `self.rpc` is never set, every method on the class would fail
+      afterwards even if construction succeeded.
+
+      Almost certainly a one-word fix (`class HadoukenAPIv4(HadoukenAPI):`),
+      but **verify rather than assume**: check `HadoukenAPI.__init__` takes
+      what the v4 call site passes, and that v4 does not rely on differing
+      from the base elsewhere. Pinned as current behaviour by
+      `test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`; that
+      test must be inverted, not deleted, when this is fixed.
+
+      **What actually works, measured — the earlier note in T28 was right
+      but incomplete.** Corrected here rather than left standing:
+
+      | configuration | state |
+      |---|---|
+      | v4, any auth | unusable — `connect()` raises (this task) |
+      | v5 + `api_key` | works: connect, download, and status (after T24, T27) |
+      | v5 + `user_pass` | works after T28; could not connect before it |
+
+      So the only path that ever functioned was v5 with `api_key`, and even
+      then downloads were added but never seen to complete. That still rules
+      out deleting the module under T18 — someone may be on that path — but
+      it is a narrower claim than "the downloader was partially functional".
+
+      **On the frame.** Four guaranteed crashes in one file is well past the
+      point where patching individually deserves justifying. The
+      justification is that each of the four arrived with tests, so the
+      module is acquiring the coverage whose absence caused all of them:
+      T24 covered the status dict, T27 the `TorrentItem` subclasses, T28
+      `connect()`'s v5 branches. This task finishes `connect()`. Every one
+      of these is a Python 3 migration artefact — `b64encode` str/bytes,
+      property semantics, a dropped base class — which is what an
+      unexercised module looks like after a language migration.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T29 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
