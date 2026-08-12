@@ -94,6 +94,15 @@ GITLEAKS_IMAGE ?= zricethezav/gitleaks:v8.30.1
 SONAR_HOST_URL ?= http://172.16.11.10:9000
 SONAR_TOKEN_FILE ?= $(HOME)/.sonar-token
 
+# PINNED, for the same reason GITLEAKS_IMAGE above is pinned -- and one more.
+# `npx --yes` with no version fetches whatever npm currently publishes and
+# executes it, and this package is in neither package.json nor the lockfile,
+# so nothing here has ever been reviewed. That code runs with SONAR_TOKEN
+# already in its environment and the repository on disk: an unpinned fetch
+# immediately after loading a credential is a dependency-confusion vector,
+# not just a reproducibility problem. Bump deliberately.
+SONAR_SCANNER_VERSION ?= 5.0.0
+
 coverage: ## Generate the coverage reports SonarQube ingests (Python + JS)
 	@# Both, not one. Sonar blends them, and a MISSING report is silent -- it
 	@# lands as a plausible-looking 0%, not an error. That is exactly how this
@@ -104,21 +113,33 @@ coverage: ## Generate the coverage reports SonarQube ingests (Python + JS)
 	@test -s coverage.xml || { echo "coverage.xml missing or empty"; exit 1; }
 	@test -s coverage/lcov.info || { echo "coverage/lcov.info missing or empty"; exit 1; }
 
-sonar-token-check: ## Fail fast if the analysis token is missing
-	@# FIRST prerequisite of `sonar`, deliberately: `coverage` takes minutes,
-	@# and discovering a missing token after it has run is the sort of thing
-	@# that gets a target abandoned rather than fixed.
+sonar-token-check: ## Fail fast if the analysis token is missing or empty
+	@# Runs before `coverage`, deliberately: that takes minutes, and
+	@# discovering a bad token after it has run is the sort of thing that gets
+	@# a target abandoned rather than fixed.
 	@test -r "$(SONAR_TOKEN_FILE)" || { \
 		echo "No token at $(SONAR_TOKEN_FILE). Use the ANALYSIS token (sqa_/sqp_),"; \
 		echo "never the admin token -- that one can rewrite issue history."; exit 1; }
+	@# Readability is not enough: an empty, truncated or wrongly-named file
+	@# passes `test -r` and then fails inside the scanner AFTER coverage has
+	@# run, which is precisely the waste this check exists to prevent. Assert
+	@# the assignment exists AND has a value.
+	@grep -qE '^SONAR_TOKEN=.+' "$(SONAR_TOKEN_FILE)" || { \
+		echo "$(SONAR_TOKEN_FILE) does not define a non-empty SONAR_TOKEN=..."; \
+		exit 1; }
 
-sonar: sonar-token-check coverage ## Scan into self-hosted SonarQube (reporting only, never a gate)
-	@# Depends on `coverage` so the reports cannot be forgotten -- forgetting
-	@# them is the whole defect this target exists to prevent (T26).
+sonar: sonar-token-check ## Scan into self-hosted SonarQube (reporting only, never a gate)
+	@# `coverage` is invoked HERE rather than declared as a prerequisite.
+	@# Under `make -j` (or a global parallel MAKEFLAGS) independent
+	@# prerequisites run concurrently, so `sonar-token-check coverage` would
+	@# start the multi-minute coverage run alongside the check instead of
+	@# after it -- silently voiding the fail-fast guarantee above. A recipe
+	@# line is ordered under every mode.
+	$(MAKE) coverage
 	@# Token via the environment only, so it stays out of the process list and
 	@# shell history. Never pass -Dsonar.token= on the command line.
 	@set -a; . "$(SONAR_TOKEN_FILE)"; set +a; \
-		npx --yes sonarqube-scanner -Dsonar.host.url=$(SONAR_HOST_URL)
+		npx --yes sonarqube-scanner@$(SONAR_SCANNER_VERSION) -Dsonar.host.url=$(SONAR_HOST_URL)
 	@echo ""
 	@echo "Scan uploaded. It is a MEASUREMENT, not a verdict:"
 	@echo "  * read findings at the call site before believing them;"
