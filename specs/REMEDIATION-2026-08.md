@@ -1044,7 +1044,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `verify` and not in CI: it is reporting, not a gate, and the runners
       cannot reach the server.
 
-- [ ] T27: hadouken's `TorrentItem` subclasses shadow the base class's properties — state: queued (no deps)
+- [x] T27: hadouken's `TorrentItem` subclasses shadow the base class's properties — state: **fixed** (2026-08-12)
 
       Found by the implementer while fixing T24, flagged rather than folded
       in, and it is the bigger of the two.
@@ -1081,7 +1081,51 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `TorrentItemv4` and `TorrentItemv5` built from representative API
       payloads, not a fake — a fake torrent is exactly what let this survive.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T27 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T28: hadouken's user_pass auth cannot connect — `b64encode` is handed a str — state: queued (no deps)
+
+      Third guaranteed crash found in this one file, flagged by the T27
+      implementer rather than folded in. `hadouken.py:57`:
+
+          header = 'Basic ' + b64encode(self.conf('auth_user') + ':' + self.conf('auth_pass'))
+
+      `b64encode` requires bytes. Driven:
+
+          b64encode('user:pass') -> TypeError: a bytes-like object is
+                                    required, not 'str'
+
+      Fires in `connect()` for any v5 Hadouken configured with
+      `auth_type = 'user_pass'`, so that authentication mode has never
+      worked. `api_key` auth is unaffected and takes a different branch.
+
+      Fix is `.encode()` on the joined string and `.decode()` on the result
+      (the header must be a str), but **do not fix it blind**: this is a
+      credential-carrying line, so check the encoding matches what Hadouken
+      actually expects rather than what makes the TypeError go away, and
+      keep the credentials out of any log added while testing.
+
+      **What this file's record says about scope.** Three separate
+      guaranteed crashes have now come out of `hadouken.py` (T24's `len()`
+      on a boolean, T27's property shadowing, and this). That is the
+      "question the frame" signal, so the frame was questioned before
+      writing this entry, and the answer was measured rather than assumed:
+
+      - `download()` does NOT use the broken attributes — it computes the
+        info hash itself and calls `add_magnet_link`/`add_file`. It works.
+      - `connect()` works under `api_key` auth.
+      - `getAllDownloadStatus()` was the broken half, and T24 + T27 fixed it.
+
+      So this downloader was **partially** functional, not dead: an operator
+      on `api_key` auth could add torrents and simply never see them
+      complete. That rules out the tempting conclusion — deleting it under
+      T18 as obviously-dead code — because someone may have it configured
+      and working to that extent. Fix T28, do not remove the module.
+
+      The real lesson is the test gap, not any one bug: nothing constructed
+      a real `TorrentItemv4`/`v5` or exercised `connect()`, which is how
+      three crashes shipped. T24 and T27 added coverage for their own lines;
+      `connect()` still has none.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T28 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
