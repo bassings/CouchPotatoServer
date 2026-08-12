@@ -965,7 +965,60 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       error handling for a condition that cannot occur, and repairing
       unreachable code was exactly the trap T15 fell into.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T24: `hadouken.py` calls `len()` on a boolean — state: queued (no deps)
+
+      `couchpotato/core/downloaders/hadouken.py:186`:
+
+          'folder': sp(torrent.save_path if len(torrent_files == 1) else ...)
+
+      `torrent_files == 1` compares a list to an int, which is always
+      `False`, and `len(False)` raises `TypeError: object of type 'bool' has
+      no len()`. It is a transposition of `len(torrent_files) == 1`. Any
+      call reaching this line crashes rather than returning a status.
+
+      SonarQube BLOCKER `python:S2159`, found by the first re-scan after
+      T17. The test suite did not find it, which says the hadouken status
+      path has no test executing this branch — fix and cover together, and
+      check the sibling downloaders for the same transposition before
+      assuming it is isolated. (`python:S2734` at `putio/main.py:25`, a
+      return value in `__init__`, is the other BLOCKER and can ride along.)
+
+- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps)
+
+      `couchpotato/ui/templates/wizard.html`, all 39 instances of SonarQube's
+      `Web:InputWithoutLabelCheck`. This is the NEW UI, not the legacy tree
+      being retired, and this project states a WCAG 2.2 AA floor enforced as
+      automated tests in both themes and at phone width.
+
+      **The interesting part is not the labels, it is that the a11y gate is
+      green.** Either the axe-core suite never visits the wizard, or it
+      visits a state where those inputs are not rendered, or axe and Sonar
+      disagree about what counts. Establish WHICH before fixing anything: if
+      the suite cannot reach the wizard, the labels are a symptom and the
+      coverage gap is the defect — the same "guard that looks like it is
+      protecting something" shape this plan keeps finding.
+
+      Do not add labels and call it done while the gate still cannot see
+      the page.
+
+- [ ] T26: the analyser has never had coverage data, so the trend it exists for is blank — state: queued (no deps)
+
+      `sonar-project.properties` sets `sonar.python.coverage.reportPaths=coverage.xml`,
+      but the first re-scan reported `coverage 0.0` because no `coverage.xml`
+      was generated before running it. Every scan so far has published a zero.
+
+      Coverage-as-a-trend is one of the two things the analyser is for (the
+      other being issues that survive between sessions), so this is not
+      cosmetic: a flat zero is indistinguishable from real zero coverage, and
+      it makes the one metric that would show the suite improving useless.
+
+      The fix is the invocation, not the config: generate `coverage.xml` in
+      the same run that scans. The properties file already records why
+      unit-only coverage would understate this project (the adapter and
+      plugin loading are exercised by integration tests), so decide what to
+      include before publishing a number people will read as the truth.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T24, T25, T26 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1064,6 +1117,37 @@ missing without a note.
 `/plan-cycle` FIRST so its lenses write numbered `AC-<LENS>-<n>` criteria into
 this spec, because a review with no acceptance criteria can only report what it
 happens to notice.
+
+## Scanning discipline (added 2026-08-11, after it was skipped)
+
+T17 was closed saying "re-scan after merge and let the rating follow the
+code". **No scan was run.** Four PRs merged after it, and the dashboard
+kept showing all three vulnerabilities as open at their pre-fix line
+numbers — so anyone reading SonarQube would have concluded T17 never
+happened. The owner asked whether scans were being run; they were not.
+
+The first re-scan (master `04121da4`) confirmed the fixes:
+
+    vulnerabilities   3 -> 0
+    security rating   D -> A
+
+and it moved because the code changed, not because anything was
+dismissed. It also surfaced three findings nothing else had: a BLOCKER
+`len()`-on-a-boolean crash (T24), 39 unlabelled inputs in the new UI
+behind a green a11y gate (T25), and coverage published as 0.0 for want
+of a report file (T26).
+
+**So: scan after a merge that changed analysed code.** Locally, never in
+CI — the runners cannot reach the server, and the answer to that is not
+to expose it. Use `SONAR_TOKEN` (the analysis token), never the admin
+token, and pass it via the environment so it stays out of the process
+list and shell history:
+
+    export $(grep -E '^SONAR_TOKEN=' ~/.sonar-token)
+    npx --yes sonarqube-scanner -Dsonar.host.url=http://<server>:9000
+
+A scan is a measurement, not a gate. Findings are claims to be read at
+the call site, and nothing is resolved or dismissed to move a number.
 
 ## Conductor log
 
