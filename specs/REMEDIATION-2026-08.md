@@ -891,7 +891,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the data-risk ranking applied, and a test proving the corrupt row is
       actually gone rather than that the call returned.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: T6, T7, T8, T11, T13, T14, T15, T17, T19 — every other open task, because each adds residue and several rewrite the code this would sweep. T19 was added in the same commit that wrote this line and was omitted from it, which is the ordinary way such a list goes stale)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T22 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17 and T19 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
