@@ -1134,7 +1134,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: queued (no deps)
+- [x] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: **closed by removal** (2026-08-12) — see "The hadouken question" below; the module is gone rather than fixed
 
       Fourth guaranteed crash from this file, found by the T28 implementer
       driving `connect()`'s v4 branch for real instead of mocking the API
@@ -1188,7 +1188,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       property semantics, a dropped base class — which is what an
       unexercised module looks like after a language migration.
 
-- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **blocked-on-human**, see the question below
+      **Closed by removal, not by fixing the constructor.** The owner
+      answered "The hadouken question" below: remove rather than fix. This
+      task's fix was never applied — `couchpotato/core/downloaders/hadouken.py`
+      is deleted outright, so the `HadoukenAPIv4` construction bug and its
+      test (`test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`)
+      no longer exist to fix or invert.
+
+- [x] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **closed by removal** (2026-08-12) — see the question below
 
       Fifth guaranteed crash in this file, raised in review of #259 and
       confirmed by driving it:
@@ -1233,7 +1240,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       logged error naming what is missing, matching how the two guards
       above it report a bad config.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T29, T30 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+      **Closed by removal, not by fixing `invoke`.** The owner answered "The
+      hadouken question" below: remove rather than fix. `invoke`'s str-body
+      bug, the credential-exposure ordering constraint it gated, and the
+      hard-coded `http://` all left with the module —
+      `couchpotato/core/downloaders/hadouken.py` is deleted, nothing was
+      patched.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1364,10 +1378,8 @@ list and shell history:
 A scan is a measurement, not a gate. Findings are claims to be read at
 the call site, and nothing is resolved or dismissed to move a number.
 
-status: blocked-on-human: hadouken has five guaranteed crashes and no
-working configuration. Fix it properly (T29 + T30, plus the credential
-exposure they unblock), or remove the downloader? T29/T30 stay queued
-until this is answered — see "The hadouken question" below.
+status: resolved (2026-08-12): the owner chose removal. T29 and T30
+closed by removal, not by a fix — see "The hadouken question" below.
 
 ## The hadouken question (2026-08-12)
 
@@ -1379,8 +1391,8 @@ each found by fixing the one before it:
 | T24 | `len()` on a boolean | v4+v5 status | fixed |
 | T27 | subclasses shadow the base `@property` members | v4+v5 status | fixed |
 | T28 | `b64encode` handed a `str` | v5 `user_pass` connect | fixed |
-| T29 | `HadoukenAPIv4` cannot be constructed | ALL v4 | open |
-| T30 | `invoke` posts a `str` body | EVERY operation, both versions | open |
+| T29 | `HadoukenAPIv4` cannot be constructed | ALL v4 | closed by removal |
+| T30 | `invoke` posts a `str` body | EVERY operation, both versions | closed by removal |
 
 **No configuration has ever worked.** It cannot add a torrent, cannot
 report status, and cannot connect at all on v4. Every defect is a Python
@@ -1412,6 +1424,35 @@ nobody can have used is not a feature being withdrawn, and that keeping
 it means committing to maintain a protocol client we cannot test against
 real hardware. But the counter-argument is real: someone may want it, and
 deleting is harder to undo than leaving it broken.
+
+**Resolved 2026-08-12: the owner chose removal**, closing T29 and T30.
+`couchpotato/core/downloaders/hadouken.py` is deleted, along with its
+config-registration block, its tests, and the settings-UI entry.
+Driven (not just reasoned about) before removal: an existing install's
+orphan `[hadouken]` section in `config.ini` is never touched by `save()`
+(the parser still round-trips it) and never rendered by `getOptions()`
+(no plugin registers it any more, so it silently drops out of the UI
+form) — confirmed by loading a real `Settings` instance against a fake
+config.ini carrying `[hadouken]` and reading `getOptions()`/`getValues()`
+directly, not by inspection. One caveat found the same way, not
+previously flagged here: the orphan section's raw values (including
+`api_key`/`auth_pass`, unmasked, because the `password` type was only
+ever known while the plugin's `registerDefaults` had run) still come
+back in `getValues()`, which the `settings` API view returns alongside
+`getOptions()`. That is pre-existing general behaviour of `Settings` for
+any unregistered section, not something this removal introduces, but
+removal makes it permanent for anyone with a saved hadouken config —
+those two fields sit in the API response, unmasked, until the operator
+edits `config.ini` by hand. Not fixed here: it is a pre-existing gap in
+`Settings`, out of scope for a downloader removal, and inventing a
+migration was explicitly out of scope for this task.
+
+Also driven: `fireEvent('download.enabled', ...)` returning nothing
+truthy (the state after hadouken was the only enabled downloader) is the
+same code path every fresh install already exercises before any
+downloader is configured — `release/main.py`'s `download()` logs "Tried
+to download, but none of the ... downloaders are enabled" and returns
+`False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
 
