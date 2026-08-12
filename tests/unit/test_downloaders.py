@@ -2882,3 +2882,197 @@ class TestHadoukenGetAllDownloadStatus:
         assert sorted(result[0]['files']) == sorted([
             os.path.join(save_path, 'a.mkv'), os.path.join(save_path, 'b.srt'),
         ])
+
+
+class TestTorrentItemProperties:
+    """T27: TorrentItem declares info_hash/save_path/name/state as
+    @property on the base class, but TorrentItemv4 and TorrentItemv5 both
+    redefine all four as plain methods with no decorator. The subclass wins
+    the MRO, so on a real instance `torrent.info_hash` is a bound method,
+    not a value -- getAllDownloadStatus dereferences it as a value at six
+    call sites (hadouken.py:173-186) and crashes (or silently passes a
+    method where a string was expected) before it ever reaches the T24
+    len() fix. FakeHadoukenTorrent (above) is a plain-attribute stub and
+    can never catch this -- these tests build the REAL classes instead.
+    """
+
+    def _make_v4_payload(self):
+        # Realistic Hadouken v4 torrents.getByInfoHashList() dict payload.
+        return {
+            'InfoHash': 'ABCDEF0123456789ABCDEF0123456789ABCDEF01',
+            'SavePath': '/downloads/complete',
+            'Name': 'Some.Movie.2026.1080p',
+            'State': 'Seeding',
+            'IsSeeding': True,
+            'IsFinished': True,
+            'Paused': True,
+            'TotalUploadedBytes': 200,
+            'TotalDownloadedBytes': 100,
+        }
+
+    def _make_v5_payload(self):
+        # Realistic Hadouken v5 webui.list() torrent row: a flat indexable
+        # sequence, not a dict. Only indices 0 (info_hash), 1 (state),
+        # 2 (name), 5 (down bytes), 6 (up bytes) and 26 (save_path) are
+        # read by TorrentItemv5 / getAllDownloadStatus, so the list must be
+        # at least 27 long to cover index 26; the untouched slots are
+        # padded with 0 as harmless placeholders matching Hadouken's
+        # numeric-only row shape.
+        row = [0] * 27
+        row[0] = 'FEDCBA9876543210FEDCBA9876543210FEDCBA98'  # info_hash
+        row[1] = 32                                          # state (completed)
+        row[2] = 'Another.Movie.2026.1080p'                  # name
+        row[5] = 100                                         # down bytes
+        row[6] = 200                                         # up bytes
+        row[26] = '/downloads/complete'                      # save_path
+        return row
+
+    # -- TorrentItemv4 -----------------------------------------------------
+
+    def test_torrentitemv4_info_hash_is_not_callable(self):
+        """The exact defect: on the unfixed class, info_hash is a bound
+        method (callable), not a string. This is what turns line 180's
+        `torrent.info_hash.upper()` into an AttributeError in production."""
+        from couchpotato.core.downloaders.hadouken import TorrentItemv4
+        torrent = TorrentItemv4(self._make_v4_payload())
+
+        assert not callable(torrent.info_hash), (
+            'TorrentItemv4.info_hash must be a @property returning a value, '
+            'not a bound method -- shadowing TorrentItem.info_hash'
+        )
+        assert torrent.info_hash == 'ABCDEF0123456789ABCDEF0123456789ABCDEF01'
+
+    def test_torrentitemv4_save_path_name_state_are_not_callable_and_correct(self):
+        from couchpotato.core.downloaders.hadouken import TorrentItemv4
+        torrent = TorrentItemv4(self._make_v4_payload())
+
+        assert not callable(torrent.save_path)
+        assert not callable(torrent.name)
+        assert not callable(torrent.state)
+
+        assert torrent.save_path == '/downloads/complete'
+        assert torrent.name == 'Some.Movie.2026.1080p'
+        assert torrent.state == 'Seeding'
+
+    def test_torrentitemv4_get_status_and_get_seed_ratio_remain_plain_methods(self):
+        """get_status/get_seed_ratio must stay plain methods on every class
+        -- @property must not bleed onto them as a side effect of this fix."""
+        from couchpotato.core.downloaders.hadouken import TorrentItemv4
+        torrent = TorrentItemv4(self._make_v4_payload())
+
+        assert callable(torrent.get_status)
+        assert callable(torrent.get_seed_ratio)
+        assert torrent.get_status() == 'completed'
+        assert torrent.get_seed_ratio() == 2.0
+
+    # -- TorrentItemv5 -----------------------------------------------------
+
+    def test_torrentitemv5_info_hash_is_not_callable(self):
+        """Same defect, the v5 class -- a fix applied to only v4 would leave
+        this one broken, so it is pinned separately."""
+        from couchpotato.core.downloaders.hadouken import TorrentItemv5
+        torrent = TorrentItemv5(self._make_v5_payload())
+
+        assert not callable(torrent.info_hash), (
+            'TorrentItemv5.info_hash must be a @property returning a value, '
+            'not a bound method -- shadowing TorrentItem.info_hash'
+        )
+        assert torrent.info_hash == 'FEDCBA9876543210FEDCBA9876543210FEDCBA98'
+
+    def test_torrentitemv5_save_path_name_state_are_not_callable_and_correct(self):
+        from couchpotato.core.downloaders.hadouken import TorrentItemv5
+        torrent = TorrentItemv5(self._make_v5_payload())
+
+        assert not callable(torrent.save_path)
+        assert not callable(torrent.name)
+        assert not callable(torrent.state)
+
+        assert torrent.save_path == '/downloads/complete'
+        assert torrent.name == 'Another.Movie.2026.1080p'
+        assert torrent.state == 32
+
+    def test_torrentitemv5_get_status_and_get_seed_ratio_remain_plain_methods(self):
+        from couchpotato.core.downloaders.hadouken import TorrentItemv5
+        torrent = TorrentItemv5(self._make_v5_payload())
+
+        assert callable(torrent.get_status)
+        assert callable(torrent.get_seed_ratio)
+        assert torrent.get_status() == 'completed'
+        assert torrent.get_seed_ratio() == 2.0
+
+
+class TestHadoukenGetAllDownloadStatusWithRealTorrentItems:
+    """T27: drives getAllDownloadStatus end to end against the REAL
+    TorrentItemv4/TorrentItemv5 classes (not FakeHadoukenTorrent, not a bare
+    MagicMock standing in for the torrent) -- proving the property fix
+    actually closes the gap between the (already correct) call sites and
+    the (previously shadowed) class attributes."""
+
+    def _make_hadouken(self, conf_values = None):
+        from couchpotato.core.downloaders.hadouken import Hadouken
+        conf_values = conf_values or {}
+        hd = Hadouken.__new__(Hadouken)
+
+        def conf(key, **kw):
+            return conf_values.get(key, kw.get('default', ''))
+
+        hd.conf = conf
+        return hd
+
+    def test_getAllDownloadStatus_with_real_torrentitemv4(self, tmp_path):
+        from couchpotato.core.downloaders.hadouken import TorrentItemv4
+        save_path = str(tmp_path)
+        payload = {
+            'InfoHash': 'abc123def456',
+            'SavePath': save_path,
+            'Name': 'Real.Movie.2026',
+            'State': 'Seeding',
+            'IsSeeding': True,
+            'IsFinished': True,
+            'Paused': True,
+            'TotalUploadedBytes': 10,
+            'TotalDownloadedBytes': 5,
+        }
+        real_torrent = TorrentItemv4(payload)
+
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+        mock_api.get_by_hash_list.return_value = [real_torrent]
+        mock_api.get_files_by_hash.return_value = ['Real.Movie.2026.mkv']
+
+        with patch.object(hd, 'connect', return_value = True):
+            result = hd.getAllDownloadStatus(['ABC123DEF456'])
+
+        assert len(result) == 1
+        assert result[0]['id'] == 'ABC123DEF456'
+        assert result[0]['name'] == 'Real.Movie.2026'
+        assert result[0]['original_status'] == 'Seeding'
+        assert result[0]['folder'] == save_path
+
+    def test_getAllDownloadStatus_with_real_torrentitemv5(self, tmp_path):
+        from couchpotato.core.downloaders.hadouken import TorrentItemv5
+        save_path = str(tmp_path)
+        row = [0] * 27
+        row[0] = 'fedcba987654'
+        row[1] = 32
+        row[2] = 'Real.MovieSet.2026'
+        row[5] = 5
+        row[6] = 10
+        row[26] = save_path
+        real_torrent = TorrentItemv5(row)
+
+        hd = self._make_hadouken()
+        mock_api = MagicMock()
+        hd.hadouken_api = mock_api
+        mock_api.get_by_hash_list.return_value = [real_torrent]
+        mock_api.get_files_by_hash.return_value = ['a.mkv', 'b.srt']
+
+        with patch.object(hd, 'connect', return_value = True):
+            result = hd.getAllDownloadStatus(['FEDCBA987654'])
+
+        assert len(result) == 1
+        assert result[0]['id'] == 'FEDCBA987654'
+        assert result[0]['name'] == 'Real.MovieSet.2026'
+        assert result[0]['original_status'] == 32
+        assert result[0]['folder'] == os.path.join(save_path, 'Real.MovieSet.2026')
