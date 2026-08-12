@@ -919,7 +919,53 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       mutation was hash-confirmed to land and the file was byte-identical
       after restore.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+- [ ] T23: the corrupt-document handling family is unreachable, and the schema is why — state: queued (no deps)
+
+      Found reviewing #250 (T22). A reviewer argued that
+      `Settings.getProperty`'s `except ValueError:` branch can never reach
+      its `fireEvent`, because the recovery `db.get('property', identifier)`
+      re-queries the same corrupt row and `_query_index` parses eagerly via
+      `_doc_from_row`, so it raises the identical `ValueError` a second time
+      and propagates out of `getProperty` uncaught. Reading the adapter,
+      that is correct.
+
+      **But the real reason is one layer deeper, and it was measured.** A
+      document whose JSON will not parse cannot be STORED at all:
+
+          UPDATE documents SET data = '{not valid json' WHERE _id = ...
+          -> OperationalError: malformed JSON
+
+      That is not a `CHECK` on the table (there is none). It is the 16
+      expression indexes over `json_extract(data, ...)`. Proven by removing
+      them: with every expression index dropped, the same corrupt write
+      SUCCEEDS. The indexes are the guard.
+
+      So the whole `(ValueError, EOFError)` family — four call sites in
+      `settings.py`, `release/main.py` x2 and `media/_base/media/main.py` —
+      is unreachable on this adapter, and T22's honest reporter is honest
+      about something that cannot currently happen. That is still the right
+      shape (it was going to be honest about something that could not happen
+      either way, and the old version was destructive-by-name), but the
+      reachability should be recorded rather than implied.
+
+      Two things to decide, and neither is urgent:
+
+      1. Does the guard hold under maintenance? The indexes are what enforce
+         it, so any path that drops or rebuilds them — a migration, a repair,
+         a restore — opens a window where malformed JSON can land and then
+         cannot be read. Worth knowing before someone writes such a
+         migration, not after.
+      2. If the family stays unreachable, the four call sites and the
+         reporter are dead code, and `T18`'s sweep should either remove them
+         or the entry should say why they are kept as a backstop against
+         corruption arriving by a route the indexes do not cover (file-level
+         damage, a restored backup written by an older schema).
+
+      Do not "fix" the `getProperty` recovery branch in isolation: it is
+      error handling for a condition that cannot occur, and repairing
+      unreachable code was exactly the trap T15 fell into.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
