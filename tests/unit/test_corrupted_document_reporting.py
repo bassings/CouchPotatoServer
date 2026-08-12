@@ -272,3 +272,35 @@ class TestTheNameNoLongerLies:
         assert hits == [], (
             'a live call site is still wired to the renamed event/method: %r' % hits
         )
+
+    def test_every_call_site_reports_a_document_id(self):
+        """The id is now the suppression KEY, so passing the wrong one is
+        worse than cosmetic.
+
+        Review of #250 found `release/main.py` firing this with
+        `release.get('key')`. SQLite release rows carry no `key` field, so
+        that is always `None`: it names no document AND collapses every
+        corrupt release into one `corrupted_document:None` window, hiding
+        all but the first. Under the old no-op handler the id went into a
+        DEBUG line nobody read; making the report real is what gave a wrong
+        id teeth.
+
+        So this pins the shape rather than the one site: every firing must
+        pass an `_id`. Deliberately structural -- the release call site sits
+        in a loop this adapter never executes (T8), so no runtime test can
+        reach it, and a guard that cannot run is the thing this file exists
+        to argue against.
+        """
+        root = pathlib.Path(__file__).resolve().parents[2] / 'couchpotato'
+        fire = re.compile(
+            r"""fireEvent\(\s*['"]database\.corrupted_document['"]\s*,\s*([^,)]+)""")
+        offenders = []
+        for path in root.rglob('*.py'):
+            for arg in fire.findall(path.read_text(encoding='utf-8', errors='ignore')):
+                if "'_id'" not in arg and '"_id"' not in arg and not arg.strip().endswith('_id'):
+                    offenders.append('%s -> %s' % (path.name, arg.strip()))
+        assert offenders == [], (
+            'these fire database.corrupted_document with something other than '
+            'a document _id, which misnames the document and shares one '
+            'suppression window: %r' % offenders
+        )

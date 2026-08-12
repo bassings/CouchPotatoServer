@@ -175,7 +175,19 @@ class Release(Plugin):
                 except Exception:
                     log.error('Failed fixing mis-status tag: %s', traceback.format_exc())
             except ValueError:
-                fireEvent('database.corrupted_document', release.get('key'), traceback_error = traceback.format_exc(0))
+                # `_id`, not `key`. This handler covers TWO `db.get` calls --
+                # the release itself and its parent media -- so which document
+                # failed is ambiguous from here. `key` is the worse of the two
+                # guesses: SQLite release rows carry no `key` field at all (see
+                # the note below), so it is always None, which names no
+                # document AND collapses every corrupt release into one
+                # `corrupted_document:None` suppression window, hiding all but
+                # the first. `_id` is always present and is the row being
+                # processed. Splitting the catches so each names its own
+                # document belongs with T8, which owns this loop -- and which
+                # records that on this adapter the loop is dead anyway, so this
+                # line cannot currently run.
+                fireEvent('database.corrupted_document', release.get('_id'), traceback_error = traceback.format_exc(0))
                 damaged += 1
             except RecordDeleted:
                 try:
