@@ -386,15 +386,19 @@ class TorrentItemv5(TorrentItem):
     def __init__(self, obj):
         self.obj = obj
 
+    @property
     def info_hash(self):
         return self.obj[0]
 
+    @property
     def save_path(self):
         return self.obj[26]
 
+    @property
     def name(self):
         return self.obj[2]
 
+    @property
     def state(self):
         return self.obj[1]
 
@@ -469,15 +473,19 @@ class TorrentItemv4(TorrentItem):
     def __init__(self, obj):
         self.obj = obj
 
+    @property
     def info_hash(self):
         return self.obj['InfoHash']
 
+    @property
     def save_path(self):
         return self.obj['SavePath']
 
+    @property
     def name(self):
         return self.obj['Name']
 
+    @property
     def state(self):
         return self.obj['State']
 
