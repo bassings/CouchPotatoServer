@@ -149,6 +149,19 @@ def test_the_trigger_override_is_present_and_readable():
         'about couchpotato/ paths.' % TRIGGERS.relative_to(REPO)
     )
     rules = _load_triggers()
+    # The per-key loop below reads only the four known keys, so a stray fifth
+    # top-level key -- a typo'd "architecutre", a leftover from a bad merge --
+    # is never read and nothing fails. That is the exact drift class this file
+    # exists to catch, and it is no longer merely dead config: the installed
+    # workflow now REJECTS an unrecognised key outright (claude-ai-harness
+    # specs/custom-rules-fail-closed.md AC-SEC-3), so a typo here aborts every
+    # review in this repo rather than being quietly ignored. Raised by review
+    # on PR #260.
+    assert set(rules.keys()) == set(TRIGGER_KEYS), (
+        'harness-triggers.json has unexpected top-level keys: %s. The installed '
+        'workflow reads exactly %s and aborts the review on any other key.'
+        % (sorted(set(rules.keys()) - set(TRIGGER_KEYS)), sorted(TRIGGER_KEYS))
+    )
     for key in TRIGGER_KEYS:
         assert isinstance(rules.get(key), list) and rules[key], (
             'harness-triggers.json is missing a non-empty "%s" glob list; the '
