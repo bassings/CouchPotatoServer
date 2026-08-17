@@ -145,8 +145,12 @@ final `harness-triggers.json`: **25** of this repo's `lens-data` paths and
 **7** of its `lens-operability` paths stop triggering, including
 `couchpotato/core/plugins/renamer/mover.py`, this repo's highest-risk file —
 and the run prints a normal-looking lens roster with nothing indicating the
-override was dropped. Those counts are re-derivable, and should be re-derived after any glob change
-rather than trusted: for each git-tracked path, a path "stops triggering" lens
+override was dropped. Those counts are a **snapshot as of 2026-08-18**, not a settled fact: they are
+computed against `DEFAULT_RULES` in the installed
+`~/.claude/workflows/review-cycle.js`, which lives outside this repo and is
+pinned by nothing here, so no test or CI check in this repo can verify them and
+an upstream change alone can make them wrong. Re-derive after any glob change
+here, and treat a mismatch as expected rather than alarming: for each git-tracked path, a path "stops triggering" lens
 X on fallback if it matches this repo's X globs but NOT the installed harness
 `DEFAULT_RULES` X globs in `~/.claude/workflows/review-cycle.js`. Over 731
 tracked paths that gives ui 1, data 25, architecture 4, operability 7.
