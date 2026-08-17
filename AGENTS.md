@@ -140,11 +140,25 @@ telemetry, and nothing warned. Tune through `harness-triggers.json`.
 LLM scope step, not by deterministic code, and `custom_rules` is optional in
 that step's schema: if the model omits it or the read fails, the run falls
 back silently to the installed workflow's defaults, which know nothing about
-`couchpotato/` paths. Measured blast radius: 25 of this repo's `lens-data`
-paths and all 4 of its `lens-operability` paths stop triggering, including
+`couchpotato/` paths. Measured blast radius, re-derived 2026-08-18 against the
+final `harness-triggers.json`: **25** of this repo's `lens-data` paths and
+**7** of its `lens-operability` paths stop triggering, including
 `couchpotato/core/plugins/renamer/mover.py`, this repo's highest-risk file —
 and the run prints a normal-looking lens roster with nothing indicating the
-override was dropped. This is not free, and it is not fixed here: the real
+override was dropped. Those counts are re-derivable, and should be re-derived after any glob change
+rather than trusted: for each git-tracked path, a path "stops triggering" lens
+X on fallback if it matches this repo's X globs but NOT the installed harness
+`DEFAULT_RULES` X globs in `~/.claude/workflows/review-cycle.js`. Over 731
+tracked paths that gives ui 1, data 25, architecture 4, operability 7.
+
+These numbers have already drifted once, which is why the method is written
+down: an earlier commit on this branch said "21 data paths", correct before
+`couchpotato/core/migration/**` was added, and "4 operability paths", correct
+before the three scheduled-job registrants were added. A count with no stated
+derivation is a claim nobody can check, which is the failure this file's own
+fork-removal rationale exists to argue against.
+
+This is not free, and it is not fixed here: the real
 fix is upstream in `claude-ai-harness`, making `custom_rules` load
 deterministically rather than through a model step. Until then, a reviewer
 running `/review-cycle` on a diff touching `renamer/`, `database.py`,
