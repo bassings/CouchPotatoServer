@@ -54,6 +54,21 @@ npx playwright test --project=accessibility
 docker build -t couchpotato:test .
 ```
 
+### Running the tests from inside a git worktree
+
+Agents in this repo usually work in a linked worktree, and **a worktree has no
+`.venv` of its own**. Resolve the main checkout first and use its interpreter:
+
+```sh
+MAIN_REPO="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+PYTHONPATH=.:libs "$MAIN_REPO/.venv/bin/python" -m pytest ...   # run from THIS worktree's root
+```
+
+`--git-common-dir` resolves the main checkout even from a linked worktree;
+`--show-toplevel` would return the worktree, where there is no interpreter.
+Never modify anything under `$MAIN_REPO` or its `.venv`: it is the shared
+checkout and other work is usually live in it.
+
 For release or dependency changes, also run the repository's release-quality checks and audit commands where available. For browser-facing workflow changes, add or update Playwright coverage where practical and verify the affected flow on a mobile-sized viewport.
 
 ## Local Review Gate (before pushing)
@@ -79,6 +94,30 @@ orchestrator reading the diff, not by an agent).
 | `lens-architecture` | a new module or package, a new entry in `requirements*.txt`, or any change to `couchpotato/core/event.py`, `loader.py`, `api.py`, `couchpotato/__init__.py` |
 | `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, or any change to scheduled/cron behaviour |
 | `lens-product` | a `specs/**` file exists for the change, or the change is user-facing |
+
+Those globs are configuration, not prose: they live in
+`.claude/harness-triggers.json`, which the installed harness workflow reads.
+Change them there and this table together.
+
+Two rows exist in the shape they do because a cycle got them wrong once, and
+the reasons are cheaper to keep than to rediscover:
+
+- **`couchpotato/api.py`, not `couchpotato/core/api.py`.** The latter does not
+  exist, so while the glob named it, the API boundary never triggered
+  `lens-architecture` at all.
+- **Scheduled behaviour is an operability concern wherever it lives.** Path
+  globs alone missed it: a change to the scheduled full-library cleanup in
+  `couchpotato/core/plugins/manage.py` matched no operability glob, so the
+  cycle skipped `lens-operability` for its own diff. The scheduler module and
+  the plugins that register interval jobs are now listed explicitly.
+
+**Do not fork the workflow to tune it.** Until 2026-08-17 this repo carried
+copies of `plan-cycle.js` and `review-cycle.js` under `.claude/workflows/`.
+Repo-local copies win over the installed ones, so those forks silently
+shadowed every later harness update: both were pinned at 2026-08-07/08,
+predated the run ledger entirely, and contained no ledger write at all. The
+measurable consequence was that no cycle run in this repo ever produced
+telemetry, and nothing warned. Tune through `harness-triggers.json`.
 
 **Precedence for conflicts on this repo** (the global order, made concrete):
 

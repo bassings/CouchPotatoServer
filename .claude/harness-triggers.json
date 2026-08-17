@@ -1,0 +1,37 @@
+{
+  "_comment": "Repo-local review-cycle trigger globs, read by the generic ~/.claude/workflows/review-cycle.js. Replaces the forked .claude/workflows/ copies removed 2026-08-17: those were pinned at 2026-08-07/08 and predate the run ledger, so every cycle run here wrote no telemetry at all and nothing warned. The globs below are carried over verbatim, including two corrections that cost a real cycle each to find -- see AGENTS.md for the reasoning that used to live in code comments.",
+  "ui": [
+    "couchpotato/ui/**",
+    "couchpotato/templates/**",
+    "**/*.html",
+    "couchpotato/static/**",
+    "tests/e2e/**"
+  ],
+  "data": [
+    "couchpotato/core/db/**",
+    "couchpotato/core/database.py",
+    "**/schema.sql",
+    "couchpotato/core/plugins/renamer/**",
+    "couchpotato/core/plugins/scanner/**",
+    "couchpotato/core/plugins/release/**"
+  ],
+  "architecture": [
+    "couchpotato/core/event.py",
+    "couchpotato/core/loader.py",
+    "couchpotato/api.py",
+    "couchpotato/__init__.py",
+    "requirements*.txt",
+    "pyproject.toml"
+  ],
+  "operability": [
+    "Dockerfile",
+    "docker-*.yml",
+    ".github/workflows/**",
+    "couchpotato/core/logger.py",
+    "scripts/**",
+    "couchpotato/core/_base/scheduler.py",
+    "couchpotato/core/plugins/manage.py",
+    "couchpotato/core/plugins/renamer/main.py",
+    "couchpotato/core/plugins/automation.py"
+  ]
+}
