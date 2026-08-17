@@ -4,7 +4,8 @@
     "couchpotato/templates/**",
     "**/*.html",
     "couchpotato/static/**",
-    "tests/e2e/**"
+    "tests/e2e/**",
+    ".github/workflows/ci.yml"
   ],
   "data": [
     "couchpotato/core/db/**",
@@ -30,6 +31,9 @@
     "couchpotato/core/_base/scheduler.py",
     "couchpotato/core/plugins/manage.py",
     "couchpotato/core/plugins/renamer/main.py",
-    "couchpotato/core/plugins/automation.py"
+    "couchpotato/core/plugins/automation.py",
+    "couchpotato/core/plugins/file.py",
+    "couchpotato/core/_base/updater/main.py",
+    "couchpotato/core/notifications/core/main.py"
   ]
 }

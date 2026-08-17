@@ -89,10 +89,10 @@ orchestrator reading the diff, not by an agent).
 
 | Lens | Trigger |
 |---|---|
-| `lens-design` + `lens-accessibility` | `couchpotato/ui/**`, `couchpotato/templates/**`, `**/*.html`, `couchpotato/static/**`, `tests/e2e/**` |
+| `lens-design` + `lens-accessibility` | `couchpotato/ui/**`, `couchpotato/templates/**`, `**/*.html`, `couchpotato/static/**`, `tests/e2e/**`, `.github/workflows/ci.yml` |
 | `lens-data` | `couchpotato/core/db/**`, `couchpotato/core/database.py`, `**/schema.sql`, `couchpotato/core/plugins/renamer/**`, `couchpotato/core/plugins/scanner/**`, `couchpotato/core/plugins/release/**`, `couchpotato/core/migration/**` |
 | `lens-architecture` | `couchpotato/core/event.py`, `couchpotato/core/loader.py`, `couchpotato/api.py`, `couchpotato/__init__.py` |
-| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, `couchpotato/core/_base/scheduler.py`, `couchpotato/core/plugins/manage.py`, `couchpotato/core/plugins/renamer/main.py`, `couchpotato/core/plugins/automation.py` |
+| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, `couchpotato/core/_base/scheduler.py`, `couchpotato/core/plugins/manage.py`, `couchpotato/core/plugins/renamer/main.py`, `couchpotato/core/plugins/automation.py`, `couchpotato/core/plugins/file.py`, `couchpotato/core/_base/updater/main.py`, `couchpotato/core/notifications/core/main.py` |
 | `lens-product` | a `specs/**` file exists for the change, or the change is user-facing |
 
 `lens-architecture` also triggers, independent of the path globs above, when
@@ -151,6 +151,20 @@ running `/review-cycle` on a diff touching `renamer/`, `database.py`,
 `release/`, `scanner/`, or `migration/` must confirm `lens-data` is actually
 in the triggered roster printed at the start of the run — its absence on one
 of those paths means the override did not load, not that the change is safe.
+
+`.github/workflows/ci.yml` appears in BOTH the UI row and the operability row,
+deliberately. It is where the accessibility gate itself is configured, and
+`specs/CI-003-fast-gate.md:462-466` records the cycle already missing this
+once: "no `lens-accessibility` ran on a change that edits the accessibility
+gate", so no AC-A11Y criterion had a verdict from anyone. A change that can
+weaken the gate needs the lens the gate exists to serve, not just the lens
+that owns CI.
+
+The operability list enumerates scheduled-job registrants because a path glob
+cannot express "registers a scheduled job". That list was derived by searching
+for `fireEvent('schedule.interval'` and is therefore a snapshot: re-derive it
+when adding a plugin that registers interval work, or the next one will be
+missed the way `plugins/manage.py` already was.
 
 **Precedence for conflicts on this repo** (the global order, made concrete):
 

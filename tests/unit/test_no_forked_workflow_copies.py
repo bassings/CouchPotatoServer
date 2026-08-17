@@ -79,6 +79,19 @@ def _table_globs_by_key():
             continue
         globs = re.findall(r'`([^`]+)`', globs_cell)
         if globs:
+            # Last-match-wins would be silent, and silent drift is the exact
+            # failure this whole test exists to catch. The label match is a
+            # substring test, so a future two-column table anywhere in
+            # AGENTS.md whose label cell merely contains e.g. "lens-data"
+            # would overwrite a real row and the suite would stay green while
+            # comparing against the wrong set. Raised by review on PR #260.
+            if matched_key in table_by_key:
+                raise AssertionError(
+                    'multiple AGENTS.md table rows matched %r; the trigger '
+                    'table must have exactly one row per lens key, or this '
+                    'guard silently compares against whichever matched last'
+                    % matched_key
+                )
             table_by_key[matched_key] = set(globs)
     return table_by_key
 
