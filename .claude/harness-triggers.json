@@ -1,0 +1,39 @@
+{
+  "ui": [
+    "couchpotato/ui/**",
+    "couchpotato/templates/**",
+    "**/*.html",
+    "couchpotato/static/**",
+    "tests/e2e/**",
+    ".github/workflows/ci.yml"
+  ],
+  "data": [
+    "couchpotato/core/db/**",
+    "couchpotato/core/database.py",
+    "**/schema.sql",
+    "couchpotato/core/plugins/renamer/**",
+    "couchpotato/core/plugins/scanner/**",
+    "couchpotato/core/plugins/release/**",
+    "couchpotato/core/migration/**"
+  ],
+  "architecture": [
+    "couchpotato/core/event.py",
+    "couchpotato/core/loader.py",
+    "couchpotato/api.py",
+    "couchpotato/__init__.py"
+  ],
+  "operability": [
+    "Dockerfile",
+    "docker-*.yml",
+    ".github/workflows/**",
+    "couchpotato/core/logger.py",
+    "scripts/**",
+    "couchpotato/core/_base/scheduler.py",
+    "couchpotato/core/plugins/manage.py",
+    "couchpotato/core/plugins/renamer/main.py",
+    "couchpotato/core/plugins/automation.py",
+    "couchpotato/core/plugins/file.py",
+    "couchpotato/core/_base/updater/main.py",
+    "couchpotato/core/notifications/core/main.py"
+  ]
+}

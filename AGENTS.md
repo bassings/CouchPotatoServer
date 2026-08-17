@@ -54,6 +54,21 @@ npx playwright test --project=accessibility
 docker build -t couchpotato:test .
 ```
 
+### Running the tests from inside a git worktree
+
+Agents in this repo usually work in a linked worktree, and **a worktree has no
+`.venv` of its own**. Resolve the main checkout first and use its interpreter:
+
+```sh
+MAIN_REPO="$(cd "$(git rev-parse --git-common-dir)/.." && pwd)"
+PYTHONPATH=.:libs "$MAIN_REPO/.venv/bin/python" -m pytest ...   # run from THIS worktree's root
+```
+
+`--git-common-dir` resolves the main checkout even from a linked worktree;
+`--show-toplevel` would return the worktree, where there is no interpreter.
+Never modify anything under `$MAIN_REPO` or its `.venv`: it is the shared
+checkout and other work is usually live in it.
+
 For release or dependency changes, also run the repository's release-quality checks and audit commands where available. For browser-facing workflow changes, add or update Playwright coverage where practical and verify the affected flow on a mobile-sized viewport.
 
 ## Local Review Gate (before pushing)
@@ -74,11 +89,100 @@ orchestrator reading the diff, not by an agent).
 
 | Lens | Trigger |
 |---|---|
-| `lens-design` + `lens-accessibility` | `couchpotato/ui/**`, `couchpotato/templates/**`, `**/*.html`, `couchpotato/static/**`, `tests/e2e/**` |
-| `lens-data` | `couchpotato/core/db/**`, `couchpotato/core/database.py`, `**/schema.sql`, `couchpotato/core/plugins/renamer/**`, `couchpotato/core/plugins/scanner/**`, `couchpotato/core/plugins/release/**` |
-| `lens-architecture` | a new module or package, a new entry in `requirements*.txt`, or any change to `couchpotato/core/event.py`, `loader.py`, `api.py`, `couchpotato/__init__.py` |
-| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, or any change to scheduled/cron behaviour |
+| `lens-design` + `lens-accessibility` | `couchpotato/ui/**`, `couchpotato/templates/**`, `**/*.html`, `couchpotato/static/**`, `tests/e2e/**`, `.github/workflows/ci.yml` |
+| `lens-data` | `couchpotato/core/db/**`, `couchpotato/core/database.py`, `**/schema.sql`, `couchpotato/core/plugins/renamer/**`, `couchpotato/core/plugins/scanner/**`, `couchpotato/core/plugins/release/**`, `couchpotato/core/migration/**` |
+| `lens-architecture` | `couchpotato/core/event.py`, `couchpotato/core/loader.py`, `couchpotato/api.py`, `couchpotato/__init__.py` |
+| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, `couchpotato/core/_base/scheduler.py`, `couchpotato/core/plugins/manage.py`, `couchpotato/core/plugins/renamer/main.py`, `couchpotato/core/plugins/automation.py`, `couchpotato/core/plugins/file.py`, `couchpotato/core/_base/updater/main.py`, `couchpotato/core/notifications/core/main.py` |
 | `lens-product` | a `specs/**` file exists for the change, or the change is user-facing |
+
+`lens-architecture` also triggers, independent of the path globs above, when
+the diff adds a new module or package, or a new entry to a dependency
+manifest (`requirements*.txt`, `pyproject.toml`). That is handled by a
+separate boolean in the workflow's scope step, not by a path glob, so it does
+not appear in the table or in `harness-triggers.json`.
+
+Those globs are configuration, not prose: they live in
+`.claude/harness-triggers.json`, which the installed harness workflow reads.
+Change them there and this table together — a unit test
+(`tests/unit/test_no_forked_workflow_copies.py`) asserts the two stay in sync.
+
+`couchpotato/core/migration/**` is a deliberate addition to `lens-data`, not
+part of the CodernityDB-to-SQLite migration this PR ports. It was missing
+from the forked workflow this PR replaces too, so it is a pre-existing gap,
+not a regression introduced here. `clean_orphans.py`
+(`couchpotato/core/migration/clean_orphans.py`) deletes movie and child
+records from the database, invoked unconditionally on every server start by
+`couchpotato/runner.py` (around line 477); a change there is exactly the
+irrecoverable-data-loss surface `lens-data` exists to catch, so it is added
+now rather than left open.
+
+Two rows exist in the shape they do because a cycle got them wrong once, and
+the reasons are cheaper to keep than to rediscover:
+
+- **`couchpotato/api.py`, not `couchpotato/core/api.py`.** The latter does not
+  exist, so while the glob named it, the API boundary never triggered
+  `lens-architecture` at all.
+- **Scheduled behaviour is an operability concern wherever it lives.** Path
+  globs alone missed it: a change to the scheduled full-library cleanup in
+  `couchpotato/core/plugins/manage.py` matched no operability glob, so the
+  cycle skipped `lens-operability` for its own diff. The scheduler module and
+  the plugins that register interval jobs are now listed explicitly.
+
+**Do not fork the workflow to tune it.** Until 2026-08-17 this repo carried
+copies of `plan-cycle.js` and `review-cycle.js` under `.claude/workflows/`.
+Repo-local copies win over the installed ones, so those forks silently
+shadowed every later harness update: both were pinned at 2026-08-07/08,
+predated the run ledger entirely, and contained no ledger write at all. The
+measurable consequence was that no cycle run in this repo ever produced
+telemetry, and nothing warned. Tune through `harness-triggers.json`.
+
+**The accepted cost of not forking.** `harness-triggers.json` is read by an
+LLM scope step, not by deterministic code, and `custom_rules` is optional in
+that step's schema: if the model omits it or the read fails, the run falls
+back silently to the installed workflow's defaults, which know nothing about
+`couchpotato/` paths. Measured blast radius, re-derived 2026-08-18 against the
+final `harness-triggers.json`: **25** of this repo's `lens-data` paths and
+**7** of its `lens-operability` paths stop triggering, including
+`couchpotato/core/plugins/renamer/mover.py`, this repo's highest-risk file —
+and the run prints a normal-looking lens roster with nothing indicating the
+override was dropped. Those counts are a **snapshot as of 2026-08-18**, not a settled fact: they are
+computed against `DEFAULT_RULES` in the installed
+`~/.claude/workflows/review-cycle.js`, which lives outside this repo and is
+pinned by nothing here, so no test or CI check in this repo can verify them and
+an upstream change alone can make them wrong. Re-derive after any glob change
+here, and treat a mismatch as expected rather than alarming: for each git-tracked path, a path "stops triggering" lens
+X on fallback if it matches this repo's X globs but NOT the installed harness
+`DEFAULT_RULES` X globs in `~/.claude/workflows/review-cycle.js`. Over 731
+tracked paths that gives ui 1, data 25, architecture 4, operability 7.
+
+These numbers have already drifted once, which is why the method is written
+down: an earlier commit on this branch said "21 data paths", correct before
+`couchpotato/core/migration/**` was added, and "4 operability paths", correct
+before the three scheduled-job registrants were added. A count with no stated
+derivation is a claim nobody can check, which is the failure this file's own
+fork-removal rationale exists to argue against.
+
+This is not free, and it is not fixed here: the real
+fix is upstream in `claude-ai-harness`, making `custom_rules` load
+deterministically rather than through a model step. Until then, a reviewer
+running `/review-cycle` on a diff touching `renamer/`, `database.py`,
+`release/`, `scanner/`, or `migration/` must confirm `lens-data` is actually
+in the triggered roster printed at the start of the run — its absence on one
+of those paths means the override did not load, not that the change is safe.
+
+`.github/workflows/ci.yml` appears in BOTH the UI row and the operability row,
+deliberately. It is where the accessibility gate itself is configured, and
+`specs/CI-003-fast-gate.md:462-466` records the cycle already missing this
+once: "no `lens-accessibility` ran on a change that edits the accessibility
+gate", so no AC-A11Y criterion had a verdict from anyone. A change that can
+weaken the gate needs the lens the gate exists to serve, not just the lens
+that owns CI.
+
+The operability list enumerates scheduled-job registrants because a path glob
+cannot express "registers a scheduled job". That list was derived by searching
+for `fireEvent('schedule.interval'` and is therefore a snapshot: re-derive it
+when adding a plugin that registers interval work, or the next one will be
+missed the way `plugins/manage.py` already was.
 
 **Precedence for conflicts on this repo** (the global order, made concrete):
 
