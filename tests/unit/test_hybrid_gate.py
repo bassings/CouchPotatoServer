@@ -15,6 +15,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.conftest import sanitized_git_env
+
 yaml = pytest.importorskip('yaml')
 
 REPO = Path(__file__).resolve().parents[2]
@@ -27,7 +29,8 @@ BROWSER_JOBS = ('ui-e2e-tests', 'accessibility')
 
 def _run(*args, cwd):
     return subprocess.run(
-        [str(SCRIPT), *args], cwd=str(cwd), capture_output=True, text=True
+        [str(SCRIPT), *args], cwd=str(cwd), capture_output=True, text=True,
+        env=sanitized_git_env(),
     ).returncode
 
 
@@ -37,9 +40,28 @@ def repo(tmp_path):
     rather than a mocked `git`."""
     def _git(*args):
         subprocess.run(['git', *args], cwd=tmp_path, check=True,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=sanitized_git_env())
 
     _git('init', '-q', '-b', 'main')
+
+    # Defense in depth: if the environment strip above ever misses a
+    # variable (a new call site added without it, a future git release
+    # adding another GIT_* location var), this catches the effect directly
+    # rather than trusting the input was sanitised. A silent redirect here
+    # would otherwise not surface until a real repository turned up
+    # corrupted, exactly as it did in the T31 follow-up incident this
+    # fixture is now regression-tested against
+    # (test_fixtures_do_not_leak_gitdir.py).
+    absolute_git_dir = subprocess.run(
+        ['git', 'rev-parse', '--absolute-git-dir'], cwd=tmp_path, check=True,
+        capture_output=True, text=True, env=sanitized_git_env(),
+    ).stdout.strip()
+    assert Path(absolute_git_dir).resolve() == (tmp_path / '.git').resolve(), (
+        'this fixture\'s git operations are not targeting the throwaway '
+        'tmp_path (got %s) -- refusing to continue rather than risk running '
+        'further git commands against a real repository' % absolute_git_dir
+    )
+
     _git('config', 'user.email', 't@example.com')
     _git('config', 'user.name', 'T')
     (tmp_path / 'seed.txt').write_text('seed\n')
@@ -296,7 +318,8 @@ class TestARenameAwayFromTheUiStillCounts:
         import subprocess as sp
 
         def _git(*args):
-            sp.run(['git', *args], cwd=repo['dir'], check=True, capture_output=True)
+            sp.run(['git', *args], cwd=repo['dir'], check=True,
+                   capture_output=True, env=sanitized_git_env())
 
         # The template must exist on the BASE, or the net diff is just an
         # added docs file and the test proves nothing.
@@ -318,7 +341,8 @@ class TestARenameAwayFromTheUiStillCounts:
         # Precondition: git really does collapse this to a rename, otherwise
         # the test passes for the wrong reason.
         renamed = sp.run(['git', 'diff', '--name-only', 'main...HEAD'],
-                         cwd=repo['dir'], capture_output=True, text=True).stdout.split()
+                         cwd=repo['dir'], capture_output=True, text=True,
+                         env=sanitized_git_env()).stdout.split()
         assert renamed == ['docs/view.txt'], (
             'git did not detect a rename, so this fixture cannot provoke the '
             'bug: %r' % renamed
@@ -349,9 +373,10 @@ class TestALargeDiffDoesNotSilentlySkip:
         bulk.mkdir(exist_ok=True)
         for i in range(6000):
             (bulk / ('file_%05d.py' % i)).write_text('x\n')
-        sp.run(['git', 'add', '-A'], cwd=repo['dir'], check=True, capture_output=True)
+        sp.run(['git', 'add', '-A'], cwd=repo['dir'], check=True,
+               capture_output=True, env=sanitized_git_env())
         sp.run(['git', 'commit', '-qm', 'a lot'], cwd=repo['dir'], check=True,
-               capture_output=True)
+               capture_output=True, env=sanitized_git_env())
 
         assert _run('main', cwd=repo['dir']) == 0, (
             'a browser-visible file was lost in a large diff'
@@ -377,14 +402,15 @@ class TestThePushBaseIsTheTargetBranchNotTheLastPush:
         import subprocess as sp
         origin = tmp_path / 'origin.git'
         sp.run(['git', 'init', '-q', '--bare', '-b', 'master', str(origin)],
-               check=True, capture_output=True)
+               check=True, capture_output=True, env=sanitized_git_env())
         clone = tmp_path / 'clone'
         sp.run(['git', 'clone', '-q', str(origin), str(clone)],
-               check=True, capture_output=True)
+               check=True, capture_output=True, env=sanitized_git_env())
 
         def _git(*args, cwd=clone):
             return sp.run(['git', *args], cwd=str(cwd), check=True,
-                          capture_output=True, text=True).stdout.strip()
+                          capture_output=True, text=True,
+                          env=sanitized_git_env()).stdout.strip()
 
         _git('config', 'user.email', 't@example.com')
         _git('config', 'user.name', 'T')
@@ -397,7 +423,8 @@ class TestThePushBaseIsTheTargetBranchNotTheLastPush:
     def _base(self, cwd):
         import subprocess as sp
         return sp.run([str(self.BASE_SCRIPT)], cwd=str(cwd),
-                      capture_output=True, text=True).stdout.strip()
+                      capture_output=True, text=True,
+                      env=sanitized_git_env()).stdout.strip()
 
     def test_before_the_first_push_the_base_is_master(self, tmp_path):
         clone, git = self._remote_repo(tmp_path)
@@ -520,7 +547,7 @@ class TestABrokenClassifierStillErrsTowardsRunning:
         assert _run('main', cwd=repo['dir']) == 1
 
         result = sp.run([str(broken), 'main'], cwd=str(repo['dir']),
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, env=sanitized_git_env())
         assert result.returncode == 0, (
             'a classifier that cannot run resolved to SKIP: rc=%d %s'
             % (result.returncode, result.stderr)
@@ -540,18 +567,20 @@ class TestThePushBaseFallsBackAndFailsSafe:
     def _base(self, cwd):
         import subprocess as sp
         return sp.run([str(self.BASE_SCRIPT)], cwd=str(cwd),
-                      capture_output=True, text=True).stdout.strip()
+                      capture_output=True, text=True,
+                      env=sanitized_git_env()).stdout.strip()
 
     def _repo_without_origin_head(self, tmp_path):
         import subprocess as sp
         origin = tmp_path / 'origin.git'
         sp.run(['git', 'init', '-q', '--bare', '-b', 'master', str(origin)],
-               check=True, capture_output=True)
+               check=True, capture_output=True, env=sanitized_git_env())
         work = tmp_path / 'work'
         work.mkdir()
 
         def _git(*args):
-            sp.run(['git', *args], cwd=str(work), check=True, capture_output=True)
+            sp.run(['git', *args], cwd=str(work), check=True,
+                   capture_output=True, env=sanitized_git_env())
 
         _git('init', '-q', '-b', 'master')
         _git('config', 'user.email', 't@example.com')
@@ -565,7 +594,7 @@ class TestThePushBaseFallsBackAndFailsSafe:
         # Modern git sets origin/HEAD on fetch. Remove it, because the case
         # under test is a repo that has never had one.
         sp.run(['git', 'symbolic-ref', '--delete', 'refs/remotes/origin/HEAD'],
-               cwd=str(work), capture_output=True)
+               cwd=str(work), capture_output=True, env=sanitized_git_env())
         return work, _git
 
     def test_the_candidate_ladder_is_used_when_origin_HEAD_is_unset(self, tmp_path):
@@ -573,7 +602,8 @@ class TestThePushBaseFallsBackAndFailsSafe:
 
         import subprocess as sp
         symref = sp.run(['git', 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'],
-                        cwd=str(work), capture_output=True, text=True)
+                        cwd=str(work), capture_output=True, text=True,
+                        env=sanitized_git_env())
         assert symref.returncode != 0, (
             'origin/HEAD exists, so this fixture cannot exercise the ladder'
         )
@@ -588,20 +618,22 @@ class TestThePushBaseFallsBackAndFailsSafe:
         work = tmp_path / 'lonely'
         work.mkdir()
         sp.run(['git', 'init', '-q', '-b', 'nothing-standard', str(work)],
-               check=True, capture_output=True)
+               check=True, capture_output=True, env=sanitized_git_env())
         for args in (['config', 'user.email', 't@example.com'],
                      ['config', 'user.name', 'T']):
-            sp.run(['git', *args], cwd=str(work), check=True, capture_output=True)
+            sp.run(['git', *args], cwd=str(work), check=True,
+                   capture_output=True, env=sanitized_git_env())
         (work / 'a.txt').write_text('a\n')
-        sp.run(['git', 'add', '-A'], cwd=str(work), check=True, capture_output=True)
+        sp.run(['git', 'add', '-A'], cwd=str(work), check=True,
+               capture_output=True, env=sanitized_git_env())
         sp.run(['git', 'commit', '-qm', 'one'], cwd=str(work), check=True,
-               capture_output=True)
+               capture_output=True, env=sanitized_git_env())
 
         assert self._base(work) == ''
 
         # End to end: the empty answer must make the classifier say YES.
         result = sp.run([str(SCRIPT), ''], cwd=str(work),
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, env=sanitized_git_env())
         assert result.returncode == 0, (
             'an unresolvable base resolved to SKIP: %s' % result.stderr
         )

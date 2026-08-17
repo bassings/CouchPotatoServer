@@ -27,6 +27,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.unit.conftest import sanitized_git_env
+
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / 'scripts' / 'needs_e2e.sh'
 
@@ -35,7 +37,7 @@ def classify(repo_dir, *paths, base='main'):
     """Commit `paths` in a throwaway repo and ask the real script."""
     def git(*args):
         subprocess.run(['git', *args], cwd=str(repo_dir), check=True,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=sanitized_git_env())
     for rel in paths:
         target = repo_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -43,15 +45,30 @@ def classify(repo_dir, *paths, base='main'):
     git('add', '-A')
     git('commit', '-qm', 'change')
     return subprocess.run([str(SCRIPT), base], cwd=str(repo_dir),
-                          capture_output=True, text=True).returncode
+                          capture_output=True, text=True,
+                          env=sanitized_git_env()).returncode
 
 
 @pytest.fixture
 def repo(tmp_path):
     def git(*args):
         subprocess.run(['git', *args], cwd=str(tmp_path), check=True,
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=sanitized_git_env())
     git('init', '-q', '-b', 'main')
+
+    # Defense in depth: verify the effect, not just the input. See
+    # test_hybrid_gate.py's `repo` fixture for the full rationale and
+    # tests/unit/test_fixtures_do_not_leak_gitdir.py for the regression test.
+    absolute_git_dir = subprocess.run(
+        ['git', 'rev-parse', '--absolute-git-dir'], cwd=str(tmp_path),
+        check=True, capture_output=True, text=True, env=sanitized_git_env(),
+    ).stdout.strip()
+    assert Path(absolute_git_dir).resolve() == (tmp_path / '.git').resolve(), (
+        'this fixture\'s git operations are not targeting the throwaway '
+        'tmp_path (got %s) -- refusing to continue rather than risk running '
+        'further git commands against a real repository' % absolute_git_dir
+    )
+
     git('config', 'user.email', 't@example.com')
     git('config', 'user.name', 'T')
     (tmp_path / 'seed.txt').write_text('seed\n')

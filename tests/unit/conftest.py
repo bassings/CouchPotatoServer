@@ -5,9 +5,49 @@ On Python 3.10, `patch('couchpotato.api.addApiView', create=True)` fails because
 rather than the api module. This conftest ensures addApiView is patchable by replacing
 the problematic patch targets with direct module-level mocks.
 """
+import os
+
 import pytest
 
 from couchpotato.core.logger import reset_log_suppression
+
+# Git sets GIT_DIR (and its siblings below) in the environment of hook
+# subprocesses launched from a `git worktree` checkout -- but not from the
+# main checkout. `pre-push` runs `make verify`, which runs this suite, so a
+# push made from a worktree hands every test process a GIT_DIR naming that
+# worktree's real `.git`.
+#
+# Any test that shells out to `git init`/`commit`/`checkout -b` inside a
+# throwaway `tmp_path` MUST strip these first: with GIT_DIR set, `git init`
+# in a fresh directory does not create a repo there, it RE-INITIALISES the
+# repo GIT_DIR already points at, and every later commit/checkout in the
+# fixture lands there too. T31 follow-up: this is exactly how the real
+# developer checkout got a fixture branch, two fixture commits, and
+# `core.bare` flipped to true.
+#
+# Deliberately a plain function, not a fixture and not autouse: importing it
+# is each caller's explicit choice, so it carries none of the blast radius
+# the autouse fixtures above do across this file's ~150+ dependents. See
+# `tests/unit/test_fixtures_do_not_leak_gitdir.py`.
+GIT_LOCATION_ENV_VARS = (
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_COMMON_DIR',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+)
+
+
+def sanitized_git_env():
+    """A copy of the current environment with git's location variables
+    removed -- pass as `env=` to any subprocess `git` call (or any script
+    that itself shells out to `git`, e.g. `needs_e2e.sh`) that must operate
+    on an explicit `cwd` rather than wherever the ambient GIT_DIR points."""
+    env = os.environ.copy()
+    for var in GIT_LOCATION_ENV_VARS:
+        env.pop(var, None)
+    return env
 
 
 @pytest.fixture(autouse=True)
