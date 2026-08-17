@@ -100,6 +100,14 @@ def test_the_repo_does_not_fork_the_harness_workflows():
     """The rule is "this directory must not exist", not "no *.js directly
     inside it".
 
+    The cost of the broad rule, stated so it is a conscious choice rather
+    than a surprise: this repo can never use `.claude/workflows/` for a
+    legitimately-scoped, non-colliding custom workflow without first relaxing
+    this guard. There is no such use today, and the trade is worth it while
+    that holds. If you are reading this because you have one, the right move
+    is to widen the rule deliberately here, not to work around it by naming
+    the file something the check happens to miss.
+
     A narrower ban is evadable: `.claude/workflows/review-cycle.mjs`,
     `.claude/workflows/lib/review-cycle.js` and
     `.claude/workflows/REVIEW-CYCLE.JS` would all dodge a `glob('*.js')`
