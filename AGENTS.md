@@ -90,14 +90,31 @@ orchestrator reading the diff, not by an agent).
 | Lens | Trigger |
 |---|---|
 | `lens-design` + `lens-accessibility` | `couchpotato/ui/**`, `couchpotato/templates/**`, `**/*.html`, `couchpotato/static/**`, `tests/e2e/**` |
-| `lens-data` | `couchpotato/core/db/**`, `couchpotato/core/database.py`, `**/schema.sql`, `couchpotato/core/plugins/renamer/**`, `couchpotato/core/plugins/scanner/**`, `couchpotato/core/plugins/release/**` |
-| `lens-architecture` | a new module or package, a new entry in `requirements*.txt`, or any change to `couchpotato/core/event.py`, `loader.py`, `api.py`, `couchpotato/__init__.py` |
-| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, or any change to scheduled/cron behaviour |
+| `lens-data` | `couchpotato/core/db/**`, `couchpotato/core/database.py`, `**/schema.sql`, `couchpotato/core/plugins/renamer/**`, `couchpotato/core/plugins/scanner/**`, `couchpotato/core/plugins/release/**`, `couchpotato/core/migration/**` |
+| `lens-architecture` | `couchpotato/core/event.py`, `couchpotato/core/loader.py`, `couchpotato/api.py`, `couchpotato/__init__.py` |
+| `lens-operability` | `Dockerfile`, `docker-*.yml`, `.github/workflows/**`, `couchpotato/core/logger.py`, `scripts/**`, `couchpotato/core/_base/scheduler.py`, `couchpotato/core/plugins/manage.py`, `couchpotato/core/plugins/renamer/main.py`, `couchpotato/core/plugins/automation.py` |
 | `lens-product` | a `specs/**` file exists for the change, or the change is user-facing |
+
+`lens-architecture` also triggers, independent of the path globs above, when
+the diff adds a new module or package, or a new entry to a dependency
+manifest (`requirements*.txt`, `pyproject.toml`). That is handled by a
+separate boolean in the workflow's scope step, not by a path glob, so it does
+not appear in the table or in `harness-triggers.json`.
 
 Those globs are configuration, not prose: they live in
 `.claude/harness-triggers.json`, which the installed harness workflow reads.
-Change them there and this table together.
+Change them there and this table together — a unit test
+(`tests/unit/test_no_forked_workflow_copies.py`) asserts the two stay in sync.
+
+`couchpotato/core/migration/**` is a deliberate addition to `lens-data`, not
+part of the CodernityDB-to-SQLite migration this PR ports. It was missing
+from the forked workflow this PR replaces too, so it is a pre-existing gap,
+not a regression introduced here. `clean_orphans.py`
+(`couchpotato/core/migration/clean_orphans.py`) deletes movie and child
+records from the database, invoked unconditionally on every server start by
+`couchpotato/runner.py` (around line 477); a change there is exactly the
+irrecoverable-data-loss surface `lens-data` exists to catch, so it is added
+now rather than left open.
 
 Two rows exist in the shape they do because a cycle got them wrong once, and
 the reasons are cheaper to keep than to rediscover:
@@ -118,6 +135,22 @@ shadowed every later harness update: both were pinned at 2026-08-07/08,
 predated the run ledger entirely, and contained no ledger write at all. The
 measurable consequence was that no cycle run in this repo ever produced
 telemetry, and nothing warned. Tune through `harness-triggers.json`.
+
+**The accepted cost of not forking.** `harness-triggers.json` is read by an
+LLM scope step, not by deterministic code, and `custom_rules` is optional in
+that step's schema: if the model omits it or the read fails, the run falls
+back silently to the installed workflow's defaults, which know nothing about
+`couchpotato/` paths. Measured blast radius: 25 of this repo's `lens-data`
+paths and all 4 of its `lens-operability` paths stop triggering, including
+`couchpotato/core/plugins/renamer/mover.py`, this repo's highest-risk file —
+and the run prints a normal-looking lens roster with nothing indicating the
+override was dropped. This is not free, and it is not fixed here: the real
+fix is upstream in `claude-ai-harness`, making `custom_rules` load
+deterministically rather than through a model step. Until then, a reviewer
+running `/review-cycle` on a diff touching `renamer/`, `database.py`,
+`release/`, `scanner/`, or `migration/` must confirm `lens-data` is actually
+in the triggered roster printed at the start of the run — its absence on one
+of those paths means the override did not load, not that the change is safe.
 
 **Precedence for conflicts on this repo** (the global order, made concrete):
 
