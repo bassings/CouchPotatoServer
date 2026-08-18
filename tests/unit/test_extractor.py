@@ -592,7 +592,7 @@ class TestNoExtractorToolMessage:
 
 class TestRarfileApiSignatureGuard:
     """Every other test mocks rarfile, baking in assumptions about its API.
-    This guard pins the REAL installed rarfile==4.2 surface CP's extractor
+    This guard pins the REAL installed rarfile surface CP's extractor
     depends on, so a future dependency bump that drifts the API fails here
     (loudly) instead of silently passing every mocked test.
 

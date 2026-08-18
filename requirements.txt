@@ -43,6 +43,15 @@ click-option-group==0.5.9
 defusedxml==0.7.1
 trakit==0.2.5
 decorator==5.3.1
+# 4.5 is a SECURITY fix, not a routine minor: GHSA-94vx-95fq-wwvp (High),
+# unbounded read with comments, published 2026-08-02. No CVE was assigned,
+# which is why it arrived looking routine. It also truncates filenames at the
+# first NUL byte. This is the library that parses a .rar arriving from a
+# hostile torrent, so it sits inside the threat model rather than beside it.
+#
+# NOTE for the next bump: rarfile 5.0 removes root-level config, so
+# `rarfile.UNRAR_TOOL = ...` (renamer/extractor.py) stops working and becomes
+# `rarfile.config.UNRAR_TOOL` — SILENTLY. Hold 5.0 until that is ported.
 rarfile==4.5
 
 # Downloaders
