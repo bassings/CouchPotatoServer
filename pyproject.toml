@@ -145,7 +145,7 @@ source_paths = ["couchpotato/core/db/sqlite_adapter.py"]
 # every bump, and a wrong one reads as precision.
 tests_dir = ["tests/unit/"]
 # `runner`, by contrast, is INERT on mutmut 3.x (re-verified on 3.7.0) —
-# config loading never reads it
+# `_load_config()` never reads it
 # and __main__.py hardcodes `runner = PytestRunner()` under a `# TODO:
 # config/option for runner`. It is kept only as documentation of which tests
 # cover the mutated module; editing it changes nothing, so if you need to narrow
