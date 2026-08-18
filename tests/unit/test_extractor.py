@@ -1013,3 +1013,42 @@ class TestCollisionWarningIsAlsoBounded:
         assert summary and '1000' in summary[0], (
             'the collision total was not reported, so the cap hides the scale'
         )
+
+
+class TestTheT41TradeoffIsPinned:
+    r"""Pins a deliberate choice that was documented but untested.
+
+    When `extr_path` ITSELF contains a backslash -- legal on POSIX, and
+    choosable by a hostile torrent naming its folder -- `sp()` rewrites each
+    target into a tree that does not exist, so no entry can be written either
+    way. The only question is HOW it fails, and the two options are not
+    equivalent:
+
+        base WITHOUT sp(): contained=False -> refused cleanly, loop continues
+        base WITH    sp(): contained=True  -> os.replace into a missing dir,
+                                              raises, ABANDONS the archive
+
+    T36 kept the first. That decision lived only in a comment saying it was
+    "measured", so a later tidy-up that made the base and target symmetric by
+    adding `sp()` would have reintroduced the worse behaviour with nothing
+    failing. A documented tradeoff nobody can watch break is not protected.
+
+    Asserts the SAFE direction only: refusal, not silence. The underlying
+    defect -- `sp()` mangling `extr_path` at all -- is T41.
+    """
+
+    def test_a_backslash_in_the_extraction_dir_refuses_rather_than_aborting(self, tmp_path):
+        extr_path = tmp_path / 'Movie.2020\\Sample'
+        extr_path.mkdir()
+        handle = _make_rar_handle([_make_info('movie.mkv')], {'movie.mkv': b'x'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            # Must not raise: an exception here abandons every remaining entry
+            # in the archive, which is the outcome this choice exists to avoid.
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [], (
+            'nothing can be written into a path sp() rewrote, so the honest '
+            'result is an empty list rather than a claimed success'
+        )
