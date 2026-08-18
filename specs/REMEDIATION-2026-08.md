@@ -1669,7 +1669,39 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the test actually drives. A test written against the WRONG mechanism
       would pass on the current code and guard nothing.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T41: `sp()` mangles an extraction directory that contains a backslash — state: queued (no deps)
+
+      Found while fixing T36, by trying a fix and measuring it rather than
+      shipping it. `extractArchive` builds each target as
+      `sp(os.path.join(extr_path, entry_name))`. When `extr_path` ITSELF
+      contains a backslash — legal on POSIX, and choosable by a hostile
+      torrent naming its folder — `sp()`'s Windows-path conversion rewrites
+      the target into a DIFFERENT tree:
+
+          real dir on disk : .../Movie.2020\Sample
+          sp() target      : .../Movie.2020/Sample/movie.mkv
+          target dir exists: False
+
+      So no entry can be written, whatever the containment check decides. The
+      only question is how it fails, and that was measured:
+
+          base WITHOUT sp(): contained=False -> refused cleanly, loop continues
+          base WITH    sp(): contained=True  -> write into a missing dir,
+                                                raises, ABANDONS the archive
+
+      T36 deliberately kept the first, because a clean per-entry refusal beats
+      an exception that sinks the rest of the archive. That is containment of
+      the symptom, not a fix.
+
+      The fix is at the `sp()` seam, and it is NOT "change `sp()`": that
+      function is used across the app and its Windows-path conversion exists
+      for genuine remote-Windows-box paths. The question is whether
+      `extractArchive` should be calling `sp()` on a path it is about to write
+      to at all. Answer that before changing anything, and drive the
+      alternative rather than reasoning about it — the last two attempts in
+      this area were both measured worse than what they replaced.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
