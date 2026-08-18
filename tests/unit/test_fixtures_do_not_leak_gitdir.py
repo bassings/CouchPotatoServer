@@ -38,10 +38,11 @@ audited unsanitised call sites between them:
 """
 import os
 import subprocess
-from tests.unit.conftest import sanitized_git_env
+from tests.unit.conftest import assert_git_dir_is, sanitized_git_env
 import sys
 from pathlib import Path
 import ast
+import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -227,3 +228,60 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
         'tmp dir silently re-inits the repo GIT_DIR names. Pass '
         'env=sanitized_git_env():\n  ' + '\n  '.join(offenders)
     )
+
+
+class TestTheContainmentAssertionIsItselfGuarded:
+    """Isolates the SECOND layer, which was previously untested.
+
+    Measured before this class existed: deleting the containment assertion
+    from both `repo` fixtures left 49 tests passing, because the per-call
+    `sanitized_git_env()` already kept every path clean. Deleting the
+    sanitisation instead failed one test. So the two layers were not two
+    proven layers -- one was proven and the other was decoration that happened
+    to be correct.
+
+    Defence in depth and an untested second layer are indistinguishable from a
+    green run. These tests drive the assertion DIRECTLY, with the first layer
+    deliberately bypassed, so each layer now fails on its own removal.
+    """
+
+    def test_it_rejects_a_git_dir_outside_the_directory(self, tmp_path):
+        """The case it exists for, driven with sanitisation bypassed: an
+        ambient GIT_DIR pointing at another repo, and no `.git` ever created
+        in tmp_path."""
+        victim = tmp_path / 'victim'
+        victim.mkdir()
+        subprocess.run(
+            ['git', 'init', '-q', str(victim)], check=True,
+            capture_output=True, env=sanitized_git_env(),
+        )
+        target = tmp_path / 'throwaway'
+        target.mkdir()
+
+        poisoned = os.environ.copy()
+        poisoned['GIT_DIR'] = str(victim / '.git')
+
+        with pytest.raises(AssertionError) as excinfo:
+            assert_git_dir_is(target, env=poisoned)
+
+        message = str(excinfo.value)
+        assert 'refusing to continue' in message, (
+            'the assertion fired but not with its named, actionable message; '
+            'got: %s' % message
+        )
+        assert str(victim) in message, (
+            'the message must name WHERE git actually pointed, or the reader '
+            'cannot tell which repository was about to be written to'
+        )
+        # And specifically NOT an OSError from resolving a `.git` that was
+        # never created -- the failure mode this helper is shaped to avoid.
+        assert not (target / '.git').exists()
+
+    def test_it_accepts_a_git_dir_inside_the_directory(self, tmp_path):
+        """The other direction, so the assertion cannot be satisfied by
+        rejecting everything."""
+        subprocess.run(
+            ['git', 'init', '-q'], cwd=str(tmp_path), check=True,
+            capture_output=True, env=sanitized_git_env(),
+        )
+        assert_git_dir_is(tmp_path)

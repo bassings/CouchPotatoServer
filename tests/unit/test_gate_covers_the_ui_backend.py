@@ -27,7 +27,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.unit.conftest import sanitized_git_env
+from tests.unit.conftest import assert_git_dir_is, sanitized_git_env
 
 REPO = Path(__file__).resolve().parents[2]
 SCRIPT = REPO / 'scripts' / 'needs_e2e.sh'
@@ -59,15 +59,7 @@ def repo(tmp_path):
     # Defense in depth: verify the effect, not just the input. See
     # test_hybrid_gate.py's `repo` fixture for the full rationale and
     # tests/unit/test_fixtures_do_not_leak_gitdir.py for the regression test.
-    absolute_git_dir = subprocess.run(
-        ['git', 'rev-parse', '--absolute-git-dir'], cwd=str(tmp_path),
-        check=True, capture_output=True, text=True, env=sanitized_git_env(),
-    ).stdout.strip()
-    assert Path(absolute_git_dir).resolve() == (tmp_path / '.git').resolve(), (
-        'this fixture\'s git operations are not targeting the throwaway '
-        'tmp_path (got %s) -- refusing to continue rather than risk running '
-        'further git commands against a real repository' % absolute_git_dir
-    )
+    assert_git_dir_is(tmp_path)
 
     git('config', 'user.email', 't@example.com')
     git('config', 'user.name', 'T')

@@ -39,6 +39,38 @@ GIT_LOCATION_ENV_VARS = (
 )
 
 
+def assert_git_dir_is(directory, env=None):
+    """Assert git, run in `directory`, resolves its git dir INSIDE `directory`.
+
+    Defence in depth for the GIT_DIR leak: verifies the EFFECT rather than
+    trusting that the input was sanitised. Extracted from the two `repo`
+    fixtures so it can be tested on its own -- inline, deleting it failed
+    nothing, because the per-call sanitisation already kept every test green.
+    Two layers where only one is proven look exactly like two working layers
+    from a green run.
+
+    Compares against the DIRECTORY, never against `directory/.git`, because in
+    the case this exists to catch that path was never created -- git
+    re-initialised the repo GIT_DIR named instead. Resolving through a child
+    that does not exist is how this assertion reports the wrong thing on the
+    one path that needs it.
+    """
+    import subprocess as _sp
+    absolute_git_dir = _sp.run(
+        ['git', 'rev-parse', '--absolute-git-dir'], cwd=str(directory),
+        check=True, capture_output=True, text=True,
+        env=sanitized_git_env() if env is None else env,
+    ).stdout.strip()
+    resolved = os.path.realpath(absolute_git_dir)
+    root = os.path.realpath(str(directory))
+    assert resolved == root or resolved.startswith(root + os.sep), (
+        'git operations here are not targeting the throwaway directory '
+        '(git dir resolved to %s, outside %s) -- refusing to continue rather '
+        'than risk running further git commands against a real repository'
+        % (absolute_git_dir, root)
+    )
+
+
 def sanitized_git_env():
     """A copy of the current environment with git's location variables
     removed -- pass as `env=` to any subprocess `git` call (or any script
