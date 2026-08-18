@@ -1350,7 +1350,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Not folded into #261: it wants its own diff and its own review gate,
       and it has nothing to do with removing a downloader.
 
-- [ ] T33: dependency triage backlog — 5 open Dependabot PRs and 7 dev-only highs — state: queued (no deps)
+- [ ] T33: dependency triage backlog — review AND apply the Dependabot updates — state: queued (needs: T29/T30/T31 via #261)
 
       Surfaced by the push on 2026-08-18: GitHub reported "1 vulnerability on
       the default branch (1 high)". Measured rather than relayed:
@@ -1386,6 +1386,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Deliberately NOT folded into #261. A lockfile change riding in on a
       downloader removal is the same mistake as riding the hook fix in on it,
       and a dependency bump is a code change made by someone else.
+
+      **Owner instruction, 2026-08-18: these are to be reviewed AND APPLIED as
+      part of this plan**, not left as a standing triage note. So the
+      deliverable is a decision recorded for every one of them, with the taken
+      ones actually landed:
+
+      1. **Take it** — but run `pip check` / `npm ls` IMMEDIATELY after
+         applying and BEFORE anything else. A bump that breaks the dependency
+         graph is rejected outright no matter what advisory it claims to fix.
+         Then re-run the full gate, because a dependency bump is a code change
+         written by someone else.
+      2. **Reject it, with evidence** — breaks the graph, drops a supported
+         runtime, or fights a deliberate pin. CLOSE the PR so it stops
+         re-proposing.
+      3. **Hold it, with the reason and the condition for revisiting.**
+
+      `extract-zip` is already decided: HOLD, because there is no patched
+      version to take. `nanoid` is a plain `npm audit fix` (never `--force`),
+      and an UNCHANGED `package.json` afterwards is the good outcome — it
+      means only resolved transitive versions moved and nothing about the
+      project's contract changed.
 
 - [ ] T34: move option-name normalisation from the write site to the read site in `Settings` — state: queued (no deps)
 
@@ -1433,7 +1454,39 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       one of them against the full 3406-test unit suite. This is the "question
       the frame" deliverable that rule 11 asks for after the third round.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33, T34 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T35: post-merge SonarQube scan — state: queued (needs: T33, and #261 merged)
+
+      Owner instruction, 2026-08-18: push a fresh scan once this work is
+      merged. Ordered AFTER T33 deliberately, so one scan reflects both the
+      merged code and the dependency decisions rather than needing two.
+
+      `make sonar` (which runs `make coverage` first as a recipe line, so the
+      reports cannot be forgotten). Reporting only.
+
+      The rules on this are not negotiable and are restated here because a
+      scan is exactly where they get quietly broken:
+
+      - **Never resolve, dismiss or accept a finding to move a number, and
+        never disable a rule to avoid one.** If a finding is real, fix the code
+        or leave it open. On a dashboard, dismissal is indistinguishable from
+        progress, which is what makes it the one action that silently destroys
+        the tool's value.
+      - **Ask the owner before resolving anything.** Every transition carries a
+        comment, and the comment states the condition under which the decision
+        expires.
+      - **Use `SONAR_TOKEN`, never the admin token.** Keep the credential that
+        can rewrite history out of routine commands. Load it without echoing
+        it; never print, paste or commit the value.
+      - **Never a gate.** Not in CI, and not a merge blocker. If a scan can
+        fail a build, the pressure becomes making the number green rather than
+        the code better. CI runners cannot reach the server anyway, and
+        exposing SonarQube publicly to work around that is not on the table.
+
+      Report the deltas against the last scan (vulnerabilities 3 -> 0, security
+      rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
+      is visible rather than just the current state.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33, T34, T35 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
