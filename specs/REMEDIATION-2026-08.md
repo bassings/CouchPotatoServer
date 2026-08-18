@@ -1757,6 +1757,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       failure messages rather than counting reds.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+      **Add to its scope (2026-08-18):** citations that rot. This session
+      converted three-line-number citations into a third-party package and
+      several stale line references into symbol citations, for one reason:
+      a wrong citation reads as precision and sends the next reader somewhere
+      specific and wrong.
+
+      One more class, raised by a peer session that hit it: a pinned COMMIT
+      HASH does not survive a history rewrite.
+      `tests/unit/test_check_test_traps.py` cites `git show f7f57b62` in a
+      docstring. It is prose, not executable — grepped, and NO test or script
+      in this repo shells out to a pinned SHA — so a rewrite would mislead a
+      reader rather than fail a gate. Resolve it by commit SUBJECT with an
+      assert-exactly-one-match, or drop the citation.
+
+      The peer's second-order finding is the one worth carrying even though it
+      does not bite us here: after a `filter-branch`, `refs/original/**` keeps
+      the old object reachable, so a test pinning the OLD hash stays GREEN
+      until `reflog expire && gc --prune=now`. A green suite run while the
+      rewrite backups still exist proves nothing about the rewritten repo.
+      Expire the backups first, then run the suite.
+
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
