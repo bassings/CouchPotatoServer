@@ -48,7 +48,7 @@ import tempfile
 REPO = Path(__file__).resolve().parents[2]
 
 # Between them, exercises the repo fixture + classify()/needs_e2e.sh call in
-# BOTH files -- i.e. all five originally audited unsanitised call sites.
+# BOTH files -- i.e. TWO REPRESENTATIVE tests, one per fixture file.
 REPRESENTATIVE_NODE_IDS = (
     'tests/unit/test_hybrid_gate.py::TestTheScriptAnswersTheQuestion::'
     'test_non_browser_changes_do_not[README.md]',
@@ -122,6 +122,10 @@ def test_the_real_fixtures_survive_a_poisoned_ambient_GIT_DIR(tmp_path):
     result = subprocess.run(
         [sys.executable, '-B', '-m', 'pytest', *REPRESENTATIVE_NODE_IDS, '-q'],
         cwd=str(REPO), capture_output=True, text=True, env=poisoned_env,
+        # Generous, but bounded: an inner pytest that deadlocks on a fixture
+        # would otherwise hang the whole gate with no diagnosis, which is a
+        # worse failure than a red test.
+        timeout=600,
     )
 
     after = _snapshot(victim)
@@ -198,7 +202,11 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
     the guard's COVERAGE did not match its claim, which is the same
     looks-like-protection shape it exists to prevent.
     """
-    tests_dir = Path(__file__).parent
+    # tests/ ROOT, not tests/unit: a git call added under integration/,
+    # e2e/ or directly in tests/ would otherwise go unscanned. None exist
+    # today -- this is preventive, and cheap enough that waiting for the
+    # first one would be the wrong trade.
+    tests_dir = Path(__file__).parents[1]
     offenders = []
 
     def _is_sanitized(node):
@@ -399,6 +407,7 @@ def test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper():
             [sys.executable, '-B', '-m', 'pytest',
              'tests/unit/test_next_beta_version.py', '-q'],
             cwd=str(REPO), capture_output=True, text=True, env=poisoned,
+            timeout=600,
         )
 
         after = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
