@@ -17,11 +17,16 @@
 
 | Downloader | Type | Status | Notes |
 |------------|------|--------|-------|
-| Hadouken | Torrent | ❌ Dead | Project abandoned |
 | NZBVortex | NZB | ⚠️ Legacy | macOS-only, rarely updated |
 | Pneumatic | NZB | ⚠️ Legacy | XBMC/Kodi addon, outdated |
 | Synology | Both | ⚠️ Legacy | Synology Download Station |
 | Put.io | Torrent | ⚠️ Legacy | Cloud download service |
+
+## Removed Downloaders
+
+| Downloader | Type | Status | Notes |
+|------------|------|--------|-------|
+| Hadouken | Torrent | 🗑️ Removed (2026-08-12) | Project abandoned since v5.2 (Aug 2015), GitHub org archived, `hdkn.net` dead. In this fork it never worked: five guaranteed crashes were found and fixed one at a time (T24, T27, T28, T29, T30) before the last one showed that no RPC call could ever succeed, on either protocol version — no configuration was reachable. Removed rather than repaired indefinitely for a client nobody could have been using. An existing install's `[hadouken]` section in `config.ini` is not migrated or deleted; it is left in place and never read by the running app. |
 
 ## Python 3 Changes
 

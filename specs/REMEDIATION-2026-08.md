@@ -1134,7 +1134,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: queued (no deps)
+- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
 
       Fourth guaranteed crash from this file, found by the T28 implementer
       driving `connect()`'s v4 branch for real instead of mocking the API
@@ -1188,7 +1188,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       property semantics, a dropped base class — which is what an
       unexercised module looks like after a language migration.
 
-- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **blocked-on-human**, see the question below
+      **Closed by removal, not by fixing the constructor.** The owner
+      answered "The hadouken question" below: remove rather than fix. This
+      task's fix was never applied — `couchpotato/core/downloaders/hadouken.py`
+      is deleted outright, so the `HadoukenAPIv4` construction bug and its
+      test (`test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`)
+      no longer exist to fix or invert.
+
+- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
 
       Fifth guaranteed crash in this file, raised in review of #259 and
       confirmed by driving it:
@@ -1233,7 +1240,253 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       logged error naming what is missing, matching how the two guards
       above it report a bad config.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T29, T30 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list.)
+      **Closed by removal, not by fixing `invoke`.** The owner answered "The
+      hadouken question" below: remove rather than fix. `invoke`'s str-body
+      bug, the credential-exposure ordering constraint it gated, and the
+      hard-coded `http://` all left with the module —
+      `couchpotato/core/downloaders/hadouken.py` is deleted, nothing was
+      patched.
+
+- [ ] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: building, in #261 (was: queued, no deps)
+
+      Found while removing hadouken, by an implementer driving the orphan
+      `[hadouken]` config section rather than reasoning about it. General,
+      pre-existing, and NOT specific to hadouken — it affects any section in
+      `config.ini` whose plugin is not registered.
+
+      Driven against a real `Settings` with an unregistered section:
+
+          orphan section present in getValues()?  True
+            api_key   -> 'SECRET_API_KEY_VALUE'
+            auth_pass -> 'SECRET_PASSWORD_VALUE'
+            SECRETS LEAKED UNMASKED? True
+
+      `Settings.getValues` masks only when
+      `self.getType(section, option) == 'password'`, and `getType` reads
+      `self.types`, which is populated by `setType` during a plugin's
+      `registerDefaults`. No plugin, no registered type, no masking — so the
+      raw value goes into the response that the `settings` API view returns.
+
+      Reachable for: any install carrying config for a plugin that was
+      removed, renamed, or failed to load. Note the loader swallows
+      ImportError at DEBUG, so a plugin that fails to import silently
+      produces exactly this state for its own saved credentials.
+
+      Removing hadouken makes it permanent for anyone who had one saved,
+      which is how it surfaced — but fixing it there would be the wrong
+      layer. The fix belongs in `getValues`: an unregistered section's
+      values should be masked by default rather than exposed by default,
+      since an unknown type is precisely when we cannot know it is safe.
+      Beware the obvious over-correction — masking everything unregistered
+      would also mask harmless values an operator may need to read to
+      recover, so decide deliberately between masking all of it and masking
+      on a name heuristic (`*_key`, `*_pass*`, `*token*`, `secret`), and say
+      which and why.
+
+      **That last paragraph used to read "not blocking the hadouken
+      removal", and it was wrong.** Corrected 2026-08-18 after the codex
+      reviewer blocked #261 on exactly this. The exposure does predate the
+      removal, but the removal changes its kind for `[hadouken]`, not just
+      its permanence: before #261 those two credentials were registered as
+      type `password` and masked, and after it they are returned in the
+      clear. A change that converts a masked secret into a plaintext one is
+      a regression introduced by that change, whatever the state of the
+      surrounding class of bug. So the fix ships in #261.
+
+      The "mask all vs name heuristic" question above resolves to NEITHER.
+      A name heuristic (`*_key`, `*_pass*`, `*token*`) misses the next
+      secret, which is the whole failure mode of a denylist. Mask by
+      REGISTRATION: an option that no plugin declared is masked, one that
+      was declared is not. That also disposes of the operator-recovery
+      worry, since anything an operator can read in the UI is by definition
+      registered.
+
+      One trap sits under the obvious implementation. `registerDefaults`
+      records a type only `if option.get('type')`, so a legitimately
+      registered plain-string option has NO entry in `self.types` either.
+      Masking on "absent from `self.types`" would blank out real settings in
+      the UI. The registration record has to be kept separately, at
+      `registerDefaults`.
+
+      Masking only: the orphan values stay on disk. Deleting a user's config
+      data is irreversible, and that is not what a disclosure fix is for.
+
+- [ ] T32: the pre-push hook runs the FULL gate on a branch DELETE, which has no diff to gate — state: queued (no deps)
+
+      Found by collision, not by review. Another Claude session running in
+      this same checkout ran `git push -q origin --delete
+      fix/harness-triggers`, which fired `.githooks/pre-push`, which started a
+      full `make verify` including a Playwright suite against the same
+      `.e2e-data` directory an in-flight gate run was already using. Both
+      verdicts became unreliable and the gate had to be re-run from scratch.
+
+      That session then measured the same delete three ways, which is what
+      turns this from a theory into a fact: two `git push --delete` attempts
+      hung long enough to be killed (one at five minutes), both sitting in
+      `make verify`; the same deletion issued as `gh api -X DELETE
+      .../git/refs/heads/...` returned in under two seconds. Same outcome, no
+      hook, no gate.
+
+      `.githooks/pre-push` never reads stdin — there is no `read`, no `while
+      read`, no reference to the ref arguments anywhere in it. So it cannot
+      distinguish a deletion from an update, and it gates a push whose diff is
+      empty by construction.
+
+      **The signal is the LOCAL sha on stdin, not `$3`.** `$3` is not a
+      positional argument of `pre-push` at all: git passes exactly two, the
+      remote name and the remote URL. Everything about the refs arrives on
+      stdin, one line per ref as `<local_ref> <local_sha> <remote_ref> <remote_sha>`,
+      and a deletion is the all-zeroes LOCAL sha with `(delete)` as the local
+      ref. The condition to skip on is "EVERY line is a deletion": a mixed
+      push that deletes one ref and updates another still has real code to
+      gate, and skipping that would be the exact false-green this hook exists
+      to prevent. The test has to pin both directions (§11): it must fail if a
+      delete-only push runs the gate, AND fail if a mixed push skips it.
+
+      Note the hook must still consume stdin even when it decides to gate.
+      Reading it is not optional bookkeeping — a hook that exits without
+      draining stdin can hand git a broken pipe.
+
+      Not folded into #261: it wants its own diff and its own review gate,
+      and it has nothing to do with removing a downloader.
+
+- [ ] T33: dependency triage backlog — review AND apply the Dependabot updates — state: queued (needs: T29/T30/T31 via #261)
+
+      Surfaced by the push on 2026-08-18: GitHub reported "1 vulnerability on
+      the default branch (1 high)". Measured rather than relayed:
+
+          npm audit --omit=dev  ->  found 0 vulnerabilities
+          npm audit             ->  7 high severity vulnerabilities
+
+      `package.json` declares NO runtime dependencies at all. Every high is in
+      the test toolchain. The named alert, `extract-zip <= 2.0.1` (unvalidated
+      symlink path traversal, alert #114), arrives via
+      `@lhci/cli -> lighthouse -> puppeteer-core -> @puppeteer/browsers`, and
+      `first_patched_version` is **null** — there is no fix to take. So its
+      only correct outcome is HOLD, and the condition for revisiting is a
+      patched `extract-zip` release or `@puppeteer/browsers` dropping the
+      dependency. Worth stating plainly because the banner reads as shippable
+      risk and is not: nothing here reaches a user's install.
+
+      `nanoid` DOES have a fix available via plain `npm audit fix` (no
+      `--force`), and per §3a an unchanged `package.json` afterwards is the
+      good outcome — only resolved transitive versions moved.
+
+      Open Dependabot PRs to decide, each needing take/reject/hold WITH the
+      reason recorded: #255 rarfile 4.4->4.5, #254 uvicorn 0.51.0->0.52.1,
+      #253 mutmut >=3.6.0->>=3.7.0, #252 ruff 0.16.1->0.16.2, #251
+      qbittorrent-api 2026.7.0->2026.8.0. Note the standing HOLDs on
+      stevedore 5.9.0 (drops Py3.10) and rebulk 6.0.1 (coupled to guessit
+      3.8.0) — those get closed, not merged, and they re-propose each cycle.
+
+      Run `pip check` / `npm ls` IMMEDIATELY after applying anything, before
+      running anything else: a bump that breaks the graph is rejected outright
+      regardless of what advisory it claims to fix.
+
+      Deliberately NOT folded into #261. A lockfile change riding in on a
+      downloader removal is the same mistake as riding the hook fix in on it,
+      and a dependency bump is a code change made by someone else.
+
+      **Owner instruction, 2026-08-18: these are to be reviewed AND APPLIED as
+      part of this plan**, not left as a standing triage note. So the
+      deliverable is a decision recorded for every one of them, with the taken
+      ones actually landed:
+
+      1. **Take it** — but run `pip check` / `npm ls` IMMEDIATELY after
+         applying and BEFORE anything else. A bump that breaks the dependency
+         graph is rejected outright no matter what advisory it claims to fix.
+         Then re-run the full gate, because a dependency bump is a code change
+         written by someone else.
+      2. **Reject it, with evidence** — breaks the graph, drops a supported
+         runtime, or fights a deliberate pin. CLOSE the PR so it stops
+         re-proposing.
+      3. **Hold it, with the reason and the condition for revisiting.**
+
+      `extract-zip` is already decided: HOLD, because there is no patched
+      version to take. `nanoid` is a plain `npm audit fix` (never `--force`),
+      and an UNCHANGED `package.json` afterwards is the good outcome — it
+      means only resolved transitive versions moved and nothing about the
+      project's contract changed.
+
+- [ ] T34: move option-name normalisation from the write site to the read site in `Settings` — state: queued (no deps)
+
+      **This task exists because rule 11 fired, not because a bug is open.**
+      Three commits in a row landed defects in `registerDefaults`, and a
+      reviewer grading the third as new work identified one root cause for all
+      of them: normalisation was put at the WRITE site instead of the READ
+      site.
+
+          e5ecaa9c  recorded names raw          -> mismatch with folded parser keys
+          88405b3f  folded at the write site    -> needed `self.p` in a method whose
+                                                   every other mutation is parser-optional
+          df6c0e18  patched that dependency     -> a ternary that tracks the parser in
+                                                   only one of its two branches
+
+      `getValues` already REQUIRES the parser — driven, it raises
+      `AttributeError: 'NoneType' object has no attribute 'sections'` at
+      `self.sections()` when `self.p` is None — so the fold can live there
+      unconditionally:
+
+          # registerDefaults: no parser dependency at all
+          self.registered_options.setdefault(section_name, set()).update(options)
+
+          # getValues: where the parser is guaranteed
+          registered_in_section = {
+              self.p.optionxform(n) for n in self.registered_options.get(section, ())
+          }
+
+      That deletes the ternary, the comment defending it, and the whole "what
+      if `self.p` is None" class, while making the parser-tracking guarantee
+      unconditional rather than half-true. It is SMALLER than what is there
+      now, which is the tell that the current shape is wrong.
+
+      **The trap in doing it, and the reason it is a task rather than a fourth
+      patch:** the current test asserts INTERNAL state —
+      `assert settings.registered_options['early'] == {'apitoken'}` — so any
+      reshape forces a test edit, and a test edited to match new internals is
+      exactly where a false green enters. Drive the reshape from OBSERVABLE
+      behaviour (`getValues()` does not star out a registered `ApiToken`) and
+      DELETE that internal-state assertion rather than rewriting it. The
+      coupling is a second-order finding in its own right: it is what makes
+      this method expensive to correct.
+
+      Not a bug. `df6c0e18` is correct and guarded — four landed mutations,
+      one of them against the full 3406-test unit suite. This is the "question
+      the frame" deliverable that rule 11 asks for after the third round.
+
+- [ ] T35: post-merge SonarQube scan — state: queued (needs: T33, and #261 merged)
+
+      Owner instruction, 2026-08-18: push a fresh scan once this work is
+      merged. Ordered AFTER T33 deliberately, so one scan reflects both the
+      merged code and the dependency decisions rather than needing two.
+
+      `make sonar` (which runs `make coverage` first as a recipe line, so the
+      reports cannot be forgotten). Reporting only.
+
+      The rules on this are not negotiable and are restated here because a
+      scan is exactly where they get quietly broken:
+
+      - **Never resolve, dismiss or accept a finding to move a number, and
+        never disable a rule to avoid one.** If a finding is real, fix the code
+        or leave it open. On a dashboard, dismissal is indistinguishable from
+        progress, which is what makes it the one action that silently destroys
+        the tool's value.
+      - **Ask the owner before resolving anything.** Every transition carries a
+        comment, and the comment states the condition under which the decision
+        expires.
+      - **Use `SONAR_TOKEN`, never the admin token.** Keep the credential that
+        can rewrite history out of routine commands. Load it without echoing
+        it; never print, paste or commit the value.
+      - **Never a gate.** Not in CI, and not a merge blocker. If a scan can
+        fail a build, the pressure becomes making the number green rather than
+        the code better. CI runners cannot reach the server anyway, and
+        exposing SonarQube publicly to work around that is not on the table.
+
+      Report the deltas against the last scan (vulnerabilities 3 -> 0, security
+      rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
+      is visible rather than just the current state.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33, T34, T35 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1364,10 +1617,8 @@ list and shell history:
 A scan is a measurement, not a gate. Findings are claims to be read at
 the call site, and nothing is resolved or dismissed to move a number.
 
-status: blocked-on-human: hadouken has five guaranteed crashes and no
-working configuration. Fix it properly (T29 + T30, plus the credential
-exposure they unblock), or remove the downloader? T29/T30 stay queued
-until this is answered — see "The hadouken question" below.
+status: resolved (2026-08-12): the owner chose removal. T29 and T30
+closed by removal, not by a fix — see "The hadouken question" below.
 
 ## The hadouken question (2026-08-12)
 
@@ -1379,8 +1630,8 @@ each found by fixing the one before it:
 | T24 | `len()` on a boolean | v4+v5 status | fixed |
 | T27 | subclasses shadow the base `@property` members | v4+v5 status | fixed |
 | T28 | `b64encode` handed a `str` | v5 `user_pass` connect | fixed |
-| T29 | `HadoukenAPIv4` cannot be constructed | ALL v4 | open |
-| T30 | `invoke` posts a `str` body | EVERY operation, both versions | open |
+| T29 | `HadoukenAPIv4` cannot be constructed | ALL v4 | closed by removal |
+| T30 | `invoke` posts a `str` body | EVERY operation, both versions | closed by removal |
 
 **No configuration has ever worked.** It cannot add a torrent, cannot
 report status, and cannot connect at all on v4. Every defect is a Python
@@ -1413,7 +1664,158 @@ it means committing to maintain a protocol client we cannot test against
 real hardware. But the counter-argument is real: someone may want it, and
 deleting is harder to undo than leaving it broken.
 
+**Resolved 2026-08-12: the owner chose removal**, closing T29 and T30.
+`couchpotato/core/downloaders/hadouken.py` is deleted, along with its
+config-registration block, its tests, and the settings-UI entry.
+Driven (not just reasoned about) before removal: an existing install's
+orphan `[hadouken]` section in `config.ini` is never touched by `save()`
+(the parser still round-trips it) and never rendered by `getOptions()`
+(no plugin registers it any more, so it silently drops out of the UI
+form) — confirmed by loading a real `Settings` instance against a fake
+config.ini carrying `[hadouken]` and reading `getOptions()`/`getValues()`
+directly, not by inspection. One caveat found the same way, not
+previously flagged here: the orphan section's raw values (including
+`api_key`/`auth_pass`, unmasked, because the `password` type was only
+ever known while the plugin's `registerDefaults` had run) still come
+back in `getValues()`, which the `settings` API view returns alongside
+`getOptions()`. That is pre-existing general behaviour of `Settings` for
+any unregistered section, not something this removal introduces, but
+removal makes it permanent for anyone with a saved hadouken config —
+those two fields sit in the API response, unmasked, until the operator
+edits `config.ini` by hand. Not fixed here: it is a pre-existing gap in
+`Settings`, out of scope for a downloader removal, and inventing a
+migration was explicitly out of scope for this task.
+
+Also driven: `fireEvent('download.enabled', ...)` returning nothing
+truthy (the state after hadouken was the only enabled downloader) is the
+same code path every fresh install already exercises before any
+downloader is configured — `release/main.py`'s `download()` logs "Tried
+to download, but none of the ... downloaders are enabled" and returns
+`False`. No crash, nothing hadouken-specific to remove.
+
 ## Conductor log
+
+- **Tick 38** — **gate green, local review gate passed after two real findings, both in T31's own fix.**
+  `make verify` exit 0 on `e5ecaa9c`: 3401 python unit / 42 integration / 202 UI
+  unit / 136 E2E + 40 accessibility. The earlier exit-2 was entirely a stale
+  `.e2e-w0-data` left by the SIGTERM'd run — same commit, green once cleaned
+  through `scripts/e2e_worker_data.py cleanup 0` rather than a bare `rm -rf`.
+
+  Two `code-reviewer` agents on the branch diff (security/privacy, and
+  correctness/test-quality). Both returned safe-to-ship, and both found the
+  same two latent defects independently, which is the useful signal:
+
+  - Option names were recorded as DECLARED; `RawConfigParser` lower-cases on
+    store and `getValues` reads back through `p.items()`, so a registered
+    option with a capital letter is starred out. Driven: `{'ApiToken'}` vs
+    `[('apitoken', ...)]` -> `'***********'`.
+  - The record was built inside the loop, so a plugin raising part way through
+    leaves later options renderable but unregistered. `loader.loadSettings`
+    fires `settings.options` BEFORE `settings.register` and `event.py` swallows
+    the exception, so the loader's own `try` never sees it. Driven with a
+    non-string `ui-meta`: `opt_c` renders as `*` instead of `C`.
+
+  **Both were CREATED by T31, not merely surfaced by it.** `self.types` carries
+  the same raw-key inconsistency, but before masking existed its only
+  consequence was a lost type declaration with the value still rendering.
+  Keying masking off registration escalates that to a wrong display. That is
+  why they were fixed in this PR rather than deferred: a change does not get to
+  leave behind the defects it introduced.
+
+  Fixed in `88405b3f`. Neither was reachable — all 425 in-tree options are
+  lower-case and measured renderable/registered divergence across every plugin
+  is zero — so nothing in the suite would have failed today. Landmines for the
+  next plugin, which is precisely the case §9 says to enforce mechanically.
+  Each guard mutation-proven to fail exactly one test and nothing else.
+
+  Rejected with evidence rather than silently dropped: the mask discloses the
+  plaintext LENGTH, but it is exactly as leaky as the `password` branch beside
+  it (`nzbget.password` is stored plaintext and masked identically), so
+  changing one means changing both — out of scope. `test_log_call_arity.py`'s
+  3-line diff is docstring prose, not a hardcoded count. `[DEFAULT]`-inherited
+  keys do get masked in every section, but they were returned in CLEAR TEXT
+  before, so the change moves in the safe direction. Leaving `[hadouken]` on
+  disk stands: settings are irreplaceable, the credential is masked in transit
+  and never read, and deleting it would move a recoverable state up the
+  data-risk ranking to close a leak masking already closes.
+
+  **Process defect, mine.** I ran both reviewers against the SAME working tree
+  and told one to mutate files in it. The security reviewer consequently
+  observed `settings.py` on disk with the masking removed — verbatim the bug
+  under review — and correctly refused to trust the tree, re-measuring against
+  a pristine `git archive HEAD` export. Its lead finding was not about the diff
+  at all but about that window: a `git commit -a` inside it ships the unmasked
+  form, indistinguishable from the defect. Verified afterwards that
+  `settings.py` and the test file were byte-identical to `e5ecaa9c` with no
+  stray `.bak`. Parallel reviewers that mutate need worktrees, same rule as
+  implementers.
+
+  Armed: full gate re-running detached on `88405b3f`. Next wake reads the exit
+  code, then pushes and merges #261.
+
+- **Tick 37** — **T31 built, committed and independently verified; T32 opened from a cross-session collision.**
+  T31 committed as `e5ecaa9c`. Validated against the repo rather than the
+  implementer's report: reverting `settings.py` to its pre-fix contents by file
+  copy fails 4 of the 6 new tests on the raw secret, and the 2 that stay green
+  are exactly the two asserting registered options are NOT masked — a failure
+  there would have meant over-masking. Restored file is byte-identical
+  (`7b0e0c27...` before and after).
+
+  Measured the blast radius against a real `config.ini` instead of reasoning
+  about it: 44 sections have no source anywhere in this fork, 27 carry
+  credential-shaped options, and 2 hold live non-empty values
+  (`omdbapi.api_key`, `prowl.api_key`). Every one has been readable through the
+  settings API. Hadouken was the 45th, not a special case. Masking cannot blank
+  a field a user needs, because `loader.loadSettings` fires `settings.options`
+  (what the UI renders) and `settings.register` (what the fix keys off) from
+  the same loop over the same section dict — registered and renderable are the
+  same set. `getValues()` has exactly one caller, the settings API view.
+
+  Two process findings, both recorded to memory rather than left in the log:
+
+  - A background `make verify` is SIGTERM'd at the turn boundary (`make: ***
+    [verify] Terminated: 15` at 69%). Relaunched under `nohup`+`disown` with a
+    `.done` sentinel; that run survived the next turn boundary, which confirms
+    it. A killed gate reads exactly like a red one, which is the dangerous part.
+  - Another session (`AI-Harness`) was running a full gate in THIS checkout,
+    triggered by `git push --delete` firing `.githooks/pre-push`. Two Playwright
+    suites over one `.e2e-data`. Messaged it directly; it confirmed with better
+    evidence than my inference (two `--delete` pushes hung in `make verify`, the
+    same delete via `gh api` returned in under two seconds) and is now out of
+    the repo with no queued writes.
+
+  That collision produced T32: the pre-push hook never reads stdin, so it
+  cannot tell a deletion from an update and gates a push whose diff is empty by
+  construction. Deliberately NOT folded into #261 — a gate change riding in on
+  an unrelated downloader removal is how it lands without the review its own
+  diff would get.
+
+  Armed: detached gate on `chore/remove-hadouken` writing to a `.done`
+  sentinel. Next wake expects an exit code to read, then the review cycle and
+  the codex thread on #261.
+
+- **Tick 36** — **storage resolved; #261 is blocked by one review thread, not a red check.**
+  The owner freed the volume (260Gi free, was 6.6Gi), so the gate is runnable
+  again. Reconciled from `gh`, not from memory: #261 has all
+  16 checks SUCCESS but `mergeStateStatus: BLOCKED`, and the cause is one
+  unresolved review thread, not a red check — `required_conversation_resolution`
+  is on. The thread is the codex reviewer's P1 on orphan-section masking, which
+  is T31.
+
+  Drove it before acting on it. An unregistered `[hadouken]` section returns
+  `{'api_key': 'SUPERSECRET_KEY', 'auth_pass': 'hunter2'}` from `getValues()`
+  while a registered password in the same call returns `*****************`. T31's
+  own note saying it does not block the removal is corrected in place above,
+  with the reason: the removal turns two masked credentials into plaintext ones,
+  which is a regression regardless of the age of the underlying class of bug.
+
+  T29 and T30 were ticked on 2026-08-12 when the owner APPROVED the removal.
+  That is the decision, not the merge, and the checklist's own rule says the box
+  is ticked only from `gh pr view`. Both un-ticked and set to `pr-open #261`.
+
+  Armed: implementer building T31 on `chore/remove-hadouken` (TDD, mask by
+  registration, mutation proof required). Next wake expects a local commit and a
+  `make verify` verdict to validate against the repo.
 
 - **Tick 35** — **#232 merged (`f97b3ab2`), T9 and T12 ticked. Plan 7 of 16.**
 

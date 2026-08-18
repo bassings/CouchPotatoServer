@@ -26,7 +26,8 @@ bad, and the third is why this is a security guard and not a style rule:
 Seven real call sites had this (fanart.tv ×2, transmission, hadouken,
 qbittorrent, rtorrent, plex), each one character wrong. Enforced here rather than
 left to review because the broken form is visually indistinguishable from the
-correct one.
+correct one. (The hadouken instance went with the module's removal,
+2026-08-12 -- see docs/reference/DOWNLOADERS.md.)
 """
 
 import ast

@@ -102,6 +102,17 @@ class Settings:
         self.log = None
         self.directories_delimiter = '::'
 
+        # section -> set(option_name) actually passed to registerDefaults on
+        # THIS instance. `self.types` (class attribute, shared across every
+        # Settings()) cannot answer "is this option registered": setType is
+        # only called `if option.get('type')`, so a great many legitimately
+        # registered options -- plain strings with no declared type -- have
+        # no entry in it either, same as an orphan. This has to be instance
+        # state, not a fourth class attribute alongside `options`/`types`, or
+        # one test's registration would make an unrelated Settings() think an
+        # orphan section was registered.
+        self.registered_options = {}
+
     def setFile(self, config_file):
         self.file = config_file
         self.p = ConfigParser.RawConfigParser()
@@ -130,6 +141,55 @@ class Settings:
             options = {}
 
         self.addSection(section_name)
+
+        # Record the WHOLE option set up front, and record each name the way
+        # ConfigParser will store it.
+        #
+        # Up front, because `loader.loadSettings` fires `settings.options`
+        # (which feeds `getOptions()` -- what the UI renders) BEFORE it fires
+        # `settings.register`, and `event.py` swallows a handler's exception.
+        # A plugin that raises part way through the loop below would otherwise
+        # leave its later options renderable but unregistered, and `getValues`
+        # would show the user `*` where a real value belongs. Masking has to
+        # be aligned with renderability, not with how far this loop got.
+        #
+        # `optionxform`, because `RawConfigParser` applies it (lower-casing,
+        # by default) when it STORES an option, and `getValues` reads back
+        # through `p.items()`. Recording the name as the plugin declared it
+        # means the two keys never meet for any option with a capital letter,
+        # and a legitimately registered field gets starred out. Nothing in the
+        # tree trips this today -- all 425 in-tree options are already
+        # lower-case -- but it is a defect this masking CREATED: `self.types`
+        # has the same raw-key inconsistency, and before masking the only
+        # consequence was a lost type declaration, not a wrong value.
+        #
+        # Sections are deliberately NOT folded: ConfigParser applies
+        # `optionxform` to options only, so `[MyPlugin]` stays `[MyPlugin]`.
+        # `str.lower` when there is no parser yet, so that this does not
+        # become the one statement in the method that raises before
+        # `setFile()`: `addSection` and `setDefault` both guard with
+        # `if self.p and ...`, and `setType` never touches the parser at all.
+        # Matching that idiom is the whole reason for the fallback.
+        #
+        # NO reachability is claimed for it. Measured: `settings.register` has
+        # no handler until `setFile()` runs, because `addEvent` happens in
+        # `connectEvents()` and only `setFile()` calls that -- so the loader,
+        # the sole in-tree firer, cannot reach this early. An earlier version
+        # of this comment asserted that a raise here would leave a section
+        # renderable and wholly masked; the mechanism it described is real
+        # (`event.py` swallows the handler exception, and `loader.loadSettings`
+        # fires `settings.options` before `settings.register`) but the path to
+        # trigger it is not, and a comment that sends the next reader hunting a
+        # live data path that does not exist is worse than no comment.
+        #
+        # `str.lower` is ConfigParser's own default `optionxform`, so a direct
+        # caller that does arrive early records exactly what the parser would
+        # have. They differ only for a non-str name, and every one of the
+        # option names declared in this tree is a string literal.
+        xform = self.p.optionxform if self.p else str.lower
+        self.registered_options.setdefault(section_name, set()).update(
+            xform(name) for name in options
+        )
 
         for option_name, option in options.items():
             self.setDefault(section_name, option_name, option.get('default', ''))
@@ -237,8 +297,33 @@ class Settings:
 
         for section in self.sections():
             values[section] = {}
+            registered_in_section = self.registered_options.get(section, set())
             for option_name, option_value in self.p.items(section):
                 if self.isOptionMeta(section, option_name):
+                    continue
+
+                if option_name not in registered_in_section:
+                    # ORPHAN: present in config.ini, but no live plugin ever
+                    # called registerDefaults for it -- typically because the
+                    # plugin that used to own it was removed (Hadouken, on
+                    # this branch). `getType()` falls back to 'unicode' for
+                    # anything not in `self.types`, so without this branch an
+                    # orphaned credential comes back verbatim.
+                    #
+                    # Mask on the RAW value, before any type-dependent branch
+                    # below runs, and do not fall through to them. Those
+                    # branches trust `getType()`, which reads `self.types` --
+                    # a CLASS attribute shared by every Settings() in the
+                    # process -- so an unrelated instance could have left a
+                    # 'directory' type registered against this same
+                    # section/option name even though THIS instance never
+                    # registered it. Running `abs2chroot` on an untrusted
+                    # orphan value is exactly the resolution we don't want to
+                    # perform at all; masking first and `continue`-ing avoids
+                    # it entirely rather than trusting stale shared state to
+                    # decide.
+                    masked = str(option_value)
+                    values[section][option_name] = len(masked) * '*' if masked else masked
                     continue
 
                 value = self.get(option_name, section)
