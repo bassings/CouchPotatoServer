@@ -163,3 +163,95 @@ class TestRegistrationDoesNotBleedBetweenInstances:
 
         assert values_b['plugin_x']['token'] != 'tok'
         assert set(values_b['plugin_x']['token']) == {'*'}
+
+
+class TestRegistrationIsRecordedTheWayConfigParserStoresIt:
+    """`RawConfigParser` runs `optionxform` (lower-casing, by default) over an
+    option name when it stores it, and `getValues()` reads back through
+    `p.items()`. If registration records the name as the plugin DECLARED it,
+    the two keys never meet for any option with a capital letter, and a
+    legitimately registered field is starred out in the UI.
+
+    Latent rather than live: every one of the 425 options across the 72
+    sections in this tree is already lower-case. It is a landmine for the next
+    plugin, and it is worth a test rather than a note precisely because
+    nothing in the tree would fail today.
+
+    Note this is a defect T31 CREATED. `self.types` has the same raw-key
+    inconsistency, but before T31 the only consequence was an option losing
+    its declared type and still rendering its value. Masking-by-registration
+    turns it into a wrong display."""
+
+    def test_registered_option_with_a_capital_letter_is_not_masked(self, tmp_path):
+        cfg = tmp_path / 'config.ini'
+        _write_config(cfg, '[myplugin]\nApiToken = visible123\n')
+        settings = _settings(cfg)
+        settings.registerDefaults('myplugin', {
+            'ApiToken': {'default': ''},
+        }, save=False)
+
+        values = settings.getValues()
+
+        # ConfigParser lower-cased the key on write, so that is what comes back.
+        assert values['myplugin']['apitoken'] == 'visible123'
+
+    def test_section_names_are_not_case_folded(self, tmp_path):
+        """The other half of the same question, pinned so a future "normalise
+        everything" fix does not quietly fold section names too: ConfigParser
+        applies `optionxform` to OPTIONS only. `[MyPlugin]` stays `[MyPlugin]`,
+        and registering it under that exact name must keep working."""
+        cfg = tmp_path / 'config.ini'
+        _write_config(cfg, '[MyPlugin]\ntoken = VALUE\n')
+        settings = _settings(cfg)
+        settings.registerDefaults('MyPlugin', {'token': {'default': ''}}, save=False)
+
+        assert settings.getValues()['MyPlugin']['token'] == 'VALUE'
+
+
+class TestPartialRegistrationDoesNotStarOutRenderableFields:
+    """`loader.loadSettings` fires `settings.options` -- which feeds
+    `getOptions()`, i.e. what the UI actually renders -- BEFORE it fires
+    `settings.register`, and `event.py`'s handler wrapper swallows the
+    exception. So a plugin that raises part way through `registerDefaults`
+    leaves its later options renderable but unregistered, and masking would
+    show the user `*` where a real value belongs.
+
+    Recording the whole option set up front, rather than one name at a time
+    inside the loop, keeps masking aligned with renderability: the same set
+    the UI was told about is the set that counts as registered."""
+
+    def test_options_after_a_raising_option_are_still_registered(self, tmp_path):
+        cfg = tmp_path / 'config.ini'
+        _write_config(cfg, '[wonky]\nopt_a = A\nopt_b = B\nopt_c = C\n')
+        settings = _settings(cfg)
+
+        # A non-string `ui-meta` makes registerDefaults raise on opt_b:
+        # `option.get('ui-meta').lower()` on an int. opt_c is never reached.
+        with pytest.raises(AttributeError):
+            settings.registerDefaults('wonky', {
+                'opt_a': {'default': ''},
+                'opt_b': {'default': '', 'ui-meta': 5},
+                'opt_c': {'default': ''},
+            }, save=False)
+
+        values = settings.getValues()
+
+        assert values['wonky']['opt_a'] == 'A'
+        assert values['wonky']['opt_c'] == 'C', (
+            'opt_c is renderable -- the UI was handed the whole section -- so '
+            'masking it shows the user asterisks where a real value belongs'
+        )
+
+
+class TestEmptyOrphanValue:
+    """The `else masked` arm of the mask expression had no fixture. An empty
+    orphan discloses nothing either way, so this pins behaviour rather than
+    closing a leak: masking an empty string must not invent characters that
+    imply a secret is present."""
+
+    def test_an_empty_orphan_value_stays_empty(self, tmp_path):
+        cfg = tmp_path / 'config.ini'
+        _write_config(cfg, '[gone]\nleftover =\n')
+        settings = _settings(cfg)
+
+        assert settings.getValues()['gone']['leftover'] == ''

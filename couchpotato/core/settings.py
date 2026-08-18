@@ -142,8 +142,34 @@ class Settings:
 
         self.addSection(section_name)
 
+        # Record the WHOLE option set up front, and record each name the way
+        # ConfigParser will store it.
+        #
+        # Up front, because `loader.loadSettings` fires `settings.options`
+        # (which feeds `getOptions()` -- what the UI renders) BEFORE it fires
+        # `settings.register`, and `event.py` swallows a handler's exception.
+        # A plugin that raises part way through the loop below would otherwise
+        # leave its later options renderable but unregistered, and `getValues`
+        # would show the user `*` where a real value belongs. Masking has to
+        # be aligned with renderability, not with how far this loop got.
+        #
+        # `optionxform`, because `RawConfigParser` applies it (lower-casing,
+        # by default) when it STORES an option, and `getValues` reads back
+        # through `p.items()`. Recording the name as the plugin declared it
+        # means the two keys never meet for any option with a capital letter,
+        # and a legitimately registered field gets starred out. Nothing in the
+        # tree trips this today -- all 425 in-tree options are already
+        # lower-case -- but it is a defect this masking CREATED: `self.types`
+        # has the same raw-key inconsistency, and before masking the only
+        # consequence was a lost type declaration, not a wrong value.
+        #
+        # Sections are deliberately NOT folded: ConfigParser applies
+        # `optionxform` to options only, so `[MyPlugin]` stays `[MyPlugin]`.
+        self.registered_options.setdefault(section_name, set()).update(
+            self.p.optionxform(name) for name in options
+        )
+
         for option_name, option in options.items():
-            self.registered_options.setdefault(section_name, set()).add(option_name)
             self.setDefault(section_name, option_name, option.get('default', ''))
 
             # Set UI-meta for option (hidden/ro/rw)
