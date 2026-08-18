@@ -201,46 +201,34 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
     tests_dir = Path(__file__).parent
     offenders = []
 
-    def _calls_sanitizer(node):
+    def _is_sanitized(node):
+        """`env=` must be a DIRECT `sanitized_git_env(...)` call.
+
+        Deliberately no dataflow. The previous version tracked names bound
+        from the sanitiser so `env = sanitized_git_env()` then `env=env` would
+        be recognised -- 43 lines that produced three of this guard's five
+        defects, ending with binding names file-wide rather than per scope, so
+        one function's clean `env` vouched for another function's dirty one.
+
+        Requiring the call inline removes that entire class by construction
+        instead of patching its fifth instance. The cost is a real one and
+        worth stating: a future caller wanting to reuse one env across several
+        calls gets flagged and has to inline. That is a visible, actionable
+        message rather than a silent wrong answer, which is the right way for
+        this to fail given its record.
+        """
+        if isinstance(node, ast.IfExp):
+            # `sanitized_git_env() if env is None else env` -- a helper with a
+            # deliberate caller override. Accepted as a SYNTACTIC form, not by
+            # tracking what the other branch holds: the shape is visible in one
+            # node, so unlike name binding it cannot pick up a value from
+            # somewhere else in the file.
+            return _is_sanitized(node.body) or _is_sanitized(node.orelse)
         return (isinstance(node, ast.Call)
                 and ((isinstance(node.func, ast.Name)
                       and node.func.id == 'sanitized_git_env')
                      or (isinstance(node.func, ast.Attribute)
                          and node.func.attr == 'sanitized_git_env')))
-
-    def _sanitized_names(tree):
-        """Locals bound from `sanitized_git_env(...)`, so `env = ...` then
-        `env=env` is recognised rather than reported.
-
-        Name-sniffing was tried first (`'sanit' in name`) and produced false
-        positives on correct code -- the same failure that killed the regex
-        version. A guard that cries wolf gets deleted, so this reads the
-        assignment instead of guessing from the identifier."""
-        names = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Assign) and _calls_sanitizer(node.value):
-                for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        names.add(target.id)
-            elif isinstance(node, ast.AnnAssign) and node.value is not None:
-                if _calls_sanitizer(node.value) and isinstance(node.target, ast.Name):
-                    names.add(node.target.id)
-        return names
-
-    def _is_sanitized(node, names):
-        """Presence of `env=` is not protection: `env=os.environ.copy()` still
-        carries an inherited GIT_DIR and is exactly as vulnerable as passing
-        nothing."""
-        if _calls_sanitizer(node):
-            return True
-        if isinstance(node, ast.Name) and node.id in names:
-            return True
-        # `sanitized_git_env() if env is None else env` -- the caller-supplied
-        # branch is the caller's responsibility, and every such caller in this
-        # tree is itself checked by this same scan.
-        if isinstance(node, ast.IfExp):
-            return _is_sanitized(node.body, names) or _is_sanitized(node.orelse, names)
-        return False
 
     SPAWNERS = ('run', 'check_output', 'check_call', 'call', 'Popen')
 
@@ -275,7 +263,6 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
         modules, funcs = subprocess_bindings(tree)
         if not modules and not funcs:
             continue
-        sanitized_names = _sanitized_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -299,7 +286,7 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
             if not (isinstance(first, ast.Constant) and first.value == 'git'):
                 continue
             env_kw = next((kw for kw in node.keywords if kw.arg == 'env'), None)
-            if env_kw is not None and _is_sanitized(env_kw.value, sanitized_names):
+            if env_kw is not None and _is_sanitized(env_kw.value):
                 continue
             if env_kw is not None:
                 offenders.append('%s:%d (env= is not sanitized_git_env())'
@@ -395,16 +382,16 @@ def test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper():
     with tempfile.TemporaryDirectory() as tmp:
         victim = Path(tmp) / 'victim'
         victim.mkdir()
-        env = sanitized_git_env()
         subprocess.run(['git', 'init', '-q', '-b', 'main', str(victim)],
-                       check=True, capture_output=True, env=env)
+                       check=True, capture_output=True, env=sanitized_git_env())
         (victim / 'f.txt').write_text('original\n')
         for args in (('add', '-A'), ('-c', 'user.email=t@e.com', '-c', 'user.name=T',
                                      'commit', '-qm', 'seed')):
             subprocess.run(['git', *args], cwd=str(victim), check=True,
-                           capture_output=True, env=env)
+                           capture_output=True, env=sanitized_git_env())
         before = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
-                                capture_output=True, text=True, env=env).stdout.strip()
+                                capture_output=True, text=True,
+                                env=sanitized_git_env()).stdout.strip()
 
         poisoned = os.environ.copy()
         poisoned['GIT_DIR'] = str(victim / '.git')
@@ -415,11 +402,14 @@ def test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper():
         )
 
         after = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
-                               capture_output=True, text=True, env=env).stdout.strip()
+                               capture_output=True, text=True,
+                               env=sanitized_git_env()).stdout.strip()
         branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=str(victim),
-                                capture_output=True, text=True, env=env).stdout.strip()
+                                capture_output=True, text=True,
+                                env=sanitized_git_env()).stdout.strip()
         bare = subprocess.run(['git', 'config', '--get', 'core.bare'], cwd=str(victim),
-                              capture_output=True, text=True, env=env).stdout.strip()
+                              capture_output=True, text=True,
+                              env=sanitized_git_env()).stdout.strip()
 
     assert result.returncode == 0, (
         'the unsanitised suite failed under a poisoned GIT_DIR:\n%s' % result.stdout[-2000:]
