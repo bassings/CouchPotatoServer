@@ -129,16 +129,23 @@ ignore = [
 # keep the runner pointed at the tests that actually cover the mutated paths
 # so each run stays fast enough to be useful.
 #
-# `source_paths` is the modern key — mutmut 3.6 warns that the old
+# `source_paths` is the modern key — mutmut 3.x warns that the old
 # `paths_to_mutate` name is deprecated. scripts/mutation_changed.py reads this
 # list rather than keeping its own copy, and accepts either name.
 source_paths = ["couchpotato/core/db/sqlite_adapter.py"]
-# `tests_dir` is LOAD-BEARING despite the deprecation warning: mutmut 3.6 folds it
-# into `pytest_add_cli_args_test_selection` (configuration.py:110) and uses it to
-# select tests (__main__.py:424, :475). Migrate the key when convenient, but do
-# not simply delete it.
+# `tests_dir` is LOAD-BEARING despite the deprecation warning: mutmut 3.x folds it
+# into `pytest_add_cli_args_test_selection` (in `configuration.py`) and uses it to
+# select tests (`__main__.py`, the pytest-arg assembly and the --collect-only
+# call). Migrate the key when convenient, but do not simply delete it.
+#
+# Cited by SYMBOL, not by line. This comment previously carried three exact
+# line numbers and ALL THREE moved between 3.6.0 and 3.7.0 — caught in review
+# of the 3.7.0 bump, along with a claim in that bump's own commit message that
+# they had not gone stale. Line citations into a third-party package rot on
+# every bump, and a wrong one reads as precision.
 tests_dir = ["tests/unit/"]
-# `runner`, by contrast, is INERT on mutmut 3.6 — `_load_config()` never reads it
+# `runner`, by contrast, is INERT on mutmut 3.x (re-verified on 3.7.0) —
+# `_load_config()` never reads it
 # and __main__.py hardcodes `runner = PytestRunner()` under a `# TODO:
 # config/option for runner`. It is kept only as documentation of which tests
 # cover the mutated module; editing it changes nothing, so if you need to narrow

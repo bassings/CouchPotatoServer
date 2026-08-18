@@ -1134,7 +1134,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
+- [x] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: **merged #261** (`e433ceba`, 2026-08-18) — closed by REMOVAL, not by a fix; verified from `gh pr view` and by `git ls-files` on master showing no hadouken file tracked
 
       Fourth guaranteed crash from this file, found by the T28 implementer
       driving `connect()`'s v4 branch for real instead of mocking the API
@@ -1195,7 +1195,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       test (`test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`)
       no longer exist to fix or invert.
 
-- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
+- [x] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **merged #261** (`e433ceba`, 2026-08-18) — closed by REMOVAL, not by a fix; verified from `gh pr view` and by `git ls-files` on master showing no hadouken file tracked
 
       Fifth guaranteed crash in this file, raised in review of #259 and
       confirmed by driving it:
@@ -1247,7 +1247,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `couchpotato/core/downloaders/hadouken.py` is deleted, nothing was
       patched.
 
-- [ ] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: building, in #261 (was: queued, no deps)
+- [x] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: **merged #261** (`e433ceba`, 2026-08-18) — masking by registration, verified present on master after merge
 
       Found while removing hadouken, by an implementer driving the orphan
       `[hadouken]` config section rather than reasoning about it. General,
@@ -1486,7 +1486,88 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
       is visible rather than just the current state.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33, T34, T35 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: queued (no deps) — **security, attacker-reachable**
+
+      Found by the security lens while reviewing the rarfile 4.5 bump, and
+      confirmed independently by driving the real `sp()` rather than reading it:
+
+          entry name                             -> resolved target
+          ../../../evil.txt                      -> /tmp/extract_here/evil.txt   contained
+          ..\..\..\CP_PWNED_BACKSLASH.txt        -> /CP_PWNED_BACKSLASH.txt      *** ESCAPES ***
+          /etc/passwd                            -> /tmp/extract_here/passwd     contained
+          ....//....//evil.txt                   -> /tmp/extract_here/evil.txt   contained
+
+      `extractor.py` flattens each entry with
+      `os.path.basename(info.filename)`, which defeats `../`, absolute paths
+      and `....//`. But on POSIX a BACKSLASH is not a separator, so
+      `..\..\..\x` survives `basename` intact. `sp()`
+      (`helpers/encoding.py`) then does the damage in its Windows-path
+      conversion: it replaces `\` with `/` **and prepends `/`**, anchoring the
+      result at root, after which `normpath` walks straight out of
+      `extr_path`. The reviewer drove the full `extractArchive` and the file
+      was written to disk outside the extraction directory.
+
+      **Reachable from an ordinary automated download.** This is the library
+      that parses a `.rar` from a torrent, i.e. exactly the hostile-input path
+      the project's threat model names.
+
+      **Bounded, and the bound matters for ranking.** `extractor.py` skips
+      extraction when the destination already exists, so this is arbitrary
+      NEW-FILE creation, not overwrite — measured against a stand-in
+      `couchpotato.db` three levels up, the target resolved onto it and the
+      bytes were unchanged. It cannot destroy the database, `config.ini` or
+      media, which keeps it off the top of the loss hierarchy but does not make
+      it acceptable.
+
+      **Taking rarfile 4.5 does NOT close it.** 4.5 ships a realpath escape
+      guard in `RarFile._extract_one`, but CouchPotato never calls
+      `extract()`/`extractall()` — it rolls its own loop over `open(info)`, so
+      it bypasses the guard entirely. That is worth stating plainly, because
+      "we took the security bump" would otherwise read as coverage.
+
+      Fix belongs in `extractArchive`: reject or sanitise the entry name before
+      `sp()`, and assert the resolved target is under
+      `os.path.realpath(extr_path)`. The test must feed the BACKSLASH form —
+      a `../` fixture passes today and would guard nothing (§11: feed it
+      hostile inputs, not polite ones).
+
+      Symlink following is genuinely safe and needs no work: rarfile returns
+      `io.BytesIO(redir_name)` for a symlink entry, so CP writes a regular file
+      containing the link target as text and never creates a link.
+
+- [ ] T37: the login throttle is bypassable by rotating `X-Forwarded-For` — state: queued (no deps) — **security**
+
+      `rate_limit.py` rests on a premise that is the exact inverse of the
+      truth. Its comment says "nothing here configures uvicorn's
+      `proxy_headers` or `forwarded_allow_ips`, so `request.client.host` is the
+      TCP peer". Not configuring them is precisely WHY
+      `ProxyHeadersMiddleware` is active — verified against the installed
+      uvicorn:
+
+          proxy_headers        -> proxy_headers: bool = True
+          forwarded_allow_ips  -> defaults to 127.0.0.1
+
+      So on the deployment shape this project documents (nginx/Caddy/Traefik on
+      the same host, or a proxy container talking to a port-mapped app) the
+      peer IS 127.0.0.1, the middleware trusts it, and the client IP becomes
+      whatever the request claims. Reviewer's measurement, real middleware
+      wrapping the real limiter at `max_requests=5`, 12 x `POST /login/`:
+
+          A  no XFF                    -> 7 x 429
+          B  rotating X-Forwarded-For  -> 0 x 429   (all 12 accepted)
+          C  fixed X-Forwarded-For     -> 7 x 429
+
+      That is AC-SEC-42's protection removed entirely, leaving bcrypt's ~166ms
+      as the only brake on credential stuffing.
+
+      Not caused by the uvicorn 0.51->0.52 bump: the default is identical at
+      0.51.0, and neither release touched proxy headers.
+
+      Whatever the fix, the COMMENT must be corrected too — a comment asserting
+      the inverse of the runtime default is how this survived review the first
+      time.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T33, T34, T35, T36, T37 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
