@@ -5,6 +5,7 @@ VENDORED-02: Put.io downloader tests (maintained putiopy client).
 Uses unittest.mock to avoid real network calls.
 """
 import datetime
+import inspect
 import json
 import os
 import sys
@@ -2703,3 +2704,76 @@ class TestDelugeCheckTorrent:
         # from the outer except Exception in add_torrent_file.
         assert mock_log_error.call_count == 1
         assert 'Invalid/corrupt torrent file' in mock_log_error.call_args[0][0]
+
+
+class TestQbittorrentApiSignatureGuard:
+    """Pins the REAL installed qbittorrent-api surface the downloader depends
+    on, so a future bump that drifts it fails here (loudly) instead of
+    silently passing every mocked test in this file.
+
+    Modelled on `TestRarfileApiSignatureGuard` in `test_extractor.py`, and
+    written for the same reason: every other qBittorrent test in this file
+    mocks the client, which bakes in assumptions about an API nothing checks.
+
+    It exists because of how the 2026.7.0 -> 2026.8.0 bump was verified: by
+    probing this surface by hand, once, in a review. Hand-probing catches the
+    bump in front of you and nothing after it -- the next bump would have
+    landed unguarded. §9: a check that can be a test should be one.
+
+    Signature-level only, deliberately. Behavioural drift inside these calls
+    needs a live qBittorrent instance, which CI does not have; that gap is
+    stated rather than papered over. `is_skip_checking`/`seedMode` are NOT
+    pinned here because the downloader does not pass them -- pinning a surface
+    we do not use would be decoration that fails on someone else's change.
+    """
+
+    def test_the_client_exposes_the_api_the_downloader_relies_on(self):
+        qba = pytest.importorskip('qbittorrentapi')
+
+        # Constructor kwargs the downloader passes (connect()).
+        params = inspect.signature(qba.Client.__init__).parameters
+        accepts_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        for kwarg in ('host', 'username', 'password'):
+            assert kwarg in params or accepts_kwargs, (
+                'qbittorrentapi.Client no longer accepts %r; '
+                'couchpotato/core/downloaders/qbittorrent_.py passes it' % kwarg
+            )
+
+        # Methods the downloader calls, and the one property it reads.
+        for name in (
+            'auth_log_in', 'auth_log_out',
+            'torrents_add', 'torrents_info', 'torrents_files',
+            'torrents_pause', 'torrents_resume', 'torrents_delete',
+        ):
+            assert callable(getattr(qba.Client, name, None)), (
+                'qbittorrentapi.Client.%s is gone or is no longer callable' % name
+            )
+        assert hasattr(qba.Client, 'is_logged_in')
+
+        # The exception type every call site catches. If this stops being the
+        # base of the family, `except qbittorrentapi.APIError` silently stops
+        # catching and a transient blip becomes an unhandled traceback.
+        assert hasattr(qba, 'APIError')
+        assert issubclass(qba.APIError, Exception)
+        assert issubclass(qba.Conflict409Error, qba.APIError), (
+            'Conflict409Error is the add-failure the downloader relies on '
+            'being caught by `except qbittorrentapi.APIError`'
+        )
+
+    def test_torrents_add_still_accepts_the_kwargs_the_downloader_sends(self):
+        """`torrents_add` is called with keyword arguments only. A rename of
+        any of these is a silent behaviour change rather than a crash when the
+        method also takes **kwargs, which is exactly why this is pinned."""
+        qba = pytest.importorskip('qbittorrentapi')
+
+        params = inspect.signature(qba.Client.torrents_add).parameters
+        accepts_kwargs = any(
+            p.kind is inspect.Parameter.VAR_KEYWORD for p in params.values()
+        )
+        for kwarg in ('urls', 'torrent_files', 'category', 'is_stopped'):
+            assert kwarg in params or accepts_kwargs, (
+                'torrents_add no longer names %r; the downloader passes it as a '
+                'keyword, so a rename fails silently rather than loudly' % kwarg
+            )
