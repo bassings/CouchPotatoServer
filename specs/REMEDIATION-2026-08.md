@@ -1629,11 +1629,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       One the scan did NOT flag, found while checking the ones it did:
       `filmstarts.py:21` calls `table.find(...)` where `table` came straight
-      from an unguarded `html.find(...)` at `:19`, one line earlier. That is
-      FIVE lines above the flagged access at `:26`, not one — an earlier
-      version of this entry said "one line above the flagged one", conflating
-      the distance to the unguarded source with the distance to the flagged
-      line. Fix it in the same pass; it is the reminder that the rule list is
+      from an unguarded `html.find(...)` at `:19`, TWO lines earlier (`:20` is
+      blank). That is five lines above the flagged access at `:26`.
+
+      This sentence has now been wrong twice, which is why it carries its own
+      history: it first said "one line above the flagged one", conflating the
+      distance to the unguarded source with the distance to the flagged line;
+      the correction then said "one line earlier" for the `:19` -> `:21` gap,
+      which is two. Cite both line numbers and let the reader subtract. Fix it in the same pass; it is the reminder that the rule list is
       a starting point, not the boundary.
 
       These are provider scrapers, so the input is a third party's markup and
@@ -1949,9 +1952,17 @@ to download, but none of the ... downloaders are enabled" and returns
     `except Exception` so the failure is reported as "failed to load web page"
     when the page loaded fine. Fix is deletion, blocked on the same AC-OPS-12
     production grep as `/getkey`.
-  - **T39** six provider scrapers access a parsed element without a None check.
-  - **T40** `synology.py:76` returns from inside `finally`, discarding any
-    in-flight exception.
+  - **T39** THREE provider scrapers access a parsed element without a None
+    check. (This line said "six" until review caught it. Six S8904
+    OCCURRENCES, but `awesomehd.py` supplies two, and three of the six are not
+    defects: two are already guarded and one is tolerated by its own
+    try/except. See the task entry.)
+  - **T40** `synology.py:76` returns from inside `finally`. (This line said it
+    discards "any in-flight exception" until review caught it. An ordinary
+    exception IS caught and logged by the preceding `except Exception`, and
+    the caller is correctly told it failed. What a `return` in `finally`
+    actually discards is narrower: a BaseException, or an exception raised
+    inside the handler. See the task entry.)
 
   **One finding I am NOT acting on, and deliberately NOT dismissing:**
   `typescript:S5845` at `category-editor.spec.ts:90` claims an equality
