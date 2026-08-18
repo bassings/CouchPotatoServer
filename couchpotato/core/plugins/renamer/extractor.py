@@ -25,8 +25,12 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
-#: Cap on per-entry log lines a single archive may produce, for BOTH refusals
-#: and name collisions. `rarfile.infolist()` parses headers only, so a hostile
+#: Cap on per-entry log lines a single archive may produce, for ALL THREE
+#: per-entry counters: refusals, name collisions, and unreadable entries.
+#: (This said "BOTH refusals and name collisions" until the third counter was
+#: added a commit later and this line was not updated -- the same drift the
+#: rest of this branch keeps correcting.)
+#: `rarfile.infolist()` parses headers only, so a hostile
 #: RAR carries thousands of poisoned entries for the cost of a header each --
 #: unbounded per-entry logging is therefore an amplification vector, not a
 #: nicety. Small, because the first few are diagnostic and the rest are noise;

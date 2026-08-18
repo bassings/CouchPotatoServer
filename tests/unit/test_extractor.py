@@ -1151,3 +1151,46 @@ class TestOneBadEntryDoesNotSinkTheArchive:
                    return_value=handle):
             with pytest.raises(OSError):
                 _Extractor().extractArchive('a.rar', str(extr_path))
+
+
+class TestUnreadableEntryLoggingIsAlsoBounded:
+    """The third per-entry counter, which arrived a commit after its two
+    siblings and did not inherit their coverage.
+
+    A corrupt entry is as cheap to craft as a poisoned name -- `infolist()`
+    parses headers only -- so `unreadable` is an amplification vector on
+    exactly the same terms as `refused` and `collisions`. It was capped and
+    summarised in code when the per-entry invariant was completed, but nothing
+    proved either half, which is how the first two counters would have looked
+    if review had stopped one round earlier.
+    """
+
+    def test_a_thousand_corrupt_entries_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['bad%d.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        def always_corrupt(info, *a, **kw):
+            raise rarfile.BadRarFile('corrupt entry')
+
+        handle.open = always_corrupt
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        per_entry = [m for m in messages if 'Could not read archive entry' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded unreadable-entry logging: %d ERROR lines from one '
+            'archive' % len(per_entry)
+        )
+        summary = [m for m in messages if 'could not be read in total' in m]
+        assert summary and '1000' in summary[0], (
+            'the unreadable total was not reported, so the cap hides the scale'
+        )
+        assert extracted == [], 'nothing was extractable, so the list must be empty'
