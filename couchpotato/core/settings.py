@@ -165,8 +165,18 @@ class Settings:
         #
         # Sections are deliberately NOT folded: ConfigParser applies
         # `optionxform` to options only, so `[MyPlugin]` stays `[MyPlugin]`.
+        # `str.lower` when there is no parser yet: `addSection` and
+        # `setDefault` both guard with `if self.p and ...` and `setType` never
+        # touches it, so this must not become the one statement in the method
+        # that raises before `setFile()`. It would not merely be untidy --
+        # `event.py` swallows a handler's exception, so an AttributeError here
+        # leaves the section renderable and wholly unregistered, i.e. every
+        # option masked. `str.lower` is ConfigParser's own default
+        # `optionxform`, so the fallback records exactly what the parser would
+        # have.
+        xform = self.p.optionxform if self.p else str.lower
         self.registered_options.setdefault(section_name, set()).update(
-            self.p.optionxform(name) for name in options
+            xform(name) for name in options
         )
 
         for option_name, option in options.items():

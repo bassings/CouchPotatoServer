@@ -255,3 +255,27 @@ class TestEmptyOrphanValue:
         settings = _settings(cfg)
 
         assert settings.getValues()['gone']['leftover'] == ''
+
+
+class TestRegistrationBeforeSetFile:
+    """Every other mutation in `registerDefaults` degrades gracefully when
+    `self.p` is None -- `addSection` and `setDefault` both guard with
+    `if self.p and ...`, and `setType` never touches it. Recording the
+    registration must not be the one statement that raises.
+
+    This is not merely tidiness. `event.py` swallows a handler's exception, so
+    an `AttributeError` here would leave the section renderable (the loader
+    fires `settings.options` first) and completely unregistered -- every one of
+    its options masked. That is exactly the failure
+    `TestPartialRegistrationDoesNotStarOutRenderableFields` pins, reached
+    through a different door."""
+
+    def test_registering_before_setfile_does_not_raise(self):
+        settings = Settings()
+        assert settings.p is None
+
+        settings.registerDefaults('early', {'ApiToken': {'default': ''}}, save=False)
+
+        # Still normalised the way ConfigParser would have, so a later
+        # setFile() does not resurrect the case-mismatch masking bug.
+        assert settings.registered_options['early'] == {'apitoken'}

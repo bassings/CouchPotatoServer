@@ -1350,7 +1350,44 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Not folded into #261: it wants its own diff and its own review gate,
       and it has nothing to do with removing a downloader.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T33: dependency triage backlog — 5 open Dependabot PRs and 7 dev-only highs — state: queued (no deps)
+
+      Surfaced by the push on 2026-08-18: GitHub reported "1 vulnerability on
+      the default branch (1 high)". Measured rather than relayed:
+
+          npm audit --omit=dev  ->  found 0 vulnerabilities
+          npm audit             ->  7 high severity vulnerabilities
+
+      `package.json` declares NO runtime dependencies at all. Every high is in
+      the test toolchain. The named alert, `extract-zip <= 2.0.1` (unvalidated
+      symlink path traversal, alert #114), arrives via
+      `@lhci/cli -> lighthouse -> puppeteer-core -> @puppeteer/browsers`, and
+      `first_patched_version` is **null** — there is no fix to take. So its
+      only correct outcome is HOLD, and the condition for revisiting is a
+      patched `extract-zip` release or `@puppeteer/browsers` dropping the
+      dependency. Worth stating plainly because the banner reads as shippable
+      risk and is not: nothing here reaches a user's install.
+
+      `nanoid` DOES have a fix available via plain `npm audit fix` (no
+      `--force`), and per §3a an unchanged `package.json` afterwards is the
+      good outcome — only resolved transitive versions moved.
+
+      Open Dependabot PRs to decide, each needing take/reject/hold WITH the
+      reason recorded: #255 rarfile 4.4->4.5, #254 uvicorn 0.51.0->0.52.1,
+      #253 mutmut >=3.6.0->>=3.7.0, #252 ruff 0.16.1->0.16.2, #251
+      qbittorrent-api 2026.7.0->2026.8.0. Note the standing HOLDs on
+      stevedore 5.9.0 (drops Py3.10) and rebulk 6.0.1 (coupled to guessit
+      3.8.0) — those get closed, not merged, and they re-propose each cycle.
+
+      Run `pip check` / `npm ls` IMMEDIATELY after applying anything, before
+      running anything else: a bump that breaks the graph is rejected outright
+      regardless of what advisory it claims to fix.
+
+      Deliberately NOT folded into #261. A lockfile change riding in on a
+      downloader removal is the same mistake as riding the hook fix in on it,
+      and a dependency bump is a code change made by someone else.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
