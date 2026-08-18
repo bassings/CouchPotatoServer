@@ -1704,7 +1704,111 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
+- [ ] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: pr-open #264
+
+      **Not a theory. It has now corrupted this repository TWICE in one day,**
+      both times flipping `core.bare` to `true` so the main checkout stopped
+      being a work tree (`fatal: this operation must be run in a work tree`),
+      and the second time it also blocked T36's push.
+
+      Git exports `GIT_DIR` into hook subprocesses **only when the push comes
+      from a linked worktree** — measured: main checkout `GIT_DIR=[unset]`,
+      worktree `GIT_DIR=[.../.git/worktrees/<name>]`. `pre-push` runs
+      `make verify`, which runs this suite, so every git-invoking subprocess in
+      the gate-fixture tests inherited it. With `GIT_DIR` set, `git init` in a
+      fresh `tmp_path` does NOT create a repo there — it re-initialises the one
+      `GIT_DIR` already names, silently (`warning: re-init`). Every later
+      fixture `commit`/`checkout` then lands in the developer's real repo.
+
+      What it actually did, observed rather than predicted: a real checkout
+      left on a fixture branch, two fixture commits on a real feature branch,
+      and `core.bare = true`.
+
+      **Why it hid for so long:** the gate passes when run directly, because
+      nothing sets `GIT_DIR`. It fails ONLY through the hook, ONLY from a
+      worktree. So the standalone verdict and the push verdict disagree, and
+      the standalone one is the one people look at.
+
+      Fix: `sanitized_git_env()` in `tests/unit/conftest.py` strips `GIT_DIR`,
+      `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+      `GIT_COMMON_DIR` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` before every
+      git-invoking subprocess call in both gate-fixture files — including the
+      `needs_e2e.sh`/`push_base_ref.sh` invocations, since those shell out to
+      git themselves. A plain function, deliberately NOT an autouse fixture, so
+      it carries none of the blast radius across this directory's other ~150
+      test files.
+
+      Defence in depth: the `repo` fixture now asserts, immediately after
+      `git init`, that `git rev-parse --absolute-git-dir` resolves inside the
+      throwaway `tmp_path`. That converts a future unsanitised call site from
+      silent corruption into a named assertion failure.
+
+      Verified under the real condition rather than by reasoning: with
+      `GIT_DIR` poisoned to the real repo, 75 gate-fixture tests pass,
+      `core.bare` stays `false` and HEAD is unchanged. Mutation-proven — with
+      the stripping removed, the defence-in-depth assertion fires and names the
+      leak:
+
+          assert PosixPath('.../victim/.git') == PosixPath('.../tmp_path/.git')
+
+      Note the first mutation attempt produced a FALSE RED (a collection error,
+      not the corruption assertion). Caught because the failure text did not
+      name the behaviour being guarded, which is the whole reason for reading
+      failure messages rather than counting reds.
+      **Reframed 2026-08-18, after the guard was wrong four times.** The first
+      fix sanitised each call site and added an AST guard to enforce it. That
+      guard missed aliased imports (`subprocess as sp` — 17 of 20 sites in the
+      file the incident happened in), missed subdirectories, accepted any
+      `env=` whether sanitised or not, and could not see argv built by an
+      `*args`-forwarding lambda — a shape with a LIVE unsanitised instance in
+      `test_next_beta_version.py` that the guard passed clean.
+
+      Four defects in one guard is the rule-11 signal, and the frame was
+      wrong: policing call SHAPES is a losing game, because every wrapper,
+      alias and lambda is a new spelling.
+
+      So the hazard is removed instead of the callers policed.
+      `tests/conftest.py` strips the six variables from `os.environ` once, for
+      the whole process, before collection. Every subprocess is then clean by
+      construction, whatever shape the call takes and whether or not its
+      author ever heard of the helper. Proven in isolation: with the scrub
+      removed, running `test_next_beta_version.py` (no sanitisation anywhere)
+      under a poisoned GIT_DIR moves the victim repo's HEAD.
+
+      Three layers, each failing on its own removal:
+
+          process scrub          -> victim HEAD moves
+          per-call sanitisation  -> 1 failed
+          containment assertion  -> 1 failed neutered, 55 affected inverted
+
+      The guard remains as defence in depth with its blind spot STATED rather
+      than implied, and the condition for revisiting recorded: prove any change
+      by planting an offender, never by reading — every defect in it was found
+      that way and none by inspection.
+
+
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+      **Add to its scope (2026-08-18):** citations that rot. This session
+      converted three-line-number citations into a third-party package and
+      several stale line references into symbol citations, for one reason:
+      a wrong citation reads as precision and sends the next reader somewhere
+      specific and wrong.
+
+      One more class, raised by a peer session that hit it: a pinned COMMIT
+      HASH does not survive a history rewrite.
+      `tests/unit/test_check_test_traps.py` cites `git show f7f57b62` in a
+      docstring. It is prose, not executable — grepped, and NO test or script
+      in this repo shells out to a pinned SHA — so a rewrite would mislead a
+      reader rather than fail a gate. Resolve it by commit SUBJECT with an
+      assert-exactly-one-match, or drop the citation.
+
+      The peer's second-order finding is the one worth carrying even though it
+      does not bite us here: after a `filter-branch`, `refs/original/**` keeps
+      the old object reachable, so a test pinning the OLD hash stays GREEN
+      until `reflog expire && gc --prune=now`. A green suite run while the
+      rewrite backups still exist proves nothing about the rewritten repo.
+      Expire the backups first, then run the suite.
+
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
