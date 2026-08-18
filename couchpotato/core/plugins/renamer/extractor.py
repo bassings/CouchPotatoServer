@@ -278,7 +278,14 @@ class ExtractorMixin:
             extr_real_path = os.path.realpath(extr_path)
             refused = 0
             collisions = 0
+            unreadable = 0
             extracted = []
+            # Parallel set purely for membership. `extracted` stays a list
+            # because its ORDER is the return contract, but `x in list` is a
+            # linear scan, so collision detection was O(n^2) on exactly the
+            # input this function treats as hostile: an archive with thousands
+            # of entries, which costs the attacker one header each.
+            seen = set()
             rar_handle = rarfile.RarFile(rar_path)
             try:
                 for info in rar_handle.infolist():
@@ -327,14 +334,52 @@ class ExtractorMixin:
                         # was wrong: it aimed at the refusal path and failed
                         # because the entry was never refused.
                         log.debug('Extracting %r...', info.filename)
-                        self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
+                        try:
+                            self._extractOneAtomic(
+                                rar_handle, info, extr_file_path, extr_path)
+                        except rarfile.RarCannotExec:
+                            # The extractor TOOL is missing. Environmental, and
+                            # it will fail identically for every remaining
+                            # entry, so it must reach the caller -- that is what
+                            # surfaces NO_EXTRACTOR_TOOL_MESSAGE ("apk add
+                            # 7zip") instead of a thousand skipped entries and
+                            # an archive quietly reported as empty.
+                            #
+                            # Caught BEFORE rarfile.Error because it subclasses
+                            # it. A pre-existing test found this within seconds
+                            # of the broader catch going in, which is the whole
+                            # argument for the narrow one.
+                            raise
+                        except rarfile.Error:
+                            # A corrupt or unreadable ENTRY is attacker-
+                            # controlled, so it gets the same treatment as a
+                            # hostile name: refuse this one, keep the archive.
+                            # Without this the invariant was only half true --
+                            # one bad entry among a thousand still aborted
+                            # everything after it.
+                            #
+                            # Deliberately `rarfile.Error` and NOT `Exception`.
+                            # An OSError here (disk full, permissions, the
+                            # filesystem going away) is ENVIRONMENTAL, and
+                            # continuing would hand `extractFiles` a partial
+                            # list which it then tags as extracted -- silently
+                            # completing a release with files missing. Aborting
+                            # leaves it untagged and retried next scan, which
+                            # is the recoverable outcome. Attacker-controlled
+                            # failures are per-entry; environmental failures
+                            # are not.
+                            unreadable += 1
+                            if unreadable <= _MAX_ENTRY_LOGS:
+                                log.error('Could not read archive entry, '
+                                          'skipping it: %r', info.filename)
+                            continue
                     # Report the target path whether we just wrote it or it was
                     # already present -- an already-extracted archive is a success,
                     # not a no-op, so the caller can still tag/clean it up. Dedupe:
                     # two entries that flatten to the same basename (e.g. a top-level
                     # file and a same-named one under Sample/) map to one destination,
                     # so the contract "distinct target files present" must hold.
-                    if extr_file_path in extracted:
+                    if extr_file_path in seen:
                         # BOUNDED for the same reason the refusal above is: an
                         # earlier version of this very commit capped refusals
                         # and then added this warning uncapped, which is the
@@ -360,15 +405,16 @@ class ExtractorMixin:
                                 'depends on archive order: %r', info.filename,
                             )
                     else:
+                        seen.add(extr_file_path)
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
-            self._logArchiveSummary(refused, collisions)
+            self._logArchiveSummary(refused, collisions, unreadable)
 
         return extracted
 
     @staticmethod
-    def _logArchiveSummary(refused, collisions):
+    def _logArchiveSummary(refused, collisions, unreadable):
         """Report totals when per-entry logging was capped.
 
         The cap exists so a hostile archive cannot flood the log, but a cap
@@ -388,6 +434,10 @@ class ExtractorMixin:
             log.warning('%d archive entries collided on the same destination in '
                         'total (only the first %d were logged individually).',
                         collisions, _MAX_ENTRY_LOGS)
+        if unreadable > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries could not be read in total (only the '
+                      'first %d were logged individually).',
+                      unreadable, _MAX_ENTRY_LOGS)
 
     @staticmethod
     def _safeEntryBasename(filename):

@@ -1085,3 +1085,69 @@ class TestTheT41TradeoffIsPinned:
             'nothing can be written into a path sp() rewrote, so the honest '
             'result is an empty list rather than a claimed success'
         )
+
+
+class TestOneBadEntryDoesNotSinkTheArchive:
+    """The PR's invariant, completed. Refusing hostile NAMES was only half of
+    it: a corrupt entry still raised out of the loop and abandoned everything
+    after it, and a corrupt entry is just as attacker-controlled as a hostile
+    name.
+
+    The split is deliberate and is the whole design here:
+
+        rarfile.Error       attacker-controlled  -> skip THIS entry, continue
+        rarfile.RarCannotExec  environmental     -> propagate (missing tool)
+        OSError                environmental     -> propagate (disk, perms)
+
+    Continuing past an OSError would hand `extractFiles` a partial list which
+    it tags as extracted -- silently completing a release with files missing.
+    Aborting leaves it untagged and retried next scan, which is recoverable.
+    """
+
+    def test_a_corrupt_entry_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('bad.mkv'), _make_info('good.mkv')]
+        handle = _make_rar_handle(infos, {'bad.mkv': b'x', 'good.mkv': b'real'})
+
+        real_open = handle.open
+
+        def open_with_one_corrupt(info, *a, **kw):
+            if info.filename == 'bad.mkv':
+                raise rarfile.BadRarFile('corrupt entry')
+            return real_open(info, *a, **kw)
+
+        handle.open = open_with_one_corrupt
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'one corrupt entry aborted the archive; the good entry after it '
+            'was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('Could not read archive entry' in r.getMessage()
+                   for r in caplog.records), 'the skip was silent'
+
+    def test_an_oserror_still_aborts_rather_than_completing_partially(self, tmp_path):
+        """The other direction, so the handler cannot be satisfied by
+        swallowing everything: an environmental failure must NOT be turned
+        into a partial success."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('a.mkv'), _make_info('b.mkv')]
+        handle = _make_rar_handle(infos, {'a.mkv': b'x', 'b.mkv': b'y'})
+
+        def open_disk_full(info, *a, **kw):
+            raise OSError(28, 'No space left on device')
+
+        handle.open = open_disk_full
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            with pytest.raises(OSError):
+                _Extractor().extractArchive('a.rar', str(extr_path))
