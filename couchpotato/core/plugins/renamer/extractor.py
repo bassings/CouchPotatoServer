@@ -26,8 +26,9 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
-#: Cap on per-entry log lines a single archive may produce, for ALL THREE
-#: per-entry counters: refusals, name collisions, and unreadable entries.
+#: Cap on per-entry log lines a single archive may produce, for ALL FOUR
+#: per-entry counters: refusals, name collisions, unreadable entries, and
+#: names too long for the filesystem.
 #: (This said "BOTH refusals and name collisions" until the third counter was
 #: added a commit later and this line was not updated -- the same drift the
 #: rest of this branch keeps correcting.)
@@ -284,6 +285,7 @@ class ExtractorMixin:
             refused = 0
             collisions = 0
             unreadable = 0
+            too_long = 0
             extracted = []
             # Parallel set purely for membership. `extracted` stays a list
             # because its ORDER is the return contract, but `x in list` is a
@@ -378,8 +380,14 @@ class ExtractorMixin:
                             # partial list it tags as extracted.
                             if e.errno != errno.ENAMETOOLONG:
                                 raise
-                            unreadable += 1
-                            if unreadable <= _MAX_ENTRY_LOGS:
+                            # Its OWN counter, not folded into `unreadable`.
+                            # This entry WAS read; it could not be WRITTEN. An
+                            # operator seeing "could not be read" would chase a
+                            # corrupt archive, when the remedy is a filesystem
+                            # name limit. Two causes, two remediations, two
+                            # counts.
+                            too_long += 1
+                            if too_long <= _MAX_ENTRY_LOGS:
                                 log.error('Archive entry name is too long for '
                                           'this filesystem, skipping it: %r',
                                           info.filename)
@@ -443,12 +451,12 @@ class ExtractorMixin:
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
-            self._logArchiveSummary(refused, collisions, unreadable)
+            self._logArchiveSummary(refused, collisions, unreadable, too_long)
 
         return extracted
 
     @staticmethod
-    def _logArchiveSummary(refused, collisions, unreadable):
+    def _logArchiveSummary(refused, collisions, unreadable, too_long):
         """Report totals when per-entry logging was capped.
 
         The cap exists so a hostile archive cannot flood the log, but a cap
@@ -472,6 +480,10 @@ class ExtractorMixin:
             log.error('%d archive entries could not be read in total (only the '
                       'first %d were logged individually).',
                       unreadable, _MAX_ENTRY_LOGS)
+        if too_long > _MAX_ENTRY_LOGS:
+            log.error('%d archive entry names were too long for this '
+                      'filesystem in total (only the first %d were logged '
+                      'individually).', too_long, _MAX_ENTRY_LOGS)
 
     @staticmethod
     def _safeEntryBasename(filename):

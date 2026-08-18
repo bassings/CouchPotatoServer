@@ -1255,3 +1255,65 @@ class TestALongEntryNameDoesNotSinkTheArchive:
             with pytest.raises(OSError) as excinfo:
                 _Extractor().extractArchive('a.rar', str(extr_path))
         assert excinfo.value.errno == errno.ENOSPC
+
+
+class TestOverlongNameLoggingIsAlsoBounded:
+    """The fourth per-entry counter. Added straight away rather than a round
+    later, because the previous three each arrived uncovered and were caught
+    by review one at a time.
+
+    Its own counter rather than folded into `unreadable`: the entry WAS read,
+    it could not be WRITTEN. An operator seeing "could not be read" chases a
+    corrupt archive; the remedy here is a filesystem name limit. Two causes,
+    two remediations, two counts.
+    """
+
+    def test_a_thousand_overlong_names_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['%s%d.mkv' % ('A' * 300, i) for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        # 'skipping it:' is the PER-ENTRY phrase. Filtering on 'too long for
+        # this filesystem' alone also matches the summary, which repeats it --
+        # the first version of this test counted 6 and reported the cap broken.
+        per_entry = [m for m in messages if 'skipping it:' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded overlong-name logging: %d ERROR lines' % len(per_entry)
+        )
+        summary = [m for m in messages if 'names were too long' in m]
+        assert summary and '1000' in summary[0], (
+            'the overlong-name total was not reported, so the cap hides the scale'
+        )
+        assert extracted == []
+
+    def test_it_is_not_reported_as_an_unreadable_entry(self, tmp_path, caplog):
+        """The distinction the split exists for: an overlong name must not be
+        counted or described as a corrupt entry, because the two point at
+        different remediations."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['%s%d.mkv' % ('A' * 300, i) for i in range(10)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert 'too long for this filesystem' in messages
+        assert 'could not be read' not in messages, (
+            'an overlong name was reported as an unreadable entry, sending the '
+            'operator after a corrupt archive instead of a name-length limit'
+        )
