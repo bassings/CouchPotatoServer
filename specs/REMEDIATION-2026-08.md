@@ -983,7 +983,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       assuming it is isolated. (`python:S2734` at `putio/main.py:25`, a
       return value in `__init__`, is the other BLOCKER and can ride along.)
 
-- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps) · **corroborated independently by SonarQube 2026-08-18: 39 x `Web:InputWithoutLabelCheck`, all in `wizard.html` — the same 39 inputs, found by a different tool with a different ruleset**
+- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps) · re-confirmed present by the 2026-08-18 scan (still 39 x `Web:InputWithoutLabelCheck`), i.e. NOT yet fixed. **Retracted 2026-08-18: an earlier version of this line called that "independent corroboration by a different tool with a different ruleset". It is not. T25 was CREATED from these same SonarQube findings — the body below says so — so a second scan reporting the same rule is the same tool agreeing with itself. A re-run is evidence the defect is still open, and nothing more.**
 
       `couchpotato/ui/templates/wizard.html`, all 39 instances of SonarQube's
       `Web:InputWithoutLabelCheck`. This is the NEW UI, not the legacy tree
@@ -1586,8 +1586,16 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       Sonar's S5779 names the mechanism exactly — an assertion inside a
       try/except that catches its own AssertionError. The other two instances
-      (`assertEqual` on the status code, `assertLess`) have the same shape: they
-      still fail, but they mislabel a non-200 as "server is not responding".
+      have the same shape but DIFFERENT messages, and an earlier version of
+      this entry wrongly gave them both the same one:
+
+          :27  assertEqual(code, 200)      -> "Server is not responding: ..."
+          :90  assertLess(elapsed, 5.0)    -> "Failed to measure response time: ..."
+
+      So a server that responds slowly is reported as a failure to MEASURE,
+      and a server returning 500 is reported as not responding at all. Each
+      mislabels its own failure differently, which is worse than one shared
+      wrong message: it sends the reader somewhere specific and wrong.
 
       **The fix is almost certainly deletion, not repair.** Its only consumer
       relationship is the reverse one: `simple_healthcheck.py:76` is the sole
@@ -1596,38 +1604,69 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Repairing a dead file to keep a check nothing runs would be work spent
       moving in the wrong direction.
 
-- [ ] T39: six providers access a parsed element without checking it exists — state: queued (no deps)
+- [ ] T39: three provider scrapers access a parsed element without checking it exists — state: queued (no deps)
 
-      2026-08-18 SonarQube scan, `python:S8904` x 6, all CRITICAL, all the same
-      shape: a BeautifulSoup lookup used directly without testing for `None`.
+      2026-08-18 SonarQube scan, `python:S8904` x 6. **Six occurrences, but NOT
+      six defects** — an earlier version of this entry said "six providers",
+      which was wrong twice over: `awesomehd.py` supplies two of the six, and
+      three of the six are not defects at all. Checked each site rather than
+      trusting the rule:
 
-          awesomehd.py:37, :40    .get_text on a possibly-absent element
-          bithdtv.py:83           .text
-          thepiratebay.py:71      .find_all
-          filmweb.py:25           [content]
-          filmstarts.py:26        [content]
+          awesomehd.py:40     .get_text on soup.find('authkey')   REAL, unguarded
+          filmweb.py:25       ['content'] on html.find('meta')    REAL, unguarded
+          filmstarts.py:26    ['content'] on html.find('meta')    REAL, unguarded
+
+          awesomehd.py:37     GUARDED — `if soup.find('error'):` on the line above
+          bithdtv.py:83       GUARDED — `toUnicode(nfo_pre.text) if nfo_pre else ''`
+          thepiratebay.py:71  TOLERATED — its own try/except leaves total_pages
+                              at its initialised 1 and parsing continues
+
+      So the family is three, not six. The two GUARDED ones look like false
+      positives from the rule not following the enclosing condition; they are
+      NOT being dismissed in SonarQube, because that is the owner's call and
+      dismissal is the one action that silently destroys the tool's value.
+      Recorded here instead.
+
+      One the scan did NOT flag, found while checking the ones it did:
+      `filmstarts.py:21` calls `table.find(...)` where `table` came straight
+      from `html.find(...)` with no None check — the same defect, one line
+      above the flagged one. Fix it in the same pass; it is the reminder that
+      the rule list is a starting point, not the boundary.
 
       These are provider scrapers, so the input is a third party's markup and
-      it changes without notice. `AttributeError`/`TypeError` on a layout change
-      is the expected failure mode, not the exception. Worth fixing as a family
-      rather than one at a time, since the remedy is identical.
-
-      Note the searcher already tolerates a provider raising, so the blast
-      radius is a dead provider rather than a crashed scan — which is why this
-      is CRITICAL-by-rule but not urgent-by-impact. Say which when fixing.
+      it changes without notice. The searcher tolerates a provider raising, so
+      the blast radius is a dead provider rather than a crashed scan — CRITICAL
+      by rule, not urgent by impact. Say which when fixing.
 
 - [ ] T40: `synology.py` returns from inside a `finally` block — state: queued (no deps)
 
       2026-08-18 SonarQube scan, `python:S1143` (CRITICAL), `synology.py:76`.
-      A `return` in `finally` DISCARDS any in-flight exception, so a failure in
-      the `try` is swallowed silently and the caller is told the operation
-      succeeded. That is the same defect class as several already fixed on this
-      plan: a protection correct at one layer, undone at the boundary.
 
-      Verify the swallow by driving it before fixing, and pin it with a test
-      that fails on the current code (§11).
+      **Corrected 2026-08-18 after review.** An earlier version of this entry
+      said the failure is "swallowed silently and the caller is told the
+      operation succeeded". That is wrong, and reading the whole construct
+      rather than the flagged line shows why:
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T35, T36, T37, T38, T39, T40 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+          except Exception:
+              log.error('Exception while adding torrent: %s', ...)
+          finally:
+              return self.downloadReturnId('') if response else False
+
+      An ordinary failure inside the `try` is caught and LOGGED by the
+      preceding `except Exception`, and `response` is still False, so the
+      `finally` returns False. The caller is correctly told it failed and the
+      log is not silent.
+
+      What remains is narrower and still real: a `return` in `finally`
+      discards anything the `except` clause does not catch — a `BaseException`
+      such as KeyboardInterrupt or SystemExit, or an exception raised inside
+      the handler itself. Those become a silent False rather than propagating.
+
+      Fix it, but fix it for the accurate reason, and pin whichever mechanism
+      the test actually drives. A test written against the WRONG mechanism
+      would pass on the current code and guard nothing.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1856,10 +1895,16 @@ to download, but none of the ... downloaders are enabled" and returns
 
   `bugs: 62 / reliability D` is the headline number and it is misleading
   without the breakdown, which is why the breakdown is here: **39 of the 62 are
-  one rule in one file** — `Web:InputWithoutLabelCheck` in `wizard.html`. That
-  is T25, found independently by a different tool with a different ruleset. Two
-  tools agreeing from different directions is worth more than either alone, and
-  it raises T25's priority.
+  one rule in one file** — `Web:InputWithoutLabelCheck` in `wizard.html`.
+
+  **That is T25, and an earlier version of this entry called it "found
+  independently by a different tool with a different ruleset". Retracted.**
+  T25 was CREATED from these same SonarQube findings, so a second scan
+  reporting the same rule is the same tool agreeing with itself, not
+  corroboration. It is evidence the defect is still open, which is worth
+  recording, and it is not evidence of anything more. The claim was flattering
+  and false, and it is exactly the kind that gets repeated once it is written
+  down.
 
   Of the 17 CRITICAL bugs, three families were verified and recorded as tasks
   rather than left in a dashboard nobody reads:
