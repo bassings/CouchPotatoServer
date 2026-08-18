@@ -41,7 +41,6 @@ import subprocess
 from tests.unit.conftest import sanitized_git_env
 import sys
 from pathlib import Path
-import re
 import ast
 
 REPO = Path(__file__).resolve().parents[2]
@@ -167,23 +166,47 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
 
     Deliberately AST, not a regex. The first version of this guard WAS a
     regex, and it reported five false positives on calls that were correctly
-    sanitised -- because `[^)]*?` stops at the first `)`, and `cwd=str(tmp_path)`
-    closes the match before `env=` is ever reached. A guard that cries wolf on
-    correct code gets deleted by the next person in a hurry, which is a worse
-    outcome than not having it.
+    sanitised -- because `[^)]*?` stops at the first `)`, and
+    `cwd=str(tmp_path)` closes the match before `env=` is ever reached. A
+    guard that cries wolf on correct code gets deleted by the next person in a
+    hurry, which is worse than not having it.
+
+    ALIASES ARE RESOLVED PER FILE, and that is not a refinement. The second
+    version matched only `subprocess.run`, while `test_hybrid_gate.py` -- the
+    file the original incident happened in -- does `import subprocess as sp`
+    inside nearly every test method and calls `sp.run(...)`. Seventeen of its
+    twenty git calls were invisible to the guard. They happened to be
+    correctly sanitised already, so nothing was leaking; the defect was that
+    the guard's COVERAGE did not match its claim, which is the same
+    looks-like-protection shape it exists to prevent.
     """
     tests_dir = Path(__file__).parent
     offenders = []
 
-    for path in sorted(tests_dir.glob('*.py')):
+    def subprocess_aliases(tree):
+        """Every local name bound to the `subprocess` module in this file,
+        including imports nested inside functions and methods."""
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == 'subprocess':
+                        names.add(alias.asname or 'subprocess')
+        return names
+
+    for path in sorted(tests_dir.rglob('*.py')):
         tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+        aliases = subprocess_aliases(tree)
+        if not aliases:
+            continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            if not (isinstance(func, ast.Attribute) and func.attr in ('run', 'check_output', 'Popen')):
+            if not (isinstance(func, ast.Attribute)
+                    and func.attr in ('run', 'check_output', 'check_call', 'call', 'Popen')):
                 continue
-            if not (isinstance(func.value, ast.Name) and func.value.id == 'subprocess'):
+            if not (isinstance(func.value, ast.Name) and func.value.id in aliases):
                 continue
             if not node.args:
                 continue
@@ -195,7 +218,7 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
                 continue
             if any(kw.arg == 'env' for kw in node.keywords):
                 continue
-            offenders.append('%s:%d' % (path.name, node.lineno))
+            offenders.append('%s:%d' % (path.relative_to(tests_dir), node.lineno))
 
     assert not offenders, (
         'these git subprocess calls pass no env=, so an ambient GIT_DIR (which '
