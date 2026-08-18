@@ -28,7 +28,7 @@ log = CPLog(__name__)
 
 #: Cap on per-entry log lines a single archive may produce, for ALL FOUR
 #: per-entry counters: refusals, name collisions, unreadable entries, and
-#: names too long for the filesystem.
+#: entries that could not be written to their destination.
 #: (This said "BOTH refusals and name collisions" until the third counter was
 #: added a commit later and this line was not updated -- the same drift the
 #: rest of this branch keeps correcting.)
@@ -38,6 +38,23 @@ log = CPLog(__name__)
 #: nicety. Small, because the first few are diagnostic and the rest are noise;
 #: `_logArchiveSummary` reports the totals so nothing is hidden by the cap.
 _MAX_ENTRY_LOGS = 5
+
+#: OSError errnos caused by THIS entry rather than by the machine, so they skip
+#: one entry instead of abandoning the archive.
+#:
+#: The axis is "caused by this entry or by the machine" -- exception TYPE is
+#: only a proxy for it, and sorting by type let both of these through a split
+#: written specifically to stop hostile entries aborting archives. Each was
+#: found by review, one at a time, after the previous one was fixed:
+#:
+#:   ENAMETOOLONG  the flattened name exceeds the filesystem's limit
+#:   EISDIR        something already occupies the destination as a directory
+#:
+#: NOT here, deliberately: ENOSPC, EACCES, EROFS, EIO. Those are the machine.
+#: They fail identically for every remaining entry, and continuing would hand
+#: `extractFiles` a partial list which it tags as extracted -- silently
+#: completing a release with files missing.
+_ENTRY_DERIVED_ERRNOS = frozenset((errno.ENAMETOOLONG, errno.EISDIR))
 
 # rarfile forces the extractor tool to be selected via the process-global
 # ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
@@ -285,7 +302,7 @@ class ExtractorMixin:
             refused = 0
             collisions = 0
             unreadable = 0
-            too_long = 0
+            unwritable = 0
             extracted = []
             # Parallel set purely for membership. `extracted` stays a list
             # because its ORDER is the return contract, but `x in list` is a
@@ -378,7 +395,7 @@ class ExtractorMixin:
                             # identically for every remaining entry, and must
                             # still abort rather than hand `extractFiles` a
                             # partial list it tags as extracted.
-                            if e.errno != errno.ENAMETOOLONG:
+                            if e.errno not in _ENTRY_DERIVED_ERRNOS:
                                 raise
                             # Its OWN counter, not folded into `unreadable`.
                             # This entry WAS read; it could not be WRITTEN. An
@@ -386,10 +403,12 @@ class ExtractorMixin:
                             # corrupt archive, when the remedy is a filesystem
                             # name limit. Two causes, two remediations, two
                             # counts.
-                            too_long += 1
-                            if too_long <= _MAX_ENTRY_LOGS:
-                                log.error('Archive entry name is too long for '
-                                          'this filesystem, skipping it: %r',
+                            unwritable += 1
+                            if unwritable <= _MAX_ENTRY_LOGS:
+                                log.error('Archive entry could not be written '
+                                          'to its destination (%s), skipping '
+                                          'it: %r',
+                                          errno.errorcode.get(e.errno, e.errno),
                                           info.filename)
                             continue
                         except rarfile.Error:
@@ -451,12 +470,20 @@ class ExtractorMixin:
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
-            self._logArchiveSummary(refused, collisions, unreadable, too_long)
+                # In the `finally`, because the counts matter MOST on an
+                # aborted archive. Sitting after the try block, this was
+                # skipped by exactly the paths that make it useful: an
+                # environmental OSError, RarCannotExec, or any entry-derived
+                # errno not yet in the set. The operator then saw five capped
+                # per-entry lines, an abort, and no totals -- the diagnostic
+                # deleted at the moment it was needed.
+                self._logArchiveSummary(
+                    refused, collisions, unreadable, unwritable)
 
         return extracted
 
     @staticmethod
-    def _logArchiveSummary(refused, collisions, unreadable, too_long):
+    def _logArchiveSummary(refused, collisions, unreadable, unwritable):
         """Report totals when per-entry logging was capped.
 
         The cap exists so a hostile archive cannot flood the log, but a cap
@@ -480,10 +507,10 @@ class ExtractorMixin:
             log.error('%d archive entries could not be read in total (only the '
                       'first %d were logged individually).',
                       unreadable, _MAX_ENTRY_LOGS)
-        if too_long > _MAX_ENTRY_LOGS:
-            log.error('%d archive entry names were too long for this '
-                      'filesystem in total (only the first %d were logged '
-                      'individually).', too_long, _MAX_ENTRY_LOGS)
+        if unwritable > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries could not be written to their '
+                      'destination in total (only the first %d were logged '
+                      'individually).', unwritable, _MAX_ENTRY_LOGS)
 
     @staticmethod
     def _safeEntryBasename(filename):

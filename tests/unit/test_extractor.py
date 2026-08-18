@@ -1233,7 +1233,7 @@ class TestALongEntryNameDoesNotSinkTheArchive:
             'it was never extracted'
         )
         assert (extr_path / 'good.mkv').read_bytes() == b'real'
-        assert any('too long for this filesystem' in r.getMessage()
+        assert any('ENAMETOOLONG' in r.getMessage()
                    for r in caplog.records), 'the skip was silent'
 
     def test_a_disk_full_oserror_still_aborts(self, tmp_path):
@@ -1289,9 +1289,10 @@ class TestOverlongNameLoggingIsAlsoBounded:
         assert len(per_entry) <= 5, (
             'unbounded overlong-name logging: %d ERROR lines' % len(per_entry)
         )
-        summary = [m for m in messages if 'names were too long' in m]
+        summary = [m for m in messages if 'could not be written' in m
+                   and 'in total' in m]
         assert summary and '1000' in summary[0], (
-            'the overlong-name total was not reported, so the cap hides the scale'
+            'the unwritable total was not reported, so the cap hides the scale'
         )
         assert extracted == []
 
@@ -1312,8 +1313,93 @@ class TestOverlongNameLoggingIsAlsoBounded:
             _Extractor().extractArchive('a.rar', str(extr_path))
 
         messages = '\n'.join(r.getMessage() for r in caplog.records)
-        assert 'too long for this filesystem' in messages
+        assert 'ENAMETOOLONG' in messages, (
+            'the errno must be named, or an operator cannot tell a name-length '
+            'limit from a destination conflict'
+        )
         assert 'could not be read' not in messages, (
             'an overlong name was reported as an unreadable entry, sending the '
             'operator after a corrupt archive instead of a name-length limit'
+        )
+
+
+class TestADestinationConflictDoesNotSinkTheArchive:
+    """`EISDIR`, found by review immediately after `ENAMETOOLONG` was fixed --
+    the same axis error, one errno over.
+
+    `os.replace(tmp, dest)` raises `IsADirectoryError` whenever something
+    already occupies the destination as a directory. That is derived from
+    where THIS entry lands, not from the machine, so it must skip one entry
+    rather than abandon the archive. Driven before fixing:
+
+        RAISED errno=21 (EISDIR): Is a directory
+        good.mkv extracted? False
+
+    Both are now in `_ENTRY_DERIVED_ERRNOS` rather than special-cased one at a
+    time, which is the shape that should have been used when the first one was
+    found: the question is a CATEGORY of errno, and enumerating it once beats
+    discovering it twice.
+    """
+
+    def test_a_directory_in_the_way_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        (extr_path / 'movie.mkv').mkdir()          # already a directory
+        names = ['movie.mkv', 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'a destination conflict aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('EISDIR' in r.getMessage() for r in caplog.records), (
+            'the skip did not name the errno, so an operator cannot tell it '
+            'from a name-length limit'
+        )
+
+
+class TestTheSummarySurvivesAnAbortedArchive:
+    """The counts matter most when the archive aborts, and that is exactly
+    when they were being dropped.
+
+    `_logArchiveSummary` sat after the `try`, so any propagating exception --
+    an environmental `OSError`, `RarCannotExec`, or an entry-derived errno not
+    yet in the set -- skipped it. The operator got five capped per-entry lines,
+    an abort, and no totals: the diagnostic deleted at the moment it was
+    needed. Now in the `finally`.
+    """
+
+    def test_counts_are_reported_even_when_a_later_entry_aborts(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        # Six refusals (over the cap of five) and then a disk-full abort.
+        names = ['..'] * 6 + ['boom.mkv']
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        def no_space(info, *a, **kw):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+
+        handle.open = no_space
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            with pytest.raises(OSError):
+                _Extractor().extractArchive('a.rar', str(extr_path))
+
+        summary = [r.getMessage() for r in caplog.records
+                   if 'refused in total' in r.getMessage()]
+        assert summary and '6' in summary[0], (
+            'the archive aborted and took its own diagnostic counts with it, '
+            'which is the case the summary exists for'
         )
