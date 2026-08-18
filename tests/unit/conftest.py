@@ -54,6 +54,18 @@ def assert_git_dir_is(directory, env=None):
     re-initialised the repo GIT_DIR named instead. Resolving through a child
     that does not exist is how this assertion reports the wrong thing on the
     one path that needs it.
+
+    Proven by three mutations, not one, because they answer different
+    questions:
+
+        neuter this assertion    ->  1 failed              is it guarded?
+        make it reject anything  ->  2 failed, 53 errors   is it on the code path?
+        neuter the sanitisation  ->  1 failed              is the OTHER layer guarded?
+
+    The middle one is the check most easily skipped. A guard can be guarded
+    and still be dead code that is never reached; only forcing it to reject
+    everything shows it actually runs -- here, for every test that takes the
+    `repo` fixture.
     """
     import subprocess as _sp
     absolute_git_dir = _sp.run(
