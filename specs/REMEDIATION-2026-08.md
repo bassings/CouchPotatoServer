@@ -1311,7 +1311,46 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Masking only: the orphan values stay on disk. Deleting a user's config
       data is irreversible, and that is not what a disclosure fix is for.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T32: the pre-push hook runs the FULL gate on a branch DELETE, which has no diff to gate — state: queued (no deps)
+
+      Found by collision, not by review. Another Claude session running in
+      this same checkout ran `git push -q origin --delete
+      fix/harness-triggers`, which fired `.githooks/pre-push`, which started a
+      full `make verify` including a Playwright suite against the same
+      `.e2e-data` directory an in-flight gate run was already using. Both
+      verdicts became unreliable and the gate had to be re-run from scratch.
+
+      That session then measured the same delete three ways, which is what
+      turns this from a theory into a fact: two `git push --delete` attempts
+      hung long enough to be killed (one at five minutes), both sitting in
+      `make verify`; the same deletion issued as `gh api -X DELETE
+      .../git/refs/heads/...` returned in under two seconds. Same outcome, no
+      hook, no gate.
+
+      `.githooks/pre-push` never reads stdin — there is no `read`, no `while
+      read`, no reference to the ref arguments anywhere in it. So it cannot
+      distinguish a deletion from an update, and it gates a push whose diff is
+      empty by construction.
+
+      **The signal is the LOCAL sha on stdin, not `$3`.** `$3` is not a
+      positional argument of `pre-push` at all: git passes exactly two, the
+      remote name and the remote URL. Everything about the refs arrives on
+      stdin, one line per ref as `<local_ref> <local_sha> <remote_ref> <remote_sha>`,
+      and a deletion is the all-zeroes LOCAL sha with `(delete)` as the local
+      ref. The condition to skip on is "EVERY line is a deletion": a mixed
+      push that deletes one ref and updates another still has real code to
+      gate, and skipping that would be the exact false-green this hook exists
+      to prevent. The test has to pin both directions (§11): it must fail if a
+      delete-only push runs the gate, AND fail if a mixed push skips it.
+
+      Note the hook must still consume stdin even when it decides to gate.
+      Reading it is not optional bookkeeping — a hook that exits without
+      draining stdin can hand git a broken pipe.
+
+      Not folded into #261: it wants its own diff and its own review gate,
+      and it has nothing to do with removing a downloader.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1519,6 +1558,105 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 38** — **gate green, local review gate passed after two real findings, both in T31's own fix.**
+  `make verify` exit 0 on `e5ecaa9c`: 3401 python unit / 42 integration / 202 UI
+  unit / 136 E2E + 40 accessibility. The earlier exit-2 was entirely a stale
+  `.e2e-w0-data` left by the SIGTERM'd run — same commit, green once cleaned
+  through `scripts/e2e_worker_data.py cleanup 0` rather than a bare `rm -rf`.
+
+  Two `code-reviewer` agents on the branch diff (security/privacy, and
+  correctness/test-quality). Both returned safe-to-ship, and both found the
+  same two latent defects independently, which is the useful signal:
+
+  - Option names were recorded as DECLARED; `RawConfigParser` lower-cases on
+    store and `getValues` reads back through `p.items()`, so a registered
+    option with a capital letter is starred out. Driven: `{'ApiToken'}` vs
+    `[('apitoken', ...)]` -> `'***********'`.
+  - The record was built inside the loop, so a plugin raising part way through
+    leaves later options renderable but unregistered. `loader.loadSettings`
+    fires `settings.options` BEFORE `settings.register` and `event.py` swallows
+    the exception, so the loader's own `try` never sees it. Driven with a
+    non-string `ui-meta`: `opt_c` renders as `*` instead of `C`.
+
+  **Both were CREATED by T31, not merely surfaced by it.** `self.types` carries
+  the same raw-key inconsistency, but before masking existed its only
+  consequence was a lost type declaration with the value still rendering.
+  Keying masking off registration escalates that to a wrong display. That is
+  why they were fixed in this PR rather than deferred: a change does not get to
+  leave behind the defects it introduced.
+
+  Fixed in `88405b3f`. Neither was reachable — all 425 in-tree options are
+  lower-case and measured renderable/registered divergence across every plugin
+  is zero — so nothing in the suite would have failed today. Landmines for the
+  next plugin, which is precisely the case §9 says to enforce mechanically.
+  Each guard mutation-proven to fail exactly one test and nothing else.
+
+  Rejected with evidence rather than silently dropped: the mask discloses the
+  plaintext LENGTH, but it is exactly as leaky as the `password` branch beside
+  it (`nzbget.password` is stored plaintext and masked identically), so
+  changing one means changing both — out of scope. `test_log_call_arity.py`'s
+  3-line diff is docstring prose, not a hardcoded count. `[DEFAULT]`-inherited
+  keys do get masked in every section, but they were returned in CLEAR TEXT
+  before, so the change moves in the safe direction. Leaving `[hadouken]` on
+  disk stands: settings are irreplaceable, the credential is masked in transit
+  and never read, and deleting it would move a recoverable state up the
+  data-risk ranking to close a leak masking already closes.
+
+  **Process defect, mine.** I ran both reviewers against the SAME working tree
+  and told one to mutate files in it. The security reviewer consequently
+  observed `settings.py` on disk with the masking removed — verbatim the bug
+  under review — and correctly refused to trust the tree, re-measuring against
+  a pristine `git archive HEAD` export. Its lead finding was not about the diff
+  at all but about that window: a `git commit -a` inside it ships the unmasked
+  form, indistinguishable from the defect. Verified afterwards that
+  `settings.py` and the test file were byte-identical to `e5ecaa9c` with no
+  stray `.bak`. Parallel reviewers that mutate need worktrees, same rule as
+  implementers.
+
+  Armed: full gate re-running detached on `88405b3f`. Next wake reads the exit
+  code, then pushes and merges #261.
+
+- **Tick 37** — **T31 built, committed and independently verified; T32 opened from a cross-session collision.**
+  T31 committed as `e5ecaa9c`. Validated against the repo rather than the
+  implementer's report: reverting `settings.py` to its pre-fix contents by file
+  copy fails 4 of the 6 new tests on the raw secret, and the 2 that stay green
+  are exactly the two asserting registered options are NOT masked — a failure
+  there would have meant over-masking. Restored file is byte-identical
+  (`7b0e0c27...` before and after).
+
+  Measured the blast radius against a real `config.ini` instead of reasoning
+  about it: 44 sections have no source anywhere in this fork, 27 carry
+  credential-shaped options, and 2 hold live non-empty values
+  (`omdbapi.api_key`, `prowl.api_key`). Every one has been readable through the
+  settings API. Hadouken was the 45th, not a special case. Masking cannot blank
+  a field a user needs, because `loader.loadSettings` fires `settings.options`
+  (what the UI renders) and `settings.register` (what the fix keys off) from
+  the same loop over the same section dict — registered and renderable are the
+  same set. `getValues()` has exactly one caller, the settings API view.
+
+  Two process findings, both recorded to memory rather than left in the log:
+
+  - A background `make verify` is SIGTERM'd at the turn boundary (`make: ***
+    [verify] Terminated: 15` at 69%). Relaunched under `nohup`+`disown` with a
+    `.done` sentinel; that run survived the next turn boundary, which confirms
+    it. A killed gate reads exactly like a red one, which is the dangerous part.
+  - Another session (`AI-Harness`) was running a full gate in THIS checkout,
+    triggered by `git push --delete` firing `.githooks/pre-push`. Two Playwright
+    suites over one `.e2e-data`. Messaged it directly; it confirmed with better
+    evidence than my inference (two `--delete` pushes hung in `make verify`, the
+    same delete via `gh api` returned in under two seconds) and is now out of
+    the repo with no queued writes.
+
+  That collision produced T32: the pre-push hook never reads stdin, so it
+  cannot tell a deletion from an update and gates a push whose diff is empty by
+  construction. Deliberately NOT folded into #261 — a gate change riding in on
+  an unrelated downloader removal is how it lands without the review its own
+  diff would get.
+
+  Armed: detached gate on `chore/remove-hadouken` writing to a `.done`
+  sentinel. Next wake expects an exit code to read, then the review cycle and
+  the codex thread on #261.
 
 - **Tick 36** — **storage resolved; #261 is blocked by one review thread, not a red check.**
   The owner freed the volume (260Gi free, was 6.6Gi), so the gate is runnable
