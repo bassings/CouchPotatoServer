@@ -19,17 +19,19 @@ import traceback
 
 import rarfile
 
-#: Cap on per-entry refusal ERRORs from a single archive. A hostile RAR can
-#: carry thousands of poisoned names for the cost of a header each, so the
-#: unbounded form was a log-amplification vector. Small, because the first few
-#: are diagnostic and the rest are noise.
-_MAX_REFUSALS_LOGGED = 5
-
 from couchpotato.core.helpers.variable import isSubFolder, sp
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
 log = CPLog(__name__)
+
+#: Cap on per-entry log lines a single archive may produce, for BOTH refusals
+#: and name collisions. `rarfile.infolist()` parses headers only, so a hostile
+#: RAR carries thousands of poisoned entries for the cost of a header each --
+#: unbounded per-entry logging is therefore an amplification vector, not a
+#: nicety. Small, because the first few are diagnostic and the rest are noise;
+#: `_logArchiveSummary` reports the totals so nothing is hidden by the cap.
+_MAX_ENTRY_LOGS = 5
 
 # rarfile forces the extractor tool to be selected via the process-global
 # ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
@@ -275,6 +277,7 @@ class ExtractorMixin:
             # extr_path, which is out of scope here -- tracked as T41.
             extr_real_path = os.path.realpath(extr_path)
             refused = 0
+            collisions = 0
             extracted = []
             rar_handle = rarfile.RarFile(rar_path)
             try:
@@ -284,56 +287,34 @@ class ExtractorMixin:
                     entry_name = self._safeEntryBasename(info.filename)
                     extr_file_path = sp(os.path.join(extr_path, entry_name))
                     if entry_name in ('', '.', '..') or not isSubFolder(extr_file_path, extr_real_path):
-                        # Two independent refusal reasons, deliberately sharing
-                        # one path so every rejected shape behaves identically.
+                        # Two refusal reasons sharing one path, so every
+                        # rejected shape behaves identically.
                         #
-                        # The NAME check catches entries that sanitize to nothing
-                        # useful: '', '.', '..', and anything ending in a
-                        # separator ('Sample/', 'Sample\'), which basename
-                        # reduces to ''. Those join back to extr_path ITSELF, and
-                        # `isSubFolder` accepts equality ("the same as or inside"),
-                        # so containment alone waves them through -- straight into
-                        # `os.replace(tmp, <a directory>)` and IsADirectoryError,
+                        # NAME: entries that sanitize to nothing useful -- '',
+                        # '.', '..', and anything ending in a separator, which
+                        # basename reduces to ''. Those join back to extr_path
+                        # ITSELF, and isSubFolder accepts equality, so
+                        # containment alone waves them through into
+                        # `os.replace(tmp, <a directory>)` -> IsADirectoryError,
                         # which escapes extractArchive and abandons the WHOLE
-                        # archive. On an unattended server that is a permanent
-                        # per-release wedge: never tagged, retried every scan,
-                        # a full traceback written each time.
+                        # archive: a permanent per-release wedge on an
+                        # unattended server.
                         #
-                        # The CONTAINMENT check is the belt-and-braces half: it
-                        # catches any shape that defeats the basename
-                        # sanitization, whatever the next one turns out to be.
+                        # CONTAINMENT: belt-and-braces for any shape that
+                        # defeats the sanitization, whatever the next one is.
                         #
-                        # Refuse just this entry -- one hostile name must not sink
-                        # the whole archive -- but make the refusal visible rather
-                        # than a silent skip.
-                        # BOUNDED, and it logs the entry NAME only -- not
-                        # rar_path, not the resolved destination.
-                        #
-                        # Everything on this line is attacker-controlled, and an
-                        # archive is cheap to craft: `infolist()` parses headers
-                        # only, so thousands of poisoned names cost the attacker
-                        # nothing and previously produced one ERROR each. That is
-                        # log amplification, and each line carried the operator's
-                        # private paths -- `PrivacyFilter` redacts `/home/<user>`
-                        # and `/Users/<user>` only, so `/volume1/...`,
-                        # `/mnt/media/...` and every other NAS layout passed
-                        # through in full.
-                        #
-                        # The paths added nothing an operator needs: they already
-                        # know the extraction directory, and the entry name is
-                        # what identifies the bad archive. `%r` because the name
-                        # can contain newlines, which would otherwise let a
-                        # crafted entry forge whole log records.
+                        # Refuse this entry only -- one hostile name must not
+                        # sink the archive -- and log the entry NAME, bounded.
+                        # Not rar_path, not the resolved destination: those add
+                        # nothing an operator needs, and PrivacyFilter redacts
+                        # only /home/<user> and /Users/<user>, so every NAS
+                        # layout would have gone to disk in full. %r because the
+                        # name may contain newlines.
                         refused += 1
-                        if refused <= _MAX_REFUSALS_LOGGED:
+                        if refused <= _MAX_ENTRY_LOGS:
                             log.error(
                                 'Refusing to extract archive entry outside the '
                                 'extraction directory: %r', info.filename,
-                            )
-                        elif refused == _MAX_REFUSALS_LOGGED + 1:
-                            log.error(
-                                'Further refused entries in this archive will not '
-                                'be logged individually; a count follows at the end.'
                             )
                         continue
                     if not os.path.isfile(extr_file_path):
@@ -354,32 +335,59 @@ class ExtractorMixin:
                     # file and a same-named one under Sample/) map to one destination,
                     # so the contract "distinct target files present" must hold.
                     if extr_file_path in extracted:
-                        # VISIBLE, because the loser is silently discarded and
+                        # BOUNDED for the same reason the refusal above is: an
+                        # earlier version of this very commit capped refusals
+                        # and then added this warning uncapped, which is the
+                        # identical amplification vector two hunks apart.
+                        #
+                        # Visible, because the loser is discarded silently and
                         # the release is still tagged extracted. Driven:
                         #
                         #   ['movie.mkv', 'Sample\\movie.mkv'] -> FEATURE-20GB
                         #   ['Sample\\movie.mkv', 'movie.mkv'] -> SAMPLE-50MB
                         #
                         # Archive ORDER decides, so in the bad order a 50MB
-                        # sample replaces the feature and the operator is told
-                        # nothing. Long-standing for `Sample/` (RAR3); T36
-                        # widens it to `Sample\\` (RAR5), which previously
-                        # crashed the whole archive instead.
-                        #
-                        # Warn only -- picking a winner (largest wins) is a
-                        # behaviour change and does not belong in a security
-                        # fix. Tracked as T43.
-                        log.warning(
-                            'Two archive entries flatten to the same name; the '
-                            'later one is discarded and which wins depends on '
-                            'archive order: %r', info.filename,
-                        )
+                        # sample replaces the feature and nobody is told.
+                        # Long-standing for `Sample/` (RAR3); T36 widens it to
+                        # `Sample\\` (RAR5), which previously crashed instead.
+                        # Warn only -- picking a winner is a behaviour change
+                        # that does not belong in a security fix. See T43.
+                        collisions += 1
+                        if collisions <= _MAX_ENTRY_LOGS:
+                            log.warning(
+                                'Two archive entries flatten to the same name; '
+                                'the later one is discarded and which wins '
+                                'depends on archive order: %r', info.filename,
+                            )
                     else:
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
+            self._logArchiveSummary(refused, collisions)
 
         return extracted
+
+    @staticmethod
+    def _logArchiveSummary(refused, collisions):
+        """Report totals when per-entry logging was capped.
+
+        The cap exists so a hostile archive cannot flood the log, but a cap
+        with no summary hides how bad the archive was -- an operator sees five
+        lines and cannot tell five poisoned entries from five thousand. An
+        earlier version of this code promised "a count follows at the end" in
+        the truncation notice and never emitted one, which is worse than
+        silence: a log line that tells the reader to wait for something that
+        never arrives.
+
+        Counts only, deliberately: no paths, no entry names.
+        """
+        if refused > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries were refused in total (only the first '
+                      '%d were logged individually).', refused, _MAX_ENTRY_LOGS)
+        if collisions > _MAX_ENTRY_LOGS:
+            log.warning('%d archive entries collided on the same destination in '
+                        'total (only the first %d were logged individually).',
+                        collisions, _MAX_ENTRY_LOGS)
 
     @staticmethod
     def _safeEntryBasename(filename):

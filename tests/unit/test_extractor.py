@@ -879,9 +879,18 @@ class TestRefusalLoggingIsBoundedAndPrivate:
         assert len(refusals) <= 5, (
             'unbounded refusal logging: %d ERROR lines from one archive' % len(refusals)
         )
-        assert any('will not be logged individually' in m for m in messages), (
-            'the flood was truncated with no notice, so an operator cannot tell '
-            'the difference between five bad entries and a thousand'
+        # And the TOTAL is reported, so the cap does not hide how bad the
+        # archive was. An earlier version promised "a count follows at the
+        # end" and never emitted one -- worse than silence, because it tells
+        # the reader to wait for something that never arrives.
+        summary = [m for m in messages if 'in total' in m]
+        assert summary, (
+            'the flood was capped with no total, so an operator cannot tell '
+            'five poisoned entries from a thousand'
+        )
+        assert '1000' in summary[0], (
+            'the summary must carry the real count, not just say there were '
+            'more: %r' % summary[0]
         )
 
     def test_the_refusal_does_not_write_private_paths_to_the_log(self, tmp_path, caplog):
@@ -972,4 +981,35 @@ class TestBasenameCollisionIsVisible:
         assert warnings, (
             'the discarded entry produced no warning, so an operator cannot '
             'tell a sample replaced the feature file'
+        )
+
+
+class TestCollisionWarningIsAlsoBounded:
+    """The collision warning was added UNCAPPED in the same commit that capped
+    the refusal ERROR five hunks above -- the identical amplification vector,
+    introduced while fixing it. A hostile archive can carry thousands of
+    entries colliding on one name as cheaply as it can carry poisoned ones.
+    """
+
+    def test_a_thousand_colliding_entries_do_not_produce_a_thousand_warnings(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['movie.mkv'] + ['Sample%d\\movie.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.WARNING,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        per_entry = [m for m in messages if 'flatten to the same name' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded collision warnings: %d lines from one archive' % len(per_entry)
+        )
+        summary = [m for m in messages if 'collided on the same destination' in m]
+        assert summary and '1000' in summary[0], (
+            'the collision total was not reported, so the cap hides the scale'
         )
