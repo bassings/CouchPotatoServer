@@ -1015,6 +1015,39 @@ class TestCollisionWarningIsAlsoBounded:
         )
 
 
+class TestWhatTheseTestsDoNotVerify:
+    r"""States the boundary of this file's coverage, because the PR that added
+    most of it rests on a claim these tests cannot check.
+
+    Every test here mocks `rarfile.RarFile` via `_make_rar_handle`, so
+    `info.filename` is whatever string the test supplies. That is the right
+    seam for the defect -- the traversal is in CouchPotato's own path
+    construction, not in rarfile -- but it means the motivating claim
+    ("rarfile normalises separators for RAR3 and NOT for RAR5, which is what
+    WinRAR has produced by default since 2013") is asserted nowhere in this
+    repository. It was verified once, by a reviewer building a real RAR5
+    archive byte by byte, and that verification does not live here.
+
+    Why that is tolerable rather than a hole: the FIX does not depend on the
+    claim. `_safeEntryBasename` normalises backslashes whether or not rarfile
+    already did -- if rarfile started normalising RAR5 tomorrow, the call
+    becomes a no-op and nothing breaks. The claim explains WHY the bug was
+    reachable, not WHETHER the fix works.
+
+    What would genuinely close it is a real RAR5 fixture, which needs an
+    archive writer this project does not have and a binary test fixture it
+    deliberately avoids. `TestRarfileApiSignatureGuard` above pins the API
+    surface instead, which is the part that can silently drift.
+    """
+
+    def test_the_sanitizer_is_correct_whether_or_not_rarfile_normalises(self):
+        """Both spellings flatten identically, so the fix holds under either
+        rarfile behaviour rather than depending on which one is current."""
+        assert _Extractor._safeEntryBasename('Sample\\movie.mkv') == 'movie.mkv'
+        assert _Extractor._safeEntryBasename('Sample/movie.mkv') == 'movie.mkv'
+        assert _Extractor._safeEntryBasename('Sample/Sub\\movie.mkv') == 'movie.mkv'
+
+
 class TestTheT41TradeoffIsPinned:
     r"""Pins a deliberate choice that was documented but untested.
 

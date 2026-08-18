@@ -1486,7 +1486,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
       is visible rather than just the current state.
 
-- [ ] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: queued (no deps) — **security, attacker-reachable**
+- [ ] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: pr-open #265 — **security, attacker-reachable**
 
       Found by the security lens while reviewing the rarfile 4.5 bump, and
       confirmed independently by driving the real `sp()` rather than reading it:
