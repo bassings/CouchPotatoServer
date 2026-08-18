@@ -56,6 +56,7 @@ import check_test_traps  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from rule6_guard_corpus import SHAPES as RULE6_SHAPES  # noqa: E402
+from tests.unit.conftest import sanitized_git_env
 
 
 def run_checker(*args):
@@ -756,11 +757,11 @@ def test_tracked_test_files_sees_both_pytest_naming_conventions(tmp_path):
     Asserting the exact list, not membership, so it also pins what must NOT
     be swept in: a helper module and a conftest are not tests.
     """
-    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, env=sanitized_git_env())
     (tmp_path / "pkg").mkdir()
     for name in ("test_prefix.py", "suffix_test.py", "helpers.py", "conftest.py"):
         (tmp_path / "pkg" / name).write_text("", encoding="utf-8")
-    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, env=sanitized_git_env())
 
     assert check_test_traps._tracked_test_files(tmp_path) == [
         "pkg/suffix_test.py",
@@ -882,14 +883,14 @@ def test_tracked_test_files_uses_git_ls_files_not_a_filesystem_walk(tmp_path):
     invisible to this rule, not merely filtered out by convention.
     """
     repo = tmp_path
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, env=sanitized_git_env())
 
     tracked = repo / "test_tracked.py"
     tracked.write_text("def test_x():\n    pass\n")
-    subprocess.run(["git", "add", "test_tracked.py"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "test_tracked.py"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True, env=sanitized_git_env())
 
     # Untracked scratch file, same test_*.py naming pattern, sitting right
     # next to the tracked one on disk.
@@ -904,15 +905,15 @@ def test_tracked_test_files_uses_git_ls_files_not_a_filesystem_walk(tmp_path):
 def test_tracked_test_files_excludes_libs(tmp_path):
     """Vendored code under libs/ is not ours to flag."""
     repo = tmp_path
-    subprocess.run(["git", "init", "-q"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True)
-    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "config", "user.name", "Test"], cwd=repo, check=True, env=sanitized_git_env())
 
     (repo / "libs").mkdir()
     (repo / "libs" / "test_vendored.py").write_text("def test_x():\n    pass\n")
     (repo / "test_ours.py").write_text("def test_y():\n    pass\n")
-    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True, env=sanitized_git_env())
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=repo, check=True, env=sanitized_git_env())
 
     files = check_test_traps._tracked_test_files(repo)
     assert files == ["test_ours.py"], files

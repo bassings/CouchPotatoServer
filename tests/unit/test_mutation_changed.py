@@ -29,6 +29,7 @@ SCRIPT = REPO_ROOT / "scripts" / "mutation_changed.py"
 
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 import mutation_changed  # noqa: E402
+from tests.unit.conftest import sanitized_git_env
 
 
 # ── Config parsing ──────────────────────────────────────────────────────────
@@ -392,8 +393,7 @@ def test_runner_env_does_not_duplicate_libs(monkeypatch):
 
 def _git(cwd, *args):
     return subprocess.run(
-        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True
-    ).stdout
+        ["git", *args], cwd=cwd, capture_output=True, text=True, check=True, env=sanitized_git_env()).stdout
 
 
 @pytest.fixture

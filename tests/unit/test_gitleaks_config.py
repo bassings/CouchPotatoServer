@@ -21,6 +21,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.unit.conftest import sanitized_git_env
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / ".gitleaks.toml"
@@ -165,8 +166,7 @@ def test_allowlisted_runtime_paths_are_actually_gitignored_and_untracked():
             ["git", "ls-files", "--error-unmatch", path],
             cwd=REPO_ROOT,
             capture_output=True,
-            text=True,
-        )
+            text=True, env=sanitized_git_env())
         assert result.returncode != 0, (
             f"{path} is TRACKED by git but allowlisted from secret scanning — "
             f"that combination hides real secrets. Untrack it or drop the allowlist entry."

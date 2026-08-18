@@ -38,8 +38,11 @@ audited unsanitised call sites between them:
 """
 import os
 import subprocess
+from tests.unit.conftest import sanitized_git_env
 import sys
 from pathlib import Path
+import re
+import ast
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -62,9 +65,15 @@ def _victim_repo(tmp_path):
     victim.mkdir()
 
     def git(*args):
+        # sanitized_git_env(), because THIS helper builds the victim. Under a
+        # real worktree push the parent pytest already carries the checkout's
+        # GIT_DIR, which this inherits -- so without stripping it, the fixture
+        # that exists to prove we do not corrupt the real repo would build its
+        # victim INSIDE the real repo. The regression test would carry the bug
+        # it tests for.
         return subprocess.run(
             ['git', *args], cwd=str(victim), check=True,
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=sanitized_git_env(),
         )
 
     git('init', '-q', '-b', 'main')
@@ -81,9 +90,12 @@ def _victim_repo(tmp_path):
 
 def _snapshot(victim):
     def git(*args):
+        # Same reason as the builder above: a snapshot taken through an
+        # ambient GIT_DIR would describe the wrong repository, so the
+        # before/after comparison could pass while the victim was mangled.
         return subprocess.run(
             ['git', *args], cwd=str(victim['dir']),
-            capture_output=True, text=True,
+            capture_output=True, text=True, env=sanitized_git_env(),
         ).stdout.strip()
 
     return {
@@ -132,3 +144,63 @@ def test_the_real_fixtures_survive_a_poisoned_ambient_GIT_DIR(tmp_path):
         'fixture branches leaked into the victim repository'
     )
     assert after['wip_exists'], 'uncommitted work in the victim disappeared'
+
+
+def test_no_test_file_invokes_git_without_sanitizing_the_environment():
+    """The guard that makes the fix survive the next contributor.
+
+    The original fix audited two files and sanitised every git call in both.
+    That was true and insufficient: review then found the SAME pattern in
+    `test_check_test_traps.py` (12 sites), `test_mutation_changed.py`,
+    `test_gitleaks_config.py` -- and, worst of all, in the victim fixture of
+    THIS file, so the regression test for the corruption bug was itself
+    carrying the corruption bug.
+
+    A prose rule ("remember to pass env=") could not have caught that, because
+    forgetting is exactly the failure mode. This scans the tree instead, so a
+    new unsanitised call site fails by name at the next `make verify` rather
+    than the next time somebody pushes from a worktree.
+
+    Deliberately a source scan, not a runtime check: the damage happens inside
+    a subprocess in a test that may not run on this machine, so the only place
+    to catch it reliably is the source.
+
+    Deliberately AST, not a regex. The first version of this guard WAS a
+    regex, and it reported five false positives on calls that were correctly
+    sanitised -- because `[^)]*?` stops at the first `)`, and `cwd=str(tmp_path)`
+    closes the match before `env=` is ever reached. A guard that cries wolf on
+    correct code gets deleted by the next person in a hurry, which is a worse
+    outcome than not having it.
+    """
+    tests_dir = Path(__file__).parent
+    offenders = []
+
+    for path in sorted(tests_dir.glob('*.py')):
+        tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr in ('run', 'check_output', 'Popen')):
+                continue
+            if not (isinstance(func.value, ast.Name) and func.value.id == 'subprocess'):
+                continue
+            if not node.args:
+                continue
+            argv = node.args[0]
+            if not (isinstance(argv, ast.List) and argv.elts):
+                continue
+            first = argv.elts[0]
+            if not (isinstance(first, ast.Constant) and first.value == 'git'):
+                continue
+            if any(kw.arg == 'env' for kw in node.keywords):
+                continue
+            offenders.append('%s:%d' % (path.name, node.lineno))
+
+    assert not offenders, (
+        'these git subprocess calls pass no env=, so an ambient GIT_DIR (which '
+        'git exports into pre-push hooks launched from a worktree) makes them '
+        'operate on the REAL repository instead of their cwd -- `git init` in a '
+        'tmp dir silently re-inits the repo GIT_DIR names. Pass '
+        'env=sanitized_git_env():\n  ' + '\n  '.join(offenders)
+    )
