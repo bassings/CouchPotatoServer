@@ -10,6 +10,7 @@ install one per OS) and the archive is left untouched -- the release is
 NOT tagged or failed, it is simply retried on a later scan once a tool is
 available.
 """
+import errno
 import glob
 import os
 import re
@@ -354,6 +355,35 @@ class ExtractorMixin:
                             # of the broader catch going in, which is the whole
                             # argument for the narrow one.
                             raise
+                        except OSError as e:
+                            # ENAMETOOLONG is an OSError, but it is derived
+                            # from THIS entry's attacker-controlled name, not
+                            # from the environment -- driven, a 300-character
+                            # entry name gives errno 63 out of `os.replace`
+                            # and aborted the archive, so `good.mkv` sitting
+                            # after it never extracted.
+                            #
+                            # That correction matters more than the case: the
+                            # axis is not "rarfile.Error vs OSError", it is
+                            # "caused by this entry or by the machine". Sorting
+                            # by exception TYPE looked like the same thing and
+                            # is not, which is why one hostile name still got
+                            # through a split written specifically to stop
+                            # hostile names.
+                            #
+                            # Only ENAMETOOLONG, deliberately. ENOSPC, EACCES,
+                            # EROFS and EIO are the machine, will fail
+                            # identically for every remaining entry, and must
+                            # still abort rather than hand `extractFiles` a
+                            # partial list it tags as extracted.
+                            if e.errno != errno.ENAMETOOLONG:
+                                raise
+                            unreadable += 1
+                            if unreadable <= _MAX_ENTRY_LOGS:
+                                log.error('Archive entry name is too long for '
+                                          'this filesystem, skipping it: %r',
+                                          info.filename)
+                            continue
                         except rarfile.Error:
                             # A corrupt or unreadable ENTRY is attacker-
                             # controlled, so it gets the same treatment as a

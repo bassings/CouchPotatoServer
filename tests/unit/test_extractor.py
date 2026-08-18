@@ -6,6 +6,7 @@ when no external extractor tool (unrar/unar/7z/7zz/bsdtar) is available,
 RAR extraction must be skipped -- logging exactly one warning per scan --
 rather than failing or tagging the release.
 """
+import errno
 import logging
 import os
 import stat
@@ -1194,3 +1195,63 @@ class TestUnreadableEntryLoggingIsAlsoBounded:
             'the unreadable total was not reported, so the cap hides the scale'
         )
         assert extracted == [], 'nothing was extractable, so the list must be empty'
+
+
+class TestALongEntryNameDoesNotSinkTheArchive:
+    """The correction to the entry-vs-environment split.
+
+    `ENAMETOOLONG` is an `OSError`, so the first version of the split -- which
+    sorted by exception TYPE -- let it propagate as though it were the machine
+    failing. It is not: it is derived from THIS entry's attacker-controlled
+    name. Driven before fixing:
+
+        errno=63 (ENAMETOOLONG) raised out of extractArchive
+        good.mkv on disk? False
+
+    One hostile name still aborted the archive, through a split written
+    specifically to stop hostile names from doing that. The axis is "caused by
+    this entry or by the machine", and exception type is only a proxy for it --
+    close enough to look right, and wrong here.
+    """
+
+    def test_an_overlong_name_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        long_name = 'A' * 300 + '.mkv'
+        names = [long_name, 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an overlong entry name aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('too long for this filesystem' in r.getMessage()
+                   for r in caplog.records), 'the skip was silent'
+
+    def test_a_disk_full_oserror_still_aborts(self, tmp_path):
+        """The other direction: only ENAMETOOLONG is entry-derived. ENOSPC is
+        the machine, fails identically for every remaining entry, and must not
+        be turned into a partial success."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        handle = _make_rar_handle([_make_info('a.mkv'), _make_info('b.mkv')],
+                                  {'a.mkv': b'x', 'b.mkv': b'y'})
+
+        def no_space(info, *a, **kw):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+
+        handle.open = no_space
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            with pytest.raises(OSError) as excinfo:
+                _Extractor().extractArchive('a.rar', str(extr_path))
+        assert excinfo.value.errno == errno.ENOSPC
