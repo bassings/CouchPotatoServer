@@ -1704,7 +1704,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
-- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: building (branch `fix/t42-gitdir-leak`)
+- [ ] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: pr-open #264
 
       **Not a theory. It has now corrupted this repository TWICE in one day,**
       both times flipping `core.bare` to `true` so the main checkout stopped
@@ -1755,6 +1755,37 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       not the corruption assertion). Caught because the failure text did not
       name the behaviour being guarded, which is the whole reason for reading
       failure messages rather than counting reds.
+      **Reframed 2026-08-18, after the guard was wrong four times.** The first
+      fix sanitised each call site and added an AST guard to enforce it. That
+      guard missed aliased imports (`subprocess as sp` — 17 of 20 sites in the
+      file the incident happened in), missed subdirectories, accepted any
+      `env=` whether sanitised or not, and could not see argv built by an
+      `*args`-forwarding lambda — a shape with a LIVE unsanitised instance in
+      `test_next_beta_version.py` that the guard passed clean.
+
+      Four defects in one guard is the rule-11 signal, and the frame was
+      wrong: policing call SHAPES is a losing game, because every wrapper,
+      alias and lambda is a new spelling.
+
+      So the hazard is removed instead of the callers policed.
+      `tests/conftest.py` strips the six variables from `os.environ` once, for
+      the whole process, before collection. Every subprocess is then clean by
+      construction, whatever shape the call takes and whether or not its
+      author ever heard of the helper. Proven in isolation: with the scrub
+      removed, running `test_next_beta_version.py` (no sanitisation anywhere)
+      under a poisoned GIT_DIR moves the victim repo's HEAD.
+
+      Three layers, each failing on its own removal:
+
+          process scrub          -> victim HEAD moves
+          per-call sanitisation  -> 1 failed
+          containment assertion  -> 1 failed neutered, 55 affected inverted
+
+      The guard remains as defence in depth with its blind spot STATED rather
+      than implied, and the condition for revisiting recorded: prove any change
+      by planting an offender, never by reading — every defect in it was found
+      that way and none by inspection.
+
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
       **Add to its scope (2026-08-18):** citations that rot. This session

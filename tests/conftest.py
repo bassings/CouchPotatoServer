@@ -1,3 +1,44 @@
+import os as _os
+
+# ---------------------------------------------------------------------------
+# Remove git's location variables from the ENTIRE test process, once, before
+# anything is collected.
+#
+# This is the layer that actually closes the class, and it exists because
+# per-call sanitisation did not. Git exports GIT_DIR into hook subprocesses
+# launched from a linked worktree; pre-push runs the suite; and a test that
+# shells out to git then operates on the REAL repository instead of its cwd
+# -- `git init` in a tmp dir silently re-inits the repo GIT_DIR names. That
+# corrupted this repository twice on 2026-08-18.
+#
+# The first fix sanitised each call site and added an AST guard to enforce it.
+# That guard was then wrong FOUR times: it missed aliased imports
+# (`subprocess as sp`), it missed a subdirectory, it accepted any `env=`
+# whether sanitised or not, and it could not see argv built by an
+# `*args`-forwarding lambda -- a shape with a live unsanitised instance
+# sitting in `test_next_beta_version.py`. Policing call SHAPES is a losing
+# game: every wrapper, alias and lambda is a new spelling.
+#
+# So remove the hazard instead of policing the callers. With these unset in
+# `os.environ`, every subprocess inherits a clean environment by construction,
+# whatever shape the call takes and whether or not its author ever heard of
+# this module. `sanitized_git_env()` and the AST guard remain as defence in
+# depth, not as the primary protection.
+#
+# Safe to do unconditionally: nothing in this suite reads GIT_DIR, and git
+# falls back to discovery from `cwd`, which is what every call already
+# intends. Tests that mean to query the real repo pass `cwd=REPO_ROOT` and
+# keep working.
+for _var in (
+    'GIT_DIR',
+    'GIT_WORK_TREE',
+    'GIT_INDEX_FILE',
+    'GIT_OBJECT_DIRECTORY',
+    'GIT_COMMON_DIR',
+    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+):
+    _os.environ.pop(_var, None)
+
 """Shared pytest fixtures for CouchPotatoServer test suite."""
 import json
 import os

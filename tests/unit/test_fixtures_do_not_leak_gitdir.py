@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 import ast
 import pytest
+import tempfile
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -172,6 +173,22 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
     guard that cries wolf on correct code gets deleted by the next person in a
     hurry, which is worse than not having it.
 
+    KNOWN LIMIT, stated rather than implied. This matches CALL SHAPES, so it
+    cannot see argv assembled elsewhere -- an `*args`-forwarding wrapper such
+    as `run = lambda *a: subprocess.run(a, ...)` in
+    `test_next_beta_version.py` passes it cleanly while invoking git. Chasing
+    every wrapper, alias and lambda is a losing game: each is a new spelling,
+    and this guard was wrong four times learning that.
+
+    Which is why it is NO LONGER the primary protection. `tests/conftest.py`
+    strips git's location variables from `os.environ` for the whole process
+    before collection, so every subprocess is clean by construction whatever
+    shape the call takes. This guard is defence in depth over that, and its
+    blind spots are survivable because of it. Revisit if the scrub is ever
+    removed, and prove any change by PLANTING an offender rather than reading
+    the code -- every defect in this guard was found that way and none by
+    inspection.
+
     ALIASES ARE RESOLVED PER FILE, and that is not a refinement. The second
     version matched only `subprocess.run`, while `test_hybrid_gate.py` -- the
     file the original incident happened in -- does `import subprocess as sp`
@@ -183,6 +200,47 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
     """
     tests_dir = Path(__file__).parent
     offenders = []
+
+    def _calls_sanitizer(node):
+        return (isinstance(node, ast.Call)
+                and ((isinstance(node.func, ast.Name)
+                      and node.func.id == 'sanitized_git_env')
+                     or (isinstance(node.func, ast.Attribute)
+                         and node.func.attr == 'sanitized_git_env')))
+
+    def _sanitized_names(tree):
+        """Locals bound from `sanitized_git_env(...)`, so `env = ...` then
+        `env=env` is recognised rather than reported.
+
+        Name-sniffing was tried first (`'sanit' in name`) and produced false
+        positives on correct code -- the same failure that killed the regex
+        version. A guard that cries wolf gets deleted, so this reads the
+        assignment instead of guessing from the identifier."""
+        names = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Assign) and _calls_sanitizer(node.value):
+                for target in node.targets:
+                    if isinstance(target, ast.Name):
+                        names.add(target.id)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                if _calls_sanitizer(node.value) and isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+        return names
+
+    def _is_sanitized(node, names):
+        """Presence of `env=` is not protection: `env=os.environ.copy()` still
+        carries an inherited GIT_DIR and is exactly as vulnerable as passing
+        nothing."""
+        if _calls_sanitizer(node):
+            return True
+        if isinstance(node, ast.Name) and node.id in names:
+            return True
+        # `sanitized_git_env() if env is None else env` -- the caller-supplied
+        # branch is the caller's responsibility, and every such caller in this
+        # tree is itself checked by this same scan.
+        if isinstance(node, ast.IfExp):
+            return _is_sanitized(node.body, names) or _is_sanitized(node.orelse, names)
+        return False
 
     def subprocess_aliases(tree):
         """Every local name bound to the `subprocess` module in this file,
@@ -198,6 +256,7 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
     for path in sorted(tests_dir.rglob('*.py')):
         tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
         aliases = subprocess_aliases(tree)
+        sanitized_names = _sanitized_names(tree)
         if not aliases:
             continue
         for node in ast.walk(tree):
@@ -217,7 +276,12 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
             first = argv.elts[0]
             if not (isinstance(first, ast.Constant) and first.value == 'git'):
                 continue
-            if any(kw.arg == 'env' for kw in node.keywords):
+            env_kw = next((kw for kw in node.keywords if kw.arg == 'env'), None)
+            if env_kw is not None and _is_sanitized(env_kw.value, sanitized_names):
+                continue
+            if env_kw is not None:
+                offenders.append('%s:%d (env= is not sanitized_git_env())'
+                                 % (path.relative_to(tests_dir), node.lineno))
                 continue
             offenders.append('%s:%d' % (path.relative_to(tests_dir), node.lineno))
 
@@ -285,3 +349,59 @@ class TestTheContainmentAssertionIsItselfGuarded:
             capture_output=True, env=sanitized_git_env(),
         )
         assert_git_dir_is(tmp_path)
+
+
+def test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper():
+    """Isolates the SCRUB layer, the one that actually closes the class.
+
+    The per-call `sanitized_git_env()` only protects call sites that remember
+    to use it, and an AST guard policing that was wrong four times: aliased
+    imports, a subdirectory, accepting any `env=` whatever it contained, and
+    argv built by an `*args`-forwarding lambda. Every wrapper and alias is a
+    new spelling, so shape-matching is a losing game.
+
+    `tests/conftest.py` therefore strips git's location variables from
+    `os.environ` once, for the whole process, before anything is collected.
+    After that every subprocess inherits a clean environment by construction.
+
+    This test drives that specifically: it runs `test_next_beta_version.py`,
+    which builds a repo with a bare `*args` lambda and passes NO `env=`
+    anywhere, under an ambient GIT_DIR pointing at a throwaway victim. Only
+    the scrub can save it -- the helper is never imported there. If the victim
+    survives, the scrub is doing the work.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        victim = Path(tmp) / 'victim'
+        victim.mkdir()
+        env = sanitized_git_env()
+        subprocess.run(['git', 'init', '-q', '-b', 'main', str(victim)],
+                       check=True, capture_output=True, env=env)
+        (victim / 'f.txt').write_text('original\n')
+        for args in (('add', '-A'), ('-c', 'user.email=t@e.com', '-c', 'user.name=T',
+                                     'commit', '-qm', 'seed')):
+            subprocess.run(['git', *args], cwd=str(victim), check=True,
+                           capture_output=True, env=env)
+        before = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
+                                capture_output=True, text=True, env=env).stdout.strip()
+
+        poisoned = os.environ.copy()
+        poisoned['GIT_DIR'] = str(victim / '.git')
+        result = subprocess.run(
+            [sys.executable, '-B', '-m', 'pytest',
+             'tests/unit/test_next_beta_version.py', '-q'],
+            cwd=str(REPO), capture_output=True, text=True, env=poisoned,
+        )
+
+        after = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
+                               capture_output=True, text=True, env=env).stdout.strip()
+        branch = subprocess.run(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], cwd=str(victim),
+                                capture_output=True, text=True, env=env).stdout.strip()
+        bare = subprocess.run(['git', 'config', '--get', 'core.bare'], cwd=str(victim),
+                              capture_output=True, text=True, env=env).stdout.strip()
+
+    assert result.returncode == 0, (
+        'the unsanitised suite failed under a poisoned GIT_DIR:\n%s' % result.stdout[-2000:]
+    )
+    assert after == before, 'the victim HEAD moved -- the scrub did not protect it'
+    assert branch == 'main', 'the victim branch changed -- the scrub did not protect it'
+    assert bare == 'false', 'core.bare flipped on the victim -- the exact 2026-08-18 damage'
