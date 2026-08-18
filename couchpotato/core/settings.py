@@ -102,6 +102,17 @@ class Settings:
         self.log = None
         self.directories_delimiter = '::'
 
+        # section -> set(option_name) actually passed to registerDefaults on
+        # THIS instance. `self.types` (class attribute, shared across every
+        # Settings()) cannot answer "is this option registered": setType is
+        # only called `if option.get('type')`, so a great many legitimately
+        # registered options -- plain strings with no declared type -- have
+        # no entry in it either, same as an orphan. This has to be instance
+        # state, not a fourth class attribute alongside `options`/`types`, or
+        # one test's registration would make an unrelated Settings() think an
+        # orphan section was registered.
+        self.registered_options = {}
+
     def setFile(self, config_file):
         self.file = config_file
         self.p = ConfigParser.RawConfigParser()
@@ -132,6 +143,7 @@ class Settings:
         self.addSection(section_name)
 
         for option_name, option in options.items():
+            self.registered_options.setdefault(section_name, set()).add(option_name)
             self.setDefault(section_name, option_name, option.get('default', ''))
 
             # Set UI-meta for option (hidden/ro/rw)
@@ -237,8 +249,33 @@ class Settings:
 
         for section in self.sections():
             values[section] = {}
+            registered_in_section = self.registered_options.get(section, set())
             for option_name, option_value in self.p.items(section):
                 if self.isOptionMeta(section, option_name):
+                    continue
+
+                if option_name not in registered_in_section:
+                    # ORPHAN: present in config.ini, but no live plugin ever
+                    # called registerDefaults for it -- typically because the
+                    # plugin that used to own it was removed (Hadouken, on
+                    # this branch). `getType()` falls back to 'unicode' for
+                    # anything not in `self.types`, so without this branch an
+                    # orphaned credential comes back verbatim.
+                    #
+                    # Mask on the RAW value, before any type-dependent branch
+                    # below runs, and do not fall through to them. Those
+                    # branches trust `getType()`, which reads `self.types` --
+                    # a CLASS attribute shared by every Settings() in the
+                    # process -- so an unrelated instance could have left a
+                    # 'directory' type registered against this same
+                    # section/option name even though THIS instance never
+                    # registered it. Running `abs2chroot` on an untrusted
+                    # orphan value is exactly the resolution we don't want to
+                    # perform at all; masking first and `continue`-ing avoids
+                    # it entirely rather than trusting stale shared state to
+                    # decide.
+                    masked = str(option_value)
+                    values[section][option_name] = len(masked) * '*' if masked else masked
                     continue
 
                 value = self.get(option_name, section)

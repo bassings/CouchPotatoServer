@@ -1134,7 +1134,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       three crashes shipped. T24 and T27 added coverage for their own lines;
       `connect()` still has none.
 
-- [x] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: **closed by removal** (2026-08-12) — see "The hadouken question" below; the module is gone rather than fixed
+- [ ] T29: `HadoukenAPIv4` cannot be constructed, so the entire v4 protocol is unusable — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
 
       Fourth guaranteed crash from this file, found by the T28 implementer
       driving `connect()`'s v4 branch for real instead of mocking the API
@@ -1195,7 +1195,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       test (`test_connect_v4_raises_typeerror_pre_existing_unrelated_bug`)
       no longer exist to fix or invert.
 
-- [x] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: **closed by removal** (2026-08-12) — see the question below
+- [ ] T30: no hadouken RPC can succeed — `invoke` posts a str body — state: pr-open #261 (owner approved removal 2026-08-12; the box is ticked only when #261 merges, not when the decision was made)
 
       Fifth guaranteed crash in this file, raised in review of #259 and
       confirmed by driving it:
@@ -1247,7 +1247,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `couchpotato/core/downloaders/hadouken.py` is deleted, nothing was
       patched.
 
-- [ ] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: queued (no deps)
+- [ ] T31: `getValues()` returns an unregistered section's secrets UNMASKED — state: building, in #261 (was: queued, no deps)
 
       Found while removing hadouken, by an implementer driving the orphan
       `[hadouken]` config section rather than reasoning about it. General,
@@ -1283,8 +1283,33 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       on a name heuristic (`*_key`, `*_pass*`, `*token*`, `secret`), and say
       which and why.
 
-      Not blocking the hadouken removal: the exposure predates it and is
-      not made worse in kind, only more permanent for one section.
+      **That last paragraph used to read "not blocking the hadouken
+      removal", and it was wrong.** Corrected 2026-08-18 after the codex
+      reviewer blocked #261 on exactly this. The exposure does predate the
+      removal, but the removal changes its kind for `[hadouken]`, not just
+      its permanence: before #261 those two credentials were registered as
+      type `password` and masked, and after it they are returned in the
+      clear. A change that converts a masked secret into a plaintext one is
+      a regression introduced by that change, whatever the state of the
+      surrounding class of bug. So the fix ships in #261.
+
+      The "mask all vs name heuristic" question above resolves to NEITHER.
+      A name heuristic (`*_key`, `*_pass*`, `*token*`) misses the next
+      secret, which is the whole failure mode of a denylist. Mask by
+      REGISTRATION: an option that no plugin declared is masked, one that
+      was declared is not. That also disposes of the operator-recovery
+      worry, since anything an operator can read in the UI is by definition
+      registered.
+
+      One trap sits under the obvious implementation. `registerDefaults`
+      records a type only `if option.get('type')`, so a legitimately
+      registered plain-string option has NO entry in `self.types` either.
+      Masking on "absent from `self.types`" would blank out real settings in
+      the UI. The registration record has to be kept separately, at
+      `registerDefaults`.
+
+      Masking only: the orphan values stay on disk. Deleting a user's config
+      data is irreversible, and that is not what a disclosure fix is for.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
@@ -1494,6 +1519,29 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 36** — **storage resolved; #261 is blocked by one review thread, not a red check.**
+  The owner freed the volume (260Gi free, was 6.6Gi), so the gate is runnable
+  again. Reconciled from `gh`, not from memory: #261 has all
+  16 checks SUCCESS but `mergeStateStatus: BLOCKED`, and the cause is one
+  unresolved review thread, not a red check — `required_conversation_resolution`
+  is on. The thread is the codex reviewer's P1 on orphan-section masking, which
+  is T31.
+
+  Drove it before acting on it. An unregistered `[hadouken]` section returns
+  `{'api_key': 'SUPERSECRET_KEY', 'auth_pass': 'hunter2'}` from `getValues()`
+  while a registered password in the same call returns `*****************`. T31's
+  own note saying it does not block the removal is corrected in place above,
+  with the reason: the removal turns two masked credentials into plaintext ones,
+  which is a regression regardless of the age of the underlying class of bug.
+
+  T29 and T30 were ticked on 2026-08-12 when the owner APPROVED the removal.
+  That is the decision, not the merge, and the checklist's own rule says the box
+  is ticked only from `gh pr view`. Both un-ticked and set to `pr-open #261`.
+
+  Armed: implementer building T31 on `chore/remove-hadouken` (TDD, mask by
+  registration, mutation proof required). Next wake expects a local commit and a
+  `make verify` verdict to validate against the repo.
 
 - **Tick 35** — **#232 merged (`f97b3ab2`), T9 and T12 ticked. Plan 7 of 16.**
 
