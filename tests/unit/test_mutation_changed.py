@@ -414,8 +414,14 @@ def temp_repo(tmp_path):
 
 
 def run_script(cwd, *args):
+    # sanitized_git_env() even though this spawns python, not git: the script
+    # itself shells out to `git rev-parse --show-toplevel`, so an ambient
+    # GIT_DIR reaches git one hop away. The process-level scrub in
+    # tests/conftest.py already covers this; passing it explicitly keeps the
+    # call honest about what it depends on.
     return subprocess.run(
-        [sys.executable, str(SCRIPT), *args], cwd=cwd, capture_output=True, text=True
+        [sys.executable, str(SCRIPT), *args], cwd=cwd, capture_output=True,
+        text=True, env=sanitized_git_env(),
     )
 
 

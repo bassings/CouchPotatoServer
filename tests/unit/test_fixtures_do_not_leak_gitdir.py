@@ -242,31 +242,53 @@ def test_no_test_file_invokes_git_without_sanitizing_the_environment():
             return _is_sanitized(node.body, names) or _is_sanitized(node.orelse, names)
         return False
 
-    def subprocess_aliases(tree):
-        """Every local name bound to the `subprocess` module in this file,
-        including imports nested inside functions and methods."""
-        names = set()
+    SPAWNERS = ('run', 'check_output', 'check_call', 'call', 'Popen')
+
+    def subprocess_bindings(tree):
+        """Names bound to the `subprocess` MODULE, and names bound directly to
+        its spawning FUNCTIONS.
+
+        Both forms, because tracking only the module import made
+        `from subprocess import run` skip the ENTIRE file: `aliases` came back
+        empty and the early `continue` fired before a single call was
+        examined. Missing one call shape is a gap; silently declining to scan
+        a whole file is the guard reporting CLEAN on code it never read, which
+        is the failure this whole exercise is about.
+
+        Covers imports nested inside functions and methods too, which is how
+        the file the original incident happened in writes them.
+        """
+        modules, funcs = set(), set()
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     if alias.name == 'subprocess':
-                        names.add(alias.asname or 'subprocess')
-        return names
+                        modules.add(alias.asname or 'subprocess')
+            elif isinstance(node, ast.ImportFrom) and node.module == 'subprocess':
+                for alias in node.names:
+                    if alias.name in SPAWNERS:
+                        funcs.add(alias.asname or alias.name)
+        return modules, funcs
 
     for path in sorted(tests_dir.rglob('*.py')):
         tree = ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
-        aliases = subprocess_aliases(tree)
-        sanitized_names = _sanitized_names(tree)
-        if not aliases:
+        modules, funcs = subprocess_bindings(tree)
+        if not modules and not funcs:
             continue
+        sanitized_names = _sanitized_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
             func = node.func
-            if not (isinstance(func, ast.Attribute)
-                    and func.attr in ('run', 'check_output', 'check_call', 'call', 'Popen')):
-                continue
-            if not (isinstance(func.value, ast.Name) and func.value.id in aliases):
+            if isinstance(func, ast.Attribute):
+                if func.attr not in SPAWNERS:
+                    continue
+                if not (isinstance(func.value, ast.Name) and func.value.id in modules):
+                    continue
+            elif isinstance(func, ast.Name):
+                if func.id not in funcs:
+                    continue
+            else:
                 continue
             if not node.args:
                 continue

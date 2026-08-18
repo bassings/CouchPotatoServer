@@ -1,3 +1,4 @@
+"""Shared pytest fixtures for CouchPotatoServer test suite."""
 import os as _os
 
 # ---------------------------------------------------------------------------
@@ -39,7 +40,6 @@ for _var in (
 ):
     _os.environ.pop(_var, None)
 
-"""Shared pytest fixtures for CouchPotatoServer test suite."""
 import json
 import os
 import sys
