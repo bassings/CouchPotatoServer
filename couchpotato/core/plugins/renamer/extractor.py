@@ -252,6 +252,21 @@ class ExtractorMixin:
             # deleteEmptyFolder's rmdir fail with ENOTEMPTY forever. Sweep it.
             self._sweepStrayTempFiles(extr_path)
 
+            # NOT sp()-normalised, deliberately, and this was measured rather
+            # than assumed. When extr_path itself contains a backslash -- legal
+            # on POSIX, and choosable by a hostile torrent naming its folder --
+            # sp() rewrites the TARGET into a tree that does not exist, so no
+            # entry can be written either way. The question is only which way
+            # it fails:
+            #
+            #   base without sp(): contained=False -> refused, loop continues
+            #   base with    sp(): contained=True  -> write into a missing dir,
+            #                                         raises, ABANDONS the archive
+            #
+            # Applying sp() here therefore trades a clean per-entry refusal for
+            # an exception that sinks everything else in the archive. Tried it,
+            # measured it, reverted it. The real defect is sp() mangling
+            # extr_path, which is out of scope here -- tracked as T41.
             extr_real_path = os.path.realpath(extr_path)
             extracted = []
             rar_handle = rarfile.RarFile(rar_path)
@@ -261,14 +276,29 @@ class ExtractorMixin:
                         continue
                     entry_name = self._safeEntryBasename(info.filename)
                     extr_file_path = sp(os.path.join(extr_path, entry_name))
-                    if not isSubFolder(extr_file_path, extr_real_path):
-                        # Belt-and-braces, independent of the basename sanitization
-                        # above: catches any entry-name shape that defeats it, e.g.
-                        # a bare '..' with no separator at all (os.path.basename
-                        # only splits on the LAST '/', so a name with none in it
-                        # is returned unchanged). Refuse just this entry -- one
-                        # hostile name must not sink the whole archive -- but make
-                        # the refusal visible rather than a silent skip.
+                    if entry_name in ('', '.', '..') or not isSubFolder(extr_file_path, extr_real_path):
+                        # Two independent refusal reasons, deliberately sharing
+                        # one path so every rejected shape behaves identically.
+                        #
+                        # The NAME check catches entries that sanitize to nothing
+                        # useful: '', '.', '..', and anything ending in a
+                        # separator ('Sample/', 'Sample\'), which basename
+                        # reduces to ''. Those join back to extr_path ITSELF, and
+                        # `isSubFolder` accepts equality ("the same as or inside"),
+                        # so containment alone waves them through -- straight into
+                        # `os.replace(tmp, <a directory>)` and IsADirectoryError,
+                        # which escapes extractArchive and abandons the WHOLE
+                        # archive. On an unattended server that is a permanent
+                        # per-release wedge: never tagged, retried every scan,
+                        # a full traceback written each time.
+                        #
+                        # The CONTAINMENT check is the belt-and-braces half: it
+                        # catches any shape that defeats the basename
+                        # sanitization, whatever the next one turns out to be.
+                        #
+                        # Refuse just this entry -- one hostile name must not sink
+                        # the whole archive -- but make the refusal visible rather
+                        # than a silent skip.
                         log.error(
                             'Refusing to extract archive entry outside the extraction '
                             'directory: %s (from %s, resolved to %s)',

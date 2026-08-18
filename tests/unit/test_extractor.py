@@ -670,6 +670,95 @@ class TestExtractArchivePathTraversal:
         assert extracted == [str(extr_path / 'passwd')]
         assert (extr_path / 'passwd').read_bytes() == b'not-actually-passwd'
 
+    def test_a_winrar_backslash_subfolder_entry_extracts_instead_of_aborting(self, tmp_path):
+        r"""The change's largest real-world effect, and until this test the only
+        coverage of it was incidental.
+
+        rarfile normalises separators for RAR3 (`h.filename.replace("\\", "/")`)
+        but NOT for RAR5, which is what WinRAR has produced by default since
+        2013. So a RAR5 `Sample\movie-sample.mkv` reached extractArchive with
+        the backslash intact, sp() rewrote it into a `Sample/` directory that
+        does not exist, and os.replace raised FileNotFoundError -- aborting the
+        WHOLE archive, not just that entry. Most scene releases carry a
+        `Sample\` or `Subs\` folder, so this was the common case, not an edge.
+
+        Named for the benign behaviour rather than the escape, so that anyone
+        later pruning "redundant security tests" does not delete the only guard
+        on the regression this change actually fixes."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        entry = 'Sample\\movie-sample.mkv'
+        infos = [_make_info(entry)]
+        handle = _make_rar_handle(infos, {entry: b'sample-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        expected = extr_path / 'movie-sample.mkv'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'sample-bytes'
+
+    @pytest.mark.parametrize('entry_name', ['', '/', '\\', '.', 'Sample/', 'Sample\\'])
+    def test_an_entry_sanitising_to_nothing_is_refused_not_crashed(self, tmp_path, entry_name):
+        """Every one of these reduces to a basename of '' or '.', which joins
+        back to extr_path ITSELF. `isSubFolder` accepts equality ("the same as
+        or inside"), so the containment check alone waves them through into
+        `os.replace(tmp, <a directory>)` -> IsADirectoryError, which escapes
+        extractArchive and abandons the whole archive.
+
+        On an unattended server that is a permanent per-release wedge: the
+        release is never tagged extracted, so every scheduled scan retries it,
+        fails identically, and writes another full traceback. The refusal path
+        this class exists to provide must catch these too."""
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info(entry_name), _make_info('movie.mkv')]
+        handle = _make_rar_handle(
+            infos, {entry_name: b'never', 'movie.mkv': b'real-movie-bytes'}
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # Refused cleanly, and the REST of the archive still extracted.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        assert (extr_path / 'movie.mkv').read_bytes() == b'real-movie-bytes'
+
+    def test_containment_catches_a_name_the_sanitizer_let_through(self, tmp_path):
+        """The containment check is defence in depth, and with the name check
+        in front of it there is no ENTRY NAME that reaches it -- after
+        `_safeEntryBasename` the result can never contain a separator, so only
+        '', '.' and '..' can escape, and all three are caught by name.
+
+        That makes it a guard nobody can watch fail through the public API,
+        which is exactly the shape this project treats as not-done. Measured:
+        deleting the containment check entirely left all 34 tests green.
+
+        So drive it at the seam it actually protects. Break the sanitizer
+        deliberately and prove containment still refuses the entry -- that is
+        the scenario it exists for: `_safeEntryBasename` being changed,
+        bypassed, or defeated by a name shape nobody has thought of yet."""
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('anything.txt'), _make_info('movie.mkv')]
+        handle = _make_rar_handle(
+            infos, {'anything.txt': b'escaped', 'movie.mkv': b'real-movie-bytes'}
+        )
+
+        # A sanitizer that fails open, returning a traversing name unchanged.
+        def broken_sanitizer(filename):
+            return '../ESCAPED.txt' if filename == 'anything.txt' else filename
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle), \
+             patch.object(_Extractor, '_safeEntryBasename', staticmethod(broken_sanitizer)):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert not (tmp_path / 'downloads' / 'ESCAPED.txt').exists(), (
+            'containment did not catch a name the sanitizer let through'
+        )
+        # And the refusal stayed per-entry: the rest of the archive extracted.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+
     def test_benign_nested_entry_still_extracts_normally(self, tmp_path):
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
@@ -690,9 +779,14 @@ class TestExtractArchivePathTraversal:
     ):
         extr_path = tmp_path / 'downloads' / 'extract_here'
         extr_path.mkdir(parents=True)
-        infos = [_make_info('movie.mkv'), _make_info('..')]
+        # Refusal FIRST, deliberately. With the refusal last, `continue` and
+        # `break` are behaviourally identical and this test cannot tell them
+        # apart -- which is exactly the property its name claims. Measured
+        # before this reorder: mutating the refusal's `continue` to `break`
+        # left all 27 tests GREEN while one hostile entry sank the archive.
+        infos = [_make_info('..'), _make_info('movie.mkv')]
         handle = _make_rar_handle(
-            infos, {'movie.mkv': b'real-movie-bytes', '..': b'should-never-be-written'}
+            infos, {'..': b'should-never-be-written', 'movie.mkv': b'real-movie-bytes'}
         )
 
         with patch(
