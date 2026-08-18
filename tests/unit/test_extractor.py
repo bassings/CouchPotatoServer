@@ -590,6 +590,129 @@ class TestNoExtractorToolMessage:
         assert 'apk add 7zip' in NO_EXTRACTOR_TOOL_MESSAGE
 
 
+class TestExtractArchivePathTraversal:
+    """T36: a hostile archive entry name must never resolve outside extr_path.
+
+    os.path.basename defeats a forward-slash '../' traversal, but on POSIX a
+    backslash is not a path separator, so a name like '..\\..\\evil.txt'
+    survives basename intact -- and sp()'s Windows-path handling then
+    anchors the joined path at filesystem root, walking it straight out of
+    extr_path. A bare '..' (no separator at all) is a second, independent
+    escape: basename only splits on the LAST '/', so a name with no '/' in
+    it at all -- including '..' itself -- is returned completely unchanged.
+    """
+
+    def test_dotdot_slash_entry_is_already_contained_by_basename_alone(self, tmp_path):
+        # Control case: proves a '../'-style fixture is NOT a valid guard for
+        # this defect -- it already passes against the unmodified code, so it
+        # would be an incidentally-passing test that guards nothing.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('../../../evil.txt')]
+        handle = _make_rar_handle(infos, {'../../../evil.txt': b'evil-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'evil.txt')]
+        assert (extr_path / 'evil.txt').read_bytes() == b'evil-bytes'
+        # Nothing escaped above extr_path.
+        assert list((tmp_path / 'downloads').iterdir()) == [extr_path]
+
+    def test_backslash_entry_does_not_escape_extraction_directory(self, tmp_path):
+        # The load-bearing case: a backslash-separated traversal is NOT a
+        # POSIX separator, so it survives os.path.basename intact, and sp()
+        # then anchors the result at filesystem root. Two levels up from
+        # extr_path (downloads/extract_here) lands exactly at tmp_path,
+        # which is writable and unambiguous to assert against.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        entry_name = '..\\..\\CP_PWNED_BACKSLASH.txt'
+        infos = [_make_info(entry_name)]
+        handle = _make_rar_handle(infos, {entry_name: b'pwned-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # Must NOT have escaped to tmp_path -- the pre-fix bug lands here.
+        assert not (tmp_path / 'CP_PWNED_BACKSLASH.txt').exists()
+        # Must have been sanitized and written INSIDE extr_path instead.
+        expected = extr_path / 'CP_PWNED_BACKSLASH.txt'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'pwned-bytes'
+
+    def test_bare_dotdot_entry_is_refused_by_the_containment_check(self, tmp_path):
+        # A second, independent escape: a bare '..' has no separator at all,
+        # so os.path.basename returns it completely unchanged -- backslash
+        # sanitization does nothing here. Only an assertion on the resolved
+        # path catches this. Must be refused, not raise, and not extracted.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('..')]
+        handle = _make_rar_handle(infos, {'..': b'should-never-be-written'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == []
+        # Nothing new appeared in extract_here's parent (the would-be escape target).
+        assert list((tmp_path / 'downloads').iterdir()) == [extr_path]
+
+    def test_absolute_path_entry_is_contained(self, tmp_path):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('/etc/passwd')]
+        handle = _make_rar_handle(infos, {'/etc/passwd': b'not-actually-passwd'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'passwd')]
+        assert (extr_path / 'passwd').read_bytes() == b'not-actually-passwd'
+
+    def test_benign_nested_entry_still_extracts_normally(self, tmp_path):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('Movie.Name.2020/Sample/movie-sample.mkv')]
+        handle = _make_rar_handle(
+            infos, {'Movie.Name.2020/Sample/movie-sample.mkv': b'sample-bytes'}
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        expected = extr_path / 'movie-sample.mkv'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'sample-bytes'
+
+    def test_refused_entry_is_logged_and_does_not_abort_the_rest_of_the_archive(
+        self, tmp_path, caplog
+    ):
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('movie.mkv'), _make_info('..')]
+        handle = _make_rar_handle(
+            infos, {'movie.mkv': b'real-movie-bytes', '..': b'should-never-be-written'}
+        )
+
+        with patch(
+            'couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle
+        ), caplog.at_level(
+            logging.ERROR, logger='couchpotato.core.plugins.renamer.extractor'
+        ):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # The legitimate entry still extracted -- one bad entry must not
+        # sink the whole archive.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        assert (extr_path / 'movie.mkv').read_bytes() == b'real-movie-bytes'
+
+        # The refusal is visible, not a silent skip.
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert '..' in errors[0].getMessage()
+
+
 class TestRarfileApiSignatureGuard:
     """Every other test mocks rarfile, baking in assumptions about its API.
     This guard pins the REAL installed rarfile surface CP's extractor

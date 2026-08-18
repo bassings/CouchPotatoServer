@@ -19,7 +19,7 @@ import traceback
 
 import rarfile
 
-from couchpotato.core.helpers.variable import sp
+from couchpotato.core.helpers.variable import isSubFolder, sp
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
@@ -252,13 +252,29 @@ class ExtractorMixin:
             # deleteEmptyFolder's rmdir fail with ENOTEMPTY forever. Sweep it.
             self._sweepStrayTempFiles(extr_path)
 
+            extr_real_path = os.path.realpath(extr_path)
             extracted = []
             rar_handle = rarfile.RarFile(rar_path)
             try:
                 for info in rar_handle.infolist():
                     if info.isdir():
                         continue
-                    extr_file_path = sp(os.path.join(extr_path, os.path.basename(info.filename)))
+                    entry_name = self._safeEntryBasename(info.filename)
+                    extr_file_path = sp(os.path.join(extr_path, entry_name))
+                    if not isSubFolder(extr_file_path, extr_real_path):
+                        # Belt-and-braces, independent of the basename sanitization
+                        # above: catches any entry-name shape that defeats it, e.g.
+                        # a bare '..' with no separator at all (os.path.basename
+                        # only splits on the LAST '/', so a name with none in it
+                        # is returned unchanged). Refuse just this entry -- one
+                        # hostile name must not sink the whole archive -- but make
+                        # the refusal visible rather than a silent skip.
+                        log.error(
+                            'Refusing to extract archive entry outside the extraction '
+                            'directory: %s (from %s, resolved to %s)',
+                            info.filename, rar_path, extr_file_path,
+                        )
+                        continue
                     if not os.path.isfile(extr_file_path):
                         log.debug('Extracting %s...', info.filename)
                         self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
@@ -274,6 +290,29 @@ class ExtractorMixin:
                 rar_handle.close()
 
         return extracted
+
+    @staticmethod
+    def _safeEntryBasename(filename):
+        """Return just the final path component of an archive-supplied entry
+        name, treating BOTH '/' and '\\' as separators.
+
+        Archive formats (RAR, ZIP) are portable and an entry name is
+        attacker-controlled, so it can carry a backslash as a directory
+        separator even when extraction runs on POSIX, where
+        ``os.path.basename`` only recognises '/'. Left alone, a name like
+        ``..\\..\\..\\evil.txt`` survives ``os.path.basename`` completely
+        intact, and ``sp()``'s Windows-path handling (needed elsewhere for
+        genuine remote-Windows-box paths, so not something to change here)
+        then anchors the joined path at the filesystem root -- walking the
+        extraction straight out of ``extr_path``. Normalising '\\' to '/'
+        before taking the basename neutralises that without touching
+        ``sp()`` itself.
+
+        This alone is NOT sufficient (see the containment check at the call
+        site): a bare ``..`` has no separator at all, so basename returns it
+        completely unchanged regardless of this normalisation.
+        """
+        return os.path.basename(filename.replace('\\', '/'))
 
     @staticmethod
     def _sweepStrayTempFiles(extr_path):
