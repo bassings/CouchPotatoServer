@@ -1704,6 +1704,58 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
+- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: building (branch `fix/t42-gitdir-leak`)
+
+      **Not a theory. It has now corrupted this repository TWICE in one day,**
+      both times flipping `core.bare` to `true` so the main checkout stopped
+      being a work tree (`fatal: this operation must be run in a work tree`),
+      and the second time it also blocked T36's push.
+
+      Git exports `GIT_DIR` into hook subprocesses **only when the push comes
+      from a linked worktree** — measured: main checkout `GIT_DIR=[unset]`,
+      worktree `GIT_DIR=[.../.git/worktrees/<name>]`. `pre-push` runs
+      `make verify`, which runs this suite, so every git-invoking subprocess in
+      the gate-fixture tests inherited it. With `GIT_DIR` set, `git init` in a
+      fresh `tmp_path` does NOT create a repo there — it re-initialises the one
+      `GIT_DIR` already names, silently (`warning: re-init`). Every later
+      fixture `commit`/`checkout` then lands in the developer's real repo.
+
+      What it actually did, observed rather than predicted: a real checkout
+      left on a fixture branch, two fixture commits on a real feature branch,
+      and `core.bare = true`.
+
+      **Why it hid for so long:** the gate passes when run directly, because
+      nothing sets `GIT_DIR`. It fails ONLY through the hook, ONLY from a
+      worktree. So the standalone verdict and the push verdict disagree, and
+      the standalone one is the one people look at.
+
+      Fix: `sanitized_git_env()` in `tests/unit/conftest.py` strips `GIT_DIR`,
+      `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY`,
+      `GIT_COMMON_DIR` and `GIT_ALTERNATE_OBJECT_DIRECTORIES` before every
+      git-invoking subprocess call in both gate-fixture files — including the
+      `needs_e2e.sh`/`push_base_ref.sh` invocations, since those shell out to
+      git themselves. A plain function, deliberately NOT an autouse fixture, so
+      it carries none of the blast radius across this directory's other ~150
+      test files.
+
+      Defence in depth: the `repo` fixture now asserts, immediately after
+      `git init`, that `git rev-parse --absolute-git-dir` resolves inside the
+      throwaway `tmp_path`. That converts a future unsanitised call site from
+      silent corruption into a named assertion failure.
+
+      Verified under the real condition rather than by reasoning: with
+      `GIT_DIR` poisoned to the real repo, 75 gate-fixture tests pass,
+      `core.bare` stays `false` and HEAD is unchanged. Mutation-proven — with
+      the stripping removed, the defence-in-depth assertion fires and names the
+      leak:
+
+          assert PosixPath('.../victim/.git') == PosixPath('.../tmp_path/.git')
+
+      Note the first mutation attempt produced a FALSE RED (a collection error,
+      not the corruption assertion). Caught because the failure text did not
+      name the behaviour being guarded, which is the whole reason for reading
+      failure messages rather than counting reds.
+
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
