@@ -1629,9 +1629,12 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       One the scan did NOT flag, found while checking the ones it did:
       `filmstarts.py:21` calls `table.find(...)` where `table` came straight
-      from `html.find(...)` with no None check — the same defect, one line
-      above the flagged one. Fix it in the same pass; it is the reminder that
-      the rule list is a starting point, not the boundary.
+      from an unguarded `html.find(...)` at `:19`, one line earlier. That is
+      FIVE lines above the flagged access at `:26`, not one — an earlier
+      version of this entry said "one line above the flagged one", conflating
+      the distance to the unguarded source with the distance to the flagged
+      line. Fix it in the same pass; it is the reminder that the rule list is
+      a starting point, not the boundary.
 
       These are provider scrapers, so the input is a third party's markup and
       it changes without notice. The searcher tolerates a provider raising, so
