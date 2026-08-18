@@ -983,7 +983,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       assuming it is isolated. (`python:S2734` at `putio/main.py:25`, a
       return value in `__init__`, is the other BLOCKER and can ride along.)
 
-- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps)
+- [ ] T25: 39 inputs in the new UI's wizard have no label — state: queued (no deps) · re-confirmed present by the 2026-08-18 scan (still 39 x `Web:InputWithoutLabelCheck`), i.e. NOT yet fixed. **Retracted 2026-08-18: an earlier version of this line called that "independent corroboration by a different tool with a different ruleset". It is not. T25 was CREATED from these same SonarQube findings — the body below says so — so a second scan reporting the same rule is the same tool agreeing with itself. A re-run is evidence the defect is still open, and nothing more.**
 
       `couchpotato/ui/templates/wizard.html`, all 39 instances of SonarQube's
       `Web:InputWithoutLabelCheck`. This is the NEW UI, not the legacy tree
@@ -1350,7 +1350,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Not folded into #261: it wants its own diff and its own review gate,
       and it has nothing to do with removing a downloader.
 
-- [ ] T33: dependency triage backlog — review AND apply the Dependabot updates — state: queued (needs: T29/T30/T31 via #261)
+- [x] T33: dependency triage backlog — review AND apply the Dependabot updates — state: **merged #262** (`09a3d153`, 2026-08-18) — all five taken, decisions recorded; the five Dependabot PRs closed themselves once the versions landed
 
       Surfaced by the push on 2026-08-18: GitHub reported "1 vulnerability on
       the default branch (1 high)". Measured rather than relayed:
@@ -1454,7 +1454,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       one of them against the full 3406-test unit suite. This is the "question
       the frame" deliverable that rule 11 asks for after the third round.
 
-- [ ] T35: post-merge SonarQube scan — state: queued (needs: T33, and #261 merged)
+- [x] T35: post-merge SonarQube scan — state: **done** (2026-08-18, against master `09a3d153`) — results below in tick 40; nothing resolved or dismissed
 
       Owner instruction, 2026-08-18: push a fresh scan once this work is
       merged. Ordered AFTER T33 deliberately, so one scan reflects both the
@@ -1567,7 +1567,144 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the inverse of the runtime default is how this survived review the first
       time.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T33, T34, T35, T36, T37 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T38: `simple_healthcheck.py` is dead AND its assertions cannot pass — state: queued (needs: AC-OPS-12 production grep, same blocker as `/getkey`'s deletion)
+
+      Surfaced by the 2026-08-18 SonarQube scan (3 x `python:S5779`) and driven
+      before recording. Two defects, one file:
+
+      `test_web_page_content` reads `response.read()`, which is BYTES, then
+      asserts `assertIn("<!doctype html>", content)` with a str needle. Driven:
+
+          assertIn(str, bytes): TypeError - a bytes-like object is required, not 'str'
+
+      So the check can NEVER pass. And because every assertion sits inside
+      `try: ... except Exception as e: self.fail("Failed to load web page: %s")`,
+      and `AssertionError`/`TypeError` are both `Exception`, the failure is
+      reported as "failed to load web page" when the page loaded fine. A
+      healthcheck that always fails, and blames the wrong component when it
+      does, is worse than no healthcheck: it trains the operator to ignore it.
+
+      Sonar's S5779 names the mechanism exactly — an assertion inside a
+      try/except that catches its own AssertionError. The other two instances
+      have the same shape but DIFFERENT messages, and an earlier version of
+      this entry wrongly gave them both the same one:
+
+          :27  assertEqual(code, 200)      -> "Server is not responding: ..."
+          :90  assertLess(elapsed, 5.0)    -> "Failed to measure response time: ..."
+
+      So a server that responds slowly is reported as a failure to MEASURE,
+      and a server returning 500 is reported as not responding at all. Each
+      mislabels its own failure differently, which is worse than one shared
+      wrong message: it sends the reader somewhere specific and wrong.
+
+      **The fix is almost certainly deletion, not repair.** Its only consumer
+      relationship is the reverse one: `simple_healthcheck.py:76` is the sole
+      referrer of the `/getkey` endpoint, and that deletion is already recorded
+      as blocked on AC-OPS-12's production grep. Same blocker, same removal.
+      Repairing a dead file to keep a check nothing runs would be work spent
+      moving in the wrong direction.
+
+- [ ] T39: three provider scrapers access a parsed element without checking it exists — state: queued (no deps)
+
+      2026-08-18 SonarQube scan, `python:S8904` x 6. **Six occurrences, but NOT
+      six defects** — an earlier version of this entry said "six providers",
+      which was wrong twice over: `awesomehd.py` supplies two of the six, and
+      three of the six are not defects at all. Checked each site rather than
+      trusting the rule:
+
+          awesomehd.py:40     .get_text on soup.find('authkey')   REAL, unguarded
+          filmweb.py:25       ['content'] on html.find('meta')    REAL, unguarded
+          filmstarts.py:26    ['content'] on html.find('meta')    REAL, unguarded
+
+          awesomehd.py:37     GUARDED — `if soup.find('error'):` on the line above
+          bithdtv.py:83       GUARDED — `toUnicode(nfo_pre.text) if nfo_pre else ''`
+          thepiratebay.py:71  TOLERATED — its own try/except leaves total_pages
+                              at its initialised 1 and parsing continues
+
+      So the family is three, not six. The two GUARDED ones look like false
+      positives from the rule not following the enclosing condition; they are
+      NOT being dismissed in SonarQube, because that is the owner's call and
+      dismissal is the one action that silently destroys the tool's value.
+      Recorded here instead.
+
+      One the scan did NOT flag, found while checking the ones it did:
+      `filmstarts.py:21` calls `table.find(...)` where `table` came straight
+      from an unguarded `html.find(...)` at `:19`, TWO lines earlier (`:20` is
+      blank). That is five lines above the flagged access at `:26`.
+
+      This sentence has now been wrong twice, which is why it carries its own
+      history: it first said "one line above the flagged one", conflating the
+      distance to the unguarded source with the distance to the flagged line;
+      the correction then said "one line earlier" for the `:19` -> `:21` gap,
+      which is two. Cite both line numbers and let the reader subtract. Fix it in the same pass; it is the reminder that the rule list is
+      a starting point, not the boundary.
+
+      These are provider scrapers, so the input is a third party's markup and
+      it changes without notice. The searcher tolerates a provider raising, so
+      the blast radius is a dead provider rather than a crashed scan — CRITICAL
+      by rule, not urgent by impact. Say which when fixing.
+
+- [ ] T40: `synology.py` returns from inside a `finally` block — state: queued (no deps)
+
+      2026-08-18 SonarQube scan, `python:S1143` (CRITICAL), `synology.py:76`.
+
+      **Corrected 2026-08-18 after review.** An earlier version of this entry
+      said the failure is "swallowed silently and the caller is told the
+      operation succeeded". That is wrong, and reading the whole construct
+      rather than the flagged line shows why:
+
+          except Exception:
+              log.error('Exception while adding torrent: %s', ...)
+          finally:
+              return self.downloadReturnId('') if response else False
+
+      An ordinary failure inside the `try` is caught and LOGGED by the
+      preceding `except Exception`, and `response` is still False, so the
+      `finally` returns False. The caller is correctly told it failed and the
+      log is not silent.
+
+      What remains is narrower and still real: a `return` in `finally`
+      discards anything the `except` clause does not catch — a `BaseException`
+      such as KeyboardInterrupt or SystemExit, or an exception raised inside
+      the handler itself. Those become a silent False rather than propagating.
+
+      Fix it, but fix it for the accurate reason, and pin whichever mechanism
+      the test actually drives. A test written against the WRONG mechanism
+      would pass on the current code and guard nothing.
+
+- [ ] T41: `sp()` mangles an extraction directory that contains a backslash — state: queued (no deps)
+
+      Found while fixing T36, by trying a fix and measuring it rather than
+      shipping it. `extractArchive` builds each target as
+      `sp(os.path.join(extr_path, entry_name))`. When `extr_path` ITSELF
+      contains a backslash — legal on POSIX, and choosable by a hostile
+      torrent naming its folder — `sp()`'s Windows-path conversion rewrites
+      the target into a DIFFERENT tree:
+
+          real dir on disk : .../Movie.2020\Sample
+          sp() target      : .../Movie.2020/Sample/movie.mkv
+          target dir exists: False
+
+      So no entry can be written, whatever the containment check decides. The
+      only question is how it fails, and that was measured:
+
+          base WITHOUT sp(): contained=False -> refused cleanly, loop continues
+          base WITH    sp(): contained=True  -> write into a missing dir,
+                                                raises, ABANDONS the archive
+
+      T36 deliberately kept the first, because a clean per-entry refusal beats
+      an exception that sinks the rest of the archive. That is containment of
+      the symptom, not a fix.
+
+      The fix is at the `sp()` seam, and it is NOT "change `sp()`": that
+      function is used across the app and its Windows-path conversion exists
+      for genuine remote-Windows-box paths. The question is whether
+      `extractArchive` should be calling `sp()` on a path it is about to write
+      to at all. Answer that before changing anything, and drive the
+      alternative rather than reasoning about it — the last two attempts in
+      this area were both measured worse than what they replaced.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews
@@ -1775,6 +1912,110 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 40** — **T35 done: SonarQube scanned against merged master. Nothing resolved, nothing dismissed.**
+  `make sonar` exit 0 against `09a3d153`, so one scan covers both #261 and #262.
+
+      metric                     now      previous
+      vulnerabilities            0        0   (was 3 before this plan)
+      security_rating            A        A   (was D)
+      security_hotspots          0        —
+      coverage                   53.7%    53.5%
+      sqale_rating (maintainab.) A        —
+      duplicated_lines_density   1.9%     —
+      bugs                       62       —
+      reliability_rating         D        —
+      ncloc                      38,016   —
+
+  The security posture the earlier work bought has HELD: 0 vulnerabilities, A
+  rating, 0 hotspots. Coverage nudged up rather than regressing, which is the
+  thing a big deletion could plausibly have moved the wrong way.
+
+  `bugs: 62 / reliability D` is the headline number and it is misleading
+  without the breakdown, which is why the breakdown is here: **39 of the 62 are
+  one rule in one file** — `Web:InputWithoutLabelCheck` in `wizard.html`.
+
+  **That is T25, and an earlier version of this entry called it "found
+  independently by a different tool with a different ruleset". Retracted.**
+  T25 was CREATED from these same SonarQube findings, so a second scan
+  reporting the same rule is the same tool agreeing with itself, not
+  corroboration. It is evidence the defect is still open, which is worth
+  recording, and it is not evidence of anything more. The claim was flattering
+  and false, and it is exactly the kind that gets repeated once it is written
+  down.
+
+  Of the 17 CRITICAL bugs, three families were verified and recorded as tasks
+  rather than left in a dashboard nobody reads:
+
+  - **T38** `simple_healthcheck.py` — `assertIn(str, bytes)` raises TypeError,
+    driven, so the check can NEVER pass; and every assertion sits inside
+    `except Exception` so the failure is reported as "failed to load web page"
+    when the page loaded fine. Fix is deletion, blocked on the same AC-OPS-12
+    production grep as `/getkey`.
+  - **T39** THREE provider scrapers access a parsed element without a None
+    check. (This line said "six" until review caught it. Six S8904
+    OCCURRENCES, but `awesomehd.py` supplies two, and three of the six are not
+    defects: two are already guarded and one is tolerated by its own
+    try/except. See the task entry.)
+  - **T40** `synology.py:76` returns from inside `finally`. (This line said it
+    discards "any in-flight exception" until review caught it. An ordinary
+    exception IS caught and logged by the preceding `except Exception`, and
+    the caller is correctly told it failed. What a `return` in `finally`
+    actually discards is narrower: a BaseException, or an exception raised
+    inside the handler. See the task entry.)
+
+  **One finding I am NOT acting on, and deliberately NOT dismissing:**
+  `typescript:S5845` at `category-editor.spec.ts:90` claims an equality
+  assertion compares incompatible types. Reading the source, `categoryToForm`
+  is plain JS with `id: c._id ?? ''`, so Sonar infers `string` from the fallback
+  while the runtime value with `_id: 0` is the number `0` — the test passes and
+  the assertion is correct. It looks like a false positive from type inference
+  on untyped JS. Marking a finding resolved is the one action that silently
+  destroys this tool's value and it needs the owner's decision, so it stays
+  open with the reasoning recorded here instead.
+
+  Scanner note, not a defect: the JS bridge failed to parse
+  `partials/movie_detail.html`, because `'{{ movie.get('profile_id', '') }}'`
+  nests single quotes inside a single-quoted JS string — the raw template is not
+  valid JavaScript and only becomes valid after Jinja renders. One template goes
+  unanalysed; 90 source files were analysed. Worth knowing the hole exists.
+
+- **Tick 39** — **#261 and #262 both merged; T29, T30, T31 and T33 ticked. Plan 10 of 20.**
+  #261 merged as `e433ceba`, verified from `gh pr view` and confirmed on master
+  by `git ls-files` showing no hadouken file tracked and the masking present.
+  #262 merged as `09a3d153`.
+
+  T33 took all five bumps. The instructive one was #252 (ruff), which was RED in
+  CI for a good reason: it failed the guard pinning ruff across
+  `requirements-dev.txt` and both `ci.yml` jobs. Dependabot knows about one of
+  the three, so its PR was INCOMPLETE rather than wrong, and taking it meant
+  moving all three. Two reviewers independently mutated the `security-lint` pin
+  back and watched the guard fail with an accurate message.
+
+  rarfile 4.5 turned out to be GHSA-94vx-95fq-wwvp (High), not a routine minor —
+  no CVE assigned, which is exactly why it read as routine. Recorded at the pin,
+  with a HOLD condition for 5.0 (removes root-level config; would break
+  `rarfile.UNRAR_TOOL = ...` silently).
+
+  Added `TestQbittorrentApiSignatureGuard` rather than filing it: that surface
+  had been verified BY HAND in review, which covers the bump in front of you and
+  nothing after it. Proven against both drift shapes — a removed method, and a
+  renamed kwarg that would otherwise fail silently because the call is
+  keyword-only.
+
+  Three corrections to my own work this tick, all caught by review: a commit
+  message claiming the mutmut comments cited behaviour when they cited three
+  line numbers the bump had moved; an over-correction that stripped the stable
+  `_load_config()` symbol along with them; and an overclaimed reachability in a
+  `settings.py` comment. All three were assertions that tell the next reader not
+  to check, which is what makes them worse than the drift they described.
+
+  T36 and T37 recorded from the security lens, both pre-existing. T36 is
+  attacker-reachable from an ordinary automated download and rarfile 4.5 does
+  NOT close it.
+
+  Armed: `make sonar` running detached (T35), covering both merges in one scan.
+  Next wake reads the scan result and reports deltas against the previous one.
 
 - **Tick 38** — **gate green, local review gate passed after two real findings, both in T31's own fix.**
   `make verify` exit 0 on `e5ecaa9c`: 3401 python unit / 42 integration / 202 UI
