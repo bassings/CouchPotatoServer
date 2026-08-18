@@ -1704,7 +1704,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
-- [ ] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: pr-open #264
+- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: **merged #264** (`0a7b197e`, 2026-08-18) — closed by a four-line process scrub, not by the AST guard; eleven review rounds, last four commits removed code
 
       **Not a theory. It has now corrupted this repository TWICE in one day,**
       both times flipping `core.bare` to `true` so the main checkout stopped
