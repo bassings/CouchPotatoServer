@@ -122,10 +122,21 @@ def test_the_real_fixtures_survive_a_poisoned_ambient_GIT_DIR(tmp_path):
     result = subprocess.run(
         [sys.executable, '-B', '-m', 'pytest', *REPRESENTATIVE_NODE_IDS, '-q'],
         cwd=str(REPO), capture_output=True, text=True, env=poisoned_env,
-        # Generous, but bounded: an inner pytest that deadlocks on a fixture
-        # would otherwise hang the whole gate with no diagnosis, which is a
-        # worse failure than a red test.
-        timeout=600,
+        # 45s, deliberately BELOW pytest.ini's ambient `--timeout=60`.
+        #
+        # The previous value here was 600, with a comment claiming it stopped
+        # the gate hanging indefinitely. Both halves were wrong: pytest-timeout
+        # already bounds every test at 60s, so nothing could hang forever, and
+        # 600 was unreachable dead code -- the outer kill always won first. A
+        # documented bound that is not the enforced one is the exact defect
+        # this branch keeps correcting elsewhere.
+        #
+        # Sitting below the ambient limit is what makes this useful: the inner
+        # run is killed HERE, naming the nested pytest, instead of the outer
+        # test being killed with a generic timeout that says nothing about
+        # which subprocess wedged. The healthy run takes ~7s, so 45 leaves
+        # ample headroom.
+        timeout=45,
     )
 
     after = _snapshot(victim)
@@ -407,7 +418,7 @@ def test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper():
             [sys.executable, '-B', '-m', 'pytest',
              'tests/unit/test_next_beta_version.py', '-q'],
             cwd=str(REPO), capture_output=True, text=True, env=poisoned,
-            timeout=600,
+            timeout=45,  # below pytest.ini's --timeout=60; see the note above
         )
 
         after = subprocess.run(['git', 'rev-parse', 'HEAD'], cwd=str(victim),
