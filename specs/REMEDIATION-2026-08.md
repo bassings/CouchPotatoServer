@@ -1787,6 +1787,42 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       that way and none by inspection.
 
 
+- [ ] T43: an archive basename collision discards a file, and archive ORDER decides which — state: queued (no deps)
+
+      Raised on #265 and driven rather than reasoned:
+
+          ['movie.mkv', 'Sample\\movie.mkv'] -> movie.mkv = b'FEATURE-20GB'
+          ['Sample\\movie.mkv', 'movie.mkv'] -> movie.mkv = b'SAMPLE-50MB'
+
+      `extractArchive` flattens every entry to its basename, so a top-level
+      `movie.mkv` and a `Sample\movie.mkv` map to ONE destination. The first
+      listed wins, the second is skipped by the existing `os.path.isfile`
+      check, and the release is still tagged extracted. In the bad order the
+      operator gets a 50MB sample named like the feature and is told nothing.
+
+      **Long-standing for `Sample/`** (RAR3, which rarfile normalises).
+      **T36 widened it to `Sample\`** (RAR5, which rarfile does NOT normalise),
+      because those archives previously aborted with FileNotFoundError instead
+      of extracting at all. So T36 traded a loud failure for a quiet wrong
+      answer in this one shape — worth being explicit about, since that is the
+      direction this project treats as worse.
+
+      #265 makes it VISIBLE (a warning naming the discarded entry) but does not
+      change behaviour, because picking a winner does not belong in a security
+      fix.
+
+      The fix is to pick deliberately rather than by archive order.
+      `RarInfo.file_size` is available, so "largest wins" would make the
+      feature beat the sample every time. Check that against the case it could
+      get wrong — an archive where the LARGER file is genuinely the unwanted
+      one — before adopting it, and drive the decision rather than assuming
+      size is a good proxy.
+
+      Note `cleanup` (which deletes the source archive) is NOT reachable from
+      the live caller: it defaults False and `renamer/main.py:1022` does not
+      pass it. So the archive survives and the loss is recoverable by
+      re-extracting. That is what keeps this off the irreplaceable tier.
+
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and

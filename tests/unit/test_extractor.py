@@ -839,3 +839,137 @@ class TestRarfileApiSignatureGuard:
         # Tool-selection surface the extractor mutates.
         assert isinstance(rf.UNRAR_TOOL, str)
         assert callable(rf.tool_setup)
+
+
+class TestRefusalLoggingIsBoundedAndPrivate:
+    """A refused entry is attacker-controlled input reaching a production ERROR
+    log, which makes it three problems at once, all measured rather than
+    theorised.
+
+    AMPLIFICATION: `rarfile.infolist()` parses headers only, so a hostile
+    archive can carry thousands of poisoned names for almost nothing, and the
+    unbounded form emitted one ERROR each.
+
+    EXPOSURE: each line carried `rar_path` and the resolved destination.
+    `PrivacyFilter` redacts `/home/<user>` and `/Users/<user>` only, so
+    `/volume1/...`, `/mnt/media/...` and every other NAS layout went to disk in
+    full. The paths were never needed -- the operator knows the extraction
+    directory, and the entry name is what identifies the bad archive.
+
+    FORGERY: an entry name may contain newlines, so interpolating it raw lets a
+    crafted archive write whole fake log records.
+    """
+
+    def _run_with_entries(self, tmp_path, names, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('/private/nas/archive.rar', str(extr_path))
+        return [r.getMessage() for r in caplog.records]
+
+    def test_a_thousand_poisoned_entries_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        messages = self._run_with_entries(tmp_path, ['..'] * 1000, caplog)
+
+        refusals = [m for m in messages if 'Refusing to extract' in m]
+        assert len(refusals) <= 5, (
+            'unbounded refusal logging: %d ERROR lines from one archive' % len(refusals)
+        )
+        assert any('will not be logged individually' in m for m in messages), (
+            'the flood was truncated with no notice, so an operator cannot tell '
+            'the difference between five bad entries and a thousand'
+        )
+
+    def test_the_refusal_does_not_write_private_paths_to_the_log(self, tmp_path, caplog):
+        messages = self._run_with_entries(tmp_path, ['..'], caplog)
+
+        joined = '\n'.join(messages)
+        assert 'Refusing to extract' in joined
+        assert '/private/nas/archive.rar' not in joined, (
+            'the archive path reached the log; PrivacyFilter does not redact '
+            'NAS-style paths, only /home/<user> and /Users/<user>'
+        )
+        assert str(tmp_path) not in joined, 'the resolved destination reached the log'
+
+    def test_a_newline_in_an_entry_name_cannot_forge_a_log_record(self, tmp_path, caplog):
+        """The forging vector is the EXTRACT line, not the refusal line.
+
+        This test originally aimed at the refusal path and failed with "the
+        hostile entry was not refused at all" -- which was the test being
+        wrong, and useful for it. After sanitisation only `''`, `'.'` and
+        `'..'` are ever refused, and none of those can carry a newline, so the
+        refusal line is unreachable for forgery. `%r` stays there as
+        belt-and-braces.
+
+        The reachable one is the entry that gets EXTRACTED: its name is logged,
+        it is fully attacker-controlled, and `%s` put the raw newline into the
+        log. Measured before the fix:
+
+            Extracting movie.mkv
+            2026-08-19 00:00:00 INFO  Nothing to see here...
+        """
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        hostile = 'movie.mkv\n2026-08-19 00:00:00 INFO  Nothing to see here'
+        infos = [_make_info(hostile)]
+        handle = _make_rar_handle(infos, {hostile: b'x'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.DEBUG,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('/private/nas/archive.rar', str(extr_path))
+
+        # CPLog prefixes every message with '[plugins.renamer.extractor] ',
+        # so a startswith() filter here silently matches nothing -- which is
+        # how the first version of this test reported "never logged" against
+        # a log line that was present and correct.
+        extracting = [r.getMessage() for r in caplog.records
+                      if 'Extracting' in r.getMessage()]
+        assert extracting, 'the entry was never logged as extracting'
+        assert '\n' not in extracting[0], (
+            'the entry name was interpolated raw, so a crafted archive can '
+            'write fake log lines: %r' % extracting[0]
+        )
+
+
+class TestBasenameCollisionIsVisible:
+    """Two entries flattening to one destination discards the loser silently,
+    and which one wins is decided by archive order. Driven:
+
+        ['movie.mkv', 'Sample\\movie.mkv'] -> movie.mkv = FEATURE-20GB
+        ['Sample\\movie.mkv', 'movie.mkv'] -> movie.mkv = SAMPLE-50MB
+
+    So in the bad order a 50MB sample replaces the feature file and the
+    release is still tagged extracted. Long-standing for `Sample/` (RAR3);
+    T36 widens it to `Sample\\` (RAR5), which previously aborted the archive.
+
+    Warning only. Picking a winner is a behaviour change and does not belong
+    in a security fix -- tracked as T43.
+    """
+
+    def test_a_collision_warns_rather_than_discarding_silently(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['Sample\\movie.mkv', 'movie.mkv']
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {'Sample\\movie.mkv': b'SAMPLE-50MB',
+                                          'movie.mkv': b'FEATURE-20GB'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.WARNING,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        warnings = [r.getMessage() for r in caplog.records
+                    if 'flatten to the same name' in r.getMessage()]
+        assert warnings, (
+            'the discarded entry produced no warning, so an operator cannot '
+            'tell a sample replaced the feature file'
+        )

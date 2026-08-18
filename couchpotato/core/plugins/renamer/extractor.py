@@ -19,6 +19,12 @@ import traceback
 
 import rarfile
 
+#: Cap on per-entry refusal ERRORs from a single archive. A hostile RAR can
+#: carry thousands of poisoned names for the cost of a header each, so the
+#: unbounded form was a log-amplification vector. Small, because the first few
+#: are diagnostic and the rest are noise.
+_MAX_REFUSALS_LOGGED = 5
+
 from couchpotato.core.helpers.variable import isSubFolder, sp
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
@@ -268,6 +274,7 @@ class ExtractorMixin:
             # measured it, reverted it. The real defect is sp() mangling
             # extr_path, which is out of scope here -- tracked as T41.
             extr_real_path = os.path.realpath(extr_path)
+            refused = 0
             extracted = []
             rar_handle = rarfile.RarFile(rar_path)
             try:
@@ -299,14 +306,46 @@ class ExtractorMixin:
                         # Refuse just this entry -- one hostile name must not sink
                         # the whole archive -- but make the refusal visible rather
                         # than a silent skip.
-                        log.error(
-                            'Refusing to extract archive entry outside the extraction '
-                            'directory: %s (from %s, resolved to %s)',
-                            info.filename, rar_path, extr_file_path,
-                        )
+                        # BOUNDED, and it logs the entry NAME only -- not
+                        # rar_path, not the resolved destination.
+                        #
+                        # Everything on this line is attacker-controlled, and an
+                        # archive is cheap to craft: `infolist()` parses headers
+                        # only, so thousands of poisoned names cost the attacker
+                        # nothing and previously produced one ERROR each. That is
+                        # log amplification, and each line carried the operator's
+                        # private paths -- `PrivacyFilter` redacts `/home/<user>`
+                        # and `/Users/<user>` only, so `/volume1/...`,
+                        # `/mnt/media/...` and every other NAS layout passed
+                        # through in full.
+                        #
+                        # The paths added nothing an operator needs: they already
+                        # know the extraction directory, and the entry name is
+                        # what identifies the bad archive. `%r` because the name
+                        # can contain newlines, which would otherwise let a
+                        # crafted entry forge whole log records.
+                        refused += 1
+                        if refused <= _MAX_REFUSALS_LOGGED:
+                            log.error(
+                                'Refusing to extract archive entry outside the '
+                                'extraction directory: %r', info.filename,
+                            )
+                        elif refused == _MAX_REFUSALS_LOGGED + 1:
+                            log.error(
+                                'Further refused entries in this archive will not '
+                                'be logged individually; a count follows at the end.'
+                            )
                         continue
                     if not os.path.isfile(extr_file_path):
-                        log.debug('Extracting %s...', info.filename)
+                        # %r, not %s: the entry name is attacker-controlled and
+                        # may contain newlines, which interpolated raw let a
+                        # crafted archive write whole fake log records. This is
+                        # the REACHABLE forging vector -- the refusal line above
+                        # cannot be, since only '', '.' and '..' are refused and
+                        # none can carry a newline. Found by a test whose premise
+                        # was wrong: it aimed at the refusal path and failed
+                        # because the entry was never refused.
+                        log.debug('Extracting %r...', info.filename)
                         self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
                     # Report the target path whether we just wrote it or it was
                     # already present -- an already-extracted archive is a success,
@@ -314,7 +353,28 @@ class ExtractorMixin:
                     # two entries that flatten to the same basename (e.g. a top-level
                     # file and a same-named one under Sample/) map to one destination,
                     # so the contract "distinct target files present" must hold.
-                    if extr_file_path not in extracted:
+                    if extr_file_path in extracted:
+                        # VISIBLE, because the loser is silently discarded and
+                        # the release is still tagged extracted. Driven:
+                        #
+                        #   ['movie.mkv', 'Sample\\movie.mkv'] -> FEATURE-20GB
+                        #   ['Sample\\movie.mkv', 'movie.mkv'] -> SAMPLE-50MB
+                        #
+                        # Archive ORDER decides, so in the bad order a 50MB
+                        # sample replaces the feature and the operator is told
+                        # nothing. Long-standing for `Sample/` (RAR3); T36
+                        # widens it to `Sample\\` (RAR5), which previously
+                        # crashed the whole archive instead.
+                        #
+                        # Warn only -- picking a winner (largest wins) is a
+                        # behaviour change and does not belong in a security
+                        # fix. Tracked as T43.
+                        log.warning(
+                            'Two archive entries flatten to the same name; the '
+                            'later one is discarded and which wins depends on '
+                            'archive order: %r', info.filename,
+                        )
+                    else:
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
