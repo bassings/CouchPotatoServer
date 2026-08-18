@@ -1387,7 +1387,53 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       downloader removal is the same mistake as riding the hook fix in on it,
       and a dependency bump is a code change made by someone else.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T34: move option-name normalisation from the write site to the read site in `Settings` — state: queued (no deps)
+
+      **This task exists because rule 11 fired, not because a bug is open.**
+      Three commits in a row landed defects in `registerDefaults`, and a
+      reviewer grading the third as new work identified one root cause for all
+      of them: normalisation was put at the WRITE site instead of the READ
+      site.
+
+          e5ecaa9c  recorded names raw          -> mismatch with folded parser keys
+          88405b3f  folded at the write site    -> needed `self.p` in a method whose
+                                                   every other mutation is parser-optional
+          df6c0e18  patched that dependency     -> a ternary that tracks the parser in
+                                                   only one of its two branches
+
+      `getValues` already REQUIRES the parser — driven, it raises
+      `AttributeError: 'NoneType' object has no attribute 'sections'` at
+      `self.sections()` when `self.p` is None — so the fold can live there
+      unconditionally:
+
+          # registerDefaults: no parser dependency at all
+          self.registered_options.setdefault(section_name, set()).update(options)
+
+          # getValues: where the parser is guaranteed
+          registered_in_section = {
+              self.p.optionxform(n) for n in self.registered_options.get(section, ())
+          }
+
+      That deletes the ternary, the comment defending it, and the whole "what
+      if `self.p` is None" class, while making the parser-tracking guarantee
+      unconditional rather than half-true. It is SMALLER than what is there
+      now, which is the tell that the current shape is wrong.
+
+      **The trap in doing it, and the reason it is a task rather than a fourth
+      patch:** the current test asserts INTERNAL state —
+      `assert settings.registered_options['early'] == {'apitoken'}` — so any
+      reshape forces a test edit, and a test edited to match new internals is
+      exactly where a false green enters. Drive the reshape from OBSERVABLE
+      behaviour (`getValues()` does not star out a registered `ApiToken`) and
+      DELETE that internal-state assertion rather than rewriting it. The
+      coupling is a second-order finding in its own right: it is what makes
+      this method expensive to correct.
+
+      Not a bug. `df6c0e18` is correct and guarded — four landed mutations,
+      one of them against the full 3406-test unit suite. This is the "question
+      the frame" deliverable that rule 11 asks for after the third round.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T31, T32, T33, T34 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
 
       **Runs LAST, and it is not a duplicate of T7 even though it sounds like
       one.** T7 is a scoped pass over the specific items this plan's reviews

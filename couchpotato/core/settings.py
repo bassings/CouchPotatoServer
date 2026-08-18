@@ -165,15 +165,27 @@ class Settings:
         #
         # Sections are deliberately NOT folded: ConfigParser applies
         # `optionxform` to options only, so `[MyPlugin]` stays `[MyPlugin]`.
-        # `str.lower` when there is no parser yet: `addSection` and
-        # `setDefault` both guard with `if self.p and ...` and `setType` never
-        # touches it, so this must not become the one statement in the method
-        # that raises before `setFile()`. It would not merely be untidy --
-        # `event.py` swallows a handler's exception, so an AttributeError here
-        # leaves the section renderable and wholly unregistered, i.e. every
-        # option masked. `str.lower` is ConfigParser's own default
-        # `optionxform`, so the fallback records exactly what the parser would
-        # have.
+        # `str.lower` when there is no parser yet, so that this does not
+        # become the one statement in the method that raises before
+        # `setFile()`: `addSection` and `setDefault` both guard with
+        # `if self.p and ...`, and `setType` never touches the parser at all.
+        # Matching that idiom is the whole reason for the fallback.
+        #
+        # NO reachability is claimed for it. Measured: `settings.register` has
+        # no handler until `setFile()` runs, because `addEvent` happens in
+        # `connectEvents()` and only `setFile()` calls that -- so the loader,
+        # the sole in-tree firer, cannot reach this early. An earlier version
+        # of this comment asserted that a raise here would leave a section
+        # renderable and wholly masked; the mechanism it described is real
+        # (`event.py` swallows the handler exception, and `loader.loadSettings`
+        # fires `settings.options` before `settings.register`) but the path to
+        # trigger it is not, and a comment that sends the next reader hunting a
+        # live data path that does not exist is worse than no comment.
+        #
+        # `str.lower` is ConfigParser's own default `optionxform`, so a direct
+        # caller that does arrive early records exactly what the parser would
+        # have. They differ only for a non-str name, and every one of the
+        # option names declared in this tree is a string literal.
         xform = self.p.optionxform if self.p else str.lower
         self.registered_options.setdefault(section_name, set()).update(
             xform(name) for name in options
