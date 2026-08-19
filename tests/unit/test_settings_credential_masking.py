@@ -636,13 +636,18 @@ class TestTheNextCredentialCannotShipUntyped:
         'newznab.api_key': "'type': 'combined' -- one control for six servers; "
                            'typing it does nothing and would break the UI',
         'torrentpotato.pass_key': "'type': 'combined', same as newznab",
-        'trakt.automation_client_id': 'public by OAuth design; the '
-                                      'client_secret beside it is the secret',
+        # NOT here: trakt.automation_client_id. The sweep never flags it
+        # (`client_id` matches no credential pattern), so an exemption would be
+        # dead weight -- which is what the new assertion below now forbids. The
+        # decision that it stays readable is asserted on its own, in
+        # TestOneFieldIsDeliberatelyNotMasked, where it belongs: this dict is
+        # "things the sweep WOULD flag and we have decided against", not a
+        # general register of opinions.
     }
 
     CREDENTIAL_NAME = re.compile(
-        r'(api_?key|passkey|pass_key|secret|token|password|cookiesetting'
-        r'|user_key|auth_token|oauth_token|webhook_url)', re.I)
+        r'(api_?key|_key|passkey|secret|token|password|cookiesetting'
+        r'|auth_token|oauth_token|webhook_url)', re.I)
 
     @staticmethod
     def _literal(node):
@@ -737,13 +742,32 @@ class TestTheNextCredentialCannotShipUntyped:
             f'naming convention changed, this tripwire has stopped working'
         )
 
-    def test_every_exemption_still_refers_to_a_real_option(self):
-        """An exemption for an option that no longer exists is dead weight that
-        reads as coverage. Removed plugins have already caused that here --
-        hadouken's options outlived its module."""
+    def test_no_exemption_is_dead_weight(self):
+        """An exemption doing no work is worse than no exemption, because it
+        reads as coverage. Two ways it can happen, and BOTH are asserted --
+        the first version checked only the first and review found the second.
+
+        1. The option no longer exists. Removed plugins have already caused
+           that here: hadouken's options outlived its module.
+        2. **The pattern never matches it**, so the sweep would not have
+           flagged it and the exemption was never reachable. `core.ssl_key`
+           was exactly this: `CREDENTIAL_NAME` had no `_key` alternative, so
+           the entry sat in the list looking like a considered decision while
+           protecting nothing. Fixed by widening the pattern rather than
+           deleting the entry -- `ssl_key` SHOULD be swept, so that a future
+           `something_key` credential is caught; the exemption then does real
+           work, which is the point."""
         declared = {f'{sec}.{o["name"]}' for _, sec, o in self._all_options()}
         for entry in sorted(self.EXEMPT):
             assert entry in declared, (
                 f'EXEMPT names {entry}, but no such section.option is declared '
                 f'anywhere under couchpotato/ -- delete the exemption'
+            )
+            option = entry.split('.', 1)[1]
+            assert self.CREDENTIAL_NAME.search(option), (
+                f'EXEMPT names {entry}, but CREDENTIAL_NAME never matches '
+                f'{option!r}, so the sweep would not have flagged it and this '
+                f'exemption protects nothing. Either widen the pattern so the '
+                f'exemption is load-bearing, or delete the entry -- do not '
+                f'leave it looking like a decision.'
             )
