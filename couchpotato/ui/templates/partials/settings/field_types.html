@@ -56,25 +56,35 @@
         in with the password they thought they were setting.
         `@change` fires on blur/commit, so no half-typed value is ever
         persisted. -#}
-    {#- Clear the mask on focus so a partial edit is impossible. `getVal`
-        returns a run of asterisks for a password-typed option, and without
-        this the operator can click at the end of it and paste, storing
-        `********xoxb-NEW` -- destroying the old credential AND saving a
-        corrupt new one, with the UI reporting success.
+    {#- Render password fields EMPTY, with the state in the placeholder.
+        Never bind the mask into the value.
 
-        The server-side guard in `Settings.saveView` cannot catch that case:
-        any predicate loose enough to reject `********xoxb-NEW` also rejects a
-        human password containing an asterisk, and refusing THOSE is far worse
-        (see the guard's comment -- it left first-run instances public). The
-        client is the layer that knows the field was touched, so the fix
-        belongs here.
+        Three problems disappear at once rather than being patched:
 
-        Clearing on focus is safe because `@change` only fires if the value
-        actually changed: focus and blur without typing leaves the stored
-        credential alone. -#}
+        1. PARTIAL EDIT. With the mask as the value, clicking in puts the
+           cursor after it, so pasting stores `********xoxb-NEW` -- old
+           credential destroyed, new one corrupt, UI reporting success. With
+           nothing in the field there is nothing to append to.
+        2. THE MASK BEING SAVED BACK AT ALL. `Settings.saveView` still guards
+           against it for the API path, but the browser can no longer submit a
+           mask it was never given.
+        3. LENGTH DISCLOSURE. `getValues` masks as `len(value) * '*'`, so
+           rendering it told anyone looking at the screen exactly how long the
+           credential is.
+
+        This replaces an earlier `@focus="$event.target.value = ''"`, which
+        worked but wiped the field the instant focus landed -- including via
+        Tab. A screen reader would announce "twenty asterisks" and then be
+        looking at an empty field with no announcement of the change. Review
+        raised it as an accessibility nit; it is better read as a sign the
+        mask should never have been in the DOM.
+
+        The placeholder now carries the state a sighted user got from the
+        asterisks, and carries it to assistive tech too, which the mask never
+        did: it says whether something is stored, not how long it is. -#}
     <input type="password"
-           :value="getVal(group.section, opt.name)"
-           @focus="$event.target.value = ''"
+           value=""
+           :placeholder="getVal(group.section, opt.name) ? 'Saved \u2014 type to replace' : 'Not set'"
            @change="setVal(group.section, opt.name, $event.target.value)"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
