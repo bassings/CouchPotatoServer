@@ -1099,14 +1099,19 @@ function setupWizard() {
     },
 
     skipStep() {
-      // Skipping the Security step stores nothing, so any earlier claim that a
-      // password is stored is no longer true. Review found this: with the
-      // summary keyed on `formData.password`, typing a password and then
-      // clicking Skip -- which is visible on that step -- reported
-      // "Authentication: Enabled" with nothing saved and `auth_required` off.
-      // That is the same lie the branch set out to fix, reached by a different
-      // button.
-      if (this.currentStep === 1) this.passwordStored = false;
+      // Deliberately does NOT touch `passwordStored`.
+      //
+      // An earlier version cleared it on step 1, reasoning that skipping means
+      // no password. Review showed that creates the SAME lie in the opposite
+      // direction: `skipStep` makes no server call at all, so after
+      // type -> Continue (saved, `auth_required = 1`) -> Back -> Skip, the
+      // server still holds the password and still enforces login, while the
+      // summary would have read "Disabled".
+      //
+      // Skip means "do not set one now", not "retract what is stored". If the
+      // save succeeded, the credential exists and the summary must say so.
+      // Where no save happened, the flag was never set and nothing needs
+      // clearing.
       this.currentStep++;
     },
 

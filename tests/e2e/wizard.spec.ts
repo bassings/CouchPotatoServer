@@ -205,19 +205,25 @@ test.describe('Wizard: a refused save must not read as success', () => {
     ).toHaveText('Disabled', { timeout: 5000 });
   });
 
-  test('Back then Skip retracts an earlier successful password save', async ({ page }) => {
+  test('Back then Skip keeps reporting Enabled, because the save still stands', async ({
+    page,
+  }) => {
     /**
-     * The path `skipStep`'s reset actually guards, which the Skip test above
-     * does NOT cover -- mutation proved that: removing the reset left that
-     * test green, because there the password is never saved in the first place
-     * and the flag was never set.
+     * The inverse of the test that used to sit here, which asserted "Disabled"
+     * and was locking in a bug.
      *
-     * Here it IS set: save the password, go Back, then Skip. Without the reset
-     * the summary keeps claiming "Enabled" from a save the user has since
-     * stepped back over and declined.
+     * `skipStep()` makes no server call. So after type -> Continue (saved,
+     * `auth_required = 1`) -> Back -> Skip, the server still holds the password
+     * and still enforces login. Reporting "Disabled" there is the same lie this
+     * branch exists to fix, pointing the other way -- and arguably worse, since
+     * an operator who believes authentication is off may expose the instance
+     * deliberately.
      *
-     * Worth its own test rather than folding into the one above: they look
-     * like the same scenario and guard opposite halves of the fix.
+     * How I got it wrong is worth recording: a mutation showed that removing
+     * `skipStep`'s clear left the earlier Skip test green. I read that as "the
+     * test is too weak" and wrote a stronger test for the clear, rather than
+     * asking whether the clear was correct. The mutation was telling me the
+     * code was wrong, not the test.
      */
     await page.route('**/settings.save/**', async (route) => {
       await route.fulfill({
@@ -229,11 +235,11 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await gotoSecurityStep(page);
 
     await SECURITY_PASSWORD(page).fill('hunter2');
-    await page.getByRole('button', { name: /Continue/i }).click();   // saves
+    await page.getByRole('button', { name: /Continue/i }).click();   // really saves
     await page.waitForTimeout(500);
-    await page.getByRole('button', { name: /Back/i }).click();       // back to Security
+    await page.getByRole('button', { name: /Back/i }).click();
     await expect(SECURITY_PASSWORD(page)).toBeVisible({ timeout: 5000 });
-    await page.getByRole('button', { name: /^Skip$/i }).click();     // decline it
+    await page.getByRole('button', { name: /^Skip$/i }).click();
 
     for (let i = 0; i < 4; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
@@ -244,8 +250,9 @@ test.describe('Wizard: a refused save must not read as success', () => {
 
     await expect(
       page.locator('[x-text*="passwordStored"]'),
-      'the summary still claims Enabled after the user stepped back and skipped',
-    ).toHaveText('Disabled', { timeout: 5000 });
+      'the summary says Disabled while the server still has the password and ' +
+        'still enforces login',
+    ).toHaveText('Enabled', { timeout: 5000 });
   });
 
   test('a save that succeeds still advances, so the guard is not a wall', async ({ page }) => {
