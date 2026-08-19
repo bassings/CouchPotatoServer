@@ -237,13 +237,14 @@ class Settings:
 
             raw_value = self.p.get(section, option)
 
-            if tp == 'password':
-                # Skip type coercion (there is no 'password' adapter) but NOT
-                # the legacy-literal cleanup: `_strip_bytes_literal` lives
-                # inside `_coerce_value`, and returning `raw_value` here handed
-                # a long-lived config's `b'...'` wrapper straight to the plugin.
-                # Masking a credential must not change what the plugin reads.
-                return _strip_bytes_literal(raw_value)
+            # No password special-case. There is no 'password' adapter, so
+            # `_coerce_value` falls through and does exactly one thing to it --
+            # `_strip_bytes_literal` -- which is what this branch used to skip.
+            # Skipping it handed a long-lived config's `b'...'` wrapper straight
+            # to the plugin, so masking a credential silently broke the
+            # integration it was protecting. The first fix duplicated the strip
+            # here; review pointed out the branch can just go, which is smaller
+            # and cannot drift from `_coerce_value` later.
 
             # Use Pydantic coercion for typed values
             return _coerce_value(raw_value, tp)
@@ -627,9 +628,10 @@ class Settings:
         # from the settings page, which only renders registered options, but it
         # is reachable through the API. Deliberately not widened here: an
         # orphan's value belongs to a plugin that no longer exists.
-        if (value and self.getType(section, option) == 'password'
-                and str(value) == len(str(self.get(option, section) or '')) * '*'
-                and self.get(option, section)):
+        current = self.get(option, section) if value else None
+        if (value and current
+                and self.getType(section, option) == 'password'
+                and str(value) == len(str(current)) * '*'):
             self.log.warning(
                 'Refused to save "%s.%s": the value is the displayed mask, not '
                 'a credential. Clear the field and paste the real value to '

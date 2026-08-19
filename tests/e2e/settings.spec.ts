@@ -206,8 +206,36 @@ test.describe('Settings', () => {
  * template: the behaviour under test IS the DOM event sequence.
  */
 test.describe('Settings: a password field cannot be half-edited', () => {
-  /** Find a rendered password input, or skip with a reason rather than pass. */
-  async function firstPasswordInput(page) {
+  /**
+   * Find a rendered password input, or fail with a reason rather than pass.
+   *
+   * Stubs the save endpoint FIRST. Without that these tests were destructive:
+   * clearing the field on focus and then blurring fires `@change`, which saves
+   * an EMPTY value over a real credential. CI caught it -- the first test wiped
+   * the downloader's password, its group collapsed, and the second test then
+   * found no visible password input at all.
+   *
+   * Worth stating plainly: a test for the credential-destruction defect was
+   * itself destroying credentials. It passed locally because the runs happened
+   * to leave a usable field behind; the CI seed did not.
+   *
+   * These tests are about what the BROWSER does, so nothing needs to persist.
+   */
+  async function firstPasswordInput(page, saves?: string[]) {
+    // ONE route handler. An earlier version had the caller register its own
+    // capture route as well, and Playwright gives precedence to the most
+    // recently added match -- so this helper's handler won, the caller's array
+    // stayed empty, and the "saves nothing" test could not fail even when the
+    // focus handler was mutated to save deliberately. Two competing handlers
+    // for one pattern is a guard that cannot fire.
+    await page.route('**/settings.save/**', async (route) => {
+      if (saves) saves.push(route.request().postData() || '');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
     await page.goto('/settings/');
     await expect(page.locator('h1')).toContainText('Settings');
     const downloaders = page.getByRole('tab', { name: /downloader/i });
@@ -255,6 +283,47 @@ test.describe('Settings: a password field cannot be half-edited', () => {
       await field.inputValue(),
       'the stored value would carry mask characters into the credential',
     ).not.toContain('*');
+  });
+
+  test('focus then blur WITHOUT typing saves nothing', async ({ page }) => {
+    /**
+     * The load-bearing claim behind clear-on-focus, and it was documented in
+     * field_types.html without ever being tested.
+     *
+     * If focus-and-blur DID fire `change`, then clearing on focus would post an
+     * empty value and destroy the credential on every visit to the settings
+     * page -- turning the mitigation into a far worse version of the bug it
+     * was written for. The claim is that browsers gate change-on-blur on the
+     * dirty value flag, which only real keystrokes or a paste set; a scripted
+     * `.value = ''` inside the focus handler does not.
+     *
+     * That is a claim about browser behaviour, so it is worth nothing until a
+     * browser is asked. This asks.
+     *
+     * Not hypothetical either: the sibling tests in this file were destructive
+     * until CI caught them wiping a downloader's password through exactly this
+     * save path.
+     */
+    const saves: string[] = [];
+    const field = await firstPasswordInput(page, saves);
+    await field.evaluate((el: HTMLInputElement) => {
+      el.value = '****************';
+    });
+
+    await field.focus();
+    await field.blur();
+    // Must comfortably exceed `debounceSave`'s 500ms timer in
+    // partials/settings/scripts.html. Waiting exactly 500 raced it: the POST
+    // landed just after the wait ended, so the assertion saw an empty array and
+    // the test passed even when the focus handler was mutated to dispatch a
+    // `change` deliberately. It would have shipped as a guard that cannot fail.
+    await page.waitForTimeout(1500);
+
+    expect(
+      saves,
+      'focus + blur without typing posted a save -- clear-on-focus would ' +
+        'destroy the stored credential on every visit to this page',
+    ).toEqual([]);
   });
 
   test('the field is type=password, so it is not shoulder-surfable', async ({ page }) => {
