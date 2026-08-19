@@ -2306,6 +2306,59 @@ to download, but none of the ... downloaders are enabled" and returns
   library and settings paths to a public Google endpoint — a bigger privacy risk
   than the advisory tick 41 was busy holding, sitting one typed command away.
 
+  **Three corrections from the adversarial pass, which found things the two
+  rubric reviews did not.**
+
+  1. **I broke the local gate while validating #269, and the breakage blocked
+     every branch in the checkout.** To check that ruff 0.16.3 was clean I
+     installed it into the shared `.venv`. But `scripts/verify.sh` fails at
+     preflight when the installed ruff differs from the `requirements-dev.txt`
+     pin, and master still pinned 0.16.2 — so `make verify` exited 2 before lint
+     or any test ran, and since `.githooks/pre-push` runs `verify.sh`, nothing
+     could be pushed at all. Measured, not theorised: the gate run launched for
+     this very branch came back `exit 2` on exactly that message.
+
+     The general shape is worth more than the incident. **Validating a bump by
+     installing it into the shared environment makes that environment disagree
+     with every branch that has not taken the bump yet** — including the branch
+     you are trying to push. The pin-agreement guard did its job by refusing;
+     the mistake was mine. Resolved by landing #269 rather than downgrading, so
+     the environment and the repo converge instead of flip-flopping.
+
+  2. **#269's CI green was measured against a stale base.** `db-ruff` forked at
+     `0a7b197e`, which predates #265 — so the tree its checks ran over did not
+     contain the T36 extraction fix, and a two-dot diff against master rendered
+     T36 as *removed*, which is a diff artefact rather than a reversion but
+     would badly mislead a reviewer. Rebased onto master before merging.
+     Generalising: **a Dependabot PR's green is a statement about its base**, and
+     Dependabot does not rebase for you.
+
+  3. **The Stryker engine floor cited above is the wrong floor.** The record says
+     Stryker 10 requires `node >=22`, which is Stryker's own `engines`. The
+     lockfile the bump actually produces drags in Babel 8, and **76 packages**
+     in it declare `"node": "^22.18.0 || >=24.11.0"`. The merge stays safe —
+     `setup-node` with `'24'` resolves to the latest 24.x — but the reasoning as
+     written would not have caught a pin to `24.0.0`, and it understates what the
+     bump imposes. Pinning `node-version` more precisely than `'24'` is the
+     follow-up.
+
+  **What the adversarial pass CONFIRMED**, so it is not re-litigated: a clean
+  venv built from master's pins gives `pip check` "No broken requirements found"
+  with all three merged bumps present; certifi's path to the runtime image lands
+  on exactly the three lines cited; mutation testing is genuinely outside the
+  merge path (`mutation.yml` is `schedule` + `workflow_dispatch` only, and is not
+  in the required checks); and the ruff pin guard is real, not vacuous — three
+  distinct mutations (each of the two `ci.yml` pins, plus unquoting one) each
+  produced a failure on the assertion that names the condition.
+
+  Also worth recording because it nearly produced a false green: the adversarial
+  pass was ASKED to run `pip check` in `.venv`, and refused, because that venv
+  still held the pre-bump versions. It would have returned "No broken
+  requirements found" while proving nothing about the three bumps — a real
+  command, a green result, unrelated to the claim. It built a clean venv from
+  master's pins instead. That is the incidentally-passing shape, caught in the
+  instruction I wrote rather than in the code.
+
   The through-line, and it is the same failure in three costumes: **depth
   applied to the interesting risk while step one is recorded from memory.**
 
