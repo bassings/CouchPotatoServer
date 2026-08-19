@@ -1403,3 +1403,57 @@ class TestTheSummarySurvivesAnAbortedArchive:
             'the archive aborted and took its own diagnostic counts with it, '
             'which is the case the summary exists for'
         )
+
+
+class TestAnUnencodableNameDoesNotSinkTheArchive:
+    r"""`EILSEQ`, the third member of `_ENTRY_DERIVED_ERRNOS` found by review
+    one round after the second.
+
+    A lone surrogate in an entry name is not encodable for the filesystem, so
+    `os.replace` raises `OSError(EILSEQ)`. Driven before fixing:
+
+        RAISED OSError [Errno 92] Illegal byte sequence
+        good.mkv extracted: False
+
+    Note the reviewer's hypothesis was that `isSubFolder` would raise, OUTSIDE
+    the try block. It does not -- `isSubFolder` catches `TypeError`/
+    `ValueError` and returns False, so NUL bytes, 4000-character names and
+    dot-only names are all refused cleanly. Driving it found a different
+    mechanism reaching the same conclusion, inside `_extractOneAtomic`.
+    """
+
+    def test_an_unencodable_name_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        hostile = 'movie\udcff.mkv'
+        names = [hostile, 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an unencodable entry name aborted the archive; the good entry '
+            'after it was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+
+    def test_names_that_are_merely_odd_are_refused_without_raising(self, tmp_path):
+        """The shapes the reviewer expected to break the containment check.
+        They do not -- recorded so the next reader does not re-test them."""
+        for hostile in ('movie\x00.mkv', 'B' * 4000 + '.mkv', '.' * 500):
+            extr_path = tmp_path / ('e%d' % len(hostile))
+            extr_path.mkdir()
+            names = [hostile, 'good.mkv']
+            handle = _make_rar_handle([_make_info(n) for n in names],
+                                      {n: b'real' for n in names})
+            with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                       return_value=handle):
+                extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+            assert extracted == [str(extr_path / 'good.mkv')], (
+                '%r did not leave the archive extractable' % hostile[:20]
+            )

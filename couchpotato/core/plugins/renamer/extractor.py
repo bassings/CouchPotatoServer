@@ -39,22 +39,37 @@ log = CPLog(__name__)
 #: `_logArchiveSummary` reports the totals so nothing is hidden by the cap.
 _MAX_ENTRY_LOGS = 5
 
-#: OSError errnos caused by THIS entry rather than by the machine, so they skip
-#: one entry instead of abandoning the archive.
+#: OSError errnos caused by THIS entry's destination rather than by the
+#: machine, so they skip one entry instead of abandoning the archive.
 #:
-#: The axis is "caused by this entry or by the machine" -- exception TYPE is
-#: only a proxy for it, and sorting by type let both of these through a split
-#: written specifically to stop hostile entries aborting archives. Each was
-#: found by review, one at a time, after the previous one was fixed:
+#: THE CRITERION, so the next member is derivable instead of discovered: an
+#: errno belongs here when it says "this NAME/PATH is unusable" and NOT when it
+#: says "this filesystem cannot serve a write right now". The first is
+#: attacker-chosen and affects one entry; the second is the machine and will
+#: fail identically for every entry that follows.
 #:
 #:   ENAMETOOLONG  the flattened name exceeds the filesystem's limit
 #:   EISDIR        something already occupies the destination as a directory
+#:   EILSEQ        the name is not encodable for this filesystem
+#:                 (driven: a lone surrogate in an entry name aborted the
+#:                 archive at os.replace)
+#:   EINVAL        the name contains a byte or sequence the filesystem rejects
 #:
-#: NOT here, deliberately: ENOSPC, EACCES, EROFS, EIO. Those are the machine.
-#: They fail identically for every remaining entry, and continuing would hand
-#: `extractFiles` a partial list which it tags as extracted -- silently
-#: completing a release with files missing.
-_ENTRY_DERIVED_ERRNOS = frozenset((errno.ENAMETOOLONG, errno.EISDIR))
+#: NOT here, deliberately: ENOSPC, EACCES, EROFS, EIO, EDQUOT. Those are the
+#: machine. Continuing past them would hand `extractFiles` a partial list which
+#: it tags as extracted -- silently completing a release with files missing.
+#:
+#: This list was built one member at a time across three review rounds
+#: (ENAMETOOLONG, then EISDIR, then EILSEQ), each found only after the previous
+#: was fixed, because each round asked "which errno did I miss" instead of
+#: "what is the category". The criterion above is the answer to the second
+#: question and is why EINVAL is here without anyone having hit it yet.
+_ENTRY_DERIVED_ERRNOS = frozenset((
+    errno.ENAMETOOLONG,
+    errno.EISDIR,
+    errno.EILSEQ,
+    errno.EINVAL,
+))
 
 # rarfile forces the extractor tool to be selected via the process-global
 # ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
