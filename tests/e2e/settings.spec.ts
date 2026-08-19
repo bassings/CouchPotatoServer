@@ -183,3 +183,74 @@ test.describe('Settings', () => {
     await expect(savedIndicator.first()).toBeVisible({ timeout: 5000 });
   });
 });
+
+/**
+ * T48: a password field must not let the operator destroy a stored credential
+ * by editing the mask.
+ *
+ * `getValues()` renders a password-typed option as a run of asterisks. Without
+ * clear-on-focus, clicking into the field puts the cursor AFTER that mask, so
+ * pasting a new token stores `********xoxb-NEW` -- the old credential is gone
+ * and the new one is corrupt, while the UI reports success. On this project's
+ * loss ranking a stored credential is irreplaceable: the user has to re-issue
+ * it at the provider, and for a tracker passkey that can mean contacting staff.
+ *
+ * The server-side guard in `Settings.saveView` cannot cover this. Any predicate
+ * loose enough to reject `********xoxb-NEW` also rejects a human password
+ * containing an asterisk, and refusing THOSE was measurably worse -- it left
+ * first-run instances unauthenticated. So the browser is the only layer that
+ * can tell "the user touched this field", and this test is what proves that
+ * layer works.
+ *
+ * Deliberately driven in a real browser rather than asserted against the
+ * template: the behaviour under test IS the DOM event sequence.
+ */
+test.describe('Settings: a password field cannot be half-edited', () => {
+  /** Find a rendered password input, or skip with a reason rather than pass. */
+  async function firstPasswordInput(page) {
+    await page.goto('/settings/');
+    await expect(page.locator('h1')).toContainText('Settings');
+    const downloaders = page.getByRole('tab', { name: /downloader/i });
+    await downloaders.click();
+    await expect(downloaders).toHaveAttribute('aria-selected', 'true');
+    const field = page.locator('input[type="password"]').first();
+    await expect(field, 'no password input rendered on the downloaders tab').toBeVisible({
+      timeout: 5000,
+    });
+    return field;
+  }
+
+  test('focusing a password field clears it, so a paste cannot append to the mask', async ({
+    page,
+  }) => {
+    const field = await firstPasswordInput(page);
+    await field.evaluate((el: HTMLInputElement) => {
+      el.value = '****************';
+    });
+
+    await field.focus();
+
+    await expect(field, 'the mask survived focus -- a paste would append to it').toHaveValue('');
+  });
+
+  test('typing after focus stores only what was typed', async ({ page }) => {
+    const field = await firstPasswordInput(page);
+    await field.evaluate((el: HTMLInputElement) => {
+      el.value = '****************';
+    });
+
+    await field.focus();
+    await field.type('brand-new-secret');
+
+    await expect(field).toHaveValue('brand-new-secret');
+    expect(
+      await field.inputValue(),
+      'the stored value would carry mask characters into the credential',
+    ).not.toContain('*');
+  });
+
+  test('the field is type=password, so it is not shoulder-surfable', async ({ page }) => {
+    const field = await firstPasswordInput(page);
+    await expect(field).toHaveAttribute('type', 'password');
+  });
+});
