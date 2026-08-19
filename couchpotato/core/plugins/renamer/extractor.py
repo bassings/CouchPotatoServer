@@ -10,6 +10,7 @@ install one per OS) and the archive is left untouched -- the release is
 NOT tagged or failed, it is simply retried on a later scan once a tool is
 available.
 """
+import errno
 import glob
 import os
 import re
@@ -19,11 +20,56 @@ import traceback
 
 import rarfile
 
-from couchpotato.core.helpers.variable import sp
+from couchpotato.core.helpers.variable import isSubFolder, sp
 from couchpotato.core.logger import CPLog
 from couchpotato.environment import Env
 
 log = CPLog(__name__)
+
+#: Cap on per-entry log lines a single archive may produce, for ALL FOUR
+#: per-entry counters: refusals, name collisions, unreadable entries, and
+#: entries that could not be written to their destination.
+#: (This said "BOTH refusals and name collisions" until the third counter was
+#: added a commit later and this line was not updated -- the same drift the
+#: rest of this branch keeps correcting.)
+#: `rarfile.infolist()` parses headers only, so a hostile
+#: RAR carries thousands of poisoned entries for the cost of a header each --
+#: unbounded per-entry logging is therefore an amplification vector, not a
+#: nicety. Small, because the first few are diagnostic and the rest are noise;
+#: `_logArchiveSummary` reports the totals so nothing is hidden by the cap.
+_MAX_ENTRY_LOGS = 5
+
+#: OSError errnos caused by THIS entry's destination rather than by the
+#: machine, so they skip one entry instead of abandoning the archive.
+#:
+#: THE CRITERION, so the next member is derivable instead of discovered: an
+#: errno belongs here when it says "this NAME/PATH is unusable" and NOT when it
+#: says "this filesystem cannot serve a write right now". The first is
+#: attacker-chosen and affects one entry; the second is the machine and will
+#: fail identically for every entry that follows.
+#:
+#:   ENAMETOOLONG  the flattened name exceeds the filesystem's limit
+#:   EISDIR        something already occupies the destination as a directory
+#:   EILSEQ        the name is not encodable for this filesystem
+#:                 (driven: a lone surrogate in an entry name aborted the
+#:                 archive at os.replace)
+#:   EINVAL        the name contains a byte or sequence the filesystem rejects
+#:
+#: NOT here, deliberately: ENOSPC, EACCES, EROFS, EIO, EDQUOT. Those are the
+#: machine. Continuing past them would hand `extractFiles` a partial list which
+#: it tags as extracted -- silently completing a release with files missing.
+#:
+#: This list was built one member at a time across three review rounds
+#: (ENAMETOOLONG, then EISDIR, then EILSEQ), each found only after the previous
+#: was fixed, because each round asked "which errno did I miss" instead of
+#: "what is the category". The criterion above is the answer to the second
+#: question and is why EINVAL is here without anyone having hit it yet.
+_ENTRY_DERIVED_ERRNOS = frozenset((
+    errno.ENAMETOOLONG,
+    errno.EISDIR,
+    errno.EILSEQ,
+    errno.EINVAL,
+))
 
 # rarfile forces the extractor tool to be selected via the process-global
 # ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
@@ -252,28 +298,257 @@ class ExtractorMixin:
             # deleteEmptyFolder's rmdir fail with ENOTEMPTY forever. Sweep it.
             self._sweepStrayTempFiles(extr_path)
 
+            # NOT sp()-normalised, deliberately, and this was measured rather
+            # than assumed. When extr_path itself contains a backslash -- legal
+            # on POSIX, and choosable by a hostile torrent naming its folder --
+            # sp() rewrites the TARGET into a tree that does not exist, so no
+            # entry can be written either way. The question is only which way
+            # it fails:
+            #
+            #   base without sp(): contained=False -> refused, loop continues
+            #   base with    sp(): contained=True  -> write into a missing dir,
+            #                                         raises, ABANDONS the archive
+            #
+            # Applying sp() here therefore trades a clean per-entry refusal for
+            # an exception that sinks everything else in the archive. Tried it,
+            # measured it, reverted it. The real defect is sp() mangling
+            # extr_path, which is out of scope here -- tracked as T41.
+            extr_real_path = os.path.realpath(extr_path)
+            refused = 0
+            collisions = 0
+            unreadable = 0
+            unwritable = 0
             extracted = []
+            # Parallel set purely for membership. `extracted` stays a list
+            # because its ORDER is the return contract, but `x in list` is a
+            # linear scan, so collision detection was O(n^2) on exactly the
+            # input this function treats as hostile: an archive with thousands
+            # of entries, which costs the attacker one header each.
+            seen = set()
             rar_handle = rarfile.RarFile(rar_path)
             try:
                 for info in rar_handle.infolist():
                     if info.isdir():
                         continue
-                    extr_file_path = sp(os.path.join(extr_path, os.path.basename(info.filename)))
+                    entry_name = self._safeEntryBasename(info.filename)
+                    extr_file_path = sp(os.path.join(extr_path, entry_name))
+                    if entry_name in ('', '.', '..') or not isSubFolder(extr_file_path, extr_real_path):
+                        # Two refusal reasons sharing one path, so every
+                        # rejected shape behaves identically.
+                        #
+                        # NAME: entries that sanitize to nothing useful -- '',
+                        # '.', '..', and anything ending in a separator, which
+                        # basename reduces to ''. Those join back to extr_path
+                        # ITSELF, and isSubFolder accepts equality, so
+                        # containment alone waves them through into
+                        # `os.replace(tmp, <a directory>)` -> IsADirectoryError,
+                        # which escapes extractArchive and abandons the WHOLE
+                        # archive: a permanent per-release wedge on an
+                        # unattended server.
+                        #
+                        # CONTAINMENT: belt-and-braces for any shape that
+                        # defeats the sanitization, whatever the next one is.
+                        #
+                        # Refuse this entry only -- one hostile name must not
+                        # sink the archive -- and log the entry NAME, bounded.
+                        # Not rar_path, not the resolved destination: those add
+                        # nothing an operator needs, and PrivacyFilter redacts
+                        # only /home/<user> and /Users/<user>, so every NAS
+                        # layout would have gone to disk in full. %r because the
+                        # name may contain newlines.
+                        refused += 1
+                        if refused <= _MAX_ENTRY_LOGS:
+                            log.error(
+                                'Refusing to extract archive entry outside the '
+                                'extraction directory: %r', info.filename,
+                            )
+                        continue
                     if not os.path.isfile(extr_file_path):
-                        log.debug('Extracting %s...', info.filename)
-                        self._extractOneAtomic(rar_handle, info, extr_file_path, extr_path)
+                        # %r, not %s: the entry name is attacker-controlled and
+                        # may contain newlines, which interpolated raw let a
+                        # crafted archive write whole fake log records. This is
+                        # the REACHABLE forging vector -- the refusal line above
+                        # cannot be, since only '', '.' and '..' are refused and
+                        # none can carry a newline. Found by a test whose premise
+                        # was wrong: it aimed at the refusal path and failed
+                        # because the entry was never refused.
+                        log.debug('Extracting %r...', info.filename)
+                        try:
+                            self._extractOneAtomic(
+                                rar_handle, info, extr_file_path, extr_path)
+                        except rarfile.RarCannotExec:
+                            # The extractor TOOL is missing. Environmental, and
+                            # it will fail identically for every remaining
+                            # entry, so it must reach the caller -- that is what
+                            # surfaces NO_EXTRACTOR_TOOL_MESSAGE ("apk add
+                            # 7zip") instead of a thousand skipped entries and
+                            # an archive quietly reported as empty.
+                            #
+                            # Caught BEFORE rarfile.Error because it subclasses
+                            # it. A pre-existing test found this within seconds
+                            # of the broader catch going in, which is the whole
+                            # argument for the narrow one.
+                            raise
+                        except OSError as e:
+                            # ENAMETOOLONG is an OSError, but it is derived
+                            # from THIS entry's attacker-controlled name, not
+                            # from the environment -- driven, a 300-character
+                            # entry name gives errno 63 out of `os.replace`
+                            # and aborted the archive, so `good.mkv` sitting
+                            # after it never extracted.
+                            #
+                            # That correction matters more than the case: the
+                            # axis is not "rarfile.Error vs OSError", it is
+                            # "caused by this entry or by the machine". Sorting
+                            # by exception TYPE looked like the same thing and
+                            # is not, which is why one hostile name still got
+                            # through a split written specifically to stop
+                            # hostile names.
+                            #
+                            # Only ENAMETOOLONG, deliberately. ENOSPC, EACCES,
+                            # EROFS and EIO are the machine, will fail
+                            # identically for every remaining entry, and must
+                            # still abort rather than hand `extractFiles` a
+                            # partial list it tags as extracted.
+                            if e.errno not in _ENTRY_DERIVED_ERRNOS:
+                                raise
+                            # Its OWN counter, not folded into `unreadable`.
+                            # This entry WAS read; it could not be WRITTEN. An
+                            # operator seeing "could not be read" would chase a
+                            # corrupt archive, when the remedy is a filesystem
+                            # name limit. Two causes, two remediations, two
+                            # counts.
+                            unwritable += 1
+                            if unwritable <= _MAX_ENTRY_LOGS:
+                                log.error('Archive entry could not be written '
+                                          'to its destination (%s), skipping '
+                                          'it: %r',
+                                          errno.errorcode.get(e.errno, e.errno),
+                                          info.filename)
+                            continue
+                        except rarfile.Error:
+                            # A corrupt or unreadable ENTRY is attacker-
+                            # controlled, so it gets the same treatment as a
+                            # hostile name: refuse this one, keep the archive.
+                            # Without this the invariant was only half true --
+                            # one bad entry among a thousand still aborted
+                            # everything after it.
+                            #
+                            # Deliberately `rarfile.Error` and NOT `Exception`.
+                            # An OSError here (disk full, permissions, the
+                            # filesystem going away) is ENVIRONMENTAL, and
+                            # continuing would hand `extractFiles` a partial
+                            # list which it then tags as extracted -- silently
+                            # completing a release with files missing. Aborting
+                            # leaves it untagged and retried next scan, which
+                            # is the recoverable outcome. Attacker-controlled
+                            # failures are per-entry; environmental failures
+                            # are not.
+                            unreadable += 1
+                            if unreadable <= _MAX_ENTRY_LOGS:
+                                log.error('Could not read archive entry, '
+                                          'skipping it: %r', info.filename)
+                            continue
                     # Report the target path whether we just wrote it or it was
                     # already present -- an already-extracted archive is a success,
                     # not a no-op, so the caller can still tag/clean it up. Dedupe:
                     # two entries that flatten to the same basename (e.g. a top-level
                     # file and a same-named one under Sample/) map to one destination,
                     # so the contract "distinct target files present" must hold.
-                    if extr_file_path not in extracted:
+                    if extr_file_path in seen:
+                        # BOUNDED for the same reason the refusal above is: an
+                        # earlier version of this very commit capped refusals
+                        # and then added this warning uncapped, which is the
+                        # identical amplification vector two hunks apart.
+                        #
+                        # Visible, because the loser is discarded silently and
+                        # the release is still tagged extracted. Driven:
+                        #
+                        #   ['movie.mkv', 'Sample\\movie.mkv'] -> FEATURE-20GB
+                        #   ['Sample\\movie.mkv', 'movie.mkv'] -> SAMPLE-50MB
+                        #
+                        # Archive ORDER decides, so in the bad order a 50MB
+                        # sample replaces the feature and nobody is told.
+                        # Long-standing for `Sample/` (RAR3); T36 widens it to
+                        # `Sample\\` (RAR5), which previously crashed instead.
+                        # Warn only -- picking a winner is a behaviour change
+                        # that does not belong in a security fix. See T43.
+                        collisions += 1
+                        if collisions <= _MAX_ENTRY_LOGS:
+                            log.warning(
+                                'Two archive entries flatten to the same name; '
+                                'the later one is discarded and which wins '
+                                'depends on archive order: %r', info.filename,
+                            )
+                    else:
+                        seen.add(extr_file_path)
                         extracted.append(extr_file_path)
             finally:
                 rar_handle.close()
+                # In the `finally`, because the counts matter MOST on an
+                # aborted archive. Sitting after the try block, this was
+                # skipped by exactly the paths that make it useful: an
+                # environmental OSError, RarCannotExec, or any entry-derived
+                # errno not yet in the set. The operator then saw five capped
+                # per-entry lines, an abort, and no totals -- the diagnostic
+                # deleted at the moment it was needed.
+                self._logArchiveSummary(
+                    refused, collisions, unreadable, unwritable)
 
         return extracted
+
+    @staticmethod
+    def _logArchiveSummary(refused, collisions, unreadable, unwritable):
+        """Report totals when per-entry logging was capped.
+
+        The cap exists so a hostile archive cannot flood the log, but a cap
+        with no summary hides how bad the archive was -- an operator sees five
+        lines and cannot tell five poisoned entries from five thousand. An
+        earlier version of this code promised "a count follows at the end" in
+        the truncation notice and never emitted one, which is worse than
+        silence: a log line that tells the reader to wait for something that
+        never arrives.
+
+        Counts only, deliberately: no paths, no entry names.
+        """
+        if refused > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries were refused in total (only the first '
+                      '%d were logged individually).', refused, _MAX_ENTRY_LOGS)
+        if collisions > _MAX_ENTRY_LOGS:
+            log.warning('%d archive entries collided on the same destination in '
+                        'total (only the first %d were logged individually).',
+                        collisions, _MAX_ENTRY_LOGS)
+        if unreadable > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries could not be read in total (only the '
+                      'first %d were logged individually).',
+                      unreadable, _MAX_ENTRY_LOGS)
+        if unwritable > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries could not be written to their '
+                      'destination in total (only the first %d were logged '
+                      'individually).', unwritable, _MAX_ENTRY_LOGS)
+
+    @staticmethod
+    def _safeEntryBasename(filename):
+        """Return just the final path component of an archive-supplied entry
+        name, treating BOTH '/' and '\\' as separators.
+
+        Archive formats (RAR, ZIP) are portable and an entry name is
+        attacker-controlled, so it can carry a backslash as a directory
+        separator even when extraction runs on POSIX, where
+        ``os.path.basename`` only recognises '/'. Left alone, a name like
+        ``..\\..\\..\\evil.txt`` survives ``os.path.basename`` completely
+        intact, and ``sp()``'s Windows-path handling (needed elsewhere for
+        genuine remote-Windows-box paths, so not something to change here)
+        then anchors the joined path at the filesystem root -- walking the
+        extraction straight out of ``extr_path``. Normalising '\\' to '/'
+        before taking the basename neutralises that without touching
+        ``sp()`` itself.
+
+        This alone is NOT sufficient (see the containment check at the call
+        site): a bare ``..`` has no separator at all, so basename returns it
+        completely unchanged regardless of this normalisation.
+        """
+        return os.path.basename(filename.replace('\\', '/'))
 
     @staticmethod
     def _sweepStrayTempFiles(extr_path):
