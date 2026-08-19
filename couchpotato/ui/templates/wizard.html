@@ -765,7 +765,49 @@
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-cp-muted">Authentication</span>
-                <span class="text-cp-text" x-text="formData.username ? 'Enabled' : 'Disabled'"></span>
+                {#- Derived from a SAVE THAT SUCCEEDED, not from form state.
+
+                    `auth_required` is flipped by `Core.md5Password`, hooked to
+                    `setting.save.core.password` -- in both directions, so
+                    clearing the password turns it back off.
+
+                    This has now been wrong twice, in the same place, for the
+                    same underlying reason: it asserted a SERVER property from
+                    LOCAL state.
+
+                    1. Keyed on `formData.username`, it said "Enabled" for an
+                       operator who filled a username and skipped the optional
+                       password. Measured: summary Enabled, API
+                       `{"auth_required": false, "password": ""}`.
+                    2. Keyed on `formData.password`, it said "Enabled" for an
+                       operator who typed a password and then pressed Skip --
+                       which is visible on that very step and calls
+                       `skipStep()`, not `saveCurrentStep()`. Back-navigation
+                       reaches the same state.
+
+                    Both fixes were local-state fixes, so the second inherited
+                    the first's defect. `passwordStored` is set only inside the
+                    save's own `.then`, which `saveSetting` cannot reach for a
+                    refused save. Typing sets nothing, and `skipStep`
+                    deliberately does NOT clear it -- see its own comment: Skip
+                    makes no server call, so retracting the flag would claim
+                    "Disabled" while the server still holds the password and
+                    still enforces login. That was a third version of this same
+                    bug, pointing the other way.
+
+                    3. A draft of THIS comment still said "`skipStep` clears
+                       it" after that clear had been removed, contradicting the
+                       code 300 lines below. Recorded because a stale claim
+                       about stored state is precisely what this line keeps
+                       getting wrong, and a comment is no more exempt than the
+                       summary it describes.
+
+                    The remaining honest limit: this still reflects what THIS
+                    session saved, not what the server currently holds. It
+                    cannot report a password configured before the wizard ran.
+                    Reading `auth_required` back would close that, and needs a
+                    fetch this summary does not currently make. -#}
+                <span class="text-cp-text" x-text="passwordStored ? 'Enabled' : 'Disabled'"></span>
               </div>
               <div class="flex justify-between">
                 <span class="text-cp-muted">Search Mode</span>
@@ -876,6 +918,9 @@
 function setupWizard() {
   return {
     currentStep: 0,
+    // Set ONLY by a password save that actually succeeded. Never by typing,
+    // never by Skip, never by Back. The summary reads this, not `formData`.
+    passwordStored: false,
     steps: ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'],
     saving: false,
     message: '',
@@ -1066,6 +1111,19 @@ function setupWizard() {
     },
 
     skipStep() {
+      // Deliberately does NOT touch `passwordStored`.
+      //
+      // An earlier version cleared it on step 1, reasoning that skipping means
+      // no password. Review showed that creates the SAME lie in the opposite
+      // direction: `skipStep` makes no server call at all, so after
+      // type -> Continue (saved, `auth_required = 1`) -> Back -> Skip, the
+      // server still holds the password and still enforces login, while the
+      // summary would have read "Disabled".
+      //
+      // Skip means "do not set one now", not "retract what is stored". If the
+      // save succeeded, the credential exists and the summary must say so.
+      // Where no save happened, the flag was never set and nothing needs
+      // clearing.
       this.currentStep++;
     },
 
@@ -1095,7 +1153,16 @@ function setupWizard() {
           
         case 1: // Security
           if (this.formData.username) saves.push(this.saveSetting('core', 'username', this.formData.username));
-          if (this.formData.password) saves.push(this.saveSetting('core', 'password', this.formData.password));
+          if (this.formData.password) {
+            // `passwordStored` is set from the SAVE, not from the field, and
+            // only once the request has actually resolved successfully.
+            // `saveSetting` throws on a refusal, so the `.then` cannot run for
+            // a save the server declined.
+            saves.push(
+              this.saveSetting('core', 'password', this.formData.password)
+                .then((r) => { this.passwordStored = true; return r; }),
+            );
+          }
           break;
           
         case 2: // Providers
@@ -1184,7 +1251,28 @@ function setupWizard() {
           break;
       }
       
-      await Promise.all(saves);
+      // `Promise.all` rejects with whichever save fails FIRST, and username is
+      // pushed before password -- so a refused PASSWORD was reported as
+      // "core.username was refused". The fact that matters (no password
+      // stored, authentication not enabled) was never stated, and the operator
+      // was pointed at the wrong field.
+      const results = await Promise.allSettled(saves);
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        // Message first, `String()` only as the fallback.
+        //
+        // This has been wrong in both directions. `reason.message` alone
+        // rendered the literal "undefined" for a non-Error rejection; the fix
+        // for that, `String(reason)`, gives `Error.prototype.toString` for the
+        // NORMAL case, so the toast read "Failed to save: Error: core.password
+        // was refused" -- and `nextStep()` re-prefixes it with "Failed to
+        // save: " anyway. On the assertive live region, which is now the only
+        // channel carrying this, that is noise read aloud in front of the one
+        // fact the operator needs.
+        throw new Error(
+          failed.map((r) => (r.reason && r.reason.message) || String(r.reason)).join('; '),
+        );
+      }
     },
 
     async saveSetting(section, name, value) {
@@ -1192,10 +1280,42 @@ function setupWizard() {
       params.append('section', section);
       params.append('name', name);
       params.append('value', value);
-      return fetch(CP.apiBase + '/settings.save/', {
+      const res = await fetch(CP.apiBase + '/settings.save/', {
         method: 'POST',
         body: params
       });
+
+      // The API answers HTTP 200 even when it REFUSES a save, so `res.ok` on
+      // its own proves nothing -- the body has to be read. This returned the
+      // raw fetch promise, so a refusal resolved, `Promise.all` resolved,
+      // nothing threw, and `nextStep()` advanced as though the value had been
+      // stored.
+      //
+      // That mattered most on step 1, which saves `core.password`. The
+      // `setting.save.core.password` hook is what turns `auth_required` on, so
+      // a silently refused save there left the instance publicly reachable
+      // while the wizard's summary reported authentication as Enabled from
+      // local form state.
+      //
+      // `nextStep()` already has the try/catch and already declines to advance
+      // when the save throws. That path was simply unreachable, because the one
+      // thing that could throw did not.
+      if (!res.ok) {
+        throw new Error(`${section}.${name}: server returned ${res.status}`);
+      }
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        // A 200 that is not JSON is not a confirmed save. Treat it as a
+        // failure rather than assuming success, which is the assumption this
+        // whole change exists to remove.
+        throw new Error(`${section}.${name}: unreadable response from server`);
+      }
+      if (data && data.success === false) {
+        throw new Error(data.error || `${section}.${name} was refused`);
+      }
+      return data;
     },
 
     async testDownloader() {
@@ -1436,6 +1556,23 @@ function setupWizard() {
     toast(msg, type) {
       this.message = msg;
       this.messageType = type;
+
+      // Also write to the PERSISTENT sr-only live regions base.html ships
+      // (`assertiveAnnouncement` / `politeAnnouncement`). The visual node here
+      // carries no role, no aria-live and no live ancestor -- deliberately, per
+      // base.html's own comment -- so without this a screen-reader user is told
+      // nothing at all, and the message then self-clears after 3s.
+      //
+      // That silence was harmless while this toast was unreachable. The fix in
+      // this branch makes it the ONLY channel reporting a refused save, which
+      // is the security-critical path: no password stored, authentication not
+      // enabled. Announcing it is not polish.
+      const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+      if (region in this) {
+        this[region] = '';            // re-announce an identical repeat
+        this.$nextTick(() => { this[region] = msg; });
+      }
+
       setTimeout(() => this.message = '', 3000);
     }
   };

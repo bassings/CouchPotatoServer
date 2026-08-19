@@ -2283,7 +2283,51 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       used differing-length edits — but the rule should change before the next
       one is trusted.
 
-- [ ] T51: the first-run wizard discards every save response, so a refused save reads as success — state: queued (no deps) — **security amplifier**
+- [x] T51: the first-run wizard discards every save response, so a refused save reads as success — state: **fixed** (2026-08-20), one gap recorded — **security amplifier**
+
+      `saveSetting` now reads the response body and throws on `success: false`, on a
+      non-2xx status, and on a 200 that is not JSON — an unreadable response is not a
+      confirmed save. The fix is small because the error path already EXISTED:
+      `nextStep()` wraps the save in try/catch and only advances when nothing throws.
+      It was unreachable, because the one thing that could throw did not.
+
+      **`res.ok` alone would not have been enough**, which this task recorded in
+      advance and which held: `api.py` answers HTTP 200 for a refusal, so a status-only
+      check would have looked correct and changed nothing.
+
+      **The RED took three attempts to become honest**, and the first two would have
+      shipped a green lie:
+
+      - selectors matched nothing (the inputs are Alpine `x-model` with no `name`/`id`),
+        so all three tests failed for reasons unrelated to their claims. Caught only
+        because the CONTROL test failed too — it should pass before any fix, and that
+        is the entire reason a control was written;
+      - "the username field is still visible" passed trivially, being true during the
+        transition either way.
+
+      **The gap this entry recorded is CLOSED, and the record is corrected
+      rather than quietly rewritten.** It said the "a refused save does not
+      advance the step" assertion had been deleted and was not covered, because
+      the disagreement between the assertion and a probe was not understood.
+
+      Review explained it: it was a retrying web-first assertion on a NON-event,
+      so it succeeded at its FIRST poll, at t~0, before the async advance had
+      happened. Both earlier versions passed against unfixed code for that
+      reason, and the second one had gone RED earlier for an unrelated cause
+      (`textContent` including hidden steps' markup), which made it look like
+      proof.
+
+      The discriminating form needs a bounded settle -- mandatory when asserting
+      that something must NOT happen -- plus a step-scoped locator
+      (`[x-text="steps[currentStep]"]`, unique and unaffected by hidden markup)
+      instead of body text. It now fails against the exact pre-fix code, and
+      ships.
+
+      Deleting it was the right call on the evidence available at the time: a
+      guard whose failures cannot be explained is worse than none, because it
+      will be trusted. The lesson is not "should not have deleted it" -- it is
+      that an unexplained disagreement between two measurements is a finding
+      worth one more look, not a reason to stop.
 
       Found while fixing T48, and it is the reason a bad guard there became a
       security hole rather than an annoyance.
@@ -2410,7 +2454,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       either should look at whether one change closes both, rather than adding
       two different partial locks.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52, T53, T54 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T55: activating a wizard step destroys focus, and the toast is unfocusable — state: queued (no deps) — **accessibility**
+
+      Found reviewing T51, and made load-bearing BY T51: the error path it
+      reports on was previously unreachable.
+
+      `wizard.html` binds `:disabled="saving"` on the Continue button, so
+      activating it disables the element the user just pressed. Focus lands on
+      `<body>` and is never restored — measured `FOCUS after save = BODY`. A
+      keyboard or screen-reader user is dropped to the top of the document at
+      the exact moment an error message appears, and the message itself carries
+      no focusable target.
+
+      T51 fixed the announcement half (the refusal now writes to base.html's
+      persistent assertive region), so the failure is no longer silent. What
+      remains is that the user is not left anywhere useful to act on it.
+
+      The named remedy in this project's standard is `aria-disabled` plus a
+      re-entry guard rather than `disabled`, which keeps the control focusable
+      and keeps focus where the user put it. Check the other `:disabled` bindings
+      in the same template while there — the pattern is repeated.
+
+      Not fixed with T51 deliberately: it is a template restructure across
+      several controls, and bundling it into a security fix would have made
+      that fix harder to review for the thing it was actually for.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T52, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
