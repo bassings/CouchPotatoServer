@@ -13,10 +13,31 @@ Every one of those was found by a human or a reviewer re-deriving the list by
 hand. That is the definition of a rule that should be a check: prose telling
 the next author to remember something they have already forgotten four times.
 
+Counted as INCIDENTS, not as directions: the T36/T45 commit was one incident
+that went wrong both ways at once. The plan file states the same four, and the
+count was reconciled across all three places on 2026-08-19 after review found it
+written three different ways -- a miscount inside the paragraph arguing that
+miscounts are the recurring failure.
+
 Deliberately a SET comparison, not a sequence one. File order and reading order
 differ (T11/T15 are transposed) and that difference carries no meaning -- an
 order-sensitive assertion would fail on a correct list, which is how guards get
 switched off.
+
+KNOWN LIMIT, and it fails OPEN in the direction that matters most. `_open_tasks`
+anchors on `^- [ ] Tn:` exactly. Review probed four format variations and three
+slipped through silently: an em-dash instead of the colon, a leading indent, and
+a bolded `**T48**`. Each made a genuinely-open task invisible to the check, so
+`test_no_open_task_is_missing_from_the_dependency_list` passed while the task was
+missing -- and `test_the_extraction_actually_found_something` only asserts `> 1`,
+so a partial drift survives it too.
+
+All 47 tasks conform today and the file has one house style, so this is a bounded
+future risk rather than a present hole. It is recorded rather than fixed because
+loosening the regex trades a silent false negative for noisy false positives on
+prose that merely resembles a task line, and this file guards bookkeeping, not
+production. **The task-line format is load-bearing: change it and change this
+test in the same commit.**
 """
 import re
 from pathlib import Path

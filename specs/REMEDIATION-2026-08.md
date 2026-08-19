@@ -1908,10 +1908,15 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       carries the pypi packages too, and a PR introducing a vulnerable pip
       package is already blocked by `fail-on-severity: high`.
 
-      **(c) Trivy already scans the production image's Python packages.**
-      `ci.yml` runs `trivy image` with `scanners: vuln`, `severity:
-      CRITICAL,HIGH`, `exit-code: 1`. The runtime Python set is scanned on every
-      PR and does find real CVEs.
+      **(c) Trivy already scans the production image's Python packages —
+      but only the FIXABLE ones.** `ci.yml` runs `trivy image` with `scanners:
+      vuln`, `severity: CRITICAL,HIGH`, `exit-code: 1`, and **`ignore-unfixed:
+      true`**. The runtime Python set is scanned on every PR and does find real
+      CVEs. It structurally cannot report a Python advisory with no patched
+      release — which is precisely the extract-zip-shaped class this task exists
+      to worry about. Right for fixable CVEs, silent for the others, and the
+      distinction matters because "Trivy covers it" was about to become the
+      reason not to build the check.
 
       So the gap is NARROWER and differently shaped than first written, and
       naming it wrongly would have sent the implementer to build a duplicate of
@@ -1992,12 +1997,38 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       when the assertions fail**.
 
       A Lighthouse HTML report embeds full-page screenshots. The configured
-      targets are `/`, `/available/`, `/add/` and `/settings/`. Run against a
-      real instance that is the user's film library, plus the directory paths on
-      the settings page — published to a third-party URL that anyone holding it
-      can fetch. `AGENTS.md` names the library itself as the personal data on
-      this project, and CLAUDE.md's security floor bans private filesystem paths
-      from LOGS; a public screenshot of them is strictly worse than a log line.
+      targets are `/`, `/available/`, `/add/` and `/settings/`.
+
+      **This originally said the payload was "the library, plus the directory
+      paths on the settings page". Review measured it and the payload is far
+      worse: the settings page renders CREDENTIALS IN PLAINTEXT.** Masking is
+      gated on `type == 'password'` (`couchpotato/core/settings.py`), 22 options
+      declare that type, and the credential fields below do not — so they come
+      back from `getValues()` verbatim and render through the default
+      `<input type="text">` branch. Driven, not read:
+
+          core.api_key            -> 'SUPERSECRET_LIVE_KEY'
+          passthepopcorn.passkey  -> 'TRACKER_PASSKEY_9999'
+          getType(core, api_key)  -> 'unicode'
+
+      So a published report can carry CouchPotato's own API key, private-tracker
+      passkeys, and notification/downloader tokens, as readable text in a
+      full-page screenshot, at a URL with no expiry the operator controls.
+
+      **And the operator is most likely to trigger it at the moment they think
+      nothing happened:** `autorun` runs the upload BEFORE it exits non-zero, so
+      a failing accessibility assertion reads as "the run aborted" while four
+      reports have already been POSTed and four public URLs printed.
+
+      That mis-ranking is the same one this task was created to correct, made one
+      notch further down: T47's first draft weighed screenshots-of-films against
+      a dev-only CWE-22, and did not notice it was also describing a secret leak.
+      `AGENTS.md` names the library as personal data, and CLAUDE.md's floor bans
+      credentials from LOGS — a public screenshot of them is strictly worse.
+
+      **`target: 'filesystem'` closes the upload path but NOT the unmasked
+      rendering**, which is independently a defect on any shared or recorded
+      screen. That half is T48.
 
       Mitigating, and the reason this is queued rather than urgent: nothing runs
       `lhci` automatically (no workflow, no `make` target — see tick 41), so it
@@ -2017,7 +2048,57 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       path `lhci autorun` never takes. The tick argued at length about the
       second and did not notice the first.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third occurrence, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the fourth time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: queued (no deps) — **security, pre-existing**
+
+      Found by the security lens while reviewing T47, and it is the larger half
+      of that finding. Independent of Lighthouse: anyone who opens `/settings/`
+      sees these in the clear, and so does anyone looking over their shoulder, in
+      a screen share, or in a support screenshot.
+
+      **Mechanism.** `couchpotato/core/settings.py` masks a value only when
+      `getType(section, option) == 'password'`. `getType` falls back to
+      `'unicode'`, and `registerDefaults` calls `setType` only `if
+      option.get('type')`. Twenty-two options across the tree DO declare
+      `'type': 'password'`, so the convention exists and is honoured — these
+      simply never got it. The UI then takes the default branch in
+      `field_types.html` (`!opt.type || opt.type === 'string'`) and emits
+      `<input type="text">`.
+
+      Driven against the real object rather than reasoned about, registering
+      exactly as the live plugins do:
+
+          core.api_key            -> 'SUPERSECRET_LIVE_KEY'
+          passthepopcorn.passkey  -> 'TRACKER_PASSKEY_9999'
+          getType(core, api_key)  -> 'unicode'
+
+      **Affected, non-advanced (visible without expanding anything):**
+      `core.api_key` — CouchPotato's own API credential — plus `passkey` on
+      `awesomehd`, `passthepopcorn` and `hdbits`; `telegrambot.bot_token`;
+      `slack.token`; `pushbullet.api_key`; `pushover.user_key`; `emby.apikey`;
+      `sabnzbd.api_key`. Advanced adds `putio.oauth_token`, `plex.auth_token`,
+      `trakt.automation_oauth_token`, `pushover.api_token`, `join.apikey`.
+
+      **The fix is to declare `'type': 'password'` on each, NOT to change the
+      masking rule.** This is the trap: the obvious shortcut — "mask anything
+      not in `self.types`" — is exactly what T31 deliberately rejected, and
+      `tests/unit/test_settings_orphan_masking.py::
+      test_registered_plain_string_option_is_not_masked` pins that rejection.
+      Untyped-and-registered is the normal case for ordinary string settings
+      like `host`, and masking by absence-of-type would star those out in the UI.
+      So the change is per-option and additive.
+
+      **Two things the implementer must not miss.** Masking is display-only —
+      the value still has to reach the plugin that uses it, so the round trip
+      (save, reload, still works) is the test that matters, not just the render.
+      And `type: 'password'` must not be added to anything the UI needs to show,
+      so each field wants checking against its own template usage rather than
+      being swept by name.
+
+      Ranking: this sits above T47's upload path. The upload needs someone to
+      type one command; this leaks on every visit to a page the software invites
+      you to open.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
@@ -2342,7 +2423,7 @@ to download, but none of the ... downloaders are enabled" and returns
   green again at 5 passed.
 
   **T18's needs-list is now a test, not a promise.** Ticking T46 left T46 sitting
-  in that list minutes later — the FIFTH occurrence of an error the surrounding
+  in that list minutes later — the FOURTH incident of an error the surrounding
   parenthesis has been predicting about itself since it was written. Four of the
   previous four were caught by a human or a reviewer re-deriving the list by
   hand, which is the precise definition of §9's "a rule that should be a check":
@@ -2359,6 +2440,13 @@ to download, but none of the ... downloaders are enabled" and returns
   verified byte-identical, suite green at 4 passed. There is also a guard on the
   guard — if either regex stops matching, the file fails loudly instead of
   passing vacuously on an empty set.
+
+  Measured with `git 2.50.1 (Apple Git-155)` — recorded because this is upstream
+  behaviour that could in principle change, and a claim about git with no version
+  attached is a claim about one machine on one day. Independently reproduced in
+  review, which found it slightly STRONGER than recorded: `GIT_COMMON_DIR` and
+  `GIT_INDEX_FILE` are unset in both cases too, so `GIT_DIR` really is the sole
+  leak.
 
   **What this does NOT prove**, stated so the next reader does not over-claim it:
   the pre-push hook was a synthetic three-line script, not `.githooks/pre-push`
