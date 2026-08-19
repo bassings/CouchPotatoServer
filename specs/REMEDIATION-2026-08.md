@@ -2174,6 +2174,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
         should stay: retries would convert this into an invisible intermittent
         rather than a caught one.
 
+      **The local flake and the CI stalls are plausibly ONE defect.** Separately
+      from the local symptom, `ui-e2e-tests` stalled in CI **four times** on
+      2026-08-19, each sitting `in_progress` for 35-96 minutes against a ~5
+      minute norm, reporting no failures, and clearing on cancel-and-rerun. The
+      measurement that links them, all from the same branch and same content:
+
+          run 32217702516   ui-e2e-tests   completed/success
+          run 32221210039   ui-e2e-tests   completed/success
+          run 32223408029   ui-e2e-tests   STALLED -> cancelled
+          run 32226381478   ui-e2e-tests   STALLED -> cancelled
+
+      Two clean, two hung, nothing else different. So it is intermittent rather
+      than a property of the branch — and an intermittent hang that clears on
+      retry, appearing BOTH locally and in CI, is one defect at two scales far
+      more parsimoniously than two.
+
+      **The cost is already being paid.** Four cancel-and-retry cycles in one
+      afternoon, each individually the right call. That is exactly how §11 says
+      a flake does its damage: it trains everyone to re-run until green, and a
+      real regression eventually gets re-run away with the noise.
+
       **The tempting wrong fix is raising the timeout.** A 20x margin says the
       budget is not the problem, and a longer one would hide the next
       regression in this flow behind a slower failure. Find why a 1.5s
@@ -2182,7 +2203,59 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       more likely explanation than a slow browser, and if so it is a
       responsiveness defect rather than a test defect.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T50: a hash-verified mutation restore can still run the MUTANT — state: queued (no deps) — **process, affects every guard in this repo**
+
+      Found 2026-08-19 by an adversarial reviewer, in its own work, while
+      verifying someone else's. It reported the anomaly against itself and
+      traced the mechanism instead of re-running until green — which is the
+      behaviour CLAUDE.md rule 10 exists to produce, and it caught a hole in
+      rule 10.
+
+      **Rule 10 is necessary and NOT sufficient.** It says: break the thing the
+      guard protects, watch it fail, restore, and confirm the mutation landed by
+      `git diff` or a hash. The reviewer did exactly that — mutated
+      `'ui-meta' : 'ro',` to `'ui-meta' : 'rw',`, ran the test, restored by file
+      copy, verified all 733 files byte-identical to HEAD — and the test then
+      failed against a provably clean tree.
+
+      **Cause: CPython's `.pyc` header records source mtime and source SIZE.**
+      `ro` and `rw` are the same byte length, and the mutate/test/restore cycle
+      finished inside one second, so both fields matched the restored file and
+      Python reused the MUTANT bytecode:
+
+          pyc records: source mtime=1787125061  source size=30013
+          actual     : source mtime=1787125061  source size=30013
+
+      Clearing `__pycache__` gave the correct result.
+
+      **Here it produced a false RED, which is loud and self-correcting. The
+      identical mechanism produces a false GREEN** when the stale cache holds
+      the ORIGINAL bytecode while the source carries the mutation: you break the
+      guard, watch it "still pass", and conclude the guard is vacuous when it is
+      fine — or conclude a fix works when the test never ran against it.
+
+      That is not a corner case. Same-length mutations are precisely the ones
+      this repo's discipline encourages: `ro`->`rw`, `<`->`>`, `and`->`or`,
+      `+`->`-`, swapping one errno member for another (which is exactly what T36
+      did, sixteen times).
+
+      **Fix, and prefer the second:**
+
+          find . -name __pycache__ -type d -exec rm -rf {} +   # clean up after
+          PYTHONDONTWRITEBYTECODE=1                            # never create it
+
+      The env var is better because it prevents the stale cache existing rather
+      than removing it afterwards, so it cannot be forgotten halfway through a
+      cycle — which is when it would bite.
+
+      **This wants promoting into `CLAUDE.md` rule 10 itself**, not just
+      recorded here: every mutation claim made in this plan predates the
+      discovery, and the rule as written would let the same false green through
+      again tomorrow. Re-running past mutation proofs is NOT proposed — most
+      used differing-length edits — but the rule should change before the next
+      one is trusted.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
