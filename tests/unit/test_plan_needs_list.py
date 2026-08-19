@@ -56,7 +56,7 @@ def _open_tasks(text):
 
 def _needs_list(text):
     m = re.search(
-        r'needs: \*\*every other open task\*\* — ([^—]+?) — because', text
+        r'needs: \*\*every other open task\*\* —([^—]*?)— because', text
     )
     assert m, "T18's needs-list is not in the expected shape; update this test WITH the file"
     return {x.strip() for x in m.group(1).split(',') if x.strip()}
@@ -126,9 +126,48 @@ class TestTheNeedsListMatchesReality:
             f'{_open_tasks(text) ^ unticked}'
         )
 
-    def test_an_empty_needs_list_is_a_legitimate_end_state(self):
-        """The companion to the above, asserted rather than merely intended:
-        when nothing is left to depend on, the two directional tests must both
-        pass on empty sets rather than erroring."""
-        assert not ({'T1'} - {'T1'}), 'set difference on equal sets must be empty'
-        assert not (set() - set()), 'both-empty must be the passing case'
+    def test_the_end_state_is_driven_through_the_real_helpers(self):
+        """When the plan finishes there are no open tasks and nothing to
+        depend on, and BOTH directional checks must still pass rather than
+        error. That end state is reached by the project succeeding, so a bug
+        there would surface at the worst possible moment.
+
+        The first version of this test asserted `{'T1'} - {'T1'} == set()`,
+        which is a guarantee of Python's `set` type and says nothing about this
+        file. Review caught it: a tautology, in the suite whose whole job is
+        refusing tautologies, with a docstring claiming it covered the real
+        end state. It now feeds synthetic text through the ACTUAL helpers, so
+        it fails if either regex mishandles the empty case."""
+        finished = (
+            '## Tasks\n'
+            '- [x] T1: done — state: merged\n'
+            '- [x] T2: also done — state: merged\n'
+            '- [ ] T18: the final sweep — state: queued (needs: '
+            '**every other open task** —  — because it runs last)\n'
+        )
+
+        # The real parsers, not a reimplementation of them.
+        assert _open_tasks(finished) == set(), (
+            'a plan with every task ticked must yield no open tasks'
+        )
+        assert _needs_list(finished) == set(), (
+            'an emptied needs-list must parse as empty, not raise or yield junk'
+        )
+
+        # And the two directional assertions must both hold on that input.
+        assert not (_needs_list(finished) - _open_tasks(finished))
+        assert not (_open_tasks(finished) - _needs_list(finished))
+
+    def test_the_end_state_check_would_catch_a_real_regression(self):
+        """Guards the guard above: prove the synthetic fixture is capable of
+        failing, so it is not passing because the parsers ignore it."""
+        still_open = (
+            '## Tasks\n'
+            '- [ ] T7: not done yet — state: queued\n'
+            '- [ ] T18: the final sweep — state: queued (needs: '
+            '**every other open task** —  — because it runs last)\n'
+        )
+        assert _open_tasks(still_open) == {'T7'}, 'the fixture must be parseable'
+        assert _open_tasks(still_open) - _needs_list(still_open) == {'T7'}, (
+            'an omitted open task must be detectable in the synthetic fixture too'
+        )
