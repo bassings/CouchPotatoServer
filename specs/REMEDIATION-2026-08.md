@@ -2144,7 +2144,45 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       behind the advanced toggle, so "every visit" would be the same
       overstatement T47 has just been corrected for. One click, not zero.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T49: an E2E test times out only inside a full run — state: queued (no deps) — **flake**
+
+      `tests/e2e/add-via-url.spec.ts:110` ("keeps the title-search box available
+      alongside the URL flow") failed the local gate on 2026-08-19 with
+      `page.goto: Test timeout of 30000ms exceeded`, navigating to
+      `/add/?url=<encoded>`.
+
+      Re-run in isolation immediately afterwards, the whole file passes and that
+      test takes **1.5s against a 30s budget** — a 20x margin. So this is not a
+      broken test and not a slow one; it is a test that fails only under
+      full-suite load.
+
+      **Recorded rather than re-run, because §11 ranks a flake below an absent
+      test:** it teaches everyone to re-run until green, and a real regression
+      gets re-run away with it. This is the second time this repo has produced a
+      "fails only in a FULL run" E2E defect — T10 was the first, and its root
+      cause was NOT the obvious one.
+
+      Evidence to start from, gathered while diagnosing rather than guessing:
+
+      - The test one line above it (`:90`) navigates to the **same** URL and
+        passed in the same full run. So the URL-resolution path itself works;
+        whatever bites is timing, not the fetch.
+      - Playwright's own output in that run flagged
+        `Slow test file: interactions.e2e.spec.ts (5.8m)`. Contention with that
+        file is the first hypothesis to test, not a conclusion.
+      - `playwright.config.ts` pins `retries: 0` locally, which is correct and
+        should stay: retries would convert this into an invisible intermittent
+        rather than a caught one.
+
+      **The tempting wrong fix is raising the timeout.** A 20x margin says the
+      budget is not the problem, and a longer one would hide the next
+      regression in this flow behind a slower failure. Find why a 1.5s
+      navigation takes >30s under load first — the `/add/` route resolves a
+      user-supplied URL server-side, so a blocked or serialised handler is a
+      more likely explanation than a slow browser, and if so it is a
+      responsiveness defect rather than a test defect.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
