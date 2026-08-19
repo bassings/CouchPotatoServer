@@ -73,31 +73,95 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await expect(page.locator('[x-text="message"]')).toContainText(/fail|error|could not/i);
   });
 
-  /*
-   * REMOVED: "a refused save does not advance the wizard past the step".
-   *
-   * The behaviour is real -- a probe confirmed it directly: the route
-   * intercepted twice, returned {"success": false}, and the page still read
-   * "Providers | Where to Search". But I could not write an assertion for it
-   * whose failures I could explain, and shipping a test I do not understand is
-   * worse than shipping none.
-   *
-   * Two versions failed for the WRONG reason before that became clear:
-   *   - asserting the username field was "still visible" passed trivially,
-   *     because it is visible during the transition either way;
-   *   - asserting on body text without `useInnerText` compared textContent,
-   *     which includes every hidden step's markup, so the step strings are
-   *     always present and the assertion could never discriminate. That one
-   *     went RED against the unfixed code and looked like proof.
-   *
-   * With `useInnerText` and the exact pre-fix code restored, it passes -- which
-   * contradicts the probe and means something about the timing or the locator
-   * is still not understood. Recorded in T51 as the remaining gap rather than
-   * papered over.
-   *
-   * What IS proven below: the refusal is reported (fails against pre-fix code,
-   * passes after), and a successful save still advances.
-   */
+  test('a refused save does not advance the wizard past the step', async ({ page }) => {
+    /**
+     * Restored after review explained the disagreement that got it deleted.
+     *
+     * Two earlier versions passed against the UNFIXED code, which is why it
+     * was pulled: asserting on `body` text was a retrying web-first assertion
+     * on a NON-event, so it succeeded at its first poll, at t~0, before the
+     * async advance had happened. The locator was groping at the right idea --
+     * `useInnerText` to dodge hidden steps' markup -- but the missing piece
+     * was a bounded settle, which asserting that something must NOT happen
+     * always needs.
+     *
+     * `[x-text="steps[currentStep]"]` is unique in the template and unaffected
+     * by hidden markup, so it discriminates where `body` could not.
+     *
+     * This is the security-relevant half of the task: does a refused PASSWORD
+     * save leave the operator on the Security step, or strand them further in
+     * with no credential stored.
+     */
+    await refuseEverySave(page);
+    await gotoSecurityStep(page);
+
+    await SECURITY_USERNAME(page).fill('admin');
+    await SECURITY_PASSWORD(page).fill('hunter2');
+    await page.getByRole('button', { name: /Continue/i }).click();
+
+    // Bounded settle: this asserts a non-event, so it must outlive the advance
+    // it is claiming did not happen.
+    await page.waitForTimeout(1500);
+
+    await expect(
+      page.locator('[x-text="steps[currentStep]"]'),
+      'the wizard advanced past Security despite the refusal',
+    ).toHaveText('Security');
+  });
+
+  test('the refusal is ANNOUNCED, not just drawn', async ({ page }) => {
+    /**
+     * The visual toast carries no role, no aria-live and no live ancestor --
+     * deliberately, per base.html, which ships two persistent sr-only regions
+     * for the purpose. The wizard's own toast() never wrote to them, so a
+     * screen-reader user was told nothing and the message self-cleared after
+     * 3 seconds.
+     *
+     * That silence was harmless while this path was unreachable. This branch
+     * makes it the ONLY channel reporting a refused save -- no password
+     * stored, authentication not enabled -- so it is on the security-critical
+     * path and CLAUDE.md's WCAG 2.2 AA floor applies.
+     */
+    await refuseEverySave(page);
+    await gotoSecurityStep(page);
+
+    await SECURITY_USERNAME(page).fill('admin');
+    await SECURITY_PASSWORD(page).fill('hunter2');
+    await page.getByRole('button', { name: /Continue/i }).click();
+
+    await expect(
+      page.locator('[data-testid="toast-announcer-assertive"]'),
+      'the refusal was drawn on screen but never announced',
+    ).toContainText(/fail|refus|error/i, { timeout: 5000 });
+  });
+
+  test('a refused PASSWORD names the password, not whichever save lost the race', async ({
+    page,
+  }) => {
+    /**
+     * `Promise.all` rejects with whichever save fails first, and username is
+     * pushed before password -- so a refused password was reported as
+     * "core.username was refused". The operator is pointed at the wrong field
+     * and the fact that matters is never stated.
+     *
+     * Refuses BOTH saves, which is what makes this discriminate. With only the
+     * password refused, `Promise.all` rejects with the password's error anyway
+     * and the test passes against the unfixed code -- I wrote that version
+     * first and the mutation proved it worthless. With both refused, first-
+     * rejection reports ONLY the username, which is precisely the bug.
+     */
+    await refuseEverySave(page);
+    await gotoSecurityStep(page);
+
+    await SECURITY_USERNAME(page).fill('admin');
+    await SECURITY_PASSWORD(page).fill('hunter2');
+    await page.getByRole('button', { name: /Continue/i }).click();
+
+    await expect(
+      page.locator('[x-text="message"]'),
+      'the message does not name the password, which is the setting that failed',
+    ).toContainText(/password/i, { timeout: 5000 });
+  });
 
   test('a save that succeeds still advances, so the guard is not a wall', async ({ page }) => {
     // The other direction: if the fix refused everything, these tests would

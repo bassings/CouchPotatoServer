@@ -765,7 +765,27 @@
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-cp-muted">Authentication</span>
-                <span class="text-cp-text" x-text="formData.username ? 'Enabled' : 'Disabled'"></span>
+                {#- Keyed on the PASSWORD, not the username. `auth_required` is
+                    flipped by `Core.md5Password`, hooked to
+                    `setting.save.core.password` -- in BOTH directions, so
+                    clearing the password turns it back off. Username has no
+                    part in it.
+
+                    Keying this on username meant an operator who filled a
+                    username and skipped the optional password field read
+                    "Enabled" while the server held `auth_required: false`.
+                    Measured in review against a real server, with no refused
+                    save involved: the summary said Enabled, the API said
+                    `{"auth_required": false, "password": ""}`. Someone reads
+                    that and port-forwards.
+
+                    This is only ACCURATE because of the fix in this same
+                    branch: `saveSetting` now throws on a refused save and
+                    `nextStep` declines to advance, so reaching this summary
+                    means the password save actually succeeded. Before that,
+                    keying on password would have been a second way to say
+                    Enabled about a server that is not. -#}
+                <span class="text-cp-text" x-text="formData.password ? 'Enabled' : 'Disabled'"></span>
               </div>
               <div class="flex justify-between">
                 <span class="text-cp-muted">Search Mode</span>
@@ -1184,7 +1204,16 @@ function setupWizard() {
           break;
       }
       
-      await Promise.all(saves);
+      // `Promise.all` rejects with whichever save fails FIRST, and username is
+      // pushed before password -- so a refused PASSWORD was reported as
+      // "core.username was refused". The fact that matters (no password
+      // stored, authentication not enabled) was never stated, and the operator
+      // was pointed at the wrong field.
+      const results = await Promise.allSettled(saves);
+      const failed = results.filter((r) => r.status === 'rejected');
+      if (failed.length) {
+        throw new Error(failed.map((r) => r.reason && r.reason.message).join('; '));
+      }
     },
 
     async saveSetting(section, name, value) {
@@ -1468,6 +1497,23 @@ function setupWizard() {
     toast(msg, type) {
       this.message = msg;
       this.messageType = type;
+
+      // Also write to the PERSISTENT sr-only live regions base.html ships
+      // (`assertiveAnnouncement` / `politeAnnouncement`). The visual node here
+      // carries no role, no aria-live and no live ancestor -- deliberately, per
+      // base.html's own comment -- so without this a screen-reader user is told
+      // nothing at all, and the message then self-clears after 3s.
+      //
+      // That silence was harmless while this toast was unreachable. The fix in
+      // this branch makes it the ONLY channel reporting a refused save, which
+      // is the security-critical path: no password stored, authentication not
+      // enabled. Announcing it is not polish.
+      const region = type === 'error' ? 'assertiveAnnouncement' : 'politeAnnouncement';
+      if (region in this) {
+        this[region] = '';            // re-announce an identical repeat
+        this.$nextTick(() => { this[region] = msg; });
+      }
+
       setTimeout(() => this.message = '', 3000);
     }
   };
