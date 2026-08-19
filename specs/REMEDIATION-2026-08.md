@@ -2407,6 +2407,31 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       naming `hdbits.passkey`. A vacuity guard pins each extraction, because the
       tag-only version of this sweep passed while two credentials rendered as text.
 
+      **GAP, recorded rather than papered over: no real-browser assertion.**
+      T48's sibling fix has one (`settings.spec.ts` — "the field is type=password,
+      so it is not shoulder-surfable"), and review reasonably asked for the same
+      here. It matters more here than there, because the tracker fields render
+      through ONE shared input whose type is the runtime expression
+      `:type="field.type || 'text'"` — so the static check reads a data array
+      and an expression and INFERS the result.
+
+      Three attempts at that test were abandoned. Reaching the Providers step
+      and enabling a tracker proved fiddly, and `getByRole` excludes hidden
+      elements, so "wrong step" and "element missing" produce the same failure
+      and cannot be told apart from the message. A guard whose failures cannot
+      be explained is worse than none, so none shipped.
+
+      What DOES exist: the static sweep over both rendering shapes, and review's
+      own browser measurement of this exact branch, which resolved every tracker
+      `password`/`passkey` to `password` in a real DOM and found only the
+      `username` fields as text. So the behaviour is verified once, by review —
+      it is simply not verified continuously.
+
+      Whoever closes this: drive the step by asserting on visible STEP CONTENT
+      first (the pattern that worked for the wizard's refused-save tests), then
+      the toggle, then the input — rather than looking for the toggle to decide
+      whether navigation worked.
+
       Same shape as T48 twice over: 16 of the 21 credential inputs already declared
       the type, and every tracker `password` did. The convention existed; a handful
       were missed. That is the argument for a sweep rather than a list.

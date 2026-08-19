@@ -311,7 +311,17 @@
                     <template x-for="field in tracker.fields" :key="field.name">
                       <div :class="field.full ? 'col-span-2' : ''">
                         <label class="block text-[10px] text-cp-muted mb-1" x-text="field.label"></label>
+                        {#- autocomplete="new-password" for the same reason as the
+                            direct credential inputs: these render as
+                            type="password" for every tracker's `password` and
+                            `passkey`, and without it a manager may offer the
+                            origin's saved LOGIN password as a fill candidate.
+                            Applied on the shared input because every tracker
+                            credential goes through it -- setting it per-field
+                            would need the attribute in the data, which is the
+                            shape that hid the passkeys from the first sweep. -#}
                         <input :type="field.type || 'text'" x-model="formData.privateTrackers[tracker.id][field.name]"
+                               autocomplete="new-password"
                                :placeholder="field.placeholder || ''"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
                       </div>
