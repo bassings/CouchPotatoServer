@@ -2247,6 +2247,53 @@ to download, but none of the ... downloaders are enabled" and returns
 
 ## Conductor log
 
+- **Tick 44** — **the Dependabot round is closed: 7 merged, 1 superseded, 0 open.**
+  Recorded with the date and the command, because the entry this closes is the
+  one that recorded `0 open` when eight were.
+
+      measured 2026-08-19 (after the merges)
+      gh pr list --author "app/dependabot" --state open  ->  0
+
+      #266 platformdirs 4.11.0 -> 4.11.3   PROD  TAKE       09e1a5ac
+      #271 packaging    26.2   -> 26.3     PROD  TAKE       bf7c1ecc
+      #273 certifi   2026.6.17 -> .7.22    PROD  TAKE       74fcb680
+      #272 coverage     7.15.2 -> 7.15.4   dev   TAKE       cbe51d10
+      #269 ruff         0.16.2 -> 0.16.3   dev   TAKE       c2af7554
+      #268 axe-core/playwright 4.12 -> .13 dev   TAKE       7a498dff
+      #267 stryker (core + vitest-runner)  dev   TAKE PAIR  d1b8cbbe
+      #270 stryker/vitest-runner           dev   SUPERSEDED closed
+
+  **§3a's graph check, run the way the earlier trap taught.** The adversarial
+  reviewer refused to run `pip check` in `.venv` because that venv still held
+  the PRE-bump versions — it would have returned "No broken requirements found"
+  while proving nothing. So this time the environment was brought up to the
+  merged pins first, and the versions confirmed from `pip show` (the installed
+  artefact) rather than from `requirements.txt` (the claim):
+
+      certifi 2026.7.22 · packaging 26.3 · platformdirs 4.11.3
+      pip check -> No broken requirements found.
+
+  **Two stale CI runs were hanging, and the fix was the same as the diagnosis.**
+  #273's `accessibility` had been "in progress" for **96 minutes** and #268's
+  `ui-e2e-tests` for 50, while master's E2E — started four minutes earlier —
+  progressed normally. Those runs were created before five merges moved the base
+  out from under them. Cancelled, both branches rebased onto master, and the
+  fresh runs went 16/16 green in about ten minutes each. The general point is
+  the one T44's neighbour already earned: **a Dependabot PR's green is a
+  statement about ITS base, and Dependabot does not rebase for you.** Reading
+  those two as "slow CI" and waiting would have burned the afternoon.
+
+  **A self-inflicted cost worth recording rather than quietly absorbing.** One
+  tick after writing "the gate is reading my working tree, so editing files now
+  would invalidate it", I checked out two other branches to rebase them — while
+  that gate was mid-E2E. The run was discarded, `node_modules` resynced with
+  `npm ci`, and the gate restarted from scratch. Nothing was corrupted and the
+  only loss was time, but the reasoning was already written down one screen
+  above the mistake. Knowing the rule and applying it are separate acts, and
+  this run keeps demonstrating that the first does not imply the second.
+
+  Gate on the rebased branch: `make verify` **exit 0**.
+
 - **Tick 43** — **T46 closed by measurement.** The question was whether T42's
   tests, which SIMULATE a poisoned `GIT_DIR` by setting it themselves, actually
   reproduce the condition git creates. Answered in a throwaway repo under the
