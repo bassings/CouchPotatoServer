@@ -237,8 +237,14 @@ class Settings:
 
             raw_value = self.p.get(section, option)
 
-            if tp == 'password':
-                return raw_value
+            # No password special-case. There is no 'password' adapter, so
+            # `_coerce_value` falls through and does exactly one thing to it --
+            # `_strip_bytes_literal` -- which is what this branch used to skip.
+            # Skipping it handed a long-lived config's `b'...'` wrapper straight
+            # to the plugin, so masking a credential silently broke the
+            # integration it was protecting. The first fix duplicated the strip
+            # here; review pointed out the branch can just go, which is smaller
+            # and cannot drift from `_coerce_value` later.
 
             # Use Pydantic coercion for typed values
             return _coerce_value(raw_value, tp)
@@ -567,6 +573,74 @@ class Settings:
         if not self.isOptionWritable(section, option):
             self.log.warning('Option "%s.%s" isn\'t writable', section, option)
             return {'success': False}
+
+        # `getValues()` returns a password-typed option as a run of asterisks,
+        # and the settings form posts field values back. Without this, saving
+        # the DISPLAYED mask overwrites the real credential and reports
+        # success -- the user then has to re-issue it at the provider, which
+        # for a tracker passkey can mean contacting staff. Irreplaceable-class
+        # loss caused by opening a page and touching a field.
+        #
+        # The client happens not to trigger it today (the password input binds
+        # `@change`, not `@input`, so an untouched field posts nothing), but
+        # that is an accident of which events a browser fires -- a password
+        # manager autofilling the field dispatches `change`. The guard belongs
+        # here, where it does not depend on that.
+        #
+        # Match the mask's EXACT shape, not merely "contains an asterisk".
+        # `getValues` renders it as `len(value) * '*'`, so it is always a pure
+        # run of asterisks and nothing is lost by being precise.
+        #
+        # The first version of this guard used `'*' in value` and was a
+        # security regression, which review caught. Its reasoning only
+        # considered ISSUED tokens -- true that no provider here mints one
+        # containing `*` -- and ignored the 19 pre-existing password options
+        # that hold HUMAN-CHOSEN passwords: `core.password`, `proxy_password`,
+        # every downloader and tracker login, `smtp_pass`. `*` is in the
+        # default symbol set of every mainstream password generator, so
+        # refusing it is refusing a routine password.
+        #
+        # Worse than an annoyance: `wizard.html` fires `saveSetting` without
+        # reading the response, so a first-run operator choosing a password
+        # with `*` would be told authentication was configured while the save
+        # was refused, `Core.md5Password` never ran, `auth_required` was never
+        # set -- and the instance stayed public. A credential-protecting change
+        # would have created an unauthenticated server.
+        #
+        # Narrowed once more after review: matching "all asterisks" RESERVED a
+        # valid credential value, and the field it hurts most is `core.password`
+        # -- combined with the wizard discarding the response (T51), a user
+        # choosing `****` would be told authentication was on while the server
+        # stayed public. Reserving a value is the wrong shape when the failure
+        # mode is silent.
+        #
+        # So compare against the mask that WOULD be rendered for the value
+        # currently stored: same length, all asterisks, and something actually
+        # stored. A fresh `****` password saves fine. The only residue is
+        # changing an existing N-character credential to exactly N asterisks,
+        # which is as close to nothing as this can get without a round-trip
+        # token.
+        #
+        # Scope, stated so it is not mistaken for coverage: `getType` returns
+        # 'unicode' for an option nobody registered, so this guard does NOT
+        # fire for orphaned sections -- which `getValues` masks anyway (T31).
+        # Saving a mask over an orphan therefore still writes it. Not reachable
+        # from the settings page, which only renders registered options, but it
+        # is reachable through the API. Deliberately not widened here: an
+        # orphan's value belongs to a plugin that no longer exists.
+        current = self.get(option, section) if value else None
+        if (value and current
+                and self.getType(section, option) == 'password'
+                and str(value) == len(str(current)) * '*'):
+            self.log.warning(
+                'Refused to save "%s.%s": the value is the displayed mask, not '
+                'a credential. Clear the field and paste the real value to '
+                'change it.', section, option)
+            return {
+                'success': False,
+                'error': 'That is the masked placeholder, not the real value. '
+                         'Clear the field and paste the credential to change it.',
+            }
 
         from couchpotato.environment import Env
         soft_chroot = Env.get('softchroot')

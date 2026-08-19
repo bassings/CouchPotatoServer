@@ -93,6 +93,7 @@ config = [{
                 },
                 {
                     'name': 'passkey',
+                    'type': 'password',
                     'default': '',
                 },
                 {

@@ -374,6 +374,7 @@ config = [{
             'options': [
                 {
                     'name': 'api_key',
+                    'type': 'password',
                     'default': '',
                     'label': 'Api Key',
                 },

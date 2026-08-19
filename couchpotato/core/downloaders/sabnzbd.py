@@ -264,6 +264,7 @@ config = [{
                 },
                 {
                     'name': 'api_key',
+                    'type': 'password',
                     'label': 'Api Key',
                     'description': 'Used for all calls to Sabnzbd.',
                 },

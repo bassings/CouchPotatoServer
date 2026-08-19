@@ -56,6 +56,7 @@ config = [{
                 },
                 {
                     'name': 'url',
+                    'type': 'password',
                     'description': 'Create a new one at <a href="https://webhooks.athom.com/" target="_blank">webhooks.athom.com</a> and add to to Homey Settings'
                 }
             ]

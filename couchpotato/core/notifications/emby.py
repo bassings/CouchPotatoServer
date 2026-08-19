@@ -81,6 +81,7 @@ config = [{
                 },
                 {
                     'name': 'apikey',
+                    'type': 'password',
                     'label': 'API Key',
                     'default': '',
                 },

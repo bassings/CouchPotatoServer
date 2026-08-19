@@ -33,12 +33,14 @@ config = [{
                 },
                 {
                     'name': 'automation_oauth_token',
+                    'type': 'password',
                     'label': 'Auth Token',
                     'advanced': True,
                     'description': 'OAuth access token (set automatically after authorization).',
                 },
                 {
                     'name': 'automation_oauth_refresh',
+                    'type': 'password',
                     'label': 'Refresh Token',
                     'advanced': True,
                     'description': 'OAuth refresh token for automatic token renewal.',

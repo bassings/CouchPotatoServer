@@ -2174,6 +2174,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
         should stay: retries would convert this into an invisible intermittent
         rather than a caught one.
 
+      **The local flake and the CI stalls are plausibly ONE defect.** Separately
+      from the local symptom, `ui-e2e-tests` stalled in CI **four times** on
+      2026-08-19, each sitting `in_progress` for 35-96 minutes against a ~5
+      minute norm, reporting no failures, and clearing on cancel-and-rerun. The
+      measurement that links them, all from the same branch and same content:
+
+          run 32217702516   ui-e2e-tests   completed/success
+          run 32221210039   ui-e2e-tests   completed/success
+          run 32223408029   ui-e2e-tests   STALLED -> cancelled
+          run 32226381478   ui-e2e-tests   STALLED -> cancelled
+
+      Two clean, two hung, nothing else different. So it is intermittent rather
+      than a property of the branch — and an intermittent hang that clears on
+      retry, appearing BOTH locally and in CI, is one defect at two scales far
+      more parsimoniously than two.
+
+      **The cost is already being paid.** Four cancel-and-retry cycles in one
+      afternoon, each individually the right call. That is exactly how §11 says
+      a flake does its damage: it trains everyone to re-run until green, and a
+      real regression eventually gets re-run away with the noise.
+
       **The tempting wrong fix is raising the timeout.** A 20x margin says the
       budget is not the problem, and a longer one would hide the next
       regression in this flow behind a slower failure. Find why a 1.5s
@@ -2182,7 +2203,214 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       more likely explanation than a slow browser, and if so it is a
       responsiveness defect rather than a test defect.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T50: a hash-verified mutation restore can still run the MUTANT — state: queued (no deps) — **process, affects every guard in this repo**
+
+      Found 2026-08-19 by an adversarial reviewer, in its own work, while
+      verifying someone else's. It reported the anomaly against itself and
+      traced the mechanism instead of re-running until green — which is the
+      behaviour CLAUDE.md rule 10 exists to produce, and it caught a hole in
+      rule 10.
+
+      **Rule 10 is necessary and NOT sufficient.** It says: break the thing the
+      guard protects, watch it fail, restore, and confirm the mutation landed by
+      `git diff` or a hash. The reviewer did exactly that — mutated
+      `'ui-meta' : 'ro',` to `'ui-meta' : 'rw',`, ran the test, restored by file
+      copy, verified all 733 files byte-identical to HEAD — and the test then
+      failed against a provably clean tree.
+
+      **Cause: CPython's `.pyc` header records source mtime and source SIZE.**
+      `ro` and `rw` are the same byte length, and the mutate/test/restore cycle
+      finished inside one second, so both fields matched the restored file and
+      Python reused the MUTANT bytecode:
+
+          pyc records: source mtime=1787125061  source size=30013
+          actual     : source mtime=1787125061  source size=30013
+
+      Clearing `__pycache__` gave the correct result.
+
+      **Here it produced a false RED, which is loud and self-correcting. The
+      identical mechanism produces a false GREEN** when the stale cache holds
+      the ORIGINAL bytecode while the source carries the mutation: you break the
+      guard, watch it "still pass", and conclude the guard is vacuous when it is
+      fine — or conclude a fix works when the test never ran against it.
+
+      That is not a corner case. Same-length mutations are precisely the ones
+      this repo's discipline encourages: `ro`->`rw`, `<`->`>`, `and`->`or`,
+      `+`->`-`, swapping one errno member for another (which is exactly what T36
+      did, sixteen times).
+
+      **The obvious remedy is WRONG, and this task originally recorded it.**
+      `PYTHONDONTWRITEBYTECODE=1` blocks the WRITE, not the READ, so it does
+      nothing about an existing stale `.pyc`. Measured with mtime and size
+      forced identical:
+
+          no env var                 -> SEEN: ro   (stale; disk says rw)
+          PYTHONDONTWRITEBYTECODE=1  -> SEEN: ro   (STILL STALE)
+          PYTHONPYCACHEPREFIX=fresh  -> SEEN: rw   (correct)
+          __pycache__ removed        -> SEEN: rw   (correct)
+
+      It is worse than useless in one case: by preventing the mutant's bytecode
+      being written it PRESERVES the pre-mutation `.pyc`, making the dangerous
+      false GREEN more likely, not less.
+
+      **Use `PYTHONPYCACHEPREFIX=$(mktemp -d)`.** Guaranteed cold, deletes
+      nothing in the working tree (which matters given this project's data-risk
+      stance), and keeps caching within the run. Cost measured at ~0.6s over
+      1437 modules, which is cheap enough that arguing to keep the warm cache is
+      not worth the words.
+
+      **The dangerous half is easier to trigger than the incident that found
+      it.** The false RED needs the RESTORE to land in the same second. The
+      false GREEN needs the MUTATION to land in the same second as the preceding
+      compile — which is the immediately preceding step of every mutation run.
+      So an agent following rule 10 on a fast machine is MORE likely to conclude
+      "this guard is vacuous, delete it" than to hit the loud failure.
+
+      **`pytest` replicates the bug in its own assertion rewriter**
+      (`_pytest/assertion/rewrite.py` writes and validates on mtime+size), so
+      mutating a TEST file carries the identical trap. And the E2E servers are
+      Python processes, so this reaches the Playwright layer too.
+
+      **No detector is possible.** In timestamp mode the `.pyc` carries no
+      content hash, so nothing can compare it against the source it claims to
+      represent. Anything proposed as a "stale pyc lint" cannot exist. The
+      answer is to eliminate the condition, not to detect it.
+
+      **This wants promoting into `CLAUDE.md` rule 10 itself**, not just
+      recorded here: every mutation claim made in this plan predates the
+      discovery, and the rule as written would let the same false green through
+      again tomorrow. Re-running past mutation proofs is NOT proposed — most
+      used differing-length edits — but the rule should change before the next
+      one is trusted.
+
+- [ ] T51: the first-run wizard discards every save response, so a refused save reads as success — state: queued (no deps) — **security amplifier**
+
+      Found while fixing T48, and it is the reason a bad guard there became a
+      security hole rather than an annoyance.
+
+      `wizard.html` saves settings with `return fetch(...)` and never reads the
+      response; `await Promise.all(saves)` resolves regardless. The wizard's own
+      summary then reports authentication as **Enabled** from LOCAL form state,
+      not from what the server stored.
+
+      So ANY server-side refusal during first-run setup is invisible. Measured
+      concretely on T48's first attempt: an operator choosing a generated
+      password containing `*` had the save refused, `Core.md5Password` never
+      fired, `auth_required` was never set — and the wizard said authentication
+      was on while the instance stayed public.
+
+      T48's guard was narrowed so that specific case cannot happen, but **the
+      amplifier is still there** and will convert the next refusal — a
+      validation error, a disk-full write failure, a chroot rejection — into the
+      same silent lie. This is worth fixing independently of what refuses.
+
+      **Scoped 2026-08-19, so it does not start cold.** The exact shape:
+
+          saveSetting()  ->  `return fetch(CP.apiBase + '/settings.save/', ...)`
+                             no .ok check, no body parse
+          caller         ->  `await Promise.all(saves)` , resolves regardless
+
+      `api.py` returns HTTP 200 even for `{'success': False}`, so `.ok` alone is
+      NOT sufficient — the body has to be read. That is the trap: a fix that
+      only checks `res.ok` would look correct, pass a naive test, and change
+      nothing.
+
+      **Testing level, decided by measurement rather than preference.** The
+      wizard's logic is inline in `wizard.html`; there is no shared JS module
+      (`couchpotato/ui/static/js/` does not exist) and the only two
+      `tests/unit/*.test.ts` files are about test configuration, not app code.
+      So it is not unit-testable without restructuring, and E2E is the honest
+      level: `/wizard/` is directly routable (`couchpotato/ui/__init__.py`), so
+      a Playwright test can `page.route` the `settings.save` call to return
+      `{"success": false}` and assert the user is actually told.
+
+      Write that test FIRST and watch it fail, because the failure mode here is
+      precisely a save that reports success — a test that does not force a
+      refusal cannot distinguish the fixed code from the broken code.
+
+      Two things for whoever takes it. The settings page already does better
+      (`partials/settings/scripts.html` checks `success: false`), so the wizard
+      is the outlier rather than the pattern — copy that. And a refusal that
+      returns `{'success': False}` with no `error` renders as "HTTP 200" in the
+      toast, which is worse than useless to a self-hosted user; T48 added an
+      `error` string to its own refusal, and the other refusal paths in
+      `saveView` still need one.
+
+- [ ] T52: the first-run wizard renders credentials as `type="text"` — state: queued (no deps) — **security, pre-existing**
+
+      T48 fixed the settings page by declaring `'type': 'password'` on the
+      plugin options. The wizard does NOT read plugin `config` — it carries its
+      own hard-coded field list — so it is unaffected and still renders
+      credentials in the clear.
+
+      Inconsistent within the single template, which is what makes it a
+      defect rather than a decision: `jackett_api_key` and the tracker
+      `password` fields already declare `type: 'password'`, while beside them
+      the tracker `passkey` fields, `sabnzbd.api_key`, `putio.oauth_token` and
+      `newznab.api_key` are hardcoded `type="text"`.
+
+      Lower severity than T48 because the wizard only ever shows what the user
+      is currently typing, never a stored secret — but it is the same
+      shoulder-surf and screenshot class, on the one page every new install
+      walks through.
+
+      Note the wizard duplicating the field list is the root cause of both this
+      and T51. Whoever takes either should consider whether the wizard can read
+      the real option declarations instead, which would make this class of
+      drift impossible rather than fixed-once.
+
+- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: queued (no deps)
+
+      Found by an adversarial reviewer while tracing T48's read paths, and
+      unrelated to that work.
+
+      `couchpotato/core/notifications/trakt.py` reads its settings with
+      `Env.setting(attr, 'trakt_automation')`. But `loader.py` registers options
+      under the top-level ENTRY name, which is `'trakt'`; `'trakt_automation'`
+      is the GROUP name. Driven against the real objects:
+
+          Env.setting(.., 'trakt')             -> 'REAL_TRAKT_TOKEN'
+          Env.setting(.., 'trakt_automation')  -> ''
+
+      So the notifier reads an empty string no matter how the user has
+      configured it, and always logs "Trakt not authorized". The feature has
+      never worked, and the failure mode is a log line that reads like a user
+      configuration problem rather than a bug — which is presumably why it has
+      survived.
+
+      Same family as the renamer event chain (see the `renamer.before/after`
+      note): correct-looking plugin code wired to something that is not there.
+      When fixing, check the other `Env.setting(..., '<section>')` call sites
+      for the same entry-vs-group confusion rather than fixing this instance
+      alone — that mistake has cost this plan repeatedly.
+
+- [ ] T54: `saveView` is a read-modify-write with no lock — state: queued (no deps)
+
+      Raised on #275 as explicitly non-blocking and correctly so: no locking
+      existed there before, and the mask guard T48 added merely makes the window
+      visible rather than creating it.
+
+      `Settings.saveView` reads the currently-stored value (to build the
+      comparison mask), then later writes via `set()` + `save()` in the same
+      call. Nothing serialises two requests touching the same `section.option`,
+      so a double-submit, two open tabs, or a password-manager autofill racing a
+      manual edit gives: both read the same "current" value, both evaluate the
+      guard against it, and the second write wins — with the guard's decision
+      made against a value that may already be stale.
+
+      Worth taking seriously on this project rather than filing as theoretical,
+      because the same shape has bitten here before: `movie.add`'s duplicate
+      race and the unlocked check-then-set in `renamer/main.py` are both in this
+      plan's history. Settings writes are lower frequency, which is why this is
+      queued rather than urgent.
+
+      Note the fix interacts with T21 (a kill between the password save and the
+      rotation loses the revocation) — both are about `saveView` not being
+      atomic across its read, its write and the hooks it fires. Whoever takes
+      either should look at whether one change closes both, rather than adding
+      two different partial locks.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52, T53, T54 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

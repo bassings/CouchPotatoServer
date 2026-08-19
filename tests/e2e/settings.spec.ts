@@ -183,3 +183,156 @@ test.describe('Settings', () => {
     await expect(savedIndicator.first()).toBeVisible({ timeout: 5000 });
   });
 });
+
+/**
+ * T48: a password field must not let the operator destroy a stored credential
+ * by editing the mask.
+ *
+ * `getValues()` renders a password-typed option as a run of asterisks. Without
+ * clear-on-focus, clicking into the field puts the cursor AFTER that mask, so
+ * pasting a new token stores `********xoxb-NEW` -- the old credential is gone
+ * and the new one is corrupt, while the UI reports success. On this project's
+ * loss ranking a stored credential is irreplaceable: the user has to re-issue
+ * it at the provider, and for a tracker passkey that can mean contacting staff.
+ *
+ * The server-side guard in `Settings.saveView` cannot cover this. Any predicate
+ * loose enough to reject `********xoxb-NEW` also rejects a human password
+ * containing an asterisk, and refusing THOSE was measurably worse -- it left
+ * first-run instances unauthenticated. So the browser is the only layer that
+ * can tell "the user touched this field", and this test is what proves that
+ * layer works.
+ *
+ * Deliberately driven in a real browser rather than asserted against the
+ * template: the behaviour under test IS the DOM event sequence.
+ */
+test.describe('Settings: a password field cannot be half-edited', () => {
+  /**
+   * Find a rendered password input, or fail with a reason rather than pass.
+   *
+   * Stubs the save endpoint FIRST. Without that these tests were destructive:
+   * clearing the field on focus and then blurring fires `@change`, which saves
+   * an EMPTY value over a real credential. CI caught it -- the first test wiped
+   * the downloader's password, its group collapsed, and the second test then
+   * found no visible password input at all.
+   *
+   * Worth stating plainly: a test for the credential-destruction defect was
+   * itself destroying credentials. It passed locally because the runs happened
+   * to leave a usable field behind; the CI seed did not.
+   *
+   * These tests are about what the BROWSER does, so nothing needs to persist.
+   */
+  async function firstPasswordInput(page, saves?: string[]) {
+    // ONE route handler. An earlier version had the caller register its own
+    // capture route as well, and Playwright gives precedence to the most
+    // recently added match -- so this helper's handler won, the caller's array
+    // stayed empty, and the "saves nothing" test could not fail even when the
+    // focus handler was mutated to save deliberately. Two competing handlers
+    // for one pattern is a guard that cannot fire.
+    await page.route('**/settings.save/**', async (route) => {
+      if (saves) saves.push(route.request().postData() || '');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.goto('/settings/');
+    await expect(page.locator('h1')).toContainText('Settings');
+
+    // Use core.password on the GENERAL tab, not a downloader's.
+    //
+    // The downloaders tab was wrong and CI proved it twice. On the seeded E2E
+    // config only Blackhole is enabled and it has no password field; every
+    // other downloader group is collapsed by provider_card.html, so there is
+    // no visible password input on that tab at all. It passed locally because
+    // this checkout's data has more downloaders enabled -- a green that was
+    // about my machine, not about the code.
+    //
+    // core.password sits in the same General-tab group as the "Require login"
+    // toggle, which this file already covers with a passing test, so it is
+    // present regardless of which downloaders a config happens to enable.
+    const field = page.locator('input[type="password"]').first();
+    await expect(
+      field,
+      'no password input on the General tab -- core.password should be in the ' +
+        'login group beside "Require login"; if that moved, re-point this ' +
+        'rather than loosening the selector',
+    ).toBeVisible({ timeout: 10000 });
+    return field;
+  }
+
+  /*
+   * The three assertions that used to live here -- "renders empty", "does not
+   * disclose length", "placeholder reflects stored state" -- moved to
+   * tests/unit/test_password_field_template.py.
+   *
+   * They are properties of the TEMPLATE, and asserting them in a browser
+   * needed a stored credential to be meaningful (without one, `getVal`
+   * returns '' and the field is empty whether or not the mask is bound -- all
+   * three passed against a template mutated back to the old design).
+   *
+   * Seeding one is not available: writing `core.password` fires
+   * `Core.md5Password`, which turns `auth_required` ON, so the next page load
+   * is a sign-in screen. That is the feature working correctly, and it is a
+   * clear signal these belong at a level that does not need app state.
+   *
+   * What stays here is what genuinely needs a browser: what happens to the
+   * value when a human types, and whether an untouched field posts anything.
+   */
+
+  test('typing stores only what was typed', async ({ page }) => {
+    const field = await firstPasswordInput(page);
+
+    await field.focus();
+    await field.type('brand-new-secret');
+
+    await expect(field).toHaveValue('brand-new-secret');
+    expect(
+      await field.inputValue(),
+      'the stored value would carry mask characters into the credential',
+    ).not.toContain('*');
+  });
+
+  test('focus then blur WITHOUT typing saves nothing', async ({ page }) => {
+    /**
+     * The load-bearing claim behind clear-on-focus, and it was documented in
+     * field_types.html without ever being tested.
+     *
+     * If focus-and-blur DID fire `change`, then clearing on focus would post an
+     * empty value and destroy the credential on every visit to the settings
+     * page -- turning the mitigation into a far worse version of the bug it
+     * was written for. The claim is that browsers gate change-on-blur on the
+     * dirty value flag, which only real keystrokes or a paste set; a scripted
+     * `.value = ''` inside the focus handler does not.
+     *
+     * That is a claim about browser behaviour, so it is worth nothing until a
+     * browser is asked. This asks.
+     *
+     * Not hypothetical either: the sibling tests in this file were destructive
+     * until CI caught them wiping a downloader's password through exactly this
+     * save path.
+     */
+    const saves: string[] = [];
+    const field = await firstPasswordInput(page, saves);
+
+    await field.focus();
+    await field.blur();
+    // Must comfortably exceed `debounceSave`'s 500ms timer in
+    // partials/settings/scripts.html. Waiting exactly 500 raced it: the POST
+    // landed just after the wait ended, so the assertion saw an empty array and
+    // the test passed even when the focus handler was mutated to dispatch a
+    // `change` deliberately. It would have shipped as a guard that cannot fail.
+    await page.waitForTimeout(1500);
+
+    expect(
+      saves,
+      'focus + blur without typing posted a save -- clear-on-focus would ' +
+        'destroy the stored credential on every visit to this page',
+    ).toEqual([]);
+  });
+
+  test('the field is type=password, so it is not shoulder-surfable', async ({ page }) => {
+    const field = await firstPasswordInput(page);
+    await expect(field).toHaveAttribute('type', 'password');
+  });
+});

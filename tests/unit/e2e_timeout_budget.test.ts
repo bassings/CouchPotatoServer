@@ -125,3 +125,56 @@ describe('E2E readiness budget', () => {
     expect(smallest - ready).toBeGreaterThanOrEqual(5_000);
   });
 });
+
+/**
+ * The "no save happened" E2E wait must outlive the debounce it is waiting out.
+ *
+ * `settings.spec.ts` proves a negative -- that focus-and-blur without typing
+ * posts nothing -- which genuinely needs a bounded wait: there is no event to
+ * await for something that must not occur. So it sleeps, and the sleep must be
+ * longer than `debounceSave`'s timer or the assertion sees an empty array
+ * because the POST has not fired YET.
+ *
+ * That is not hypothetical. The first version waited exactly 500ms against a
+ * 500ms debounce and passed even when the focus handler was deliberately
+ * mutated to save -- a guard that could not fail, for a claim whose falsehood
+ * would destroy a credential on every visit to the settings page.
+ *
+ * Same shape as the budget above and recorded for the same reason: both
+ * numbers are individually reasonable, and neither file mentions the other.
+ * Whoever changes the debounce will not think to look at an E2E spec.
+ */
+describe('the settings debounce and the E2E wait that outlives it', () => {
+  const scripts = readFileSync(
+    path.join(REPO_ROOT, 'couchpotato/ui/templates/partials/settings/scripts.html'),
+    'utf8',
+  );
+  const spec = readFileSync(
+    path.join(REPO_ROOT, 'tests/e2e/settings.spec.ts'),
+    'utf8',
+  );
+
+  const debounceMs = Number(
+    /setTimeout\(\s*\(\)\s*=>\s*this\.saveSingle\([^)]*\)\s*,\s*(\d+)\s*\)/.exec(scripts)?.[1],
+  );
+  const waitMs = Number(
+    /await page\.waitForTimeout\((\d+)\);/.exec(
+      spec.slice(spec.indexOf('focus then blur WITHOUT typing saves nothing')),
+    )?.[1],
+  );
+
+  it('finds both numbers, so this guard is not vacuous', () => {
+    expect(debounceMs, 'debounceSave timer not found in scripts.html').toBeGreaterThan(0);
+    expect(waitMs, 'waitForTimeout not found in the focus/blur test').toBeGreaterThan(0);
+  });
+
+  it('waits comfortably longer than the debounce', () => {
+    expect(
+      waitMs,
+      `the E2E waits ${waitMs}ms for a save that must not happen, but ` +
+        `debounceSave fires at ${debounceMs}ms. Anything less than a clear ` +
+        `margin makes the test pass because the POST has not fired yet, not ` +
+        `because it never will.`,
+    ).toBeGreaterThanOrEqual(debounceMs * 2);
+  });
+});

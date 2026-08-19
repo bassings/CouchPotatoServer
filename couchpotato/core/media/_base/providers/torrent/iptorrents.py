@@ -159,6 +159,7 @@ config = [{
                 },
 				{
                     'name': 'cookiesetting',
+                    'type': 'password',
                     'label': 'Cookies',
                     'default': 'uid=1234;pass=567845439634987',
                     'description': 'Use DevTools or Firebug to get these values after logging in on your browser',

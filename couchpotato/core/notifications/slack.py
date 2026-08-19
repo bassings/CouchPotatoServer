@@ -62,6 +62,7 @@ config = [{
                 },
                 {
                     'name': 'token',
+                    'type': 'password',
                     'label': 'Bot Token',
                     'description': 'Slack bot or user token. Create one at <a href="https://api.slack.com/apps" target="_blank">api.slack.com</a>.',
                 },
