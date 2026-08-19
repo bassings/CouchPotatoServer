@@ -1259,12 +1259,19 @@ function setupWizard() {
       const results = await Promise.allSettled(saves);
       const failed = results.filter((r) => r.status === 'rejected');
       if (failed.length) {
-        // `String(reason)` rather than `reason.message`: every throw site in
-        // saveSetting uses `new Error`, so the latter holds today -- but a bare
-        // non-Error rejection would render the literal "undefined" into the
-        // toast AND the screen-reader announcement, which is worse than a rough
-        // message on the one path where the user has nothing else to go on.
-        throw new Error(failed.map((r) => String(r.reason)).join('; '));
+        // Message first, `String()` only as the fallback.
+        //
+        // This has been wrong in both directions. `reason.message` alone
+        // rendered the literal "undefined" for a non-Error rejection; the fix
+        // for that, `String(reason)`, gives `Error.prototype.toString` for the
+        // NORMAL case, so the toast read "Failed to save: Error: core.password
+        // was refused" -- and `nextStep()` re-prefixes it with "Failed to
+        // save: " anyway. On the assertive live region, which is now the only
+        // channel carrying this, that is noise read aloud in front of the one
+        // fact the operator needs.
+        throw new Error(
+          failed.map((r) => (r.reason && r.reason.message) || String(r.reason)).join('; '),
+        );
       }
     },
 

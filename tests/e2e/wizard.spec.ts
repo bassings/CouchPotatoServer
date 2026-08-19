@@ -157,10 +157,21 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /Continue/i }).click();
 
+    const message = page.locator('[x-text="message"]');
     await expect(
-      page.locator('[x-text="message"]'),
+      message,
       'the message does not name the password, which is the setting that failed',
     ).toContainText(/password/i, { timeout: 5000 });
+
+    // And no `Error:` prefixes. `String(new Error(...))` yields
+    // "Error: <message>", which `nextStep()` then prefixes AGAIN with
+    // "Failed to save: ". On the assertive live region -- the only channel
+    // carrying this -- that is noise read aloud ahead of the one fact the
+    // operator needs.
+    expect(
+      await message.textContent(),
+      'the message carries Error.toString noise into the announcement',
+    ).not.toMatch(/Error:/);
   });
 
   test('Skip after typing a password does not claim authentication is enabled', async ({
