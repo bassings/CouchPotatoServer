@@ -2418,6 +2418,12 @@ to download, but none of the ... downloaders are enabled" and returns
      and the repo converge rather than flip-flopping, and until it lands the
      gate stays red and this branch cannot be pushed without `--no-verify`.
 
+     **Closed 2026-08-19, and dated this time.** #269 merged as `c2af7554`.
+     After rebasing, `requirements-dev.txt` pins `ruff==0.16.3`,
+     `.venv/bin/ruff --version` reports 0.16.3, and `scripts/verify.sh` gets
+     past preflight into "1/7 ruff lint — All checks passed!". The environment
+     and the repo agree, and nothing was downgraded to make that true.
+
   2. **#269's CI green was measured against a stale base.** `db-ruff` forked at
      `0a7b197e`, which predates #265 — so the tree its checks ran over did not
      contain the T36 extraction fix, and a two-dot diff against master rendered
