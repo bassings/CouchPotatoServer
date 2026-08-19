@@ -255,6 +255,49 @@ test.describe('Wizard: a refused save must not read as success', () => {
     ).toHaveText('Enabled', { timeout: 5000 });
   });
 
+  test('a refusal on a LATER step is reported too, not just on Security', async ({ page }) => {
+    /**
+     * The throw is applied at `saveSetting`, so it covers every call site --
+     * Providers, Downloader and Library all push saves, and some of them can
+     * genuinely be refused (`chroot2abs` rejects a directory outside the soft
+     * chroot, which returns `{"success": false}`).
+     *
+     * Before this branch those refusals were swallowed by the raw-fetch-promise
+     * bug exactly like the password one. Every other test here exercises step
+     * 1, so nothing proved the behaviour generalises -- raised in review as a
+     * coverage gap, and it is a real one: a step-1-only fix would look
+     * identical in all the other tests.
+     *
+     * Refuses only the renamer saves, so the wizard has to reach a later step
+     * under normal conditions first.
+     */
+    await page.route('**/settings.save/**', async (route) => {
+      const body = route.request().postData() || '';
+      const refused = body.includes('section=renamer');
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(refused ? { success: false } : { success: true }),
+      });
+    });
+    await gotoSecurityStep(page);
+
+    // Walk forward until the renamer save is attempted and refused.
+    for (let i = 0; i < 5; i++) {
+      const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
+      if (!(await next.isVisible().catch(() => false))) break;
+      await next.click();
+      await page.waitForTimeout(400);
+      const msg = await page.locator('[x-text="message"]').textContent().catch(() => '');
+      if (msg && /fail|refus|error/i.test(msg)) break;
+    }
+
+    await expect(
+      page.locator('[x-text="message"]'),
+      'a refused save on a later step was swallowed -- the fix is step-1 only',
+    ).toContainText(/fail|refus|error/i, { timeout: 5000 });
+  });
+
   test('a save that succeeds still advances, so the guard is not a wall', async ({ page }) => {
     // The other direction: if the fix refused everything, these tests would
     // pass for the wrong reason and the wizard would be unusable.
