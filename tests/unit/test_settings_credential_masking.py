@@ -102,6 +102,7 @@ CREDENTIALS = [
     # the ability to act. Distinguished below from an endpoint URL.
     ('couchpotato.core.notifications.discord', 'discord', 'webhook_url'),
     ('couchpotato.core.notifications.homey', 'homey', 'url'),
+    ('couchpotato.core.notifications.webhook', 'webhook', 'url'),
 ]
 
 IDS = [f'{s}.{o}' for _, s, o in CREDENTIALS]
@@ -242,15 +243,38 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
             'saving the displayed mask overwrote the real credential'
         )
 
-    def test_a_partially_edited_mask_is_also_refused(self, tmp_path):
-        """The operator clicks in and appends rather than clearing first.
-        Nothing strips stars anywhere, so `****xyz` would be stored verbatim
-        and the credential is still gone."""
+    def test_a_partially_edited_mask_is_NOT_caught_and_that_is_deliberate(self, tmp_path):
+        """The limit of a server-side guard, pinned rather than left implicit.
+
+        If the operator clicks into a masked field and appends instead of
+        clearing, `*****xyz` is stored verbatim and the credential is gone.
+        An earlier version of the guard DID catch this, by refusing any value
+        containing an asterisk -- and that was a security regression.
+
+        Review measured why: 19 pre-existing password options hold HUMAN-CHOSEN
+        passwords (`core.password`, `proxy_password`, every downloader and
+        tracker login, `smtp_pass`), `*` is in the default symbol set of every
+        mainstream password generator, and `wizard.html` fires `saveSetting`
+        without reading the response. So an operator picking a password with an
+        asterisk at first run was told authentication was configured while the
+        save was refused and the instance stayed public.
+
+        Any predicate loose enough to catch a partial edit can also reject a
+        real password, and that failure mode is far worse than this one: this
+        loses one credential the user is actively editing and can see went
+        wrong; that one silently leaves the server unauthenticated.
+
+        So the guard matches the mask's EXACT shape and nothing else. The
+        partial edit is left to the client, which is the layer that actually
+        knows the field was touched."""
         settings = self._settings(tmp_path, 'xoxb-REAL-TOKEN-8842')
 
         settings.saveView(section='slack', name='token', value='*****xyz')
 
-        assert settings.get('token', 'slack') == 'xoxb-REAL-TOKEN-8842'
+        assert settings.get('token', 'slack') == '*****xyz', (
+            'if this now passes the credential through unchanged, the guard '
+            'was broadened -- re-read the reasoning above before keeping it'
+        )
 
     def test_a_genuine_new_credential_still_saves(self, tmp_path):
         """The guard must not become a lockout -- rotating a credential is the
@@ -271,7 +295,49 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
 
         assert settings.get('token', 'slack') == ''
 
-    def test_a_credential_containing_an_asterisk_is_the_accepted_casualty(self, tmp_path):
+    def test_core_password_with_an_asterisk_still_saves(self, tmp_path):
+        """The regression the first version of this guard caused, pinned so it
+        cannot come back.
+
+        `core.password` is the LOGIN password and is password-typed. A guard
+        refusing any value containing `*` refused it -- and `wizard.html` calls
+        `saveSetting` without reading the response, so a first-run operator
+        picking a generated password with an asterisk was told authentication
+        was on while `Core.md5Password` never fired, `auth_required` was never
+        set, and the instance stayed public.
+
+        This is the highest-severity thing this branch touched, and it was
+        introduced BY the fix, not found by it."""
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text('[core]\npassword = old_hash\n', encoding='utf-8')
+        settings = Settings()
+        settings.setFile(str(cfg))
+        settings.registerDefaults(
+            'core', {'password': {'default': '', 'type': 'password'}}, save=False)
+
+        settings.saveView(section='core', name='password', value='Tr0ub4dor&3*x')
+
+        assert settings.get('password', 'core') == 'Tr0ub4dor&3*x', (
+            'a routine generated password was refused -- see the wizard path, '
+            'this silently leaves the server unauthenticated'
+        )
+
+    def test_a_downloader_password_with_an_asterisk_still_saves(self, tmp_path):
+        """Same shape, second surface: 19 pre-existing password options hold
+        human-chosen passwords, not issued tokens. One example is asserted so
+        the reasoning is not carried only by `core.password`."""
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text('[sabnzbd]\npassword = old\n', encoding='utf-8')
+        settings = Settings()
+        settings.setFile(str(cfg))
+        settings.registerDefaults(
+            'sabnzbd', {'password': {'default': '', 'type': 'password'}}, save=False)
+
+        settings.saveView(section='sabnzbd', name='password', value='my*pass')
+
+        assert settings.get('password', 'sabnzbd') == 'my*pass'
+
+    def test_a_credential_of_only_asterisks_is_the_remaining_casualty(self, tmp_path):
         """Pinned deliberately rather than left implicit: the guard refuses any
         password value CONTAINING an asterisk, so a credential that genuinely
         has one cannot be saved.
@@ -295,36 +361,25 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
 
 
 class TestTwoFieldsAreDeliberatelyNotMasked:
-    """Review found ten unmasked fields the name-based sweep missed. Eight are
-    now masked. These two are deliberately not, and the reasoning is asserted
-    here so a later "you missed some" sweep does not reverse it silently.
-
-    **`webhook.url` is an ENDPOINT, not a capability.** Its description is "URL
-    that receives a JSON POST when movies are snatched or downloaded" -- it is
-    the address of the user's OWN server. Discord's and Homey's webhook URLs
-    are masked because a third party ISSUED them and possession alone grants
-    the ability to post; that is a bearer credential wearing a URL's clothes.
-    A user's own endpoint is not, and masking it removes their ability to check
-    what they typed while protecting nothing. If someone points this at a
-    capability URL, that is their choice and it is one they can see.
+    """One field is deliberately not masked, and the reasoning is asserted here
+    so a later "you missed some" sweep does not reverse it silently.
 
     **`trakt.automation_client_id` is public by OAuth design.** The client_id
     identifies the application, not the user, and is transmitted in every
     authorisation request; its `client_secret` sibling IS masked. Masking an
     identifier because it sits next to a secret is cargo-cult.
 
-    Both are judgement calls, so they are written down with their reasons
-    rather than left as an unexplained gap in the list."""
-
-    def test_the_generic_webhook_url_is_still_readable(self):
-        opt = _find_option('couchpotato.core.notifications.webhook',
-                           'webhook', 'url')
-        assert opt.get('type') != 'password', (
-            "webhook.url was masked. It is the user's own endpoint, not an "
-            'issued capability -- masking hides their config and protects '
-            'nothing. If this changed because the field now carries a token, '
-            'update the reasoning here rather than just the declaration.'
-        )
+    **`webhook.url` was on this list and has been REMOVED from it.** The
+    argument was that it is the address of the user's own server rather than an
+    issued capability, unlike Discord's and Homey's. Review pointed out that
+    nothing in the code constrains what goes in that field: a Slack
+    `hooks.slack.com/services/...`, a second Discord webhook, an IFTTT
+    `.../with/key/...` or a Home Assistant `/api/webhook/<id>` are all valid
+    values and every one is a bearer capability. So the distinction rested on
+    an assumption the code does not enforce, while the SAME string is masked
+    one plugin over. It is masked now. The cost -- not being able to re-read
+    what you typed -- was already accepted for Discord, so accepting it here is
+    consistency rather than a new trade."""
 
     def test_the_trakt_client_id_is_still_readable(self):
         opt = _find_option('couchpotato.core.media.movie.providers.automation.trakt',
@@ -400,7 +455,15 @@ class TestTorrentpotatoIsTheSecondCombinedLeak:
     The consequence of the undercount is specific: whoever fixes the combined
     renderer would have deleted the newznab class, seen the suite go green, and
     shipped with tracker passkeys still leaking. An exemption list that is
-    wrong is worse than no list, because it reads as an inventory."""
+    wrong is worse than no list, because it reads as an inventory.
+
+    **And this leak DEFEATS a mask on the same page.** `torrentpotato`'s Jackett
+    sync writes `jackett_api_key` straight into `pass_key`
+    (`torrentpotato.py`: "Use Jackett API key as passkey"). `jackett_api_key`
+    IS password-typed, so for any user who has pressed Sync -- the documented
+    happy path -- the same Jackett key is masked in one field and printed in
+    clear six options below it. Anyone reading the exemption list would
+    otherwise conclude the Jackett key is handled."""
 
     def test_torrentpotato_pass_key_is_combined_not_password(self):
         opt = _find_option(

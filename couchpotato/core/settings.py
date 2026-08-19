@@ -586,16 +586,39 @@ class Settings:
         # manager autofilling the field dispatches `change`. The guard belongs
         # here, where it does not depend on that.
         #
-        # Known limit, accepted deliberately: a credential that genuinely
-        # contains an asterisk cannot be saved. None of the providers here
-        # issue such values, and the alternative -- a per-field nonce round
-        # trip -- is a far larger change for a case that does not arise.
-        if value and '*' in str(value) and self.getType(section, option) == 'password':
+        # Match the mask's EXACT shape, not merely "contains an asterisk".
+        # `getValues` renders it as `len(value) * '*'`, so it is always a pure
+        # run of asterisks and nothing is lost by being precise.
+        #
+        # The first version of this guard used `'*' in value` and was a
+        # security regression, which review caught. Its reasoning only
+        # considered ISSUED tokens -- true that no provider here mints one
+        # containing `*` -- and ignored the 19 pre-existing password options
+        # that hold HUMAN-CHOSEN passwords: `core.password`, `proxy_password`,
+        # every downloader and tracker login, `smtp_pass`. `*` is in the
+        # default symbol set of every mainstream password generator, so
+        # refusing it is refusing a routine password.
+        #
+        # Worse than an annoyance: `wizard.html` fires `saveSetting` without
+        # reading the response, so a first-run operator choosing a password
+        # with `*` would be told authentication was configured while the save
+        # was refused, `Core.md5Password` never ran, `auth_required` was never
+        # set -- and the instance stayed public. A credential-protecting change
+        # would have created an unauthenticated server.
+        #
+        # Remaining casualty, now genuinely negligible: a credential whose
+        # value is asterisks and nothing else.
+        if (value and set(str(value)) == {'*'}
+                and self.getType(section, option) == 'password'):
             self.log.warning(
-                'Refused to save "%s.%s": the value looks like the displayed '
-                'mask rather than a credential. Clear the field and paste the '
-                'real value to change it.', section, option)
-            return {'success': False}
+                'Refused to save "%s.%s": the value is the displayed mask, not '
+                'a credential. Clear the field and paste the real value to '
+                'change it.', section, option)
+            return {
+                'success': False,
+                'error': 'That is the masked placeholder, not the real value. '
+                         'Clear the field and paste the credential to change it.',
+            }
 
         from couchpotato.environment import Env
         soft_chroot = Env.get('softchroot')

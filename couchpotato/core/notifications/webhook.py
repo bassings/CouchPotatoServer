@@ -53,6 +53,7 @@ config = [{
                 },
                 {
                     'name': 'url',
+                    'type': 'password',
                     'label': 'Webhook URL',
                     'description': 'URL that receives a JSON POST when movies are snatched or downloaded.',
                 },

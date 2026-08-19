@@ -2255,7 +2255,59 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       used differing-length edits — but the rule should change before the next
       one is trusted.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T51: the first-run wizard discards every save response, so a refused save reads as success — state: queued (no deps) — **security amplifier**
+
+      Found while fixing T48, and it is the reason a bad guard there became a
+      security hole rather than an annoyance.
+
+      `wizard.html` saves settings with `return fetch(...)` and never reads the
+      response; `await Promise.all(saves)` resolves regardless. The wizard's own
+      summary then reports authentication as **Enabled** from LOCAL form state,
+      not from what the server stored.
+
+      So ANY server-side refusal during first-run setup is invisible. Measured
+      concretely on T48's first attempt: an operator choosing a generated
+      password containing `*` had the save refused, `Core.md5Password` never
+      fired, `auth_required` was never set — and the wizard said authentication
+      was on while the instance stayed public.
+
+      T48's guard was narrowed so that specific case cannot happen, but **the
+      amplifier is still there** and will convert the next refusal — a
+      validation error, a disk-full write failure, a chroot rejection — into the
+      same silent lie. This is worth fixing independently of what refuses.
+
+      Two things for whoever takes it. The settings page already does better
+      (`partials/settings/scripts.html` checks `success: false`), so the wizard
+      is the outlier rather than the pattern — copy that. And a refusal that
+      returns `{'success': False}` with no `error` renders as "HTTP 200" in the
+      toast, which is worse than useless to a self-hosted user; T48 added an
+      `error` string to its own refusal, and the other refusal paths in
+      `saveView` still need one.
+
+- [ ] T52: the first-run wizard renders credentials as `type="text"` — state: queued (no deps) — **security, pre-existing**
+
+      T48 fixed the settings page by declaring `'type': 'password'` on the
+      plugin options. The wizard does NOT read plugin `config` — it carries its
+      own hard-coded field list — so it is unaffected and still renders
+      credentials in the clear.
+
+      Inconsistent within the single template, which is what makes it a
+      defect rather than a decision: `jackett_api_key` and the tracker
+      `password` fields already declare `type: 'password'`, while beside them
+      the tracker `passkey` fields, `sabnzbd.api_key`, `putio.oauth_token` and
+      `newznab.api_key` are hardcoded `type="text"`.
+
+      Lower severity than T48 because the wizard only ever shows what the user
+      is currently typing, never a stored secret — but it is the same
+      shoulder-surf and screenshot class, on the one page every new install
+      walks through.
+
+      Note the wizard duplicating the field list is the root cause of both this
+      and T51. Whoever takes either should consider whether the wizard can read
+      the real option declarations instead, which would make this class of
+      drift impossible rather than fixed-once.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
