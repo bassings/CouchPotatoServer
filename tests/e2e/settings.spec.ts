@@ -238,21 +238,26 @@ test.describe('Settings: a password field cannot be half-edited', () => {
     });
     await page.goto('/settings/');
     await expect(page.locator('h1')).toContainText('Settings');
-    const downloaders = page.getByRole('tab', { name: /downloader/i });
-    await downloaders.click();
-    await expect(downloaders).toHaveAttribute('aria-selected', 'true');
-    // `.first()` on all password inputs was fragile: a disabled downloader's
-    // group is collapsed by provider_card.html, so the first match can be a
-    // HIDDEN input and the visibility assertion then fails for a reason that
-    // has nothing to do with what is under test. It passes today (CI green,
-    // 5m40s) -- this is hardening, not a repair.
-    const field = page.locator('input[type="password"]:visible').first();
+
+    // Use core.password on the GENERAL tab, not a downloader's.
+    //
+    // The downloaders tab was wrong and CI proved it twice. On the seeded E2E
+    // config only Blackhole is enabled and it has no password field; every
+    // other downloader group is collapsed by provider_card.html, so there is
+    // no visible password input on that tab at all. It passed locally because
+    // this checkout's data has more downloaders enabled -- a green that was
+    // about my machine, not about the code.
+    //
+    // core.password sits in the same General-tab group as the "Require login"
+    // toggle, which this file already covers with a passing test, so it is
+    // present regardless of which downloaders a config happens to enable.
+    const field = page.locator('input[type="password"]').first();
     await expect(
       field,
-      'no VISIBLE password input on the downloaders tab -- if the seeded ' +
-        'config changed, point this at a group that is enabled rather than ' +
-        'loosening the selector',
-    ).toBeVisible({ timeout: 5000 });
+      'no password input on the General tab -- core.password should be in the ' +
+        'login group beside "Require login"; if that moved, re-point this ' +
+        'rather than loosening the selector',
+    ).toBeVisible({ timeout: 10000 });
     return field;
   }
 
