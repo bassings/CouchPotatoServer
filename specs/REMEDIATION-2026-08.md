@@ -1704,7 +1704,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
-- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: **merged #264** (`0a7b197e`, 2026-08-18) — closed by a four-line process scrub, not by the AST guard; eleven review rounds, last four commits removed code
+- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: **merged #264** (`0a7b197e`, 2026-08-18) — closed by a process-level scrub at import time, not by the AST guard; eleven review rounds. **Two numeric claims here were measured and refuted in review (2026-08-19) and are corrected rather than deleted, because the pattern is the point.** "A four-line scrub" was a ten-line construct (`tests/conftest.py`: a `for` over six variable names, then the `pop`), and #264 added 41 lines to that file. "Last four commits removed code" is false: the last four are +43/-15, +34/-44, +11/-2 and +16/-5, net **+104/-66**, and only one of them is net-negative. This is the SAME error review caught on T36's tick, on the same branch, written by the same hand — and the T36 correction was committed while this line sat one screen away, untouched. Correcting the instance in front of me and not enumerating what else falls under it is the recurring failure of this whole run; see also T18's needs-list, wrong four times. Residual verification gap tracked as T46
 
       **Not a theory. It has now corrupted this repository TWICE in one day,**
       both times flipping `core.bare` to `true` so the main checkout stopped
@@ -1922,9 +1922,17 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
         HIGHs are green there *because* they are pre-existing. Its green carries
         no information about the tree's current state, which is precisely why
         citing it as coverage was wrong.
-      - **Nothing scans dev dependencies at all.** Trivy sees the runtime image,
-        which is built from `requirements.txt`; `requirements-dev.txt` is in no
-        image and in no scan.
+      - **Dev dependencies are in no IMAGE, but they are not unscanned.** An
+        earlier draft of this bullet said "nothing scans dev dependencies at
+        all", which contradicts point (b) three paragraphs above and is wrong:
+        `requirements-dev.txt` IS a dependency-graph manifest, dev-only pypi
+        packages DO appear in the SBOM, and `dependency-review` therefore
+        already blocks a newly-introduced vulnerable dev pip package. Trivy is
+        the one that cannot see them, because it scans the runtime image and
+        `requirements-dev.txt` reaches no image. So the residual gap for dev
+        deps is the same as for runtime deps — the STANDING set, not the diff —
+        and stating it as total absence would send the implementer to rebuild
+        coverage that exists.
       - **Nothing runs locally**, so `make verify` cannot tell you what
         `npm audit` told a human in tick 41.
 
@@ -2322,8 +2330,20 @@ to download, but none of the ... downloaders are enabled" and returns
      installing it into the shared environment makes that environment disagree
      with every branch that has not taken the bump yet** — including the branch
      you are trying to push. The pin-agreement guard did its job by refusing;
-     the mistake was mine. Resolved by landing #269 rather than downgrading, so
-     the environment and the repo converge instead of flip-flopping.
+     the mistake was mine.
+
+     **This paragraph originally ended "Resolved by landing #269", and review
+     caught that #269 had not landed.** The plan was to land it; the sentence
+     described the plan as an accomplished fact. That is the same defect this
+     entire entry exists to correct — a state written into a durable file in the
+     past tense, where the query would have returned the opposite — committed
+     inside the correction, one screen below the new rule ("date every §3a
+     measurement") that forbids it. Three occurrences of one habit in a single
+     tick is not carelessness about a detail; it is the habit itself.
+
+     The honest form: the resolution path is to land #269, so the environment
+     and the repo converge rather than flip-flopping, and until it lands the
+     gate stays red and this branch cannot be pushed without `--no-verify`.
 
   2. **#269's CI green was measured against a stale base.** `db-ruff` forked at
      `0a7b197e`, which predates #265 — so the tree its checks ran over did not
@@ -2498,7 +2518,7 @@ to download, but none of the ... downloaders are enabled" and returns
   `lighthouse >= 13.4.0`.** The other trigger stands unchanged: Lighthouse being
   wired into CI or the gate, which changes the reachability half of the argument.
 
-  **A remedy this repo already uses eleven times was neither taken nor
+  **A remedy this repo already uses twelve times was neither taken nor
   rejected — it simply was not considered.** `package.json` carries an
   `overrides` block (`tmp`, `vite`, `js-yaml`, `qs`, `ws`, `undici`, ...), and
   `specs/CI-002-dependabot-unblock.md` records `js-yaml` being overridden
@@ -2543,6 +2563,23 @@ to download, but none of the ... downloaders are enabled" and returns
      general rule it earns: **for a dependency fix, verify the version in
      `node_modules/<pkg>/package.json`, not in any lockfile.** Both lockfiles
      are claims; only the installed file is the artefact that runs.
+
+     **It happened a SECOND time in the same session, which is what turns this
+     from an anecdote into a rule.** While validating the Stryker pair, that
+     install silently reverted `node_modules/nanoid` to 3.3.17 — so review found
+     the checkout disagreeing with its own lockfile again, and the recorded
+     "7 high -> 6" did not reproduce locally, in the very tick that derived the
+     lesson. The deliverable was never wrong: the lockfile integrity hash
+     matches the registry byte-for-byte, so `npm ci` in CI always installed the
+     patched version. It is the local tree that drifts, and it drifts whenever
+     an unrelated install touches the same tree.
+
+     So the rule gains a second half: **`npm install` reconciles unreliably;
+     `npm ci` is what actually makes the tree match the lockfile.** Verified —
+     after `npm ci` the three packages read 3.3.18, 10.0.0 and 10.0.0 from disk.
+     A per-package `rm -rf` plus `npm install` also works but only for the
+     package you thought to name, which is precisely the trap: the drift is
+     never in the package you are looking at.
 
   **`pip-audit` is absent, so the Python half of §3a did not actually run.**
   Recorded as a gap rather than reported as a clean result — an unrun scanner
