@@ -1490,3 +1490,49 @@ class TestAnUnencodableNameDoesNotSinkTheArchive:
                 % hostile[:20]
             )
             assert (extr_path / 'good.mkv').read_bytes() == b'real'
+
+
+class TestAnEINVALDestinationDoesNotSinkTheArchive:
+    """`EINVAL` is in `_ENTRY_DERIVED_ERRNOS` because the CRITERION admits it,
+    not because anyone hit it -- and review rightly pointed out that its three
+    siblings each had a test while it did not.
+
+    Both things are true at once, and the resolution is that a test does not
+    need a real-world occurrence. Injecting the errno tests the HANDLER, which
+    is what has to be right; whether some filesystem actually returns EINVAL
+    for a given name is that filesystem's business. This is the same lesson as
+    the EILSEQ test one commit earlier, which relied on a real surrogate name
+    and passed on macOS while failing on Linux.
+
+    So the criterion still decides membership, and every member is still
+    guarded. An untested branch in a handler that decides "skip one entry" vs
+    "abandon the archive" is not something to leave on a comment's authority.
+    """
+
+    def test_an_einval_destination_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['odd.mkv', 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        real_replace = os.replace
+
+        def replace_rejecting_odd(src, dst, *a, **kw):
+            if dst.endswith('odd.mkv'):
+                raise OSError(errno.EINVAL, 'Invalid argument')
+            return real_replace(src, dst, *a, **kw)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor.os.replace',
+                   side_effect=replace_rejecting_odd), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an EINVAL destination aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert any('EINVAL' in r.getMessage() for r in caplog.records)

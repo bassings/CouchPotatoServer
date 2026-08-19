@@ -1823,7 +1823,40 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       pass it. So the archive survives and the loss is recoverable by
       re-extracting. That is what keeps this off the irreplaceable tier.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41, T43 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+- [ ] T44: a single archive entry can decompress to an unbounded size — state: queued (no deps) — **security, pre-existing**
+
+      Raised on #265 as explicitly non-blocking and correctly so: the read loop
+      in `_extractOneAtomic` is untouched by that PR. Recorded because the file
+      has just had enough scrutiny to make the omission conspicuous.
+
+      `rarfile.infolist()` parses HEADERS only, so a header claiming a large
+      uncompressed size costs the attacker nothing, and the streaming loop
+      writes whatever comes out with no cap:
+
+          while True:
+              chunk = source.read(1024 * 1024)
+              if not chunk: break
+              target.write(chunk)
+
+      A hostile release therefore fills the disk. On this project that is worse
+      than it sounds: the same volume holds the SQLite database and settings,
+      and a full disk is exactly how this session lost a gate run to
+      `sqlite3.OperationalError: disk I/O error`. Data at the top of the
+      loss ranking sits behind a limit that does not exist.
+
+      The fix is a per-entry byte budget in the read loop, refusing the entry
+      when it exceeds what `info.file_size` claimed (plus a margin), and
+      treating the refusal exactly like the other entry-derived failures —
+      skip one entry, keep the archive, count it, cap the log.
+
+      Note `info.file_size` is attacker-supplied, so it bounds nothing on its
+      own; it is useful only as a CROSS-CHECK against bytes actually written.
+      A budget derived from free space would be the belt to that braces.
+
+      Do NOT reuse `_ENTRY_DERIVED_ERRNOS` for this. Nothing raises an OSError
+      here — the write succeeds, repeatedly. It needs its own refusal path.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41, T43, T44 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
