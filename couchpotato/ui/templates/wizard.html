@@ -1192,10 +1192,42 @@ function setupWizard() {
       params.append('section', section);
       params.append('name', name);
       params.append('value', value);
-      return fetch(CP.apiBase + '/settings.save/', {
+      const res = await fetch(CP.apiBase + '/settings.save/', {
         method: 'POST',
         body: params
       });
+
+      // The API answers HTTP 200 even when it REFUSES a save, so `res.ok` on
+      // its own proves nothing -- the body has to be read. This returned the
+      // raw fetch promise, so a refusal resolved, `Promise.all` resolved,
+      // nothing threw, and `nextStep()` advanced as though the value had been
+      // stored.
+      //
+      // That mattered most on step 1, which saves `core.password`. The
+      // `setting.save.core.password` hook is what turns `auth_required` on, so
+      // a silently refused save there left the instance publicly reachable
+      // while the wizard's summary reported authentication as Enabled from
+      // local form state.
+      //
+      // `nextStep()` already has the try/catch and already declines to advance
+      // when the save throws. That path was simply unreachable, because the one
+      // thing that could throw did not.
+      if (!res.ok) {
+        throw new Error(`${section}.${name}: server returned ${res.status}`);
+      }
+      let data = null;
+      try {
+        data = await res.json();
+      } catch (e) {
+        // A 200 that is not JSON is not a confirmed save. Treat it as a
+        // failure rather than assuming success, which is the assumption this
+        // whole change exists to remove.
+        throw new Error(`${section}.${name}: unreadable response from server`);
+      }
+      if (data && data.success === false) {
+        throw new Error(data.error || `${section}.${name} was refused`);
+      }
+      return data;
     },
 
     async testDownloader() {
