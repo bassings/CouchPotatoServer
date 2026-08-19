@@ -16,7 +16,7 @@ dulwich==1.2.12
 
 # Network
 requests==2.34.2
-certifi==2026.6.17
+certifi==2026.7.22
 chardet==7.4.3
 
 # Parsing
