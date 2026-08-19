@@ -2380,7 +2380,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `error` string to its own refusal, and the other refusal paths in
       `saveView` still need one.
 
-- [ ] T52: the first-run wizard renders credentials as `type="text"` — state: queued (no deps) — **security, pre-existing**
+- [x] T52: the first-run wizard renders credentials as `type="text"` — state: **fixed** (2026-08-20) — **security, pre-existing**
+
+      Seven fields typed: `newznab entry.api_key`, `sabnzbd.api_key` and
+      `putio.oauth_token` (each appearing twice — once in markup, once in a JS
+      template string), plus `passthepopcorn.passkey` and `hdbits.passkey`.
+
+      **The enumeration nearly went wrong in the way this plan keeps recording.** A
+      regex over `<input>` tags found the first five and reported the file clean
+      otherwise. It cannot see the tracker passkeys: those render through ONE generic
+      input (`:type="field.type || 'text'"`) fed by the `privateTrackers` array, so
+      the credential's name never appears in the markup at all. They were found by
+      reading how that loop works, not by sweeping.
+
+      So the guard checks BOTH shapes, and both are mutation-proven: reverting one
+      direct input fails naming `wizard.html:633`, reverting one tracker field fails
+      naming `hdbits.passkey`. A vacuity guard pins each extraction, because the
+      tag-only version of this sweep passed while two credentials rendered as text.
+
+      Same shape as T48 twice over: 16 of the 21 credential inputs already declared
+      the type, and every tracker `password` did. The convention existed; a handful
+      were missed. That is the argument for a sweep rather than a list.
 
       T48 fixed the settings page by declaring `'type': 'password'` on the
       plugin options. The wizard does NOT read plugin `config` — it carries its
@@ -2479,7 +2499,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       several controls, and bundling it into a security fix would have made
       that fix harder to review for the thing it was actually for.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T52, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
