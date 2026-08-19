@@ -6,6 +6,7 @@ when no external extractor tool (unrar/unar/7z/7zz/bsdtar) is available,
 RAR extraction must be skipped -- logging exactly one warning per scan --
 rather than failing or tagging the release.
 """
+import errno
 import logging
 import os
 import stat
@@ -590,6 +591,223 @@ class TestNoExtractorToolMessage:
         assert 'apk add 7zip' in NO_EXTRACTOR_TOOL_MESSAGE
 
 
+class TestExtractArchivePathTraversal:
+    """T36: a hostile archive entry name must never resolve outside extr_path.
+
+    os.path.basename defeats a forward-slash '../' traversal, but on POSIX a
+    backslash is not a path separator, so a name like '..\\..\\evil.txt'
+    survives basename intact -- and sp()'s Windows-path handling then
+    anchors the joined path at filesystem root, walking it straight out of
+    extr_path. A bare '..' (no separator at all) is a second, independent
+    escape: basename only splits on the LAST '/', so a name with no '/' in
+    it at all -- including '..' itself -- is returned completely unchanged.
+    """
+
+    def test_dotdot_slash_entry_is_already_contained_by_basename_alone(self, tmp_path):
+        # Control case: proves a '../'-style fixture is NOT a valid guard for
+        # this defect -- it already passes against the unmodified code, so it
+        # would be an incidentally-passing test that guards nothing.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('../../../evil.txt')]
+        handle = _make_rar_handle(infos, {'../../../evil.txt': b'evil-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'evil.txt')]
+        assert (extr_path / 'evil.txt').read_bytes() == b'evil-bytes'
+        # Nothing escaped above extr_path.
+        assert list((tmp_path / 'downloads').iterdir()) == [extr_path]
+
+    def test_backslash_entry_does_not_escape_extraction_directory(self, tmp_path):
+        # The load-bearing case: a backslash-separated traversal is NOT a
+        # POSIX separator, so it survives os.path.basename intact, and sp()
+        # then anchors the result at filesystem root. Two levels up from
+        # extr_path (downloads/extract_here) lands exactly at tmp_path,
+        # which is writable and unambiguous to assert against.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        entry_name = '..\\..\\CP_PWNED_BACKSLASH.txt'
+        infos = [_make_info(entry_name)]
+        handle = _make_rar_handle(infos, {entry_name: b'pwned-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # Must NOT have escaped to tmp_path -- the pre-fix bug lands here.
+        assert not (tmp_path / 'CP_PWNED_BACKSLASH.txt').exists()
+        # Must have been sanitized and written INSIDE extr_path instead.
+        expected = extr_path / 'CP_PWNED_BACKSLASH.txt'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'pwned-bytes'
+
+    def test_bare_dotdot_entry_is_refused_by_the_containment_check(self, tmp_path):
+        # A second, independent escape: a bare '..' has no separator at all,
+        # so os.path.basename returns it completely unchanged -- backslash
+        # sanitization does nothing here. Only an assertion on the resolved
+        # path catches this. Must be refused, not raise, and not extracted.
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('..')]
+        handle = _make_rar_handle(infos, {'..': b'should-never-be-written'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == []
+        # Nothing new appeared in extract_here's parent (the would-be escape target).
+        assert list((tmp_path / 'downloads').iterdir()) == [extr_path]
+
+    def test_absolute_path_entry_is_contained(self, tmp_path):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('/etc/passwd')]
+        handle = _make_rar_handle(infos, {'/etc/passwd': b'not-actually-passwd'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'passwd')]
+        assert (extr_path / 'passwd').read_bytes() == b'not-actually-passwd'
+
+    def test_a_winrar_backslash_subfolder_entry_extracts_instead_of_aborting(self, tmp_path):
+        r"""The change's largest real-world effect, and until this test the only
+        coverage of it was incidental.
+
+        rarfile normalises separators for RAR3 (`h.filename.replace("\\", "/")`)
+        but NOT for RAR5, which is what WinRAR has produced by default since
+        2013. So a RAR5 `Sample\movie-sample.mkv` reached extractArchive with
+        the backslash intact, sp() rewrote it into a `Sample/` directory that
+        does not exist, and os.replace raised FileNotFoundError -- aborting the
+        WHOLE archive, not just that entry. Most scene releases carry a
+        `Sample\` or `Subs\` folder, so this was the common case, not an edge.
+
+        Named for the benign behaviour rather than the escape, so that anyone
+        later pruning "redundant security tests" does not delete the only guard
+        on the regression this change actually fixes."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        entry = 'Sample\\movie-sample.mkv'
+        infos = [_make_info(entry)]
+        handle = _make_rar_handle(infos, {entry: b'sample-bytes'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        expected = extr_path / 'movie-sample.mkv'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'sample-bytes'
+
+    @pytest.mark.parametrize('entry_name', ['', '/', '\\', '.', 'Sample/', 'Sample\\'])
+    def test_an_entry_sanitising_to_nothing_is_refused_not_crashed(self, tmp_path, entry_name):
+        """Every one of these reduces to a basename of '' or '.', which joins
+        back to extr_path ITSELF. `isSubFolder` accepts equality ("the same as
+        or inside"), so the containment check alone waves them through into
+        `os.replace(tmp, <a directory>)` -> IsADirectoryError, which escapes
+        extractArchive and abandons the whole archive.
+
+        On an unattended server that is a permanent per-release wedge: the
+        release is never tagged extracted, so every scheduled scan retries it,
+        fails identically, and writes another full traceback. The refusal path
+        this class exists to provide must catch these too."""
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info(entry_name), _make_info('movie.mkv')]
+        handle = _make_rar_handle(
+            infos, {entry_name: b'never', 'movie.mkv': b'real-movie-bytes'}
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # Refused cleanly, and the REST of the archive still extracted.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        assert (extr_path / 'movie.mkv').read_bytes() == b'real-movie-bytes'
+
+    def test_containment_catches_a_name_the_sanitizer_let_through(self, tmp_path):
+        """The containment check is defence in depth, and with the name check
+        in front of it there is no ENTRY NAME that reaches it -- after
+        `_safeEntryBasename` the result can never contain a separator, so only
+        '', '.' and '..' can escape, and all three are caught by name.
+
+        That makes it a guard nobody can watch fail through the public API,
+        which is exactly the shape this project treats as not-done. Measured:
+        deleting the containment check entirely left all 34 tests green.
+
+        So drive it at the seam it actually protects. Break the sanitizer
+        deliberately and prove containment still refuses the entry -- that is
+        the scenario it exists for: `_safeEntryBasename` being changed,
+        bypassed, or defeated by a name shape nobody has thought of yet."""
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        infos = [_make_info('anything.txt'), _make_info('movie.mkv')]
+        handle = _make_rar_handle(
+            infos, {'anything.txt': b'escaped', 'movie.mkv': b'real-movie-bytes'}
+        )
+
+        # A sanitizer that fails open, returning a traversing name unchanged.
+        def broken_sanitizer(filename):
+            return '../ESCAPED.txt' if filename == 'anything.txt' else filename
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle), \
+             patch.object(_Extractor, '_safeEntryBasename', staticmethod(broken_sanitizer)):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        assert not (tmp_path / 'downloads' / 'ESCAPED.txt').exists(), (
+            'containment did not catch a name the sanitizer let through'
+        )
+        # And the refusal stayed per-entry: the rest of the archive extracted.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+
+    def test_benign_nested_entry_still_extracts_normally(self, tmp_path):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('Movie.Name.2020/Sample/movie-sample.mkv')]
+        handle = _make_rar_handle(
+            infos, {'Movie.Name.2020/Sample/movie-sample.mkv': b'sample-bytes'}
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        expected = extr_path / 'movie-sample.mkv'
+        assert extracted == [str(expected)]
+        assert expected.read_bytes() == b'sample-bytes'
+
+    def test_refused_entry_is_logged_and_does_not_abort_the_rest_of_the_archive(
+        self, tmp_path, caplog
+    ):
+        extr_path = tmp_path / 'downloads' / 'extract_here'
+        extr_path.mkdir(parents=True)
+        # Refusal FIRST, deliberately. With the refusal last, `continue` and
+        # `break` are behaviourally identical and this test cannot tell them
+        # apart -- which is exactly the property its name claims. Measured
+        # before this reorder: mutating the refusal's `continue` to `break`
+        # left all 27 tests GREEN while one hostile entry sank the archive.
+        infos = [_make_info('..'), _make_info('movie.mkv')]
+        handle = _make_rar_handle(
+            infos, {'..': b'should-never-be-written', 'movie.mkv': b'real-movie-bytes'}
+        )
+
+        with patch(
+            'couchpotato.core.plugins.renamer.extractor.rarfile.RarFile', return_value=handle
+        ), caplog.at_level(
+            logging.ERROR, logger='couchpotato.core.plugins.renamer.extractor'
+        ):
+            extracted = _Extractor().extractArchive('archive.rar', str(extr_path))
+
+        # The legitimate entry still extracted -- one bad entry must not
+        # sink the whole archive.
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        assert (extr_path / 'movie.mkv').read_bytes() == b'real-movie-bytes'
+
+        # The refusal is visible, not a silent skip.
+        errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert '..' in errors[0].getMessage()
+
+
 class TestRarfileApiSignatureGuard:
     """Every other test mocks rarfile, baking in assumptions about its API.
     This guard pins the REAL installed rarfile surface CP's extractor
@@ -622,3 +840,699 @@ class TestRarfileApiSignatureGuard:
         # Tool-selection surface the extractor mutates.
         assert isinstance(rf.UNRAR_TOOL, str)
         assert callable(rf.tool_setup)
+
+
+class TestRefusalLoggingIsBoundedAndPrivate:
+    """A refused entry is attacker-controlled input reaching a production ERROR
+    log, which makes it three problems at once, all measured rather than
+    theorised.
+
+    AMPLIFICATION: `rarfile.infolist()` parses headers only, so a hostile
+    archive can carry thousands of poisoned names for almost nothing, and the
+    unbounded form emitted one ERROR each.
+
+    EXPOSURE: each line carried `rar_path` and the resolved destination.
+    `PrivacyFilter` redacts `/home/<user>` and `/Users/<user>` only, so
+    `/volume1/...`, `/mnt/media/...` and every other NAS layout went to disk in
+    full. The paths were never needed -- the operator knows the extraction
+    directory, and the entry name is what identifies the bad archive.
+
+    FORGERY: an entry name may contain newlines, so interpolating it raw lets a
+    crafted archive write whole fake log records.
+    """
+
+    def _run_with_entries(self, tmp_path, names, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('/private/nas/archive.rar', str(extr_path))
+        return [r.getMessage() for r in caplog.records]
+
+    def test_a_thousand_poisoned_entries_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        messages = self._run_with_entries(tmp_path, ['..'] * 1000, caplog)
+
+        refusals = [m for m in messages if 'Refusing to extract' in m]
+        assert len(refusals) <= 5, (
+            'unbounded refusal logging: %d ERROR lines from one archive' % len(refusals)
+        )
+        # And the TOTAL is reported, so the cap does not hide how bad the
+        # archive was. An earlier version promised "a count follows at the
+        # end" and never emitted one -- worse than silence, because it tells
+        # the reader to wait for something that never arrives.
+        summary = [m for m in messages if 'in total' in m]
+        assert summary, (
+            'the flood was capped with no total, so an operator cannot tell '
+            'five poisoned entries from a thousand'
+        )
+        assert '1000' in summary[0], (
+            'the summary must carry the real count, not just say there were '
+            'more: %r' % summary[0]
+        )
+
+    def test_the_refusal_does_not_write_private_paths_to_the_log(self, tmp_path, caplog):
+        messages = self._run_with_entries(tmp_path, ['..'], caplog)
+
+        joined = '\n'.join(messages)
+        assert 'Refusing to extract' in joined
+        assert '/private/nas/archive.rar' not in joined, (
+            'the archive path reached the log; PrivacyFilter does not redact '
+            'NAS-style paths, only /home/<user> and /Users/<user>'
+        )
+        assert str(tmp_path) not in joined, 'the resolved destination reached the log'
+
+    def test_a_newline_in_an_entry_name_cannot_forge_a_log_record(self, tmp_path, caplog):
+        """The forging vector is the EXTRACT line, not the refusal line.
+
+        This test originally aimed at the refusal path and failed with "the
+        hostile entry was not refused at all" -- which was the test being
+        wrong, and useful for it. After sanitisation only `''`, `'.'` and
+        `'..'` are ever refused, and none of those can carry a newline, so the
+        refusal line is unreachable for forgery. `%r` stays there as
+        belt-and-braces.
+
+        The reachable one is the entry that gets EXTRACTED: its name is logged,
+        it is fully attacker-controlled, and `%s` put the raw newline into the
+        log. Measured before the fix:
+
+            Extracting movie.mkv
+            2026-08-19 00:00:00 INFO  Nothing to see here...
+        """
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        hostile = 'movie.mkv\n2026-08-19 00:00:00 INFO  Nothing to see here'
+        infos = [_make_info(hostile)]
+        handle = _make_rar_handle(infos, {hostile: b'x'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.DEBUG,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('/private/nas/archive.rar', str(extr_path))
+
+        # CPLog prefixes every message with '[plugins.renamer.extractor] ',
+        # so a startswith() filter here silently matches nothing -- which is
+        # how the first version of this test reported "never logged" against
+        # a log line that was present and correct.
+        extracting = [r.getMessage() for r in caplog.records
+                      if 'Extracting' in r.getMessage()]
+        assert extracting, 'the entry was never logged as extracting'
+        assert '\n' not in extracting[0], (
+            'the entry name was interpolated raw, so a crafted archive can '
+            'write fake log lines: %r' % extracting[0]
+        )
+
+
+class TestBasenameCollisionIsVisible:
+    """Two entries flattening to one destination discards the loser silently,
+    and which one wins is decided by archive order. Driven:
+
+        ['movie.mkv', 'Sample\\movie.mkv'] -> movie.mkv = FEATURE-20GB
+        ['Sample\\movie.mkv', 'movie.mkv'] -> movie.mkv = SAMPLE-50MB
+
+    So in the bad order a 50MB sample replaces the feature file and the
+    release is still tagged extracted. Long-standing for `Sample/` (RAR3);
+    T36 widens it to `Sample\\` (RAR5), which previously aborted the archive.
+
+    Warning only. Picking a winner is a behaviour change and does not belong
+    in a security fix -- tracked as T43.
+    """
+
+    def test_a_collision_warns_rather_than_discarding_silently(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['Sample\\movie.mkv', 'movie.mkv']
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {'Sample\\movie.mkv': b'SAMPLE-50MB',
+                                          'movie.mkv': b'FEATURE-20GB'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.WARNING,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'movie.mkv')]
+        warnings = [r.getMessage() for r in caplog.records
+                    if 'flatten to the same name' in r.getMessage()]
+        assert warnings, (
+            'the discarded entry produced no warning, so an operator cannot '
+            'tell a sample replaced the feature file'
+        )
+
+
+class TestCollisionWarningIsAlsoBounded:
+    """The collision warning was added UNCAPPED in the same commit that capped
+    the refusal ERROR five hunks above -- the identical amplification vector,
+    introduced while fixing it. A hostile archive can carry thousands of
+    entries colliding on one name as cheaply as it can carry poisoned ones.
+    """
+
+    def test_a_thousand_colliding_entries_do_not_produce_a_thousand_warnings(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['movie.mkv'] + ['Sample%d\\movie.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.WARNING,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        per_entry = [m for m in messages if 'flatten to the same name' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded collision warnings: %d lines from one archive' % len(per_entry)
+        )
+        summary = [m for m in messages if 'collided on the same destination' in m]
+        assert summary and '1000' in summary[0], (
+            'the collision total was not reported, so the cap hides the scale'
+        )
+
+
+class TestWhatTheseTestsDoNotVerify:
+    r"""States the boundary of this file's coverage, because the PR that added
+    most of it rests on a claim these tests cannot check.
+
+    Every test here mocks `rarfile.RarFile` via `_make_rar_handle`, so
+    `info.filename` is whatever string the test supplies. That is the right
+    seam for the defect -- the traversal is in CouchPotato's own path
+    construction, not in rarfile -- but it means the motivating claim
+    ("rarfile normalises separators for RAR3 and NOT for RAR5, which is what
+    WinRAR has produced by default since 2013") is asserted nowhere in this
+    repository. It was verified once, by a reviewer building a real RAR5
+    archive byte by byte, and that verification does not live here.
+
+    Why that is tolerable rather than a hole: the FIX does not depend on the
+    claim. `_safeEntryBasename` normalises backslashes whether or not rarfile
+    already did -- if rarfile started normalising RAR5 tomorrow, the call
+    becomes a no-op and nothing breaks. The claim explains WHY the bug was
+    reachable, not WHETHER the fix works.
+
+    What would genuinely close it is a real RAR5 fixture, which needs an
+    archive writer this project does not have and a binary test fixture it
+    deliberately avoids. `TestRarfileApiSignatureGuard` above pins the API
+    surface instead, which is the part that can silently drift.
+    """
+
+    def test_the_sanitizer_is_correct_whether_or_not_rarfile_normalises(self):
+        """Both spellings flatten identically, so the fix holds under either
+        rarfile behaviour rather than depending on which one is current."""
+        assert _Extractor._safeEntryBasename('Sample\\movie.mkv') == 'movie.mkv'
+        assert _Extractor._safeEntryBasename('Sample/movie.mkv') == 'movie.mkv'
+        assert _Extractor._safeEntryBasename('Sample/Sub\\movie.mkv') == 'movie.mkv'
+
+
+class TestTheT41TradeoffIsPinned:
+    r"""Pins a deliberate choice that was documented but untested.
+
+    When `extr_path` ITSELF contains a backslash -- legal on POSIX, and
+    choosable by a hostile torrent naming its folder -- `sp()` rewrites each
+    target into a tree that does not exist, so no entry can be written either
+    way. The only question is HOW it fails, and the two options are not
+    equivalent:
+
+        base WITHOUT sp(): contained=False -> refused cleanly, loop continues
+        base WITH    sp(): contained=True  -> os.replace into a missing dir,
+                                              raises, ABANDONS the archive
+
+    T36 kept the first. That decision lived only in a comment saying it was
+    "measured", so a later tidy-up that made the base and target symmetric by
+    adding `sp()` would have reintroduced the worse behaviour with nothing
+    failing. A documented tradeoff nobody can watch break is not protected.
+
+    Asserts the SAFE direction only: refusal, not silence. The underlying
+    defect -- `sp()` mangling `extr_path` at all -- is T41.
+    """
+
+    def test_a_backslash_in_the_extraction_dir_refuses_rather_than_aborting(self, tmp_path):
+        extr_path = tmp_path / 'Movie.2020\\Sample'
+        extr_path.mkdir()
+        handle = _make_rar_handle([_make_info('movie.mkv')], {'movie.mkv': b'x'})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            # Must not raise: an exception here abandons every remaining entry
+            # in the archive, which is the outcome this choice exists to avoid.
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [], (
+            'nothing can be written into a path sp() rewrote, so the honest '
+            'result is an empty list rather than a claimed success'
+        )
+
+
+class TestOneBadEntryDoesNotSinkTheArchive:
+    """The PR's invariant, completed. Refusing hostile NAMES was only half of
+    it: a corrupt entry still raised out of the loop and abandoned everything
+    after it, and a corrupt entry is just as attacker-controlled as a hostile
+    name.
+
+    The split is deliberate and is the whole design here:
+
+        rarfile.Error       attacker-controlled  -> skip THIS entry, continue
+        rarfile.RarCannotExec  environmental     -> propagate (missing tool)
+        OSError                environmental     -> propagate (disk, perms)
+
+    Continuing past an OSError would hand `extractFiles` a partial list which
+    it tags as extracted -- silently completing a release with files missing.
+    Aborting leaves it untagged and retried next scan, which is recoverable.
+    """
+
+    def test_a_corrupt_entry_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('bad.mkv'), _make_info('good.mkv')]
+        handle = _make_rar_handle(infos, {'bad.mkv': b'x', 'good.mkv': b'real'})
+
+        real_open = handle.open
+
+        def open_with_one_corrupt(info, *a, **kw):
+            if info.filename == 'bad.mkv':
+                raise rarfile.BadRarFile('corrupt entry')
+            return real_open(info, *a, **kw)
+
+        handle.open = open_with_one_corrupt
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'one corrupt entry aborted the archive; the good entry after it '
+            'was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('Could not read archive entry' in r.getMessage()
+                   for r in caplog.records), 'the skip was silent'
+
+    def test_an_oserror_still_aborts_rather_than_completing_partially(self, tmp_path):
+        """The other direction, so the handler cannot be satisfied by
+        swallowing everything: an environmental failure must NOT be turned
+        into a partial success."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        infos = [_make_info('a.mkv'), _make_info('b.mkv')]
+        handle = _make_rar_handle(infos, {'a.mkv': b'x', 'b.mkv': b'y'})
+
+        def open_disk_full(info, *a, **kw):
+            raise OSError(28, 'No space left on device')
+
+        handle.open = open_disk_full
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            with pytest.raises(OSError):
+                _Extractor().extractArchive('a.rar', str(extr_path))
+
+
+class TestUnreadableEntryLoggingIsAlsoBounded:
+    """The third per-entry counter, which arrived a commit after its two
+    siblings and did not inherit their coverage.
+
+    A corrupt entry is as cheap to craft as a poisoned name -- `infolist()`
+    parses headers only -- so `unreadable` is an amplification vector on
+    exactly the same terms as `refused` and `collisions`. It was capped and
+    summarised in code when the per-entry invariant was completed, but nothing
+    proved either half, which is how the first two counters would have looked
+    if review had stopped one round earlier.
+    """
+
+    def test_a_thousand_corrupt_entries_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['bad%d.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        def always_corrupt(info, *a, **kw):
+            raise rarfile.BadRarFile('corrupt entry')
+
+        handle.open = always_corrupt
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        per_entry = [m for m in messages if 'Could not read archive entry' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded unreadable-entry logging: %d ERROR lines from one '
+            'archive' % len(per_entry)
+        )
+        summary = [m for m in messages if 'could not be read in total' in m]
+        assert summary and '1000' in summary[0], (
+            'the unreadable total was not reported, so the cap hides the scale'
+        )
+        assert extracted == [], 'nothing was extractable, so the list must be empty'
+
+
+class TestALongEntryNameDoesNotSinkTheArchive:
+    """The correction to the entry-vs-environment split.
+
+    `ENAMETOOLONG` is an `OSError`, so the first version of the split -- which
+    sorted by exception TYPE -- let it propagate as though it were the machine
+    failing. It is not: it is derived from THIS entry's attacker-controlled
+    name. Driven before fixing:
+
+        errno=63 (ENAMETOOLONG) raised out of extractArchive
+        good.mkv on disk? False
+
+    One hostile name still aborted the archive, through a split written
+    specifically to stop hostile names from doing that. The axis is "caused by
+    this entry or by the machine", and exception type is only a proxy for it --
+    close enough to look right, and wrong here.
+    """
+
+    def test_an_overlong_name_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        long_name = 'A' * 300 + '.mkv'
+        names = [long_name, 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an overlong entry name aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('ENAMETOOLONG' in r.getMessage()
+                   for r in caplog.records), 'the skip was silent'
+
+    def test_a_disk_full_oserror_still_aborts(self, tmp_path):
+        """The other direction: only ENAMETOOLONG is entry-derived. ENOSPC is
+        the machine, fails identically for every remaining entry, and must not
+        be turned into a partial success."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        handle = _make_rar_handle([_make_info('a.mkv'), _make_info('b.mkv')],
+                                  {'a.mkv': b'x', 'b.mkv': b'y'})
+
+        def no_space(info, *a, **kw):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+
+        handle.open = no_space
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle):
+            with pytest.raises(OSError) as excinfo:
+                _Extractor().extractArchive('a.rar', str(extr_path))
+        assert excinfo.value.errno == errno.ENOSPC
+
+
+class TestOverlongNameLoggingIsAlsoBounded:
+    """The fourth per-entry counter. Added straight away rather than a round
+    later, because the previous three each arrived uncovered and were caught
+    by review one at a time.
+
+    Its own counter rather than folded into `unreadable`: the entry WAS read,
+    it could not be WRITTEN. An operator seeing "could not be read" chases a
+    corrupt archive; the remedy here is a filesystem name limit. Two causes,
+    two remediations, two counts.
+    """
+
+    def test_a_thousand_overlong_names_do_not_produce_a_thousand_errors(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['%s%d.mkv' % ('A' * 300, i) for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        # 'skipping it:' is the PER-ENTRY phrase. Filtering on 'too long for
+        # this filesystem' alone also matches the summary, which repeats it --
+        # the first version of this test counted 6 and reported the cap broken.
+        per_entry = [m for m in messages if 'skipping it:' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded overlong-name logging: %d ERROR lines' % len(per_entry)
+        )
+        summary = [m for m in messages if 'could not be written' in m
+                   and 'in total' in m]
+        assert summary and '1000' in summary[0], (
+            'the unwritable total was not reported, so the cap hides the scale'
+        )
+        assert extracted == []
+
+    def test_it_is_not_reported_as_an_unreadable_entry(self, tmp_path, caplog):
+        """The distinction the split exists for: an overlong name must not be
+        counted or described as a corrupt entry, because the two point at
+        different remediations."""
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['%s%d.mkv' % ('A' * 300, i) for i in range(10)]
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert 'ENAMETOOLONG' in messages, (
+            'the errno must be named, or an operator cannot tell a name-length '
+            'limit from a destination conflict'
+        )
+        assert 'could not be read' not in messages, (
+            'an overlong name was reported as an unreadable entry, sending the '
+            'operator after a corrupt archive instead of a name-length limit'
+        )
+
+
+class TestADestinationConflictDoesNotSinkTheArchive:
+    """`EISDIR`, found by review immediately after `ENAMETOOLONG` was fixed --
+    the same axis error, one errno over.
+
+    `os.replace(tmp, dest)` raises `IsADirectoryError` whenever something
+    already occupies the destination as a directory. That is derived from
+    where THIS entry lands, not from the machine, so it must skip one entry
+    rather than abandon the archive. Driven before fixing:
+
+        RAISED errno=21 (EISDIR): Is a directory
+        good.mkv extracted? False
+
+    Both are now in `_ENTRY_DERIVED_ERRNOS` rather than special-cased one at a
+    time, which is the shape that should have been used when the first one was
+    found: the question is a CATEGORY of errno, and enumerating it once beats
+    discovering it twice.
+    """
+
+    def test_a_directory_in_the_way_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        (extr_path / 'movie.mkv').mkdir()          # already a directory
+        names = ['movie.mkv', 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'a destination conflict aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('EISDIR' in r.getMessage() for r in caplog.records), (
+            'the skip did not name the errno, so an operator cannot tell it '
+            'from a name-length limit'
+        )
+
+
+class TestTheSummarySurvivesAnAbortedArchive:
+    """The counts matter most when the archive aborts, and that is exactly
+    when they were being dropped.
+
+    `_logArchiveSummary` sat after the `try`, so any propagating exception --
+    an environmental `OSError`, `RarCannotExec`, or an entry-derived errno not
+    yet in the set -- skipped it. The operator got five capped per-entry lines,
+    an abort, and no totals: the diagnostic deleted at the moment it was
+    needed. Now in the `finally`.
+    """
+
+    def test_counts_are_reported_even_when_a_later_entry_aborts(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        # Six refusals (over the cap of five) and then a disk-full abort.
+        names = ['..'] * 6 + ['boom.mkv']
+        infos = [_make_info(n) for n in names]
+        handle = _make_rar_handle(infos, {n: b'x' for n in names})
+
+        def no_space(info, *a, **kw):
+            raise OSError(errno.ENOSPC, 'No space left on device')
+
+        handle.open = no_space
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            with pytest.raises(OSError):
+                _Extractor().extractArchive('a.rar', str(extr_path))
+
+        summary = [r.getMessage() for r in caplog.records
+                   if 'refused in total' in r.getMessage()]
+        assert summary and '6' in summary[0], (
+            'the archive aborted and took its own diagnostic counts with it, '
+            'which is the case the summary exists for'
+        )
+
+
+class TestAnUnencodableNameDoesNotSinkTheArchive:
+    r"""`EILSEQ`, the third member of `_ENTRY_DERIVED_ERRNOS` found by review
+    one round after the second.
+
+    A lone surrogate in an entry name is not encodable for the filesystem, so
+    `os.replace` raises `OSError(EILSEQ)`. Driven before fixing:
+
+        RAISED OSError [Errno 92] Illegal byte sequence
+        good.mkv extracted: False
+
+    Note the reviewer's hypothesis was that `isSubFolder` would raise, OUTSIDE
+    the try block. It does not -- `isSubFolder` catches `TypeError`/
+    `ValueError` and returns False, so NUL bytes, 4000-character names and
+    dot-only names are all refused cleanly. Driving it found a different
+    mechanism reaching the same conclusion, inside `_extractOneAtomic`.
+    """
+
+    def test_an_unencodable_name_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        """EILSEQ is INJECTED, not provoked by a real filename.
+
+        The first version of this test used a lone surrogate and relied on the
+        filesystem to reject it. That passes on macOS (APFS rejects invalid
+        UTF-8) and FAILS on Linux (ext4 stores arbitrary bytes, so the name
+        writes fine and nothing is skipped) -- caught by CI, not locally,
+        because this project's production target is Alpine Linux and my local
+        run was macOS.
+
+        So the original "driven" evidence was real and platform-specific, and
+        the test built on it encoded one filesystem's behaviour as universal.
+        Injecting the errno tests the HANDLER, which is the thing that has to
+        be right on every platform, and leaves whether a given name provokes
+        it to the filesystem.
+        """
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['odd.mkv', 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        real_replace = os.replace
+
+        def replace_rejecting_odd(src, dst, *a, **kw):
+            if dst.endswith('odd.mkv'):
+                raise OSError(errno.EILSEQ, 'Illegal byte sequence')
+            return real_replace(src, dst, *a, **kw)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor.os.replace',
+                   side_effect=replace_rejecting_odd), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an EILSEQ destination aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert any('EILSEQ' in r.getMessage() for r in caplog.records)
+
+    def test_names_that_are_merely_odd_do_not_sink_the_archive(self, tmp_path):
+        """The shapes the reviewer expected to break the containment check.
+        They do not -- recorded so the next reader does not re-test them.
+
+        Asserts only that the GOOD entry survives, deliberately. Whether a
+        given odd name is refused, skipped or written is the filesystem's
+        decision and differs by platform: macOS rejects invalid UTF-8 where
+        Linux stores arbitrary bytes, which is exactly how the sibling test
+        above passed locally and failed in CI. The property that must hold
+        everywhere is that one odd entry does not cost you the rest of the
+        archive."""
+        for i, hostile in enumerate(('movie\x00.mkv', 'B' * 4000 + '.mkv', '.' * 500)):
+            extr_path = tmp_path / ('e%d' % i)
+            extr_path.mkdir()
+            names = [hostile, 'good.mkv']
+            handle = _make_rar_handle([_make_info(n) for n in names],
+                                      {n: b'real' for n in names})
+            with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                       return_value=handle):
+                extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+            assert str(extr_path / 'good.mkv') in extracted, (
+                '%r sank the archive; the good entry after it was lost'
+                % hostile[:20]
+            )
+            assert (extr_path / 'good.mkv').read_bytes() == b'real'
+
+
+class TestAnEINVALDestinationDoesNotSinkTheArchive:
+    """`EINVAL` is in `_ENTRY_DERIVED_ERRNOS` because the CRITERION admits it,
+    not because anyone hit it -- and review rightly pointed out that its three
+    siblings each had a test while it did not.
+
+    Both things are true at once, and the resolution is that a test does not
+    need a real-world occurrence. Injecting the errno tests the HANDLER, which
+    is what has to be right; whether some filesystem actually returns EINVAL
+    for a given name is that filesystem's business. This is the same lesson as
+    the EILSEQ test one commit earlier, which relied on a real surrogate name
+    and passed on macOS while failing on Linux.
+
+    So the criterion still decides membership, and every member is still
+    guarded. An untested branch in a handler that decides "skip one entry" vs
+    "abandon the archive" is not something to leave on a comment's authority.
+    """
+
+    def test_an_einval_destination_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+        names = ['odd.mkv', 'good.mkv']
+        handle = _make_rar_handle([_make_info(n) for n in names],
+                                  {n: b'real' for n in names})
+
+        real_replace = os.replace
+
+        def replace_rejecting_odd(src, dst, *a, **kw):
+            if dst.endswith('odd.mkv'):
+                raise OSError(errno.EINVAL, 'Invalid argument')
+            return real_replace(src, dst, *a, **kw)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor.os.replace',
+                   side_effect=replace_rejecting_odd), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'an EINVAL destination aborted the archive; the good entry after '
+            'it was never extracted'
+        )
+        assert any('EINVAL' in r.getMessage() for r in caplog.records)
