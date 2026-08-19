@@ -31,7 +31,11 @@ or copy control, so masking it would turn a disclosure defect into a lockout.
 That exemption is asserted below so it cannot be "tidied up" later without the
 test saying why.
 """
+import ast
 import importlib
+import re
+from pathlib import Path
+
 import pytest
 
 from couchpotato.core.settings import Settings
@@ -338,19 +342,13 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
         assert settings.get('password', 'sabnzbd') == 'my*pass'
 
     def test_a_credential_of_only_asterisks_is_the_remaining_casualty(self, tmp_path):
-        """Pinned deliberately rather than left implicit: the guard refuses any
-        password value CONTAINING an asterisk, so a credential that genuinely
-        has one cannot be saved.
+        """The whole remaining casualty, now that the guard matches the mask's
+        exact shape rather than merely containing an asterisk: a credential
+        whose value is asterisks and nothing else cannot be saved.
 
-        That is broader than strictly necessary and it is the deliberate trade.
-        Matching the mask exactly would need the server to know the current
-        length, and would still miss the partial-edit case above; a per-field
-        nonce round trip is a far larger change. None of the providers here
-        (Slack, Discord, Pushover, Trakt, the trackers) issue values with
-        asterisks -- they are alphanumeric with `-_` or URL-safe.
-
-        Recorded so the trade is visible in the suite rather than buried in a
-        comment, and so it fails loudly the day someone needs it."""
+        This docstring previously described the BROAD rule and survived the
+        narrowing -- review caught it. Stale text in a suite that polices
+        staleness is worth fixing loudly rather than quietly."""
         settings = self._settings(tmp_path, 'xoxb-OLD-TOKEN')
 
         settings.saveView(section='slack', name='token', value='****')
@@ -360,7 +358,7 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
         )
 
 
-class TestTwoFieldsAreDeliberatelyNotMasked:
+class TestOneFieldIsDeliberatelyNotMasked:
     """One field is deliberately not masked, and the reasoning is asserted here
     so a later "you missed some" sweep does not reverse it silently.
 
@@ -577,3 +575,113 @@ class TestTheCoreApiKeyExemptionIsDeliberate:
             'changed, re-decide the exemption rather than assuming it holds'
         )
         assert _core  # module import is part of the assertion
+
+
+class TestTheNextCredentialCannotShipUntyped:
+    """The gap the rest of this file cannot close, and the reason it matters.
+
+    Every test above names a credential explicitly. Review proved the
+    consequence by adding a brand-new untyped `discord.bot_secret_token` to the
+    live config: the whole suite stayed green. So the suite pins the 23 known
+    ones and is structurally blind to the 24th -- which is exactly how this task
+    was created in the first place, and how its own first pass missed ten more.
+
+    The file's docstring claimed that reading LIVE declarations solved this. It
+    does not: reading live declarations stops a listed option silently losing
+    its type, and does nothing about an option nobody listed.
+
+    So this sweeps the tree instead of trusting a list. It is deliberately
+    name-based -- the same heuristic that missed ten fields last time -- because
+    a heuristic that fires on the obvious cases is still worth having as a
+    tripwire, PROVIDED nobody mistakes it for completeness. It is not
+    completeness. `cookiesetting`, `passkey` and `webhook_url` are all in the
+    pattern now only because review found them by reading labels and
+    descriptions, which no regex would have done.
+
+    Anything genuinely exempt goes in EXEMPT below with its reason, so the
+    decision is recorded rather than the pattern being quietly loosened.
+    """
+
+    # name -> why it is not masked. Every entry is a decision someone made.
+    EXEMPT = {
+        'core.api_key': 'read-only, exists to be copied into third-party apps; '
+                        'masking with no reveal control is a lockout (see above)',
+        'core.ssl_key': 'a filesystem path to a key file, not the key',
+        'newznab.api_key': "'type': 'combined' -- one control for six servers; "
+                           'typing it does nothing and would break the UI',
+        'torrentpotato.pass_key': "'type': 'combined', same as newznab",
+        'trakt.automation_client_id': 'public by OAuth design; the '
+                                      'client_secret beside it is the secret',
+    }
+
+    CREDENTIAL_NAME = re.compile(
+        r'(api_?key|passkey|pass_key|secret|token|password|cookiesetting'
+        r'|user_key|auth_token|oauth_token|webhook_url)', re.I)
+
+    def _all_options(self):
+        """Every option declared anywhere under `couchpotato/`, by AST rather
+        than by import, so a plugin that raises on import is still swept."""
+        root = Path(__file__).resolve().parents[2] / 'couchpotato'
+        for path in sorted(root.rglob('*.py')):
+            try:
+                tree = ast.parse(path.read_text(encoding='utf-8', errors='replace'))
+            except SyntaxError:                       # pragma: no cover
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Dict):
+                    continue
+                keys = {k.value for k in node.keys
+                        if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+                if 'name' not in keys:
+                    continue
+                got = {}
+                for k, v in zip(node.keys, node.values):
+                    if (isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+                            and isinstance(k.value, str)):
+                        got[k.value] = v.value
+                if 'name' in got:
+                    yield path, got
+
+    def test_every_credential_shaped_option_is_masked_or_exempt(self):
+        unmasked = []
+        for path, opt in self._all_options():
+            name = opt.get('name')
+            if not isinstance(name, str) or not self.CREDENTIAL_NAME.search(name):
+                continue
+            if opt.get('type') == 'password':
+                continue
+            if any(name == e.split('.', 1)[1] for e in self.EXEMPT):
+                continue
+            unmasked.append(f'{path.name}:{name} (type={opt.get("type")!r})')
+
+        assert not unmasked, (
+            'credential-shaped options with no password type and no recorded '
+            'exemption:\n  ' + '\n  '.join(sorted(set(unmasked))) +
+            '\n\nEither declare "type": "password", or add it to EXEMPT with '
+            'the reason. Do NOT loosen the pattern to make this pass.'
+        )
+
+    def test_the_sweep_can_actually_fail(self):
+        """Guards the guard: the assertion above passes trivially if the AST
+        walk finds nothing or the pattern matches nothing. Both are pinned."""
+        found = list(self._all_options())
+        assert len(found) > 300, f'AST walk found only {len(found)} options'
+
+        names = [o.get('name') for _, o in found if isinstance(o.get('name'), str)]
+        matched = [n for n in names if self.CREDENTIAL_NAME.search(n)]
+        assert len(matched) > 20, (
+            f'the credential pattern matched only {len(matched)} names; if the '
+            f'naming convention changed, this tripwire has stopped working'
+        )
+
+    def test_every_exemption_still_refers_to_a_real_option(self):
+        """An exemption for an option that no longer exists is dead weight that
+        reads as coverage. Removed plugins have already caused that here --
+        hadouken's options outlived its module."""
+        declared = {o.get('name') for _, o in self._all_options()}
+        for entry in self.EXEMPT:
+            option = entry.split('.', 1)[1]
+            assert option in declared, (
+                f'EXEMPT names {entry}, but no option {option!r} is declared '
+                f'anywhere under couchpotato/ -- delete the exemption'
+            )

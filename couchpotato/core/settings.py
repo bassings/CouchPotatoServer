@@ -608,6 +608,14 @@ class Settings:
         #
         # Remaining casualty, now genuinely negligible: a credential whose
         # value is asterisks and nothing else.
+        #
+        # Scope, stated so it is not mistaken for coverage: `getType` returns
+        # 'unicode' for an option nobody registered, so this guard does NOT
+        # fire for orphaned sections -- which `getValues` masks anyway (T31).
+        # Saving a mask over an orphan therefore still writes it. Not reachable
+        # from the settings page, which only renders registered options, but it
+        # is reachable through the API. Deliberately not widened here: an
+        # orphan's value belongs to a plugin that no longer exists.
         if (value and set(str(value)) == {'*'}
                 and self.getType(section, option) == 'password'):
             self.log.warning(

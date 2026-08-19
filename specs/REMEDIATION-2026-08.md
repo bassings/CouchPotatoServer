@@ -2307,7 +2307,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the real option declarations instead, which would make this class of
       drift impossible rather than fixed-once.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: queued (no deps)
+
+      Found by an adversarial reviewer while tracing T48's read paths, and
+      unrelated to that work.
+
+      `couchpotato/core/notifications/trakt.py` reads its settings with
+      `Env.setting(attr, 'trakt_automation')`. But `loader.py` registers options
+      under the top-level ENTRY name, which is `'trakt'`; `'trakt_automation'`
+      is the GROUP name. Driven against the real objects:
+
+          Env.setting(.., 'trakt')             -> 'REAL_TRAKT_TOKEN'
+          Env.setting(.., 'trakt_automation')  -> ''
+
+      So the notifier reads an empty string no matter how the user has
+      configured it, and always logs "Trakt not authorized". The feature has
+      never worked, and the failure mode is a log line that reads like a user
+      configuration problem rather than a bug — which is presumably why it has
+      survived.
+
+      Same family as the renamer event chain (see the `renamer.before/after`
+      note): correct-looking plugin code wired to something that is not there.
+      When fixing, check the other `Env.setting(..., '<section>')` call sites
+      for the same entry-vs-group confusion rather than fixing this instance
+      alone — that mistake has cost this plan repeatedly.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52, T53 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

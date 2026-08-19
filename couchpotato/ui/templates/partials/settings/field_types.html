@@ -56,8 +56,25 @@
         in with the password they thought they were setting.
         `@change` fires on blur/commit, so no half-typed value is ever
         persisted. -#}
+    {#- Clear the mask on focus so a partial edit is impossible. `getVal`
+        returns a run of asterisks for a password-typed option, and without
+        this the operator can click at the end of it and paste, storing
+        `********xoxb-NEW` -- destroying the old credential AND saving a
+        corrupt new one, with the UI reporting success.
+
+        The server-side guard in `Settings.saveView` cannot catch that case:
+        any predicate loose enough to reject `********xoxb-NEW` also rejects a
+        human password containing an asterisk, and refusing THOSE is far worse
+        (see the guard's comment -- it left first-run instances public). The
+        client is the layer that knows the field was touched, so the fix
+        belongs here.
+
+        Clearing on focus is safe because `@change` only fires if the value
+        actually changed: focus and blur without typing leaves the stored
+        credential alone. -#}
     <input type="password"
            :value="getVal(group.section, opt.name)"
+           @focus="$event.target.value = ''"
            @change="setVal(group.section, opt.name, $event.target.value)"
            :aria-label="opt.label || opt.name.replace(/_/g, ' ')"
            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
