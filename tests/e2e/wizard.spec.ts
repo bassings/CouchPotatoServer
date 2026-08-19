@@ -163,6 +163,91 @@ test.describe('Wizard: a refused save must not read as success', () => {
     ).toContainText(/password/i, { timeout: 5000 });
   });
 
+  test('Skip after typing a password does not claim authentication is enabled', async ({
+    page,
+  }) => {
+    /**
+     * The P1 review found on this branch, and the second time this summary has
+     * asserted a SERVER property from LOCAL state.
+     *
+     * Skip is visible on the Security step and calls `skipStep()`, not
+     * `saveCurrentStep()`. So typing a password and pressing it stores
+     * nothing, leaves `auth_required` off -- and, with the summary keyed on
+     * `formData.password`, reported "Enabled" anyway. That is the same lie the
+     * branch exists to fix, reached by a different button.
+     */
+    await page.route('**/settings.save/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await gotoSecurityStep(page);
+
+    await SECURITY_PASSWORD(page).fill('hunter2');
+    await page.getByRole('button', { name: /^Skip$/i }).click();
+
+    // Walk to the summary step.
+    for (let i = 0; i < 4; i++) {
+      const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
+      if (!(await next.isVisible().catch(() => false))) break;
+      await next.click();
+      await page.waitForTimeout(300);
+    }
+
+    // Scoped to the Authentication row itself. Asserting on `body` was too
+    // broad -- other summary rows legitimately read "Enabled" (the renamer,
+    // for one), so the test failed for a reason unrelated to its claim.
+    await expect(
+      page.locator('[x-text*="passwordStored"]'),
+      'the summary claims authentication is enabled after Skip stored nothing',
+    ).toHaveText('Disabled', { timeout: 5000 });
+  });
+
+  test('Back then Skip retracts an earlier successful password save', async ({ page }) => {
+    /**
+     * The path `skipStep`'s reset actually guards, which the Skip test above
+     * does NOT cover -- mutation proved that: removing the reset left that
+     * test green, because there the password is never saved in the first place
+     * and the flag was never set.
+     *
+     * Here it IS set: save the password, go Back, then Skip. Without the reset
+     * the summary keeps claiming "Enabled" from a save the user has since
+     * stepped back over and declined.
+     *
+     * Worth its own test rather than folding into the one above: they look
+     * like the same scenario and guard opposite halves of the fix.
+     */
+    await page.route('**/settings.save/**', async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await gotoSecurityStep(page);
+
+    await SECURITY_PASSWORD(page).fill('hunter2');
+    await page.getByRole('button', { name: /Continue/i }).click();   // saves
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: /Back/i }).click();       // back to Security
+    await expect(SECURITY_PASSWORD(page)).toBeVisible({ timeout: 5000 });
+    await page.getByRole('button', { name: /^Skip$/i }).click();     // decline it
+
+    for (let i = 0; i < 4; i++) {
+      const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
+      if (!(await next.isVisible().catch(() => false))) break;
+      await next.click();
+      await page.waitForTimeout(300);
+    }
+
+    await expect(
+      page.locator('[x-text*="passwordStored"]'),
+      'the summary still claims Enabled after the user stepped back and skipped',
+    ).toHaveText('Disabled', { timeout: 5000 });
+  });
+
   test('a save that succeeds still advances, so the guard is not a wall', async ({ page }) => {
     // The other direction: if the fix refused everything, these tests would
     // pass for the wrong reason and the wizard would be unusable.

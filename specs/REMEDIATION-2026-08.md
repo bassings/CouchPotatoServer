@@ -2305,15 +2305,29 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       - "the username field is still visible" passed trivially, being true during the
         transition either way.
 
-      **REMAINING GAP.** Two assertions ship, both proven against the exact pre-fix
-      code: the refusal is reported, and a successful save still advances. A third —
-      "a refused save does not advance the step" — is NOT covered. The behaviour is
-      real: a probe confirmed the route intercepted, returned `{"success": false}`, and
-      the page still read "Providers | Where to Search". But with `useInnerText` and
-      pre-fix code restored the assertion passes, contradicting the probe, so something
-      about the timing or the locator is not understood. The test was DELETED rather
-      than shipped: a guard whose failures cannot be explained is worse than none,
-      because it will be trusted. Start from the probe, which does discriminate.
+      **The gap this entry recorded is CLOSED, and the record is corrected
+      rather than quietly rewritten.** It said the "a refused save does not
+      advance the step" assertion had been deleted and was not covered, because
+      the disagreement between the assertion and a probe was not understood.
+
+      Review explained it: it was a retrying web-first assertion on a NON-event,
+      so it succeeded at its FIRST poll, at t~0, before the async advance had
+      happened. Both earlier versions passed against unfixed code for that
+      reason, and the second one had gone RED earlier for an unrelated cause
+      (`textContent` including hidden steps' markup), which made it look like
+      proof.
+
+      The discriminating form needs a bounded settle -- mandatory when asserting
+      that something must NOT happen -- plus a step-scoped locator
+      (`[x-text="steps[currentStep]"]`, unique and unaffected by hidden markup)
+      instead of body text. It now fails against the exact pre-fix code, and
+      ships.
+
+      Deleting it was the right call on the evidence available at the time: a
+      guard whose failures cannot be explained is worse than none, because it
+      will be trusted. The lesson is not "should not have deleted it" -- it is
+      that an unexplained disagreement between two measurements is a finding
+      worth one more look, not a reason to stop.
 
       Found while fixing T48, and it is the reason a bad guard there became a
       security hole rather than an annoyance.

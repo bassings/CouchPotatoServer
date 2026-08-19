@@ -765,27 +765,37 @@
             <div class="space-y-2 text-sm">
               <div class="flex justify-between">
                 <span class="text-cp-muted">Authentication</span>
-                {#- Keyed on the PASSWORD, not the username. `auth_required` is
-                    flipped by `Core.md5Password`, hooked to
-                    `setting.save.core.password` -- in BOTH directions, so
-                    clearing the password turns it back off. Username has no
-                    part in it.
+                {#- Derived from a SAVE THAT SUCCEEDED, not from form state.
 
-                    Keying this on username meant an operator who filled a
-                    username and skipped the optional password field read
-                    "Enabled" while the server held `auth_required: false`.
-                    Measured in review against a real server, with no refused
-                    save involved: the summary said Enabled, the API said
-                    `{"auth_required": false, "password": ""}`. Someone reads
-                    that and port-forwards.
+                    `auth_required` is flipped by `Core.md5Password`, hooked to
+                    `setting.save.core.password` -- in both directions, so
+                    clearing the password turns it back off.
 
-                    This is only ACCURATE because of the fix in this same
-                    branch: `saveSetting` now throws on a refused save and
-                    `nextStep` declines to advance, so reaching this summary
-                    means the password save actually succeeded. Before that,
-                    keying on password would have been a second way to say
-                    Enabled about a server that is not. -#}
-                <span class="text-cp-text" x-text="formData.password ? 'Enabled' : 'Disabled'"></span>
+                    This has now been wrong twice, in the same place, for the
+                    same underlying reason: it asserted a SERVER property from
+                    LOCAL state.
+
+                    1. Keyed on `formData.username`, it said "Enabled" for an
+                       operator who filled a username and skipped the optional
+                       password. Measured: summary Enabled, API
+                       `{"auth_required": false, "password": ""}`.
+                    2. Keyed on `formData.password`, it said "Enabled" for an
+                       operator who typed a password and then pressed Skip --
+                       which is visible on that very step and calls
+                       `skipStep()`, not `saveCurrentStep()`. Back-navigation
+                       reaches the same state.
+
+                    Both fixes were local-state fixes, so the second inherited
+                    the first's defect. `passwordStored` is set only inside the
+                    save's own `.then`, which `saveSetting` cannot reach for a
+                    refused save, and `skipStep` clears it. Typing sets nothing.
+
+                    The remaining honest limit: this still reflects what THIS
+                    session saved, not what the server currently holds. It
+                    cannot report a password configured before the wizard ran.
+                    Reading `auth_required` back would close that, and needs a
+                    fetch this summary does not currently make. -#}
+                <span class="text-cp-text" x-text="passwordStored ? 'Enabled' : 'Disabled'"></span>
               </div>
               <div class="flex justify-between">
                 <span class="text-cp-muted">Search Mode</span>
@@ -896,6 +906,9 @@
 function setupWizard() {
   return {
     currentStep: 0,
+    // Set ONLY by a password save that actually succeeded. Never by typing,
+    // never by Skip, never by Back. The summary reads this, not `formData`.
+    passwordStored: false,
     steps: ['Welcome', 'Security', 'Providers', 'Downloader', 'Library', 'Done'],
     saving: false,
     message: '',
@@ -1086,6 +1099,14 @@ function setupWizard() {
     },
 
     skipStep() {
+      // Skipping the Security step stores nothing, so any earlier claim that a
+      // password is stored is no longer true. Review found this: with the
+      // summary keyed on `formData.password`, typing a password and then
+      // clicking Skip -- which is visible on that step -- reported
+      // "Authentication: Enabled" with nothing saved and `auth_required` off.
+      // That is the same lie the branch set out to fix, reached by a different
+      // button.
+      if (this.currentStep === 1) this.passwordStored = false;
       this.currentStep++;
     },
 
@@ -1115,7 +1136,16 @@ function setupWizard() {
           
         case 1: // Security
           if (this.formData.username) saves.push(this.saveSetting('core', 'username', this.formData.username));
-          if (this.formData.password) saves.push(this.saveSetting('core', 'password', this.formData.password));
+          if (this.formData.password) {
+            // `passwordStored` is set from the SAVE, not from the field, and
+            // only once the request has actually resolved successfully.
+            // `saveSetting` throws on a refusal, so the `.then` cannot run for
+            // a save the server declined.
+            saves.push(
+              this.saveSetting('core', 'password', this.formData.password)
+                .then((r) => { this.passwordStored = true; return r; }),
+            );
+          }
           break;
           
         case 2: // Providers
@@ -1212,7 +1242,12 @@ function setupWizard() {
       const results = await Promise.allSettled(saves);
       const failed = results.filter((r) => r.status === 'rejected');
       if (failed.length) {
-        throw new Error(failed.map((r) => r.reason && r.reason.message).join('; '));
+        // `String(reason)` rather than `reason.message`: every throw site in
+        // saveSetting uses `new Error`, so the latter holds today -- but a bare
+        // non-Error rejection would render the literal "undefined" into the
+        // toast AND the screen-reader announcement, which is worse than a rough
+        // message on the one path where the user has nothing else to go on.
+        throw new Error(failed.map((r) => String(r.reason)).join('; '));
       }
     },
 
