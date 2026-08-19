@@ -1954,7 +1954,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       flagged, and once to `npm audit`, which was described as running when it
       does not.
 
-- [ ] T46: T42's fix has never been exercised under the condition it was written for — state: queued (no deps)
+- [x] T46: T42's fix has never been exercised under the condition it was written for — state: **done** (2026-08-19) — **the simulation is faithful, and the scrub is load-bearing.** Measured, not reasoned; evidence in tick 43
 
       T42 is merged and its box is ticked, correctly: the scrub at
       `tests/conftest.py` pops the six git location variables at import time,
@@ -2246,6 +2246,60 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 43** — **T46 closed by measurement.** The question was whether T42's
+  tests, which SIMULATE a poisoned `GIT_DIR` by setting it themselves, actually
+  reproduce the condition git creates. Answered in a throwaway repo under the
+  scratchpad, never in this checkout, because the failure mode under test is
+  corruption of the repository.
+
+  **The control arm is the finding.** Same repo, same hook, same push, one
+  difference:
+
+      push from the main checkout   ->  GIT_DIR = <unset>
+      push from a linked worktree   ->  GIT_DIR = .../main/.git/worktrees/wt
+
+  So the asymmetry T42 was written for is real and is now measured rather than
+  cited. `GIT_WORK_TREE` stays unset in both, which is worth knowing: the leak is
+  `GIT_DIR` alone, and a fix that only guarded `GIT_WORK_TREE` would look
+  reasonable and do nothing.
+
+  **The control arm also nearly did not run.** The first attempt pushed `master`
+  into a repo whose `git init` had defaulted to `main`, so every control push
+  died on `src refspec master does not match any` and printed no hook output at
+  all. Read carelessly that is "the main checkout does not leak" — the right
+  conclusion from a test that never executed. It was caught only because the
+  ABSENCE of output looked wrong, not because anything failed loudly. A control
+  arm that silently does not run is the quietest false green there is.
+
+  **Why the simulation is faithful:** the scrub is `os.environ.pop(name, None)`,
+  which is value-independent. The real condition and the simulated one differ
+  only in who set the variable, and nothing downstream can tell. So the
+  simulated tests were testing the real thing all along — which is the answer
+  T46 asked for, and it was not knowable without running it.
+
+  **End to end, with `GIT_DIR` pointed at the THROWAWAY repo** so a failure could
+  not reach this one: `tests/unit/test_fixtures_do_not_leak_gitdir.py` 5 passed,
+  and this repo's HEAD byte-identical before and after.
+
+  **Mutation, because a guard nobody has watched fail is not done.** Replacing
+  the `pop` with `pass` — confirmed landed by SHA-256, not by assumption
+  (`933eb24d...` -> `05e61a2f...`) — produced:
+
+      AssertionError: the victim HEAD moved -- the scrub did not protect it
+      1 failed, 4 passed
+
+  The assertion names the actual corruption, not a proxy for it. Restored by
+  file copy rather than `git checkout --` (which would have reverted to HEAD and
+  eaten uncommitted work), and verified byte-identical by hash, with the suite
+  green again at 5 passed.
+
+  **What this does NOT prove**, stated so the next reader does not over-claim it:
+  the pre-push hook was a synthetic three-line script, not `.githooks/pre-push`
+  running the real gate. What is established is that git exports `GIT_DIR` from
+  a worktree push and that the scrub removes it before collection. Whether the
+  full gate has some OTHER worktree-sensitive path is a different question, and
+  this experiment does not answer it.
 
 - **Tick 42** — **the Dependabot triage tick 41 recorded as "nothing to do".**
   Owner asked for these directly, and two independent reviewers had already
