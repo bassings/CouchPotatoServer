@@ -2283,7 +2283,37 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       used differing-length edits — but the rule should change before the next
       one is trusted.
 
-- [ ] T51: the first-run wizard discards every save response, so a refused save reads as success — state: queued (no deps) — **security amplifier**
+- [x] T51: the first-run wizard discards every save response, so a refused save reads as success — state: **fixed** (2026-08-20), one gap recorded — **security amplifier**
+
+      `saveSetting` now reads the response body and throws on `success: false`, on a
+      non-2xx status, and on a 200 that is not JSON — an unreadable response is not a
+      confirmed save. The fix is small because the error path already EXISTED:
+      `nextStep()` wraps the save in try/catch and only advances when nothing throws.
+      It was unreachable, because the one thing that could throw did not.
+
+      **`res.ok` alone would not have been enough**, which this task recorded in
+      advance and which held: `api.py` answers HTTP 200 for a refusal, so a status-only
+      check would have looked correct and changed nothing.
+
+      **The RED took three attempts to become honest**, and the first two would have
+      shipped a green lie:
+
+      - selectors matched nothing (the inputs are Alpine `x-model` with no `name`/`id`),
+        so all three tests failed for reasons unrelated to their claims. Caught only
+        because the CONTROL test failed too — it should pass before any fix, and that
+        is the entire reason a control was written;
+      - "the username field is still visible" passed trivially, being true during the
+        transition either way.
+
+      **REMAINING GAP.** Two assertions ship, both proven against the exact pre-fix
+      code: the refusal is reported, and a successful save still advances. A third —
+      "a refused save does not advance the step" — is NOT covered. The behaviour is
+      real: a probe confirmed the route intercepted, returned `{"success": false}`, and
+      the page still read "Providers | Where to Search". But with `useInnerText` and
+      pre-fix code restored the assertion passes, contradicting the probe, so something
+      about the timing or the locator is not understood. The test was DELETED rather
+      than shipped: a guard whose failures cannot be explained is worse than none,
+      because it will be trusted. Start from the probe, which does discriminate.
 
       Found while fixing T48, and it is the reason a bad guard there became a
       security hole rather than an annoyance.
@@ -2410,7 +2440,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       either should look at whether one change closes both, rather than adding
       two different partial locks.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T51, T52, T53, T54 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T52, T53, T54 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
