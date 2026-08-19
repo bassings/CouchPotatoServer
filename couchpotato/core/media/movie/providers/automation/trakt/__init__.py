@@ -40,6 +40,7 @@ config = [{
                 },
                 {
                     'name': 'automation_oauth_refresh',
+                    'type': 'password',
                     'label': 'Refresh Token',
                     'advanced': True,
                     'description': 'OAuth refresh token for automatic token renewal.',

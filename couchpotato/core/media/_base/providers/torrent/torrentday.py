@@ -115,6 +115,7 @@ config = [{
                 },
                 {
                     'name': 'cookiesetting',
+                    'type': 'password',
                     'label': 'Cookies',
                     'default': '',
                     'description': 'Cookies',

@@ -62,6 +62,27 @@ CREDENTIALS = [
      'themoviedb', 'api_key'),
     ('couchpotato.core.media.movie.providers.automation.trakt',
      'trakt', 'automation_oauth_token'),
+    # Found by review, NOT by the name-based sweep that produced the list
+    # above -- and higher-value than anything it caught. A refresh token mints
+    # access tokens indefinitely, so masking the access token six lines above
+    # it and not this one bought nothing; the cookie settings are live
+    # logged-in sessions, i.e. account takeover on an invite-only tracker.
+    ('couchpotato.core.media.movie.providers.automation.trakt',
+     'trakt', 'automation_oauth_refresh'),
+    ('couchpotato.core.media._base.providers.torrent.torrentday',
+     'torrentday', 'cookiesetting'),
+    ('couchpotato.core.media._base.providers.torrent.iptorrents',
+     'iptorrents', 'cookiesetting'),
+    ('couchpotato.core.media._base.providers.torrent.bithdtv',
+     'bithdtv', 'cookiesettingsl'),
+    ('couchpotato.core.media._base.providers.torrent.bithdtv',
+     'bithdtv', 'cookiesettingsp'),
+    ('couchpotato.core.media._base.providers.torrent.bithdtv',
+     'bithdtv', 'cookiesettingsu'),
+    # Capability URLs: issued by a third party, and possession alone grants
+    # the ability to act. Distinguished below from an endpoint URL.
+    ('couchpotato.core.notifications.discord', 'discord', 'webhook_url'),
+    ('couchpotato.core.notifications.homey', 'homey', 'url'),
 ]
 
 IDS = [f'{s}.{o}' for _, s, o in CREDENTIALS]
@@ -143,6 +164,144 @@ class TestMaskingIsDisplayOnly:
         assert settings.get(option, section) == 'SECRET_VALUE_XYZ', (
             f'{section}.{option} is masked for the plugin too -- the '
             f'integration would break, which is worse than the disclosure'
+        )
+
+
+class TestTwoFieldsAreDeliberatelyNotMasked:
+    """Review found ten unmasked fields the name-based sweep missed. Eight are
+    now masked. These two are deliberately not, and the reasoning is asserted
+    here so a later "you missed some" sweep does not reverse it silently.
+
+    **`webhook.url` is an ENDPOINT, not a capability.** Its description is "URL
+    that receives a JSON POST when movies are snatched or downloaded" -- it is
+    the address of the user's OWN server. Discord's and Homey's webhook URLs
+    are masked because a third party ISSUED them and possession alone grants
+    the ability to post; that is a bearer credential wearing a URL's clothes.
+    A user's own endpoint is not, and masking it removes their ability to check
+    what they typed while protecting nothing. If someone points this at a
+    capability URL, that is their choice and it is one they can see.
+
+    **`trakt.automation_client_id` is public by OAuth design.** The client_id
+    identifies the application, not the user, and is transmitted in every
+    authorisation request; its `client_secret` sibling IS masked. Masking an
+    identifier because it sits next to a secret is cargo-cult.
+
+    Both are judgement calls, so they are written down with their reasons
+    rather than left as an unexplained gap in the list."""
+
+    def test_the_generic_webhook_url_is_still_readable(self):
+        opt = _find_option('couchpotato.core.notifications.webhook',
+                           'webhook', 'url')
+        assert opt.get('type') != 'password', (
+            "webhook.url was masked. It is the user's own endpoint, not an "
+            'issued capability -- masking hides their config and protects '
+            'nothing. If this changed because the field now carries a token, '
+            'update the reasoning here rather than just the declaration.'
+        )
+
+    def test_the_trakt_client_id_is_still_readable(self):
+        opt = _find_option('couchpotato.core.media.movie.providers.automation.trakt',
+                           'trakt', 'automation_client_id')
+        assert opt.get('type') != 'password', (
+            'trakt.automation_client_id was masked. A client_id is public by '
+            'OAuth design and identifies the app, not the user; the '
+            'client_secret beside it is the secret.'
+        )
+
+
+class TestTypingDoesNotChangeWhatThePluginReads:
+    """The regression this fix could introduce, which matters more than the leak
+    it closes: declaring an option `password` changes the READ path.
+
+    `Settings.get()` short-circuits on `password` and returns `raw_value`
+    directly, skipping `_coerce_value` -- and `_strip_bytes_literal` lives
+    inside `_coerce_value`. That helper exists because an earlier version of
+    this fork wrote Python 2 bytes literals into `config.ini`, so a long-lived
+    install can hold `token = b'xoxb-...'`.
+
+    Measured before the fix, same config value, type toggled:
+
+        no type    -> 'xoxb-legacy-token'
+        password   -> "b'xoxb-legacy-token'"
+
+    So masking a credential would hand the wrapper to the provider and the
+    integration would fail silently, with nothing in the UI to explain it. A
+    fix that breaks the thing it was protecting is worse than the disclosure.
+
+    Note the fixture is deliberately hostile: the other tests here seed a clean
+    `SECRET_VALUE_XYZ`, which cannot provoke this at all. Review flagged that
+    those fixtures were gentler than production, and it was right."""
+
+    def test_a_legacy_bytes_literal_still_reaches_the_plugin_unwrapped(self, tmp_path):
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text("[slack]\ntoken = b'xoxb-legacy-token'\n", encoding='utf-8')
+        settings = Settings()
+        settings.setFile(str(cfg))
+        settings.registerDefaults(
+            'slack', {'token': {'default': '', 'type': 'password'}}, save=False,
+        )
+
+        assert settings.get('token', 'slack') == 'xoxb-legacy-token', (
+            'the password short-circuit skipped _strip_bytes_literal, so the '
+            "plugin receives b'...' instead of the token"
+        )
+
+    def test_the_same_value_is_still_masked_for_display(self, tmp_path):
+        """Both directions: stripping the literal must not un-mask it."""
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text("[slack]\ntoken = b'xoxb-legacy-token'\n", encoding='utf-8')
+        settings = Settings()
+        settings.setFile(str(cfg))
+        settings.registerDefaults(
+            'slack', {'token': {'default': '', 'type': 'password'}}, save=False,
+        )
+
+        got = settings.getValues()['slack']['token']
+        assert 'xoxb-legacy-token' not in got
+        assert set(got) == {'*'}
+
+
+class TestTorrentpotatoIsTheSecondCombinedLeak:
+    """The combined-leak inventory was an UNDERCOUNT, and that mattered.
+
+    An earlier version of this file documented `newznab.api_key` as the sole
+    combined exemption, and the commit message said "six indexer API keys still
+    render in the clear". Review found `torrentpotato.pass_key` -- a private
+    tracker passkey, `'type': 'combined'`, `combine: [use, host, pass_key,
+    name, seed_ratio, seed_time, extra_score]`.
+
+    The consequence of the undercount is specific: whoever fixes the combined
+    renderer would have deleted the newznab class, seen the suite go green, and
+    shipped with tracker passkeys still leaking. An exemption list that is
+    wrong is worse than no list, because it reads as an inventory."""
+
+    def test_torrentpotato_pass_key_is_combined_not_password(self):
+        opt = _find_option(
+            'couchpotato.core.media._base.providers.torrent.torrentpotato',
+            'torrentpotato', 'pass_key')
+        assert opt.get('type') == 'combined', (
+            'torrentpotato.pass_key is no longer combined -- re-decide the '
+            'exemption; it may now be maskable by typing'
+        )
+        assert 'pass_key' in opt.get('combine', [])
+
+    def test_torrentpotato_pass_key_still_leaks_and_that_is_recorded(self, tmp_path):
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text('[torrentpotato]\npass_key = TP_KEY_A,TP_KEY_B\n',
+                       encoding='utf-8')
+        settings = Settings()
+        settings.setFile(str(cfg))
+        settings.registerDefaults(
+            'torrentpotato',
+            {'pass_key': _find_option(
+                'couchpotato.core.media._base.providers.torrent.torrentpotato',
+                'torrentpotato', 'pass_key')},
+            save=False,
+        )
+
+        assert 'TP_KEY_A' in settings.getValues()['torrentpotato']['pass_key'], (
+            'torrentpotato.pass_key is now masked -- good. Delete this class '
+            'and move it into CREDENTIALS.'
         )
 
 

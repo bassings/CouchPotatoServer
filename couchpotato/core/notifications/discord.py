@@ -61,6 +61,7 @@ config = [{
                 },
                 {
                     'name': 'webhook_url',
+                    'type': 'password',
                     'label': 'Webhook URL',
                     'description': 'Discord webhook URL. Create one in your channel\'s Integrations settings.',
                 },

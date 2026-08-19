@@ -238,7 +238,12 @@ class Settings:
             raw_value = self.p.get(section, option)
 
             if tp == 'password':
-                return raw_value
+                # Skip type coercion (there is no 'password' adapter) but NOT
+                # the legacy-literal cleanup: `_strip_bytes_literal` lives
+                # inside `_coerce_value`, and returning `raw_value` here handed
+                # a long-lived config's `b'...'` wrapper straight to the plugin.
+                # Masking a credential must not change what the plugin reads.
+                return _strip_bytes_literal(raw_value)
 
             # Use Pydantic coercion for typed values
             return _coerce_value(raw_value, tp)

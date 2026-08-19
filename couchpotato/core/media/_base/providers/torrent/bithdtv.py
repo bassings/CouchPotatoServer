@@ -111,18 +111,21 @@ config = [{
                 },
                 {
                     'name': 'cookiesettingsl',
+                    'type': 'password',
                     'label': 'Cookies (h_sl)',
                     'default': '',
                     'description': 'Cookie h_sl from session',
                 },
                 {
                     'name': 'cookiesettingsp',
+                    'type': 'password',
                     'label': 'Cookies (h_sp)',
                     'default': '',
                     'description': 'Cookie h_sp from session',
                 },
                 {
                     'name': 'cookiesettingsu',
+                    'type': 'password',
                     'label': 'Cookies (h_su)',
                     'default': '',
                     'description': 'Cookie h_su from session',
