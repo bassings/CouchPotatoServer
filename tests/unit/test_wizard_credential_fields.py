@@ -145,11 +145,22 @@ class TestTheSweepsCannotPassVacuously:
         for tracker, field, _ in found:
             per_tracker.setdefault(tracker, set()).add(field)
 
-        declared = set(re.findall(r"id:\s*'([^']+)'", _text()[
-            _text().index('    privateTrackers: ['):]))
+        # Bounded to the tracker array. The first version scanned from
+        # `privateTrackers` to END OF FILE, so any unrelated `id: '...'` added
+        # later in wizard.html would be reported as a missing tracker -- a
+        # false failure in the guard, pointing at innocent code.
+        text = _text()
+        start = text.index('    privateTrackers: [')
+        block = text[start:text.index('\n    ],', start)]
+        declared = set(re.findall(r"id:\s*'([^']+)'", block))
         seen = set(per_tracker)
-        assert declared <= seen or not declared - seen, (
-            f'trackers declared but not extracted: {sorted(declared - seen)}'
+
+        # Both directions. The first version was `declared <= seen or not
+        # declared - seen`, which is the same predicate twice -- `X or X`. It
+        # could not catch extraction inventing a tracker that is not declared.
+        assert declared == seen, (
+            f'declared but not extracted: {sorted(declared - seen)}; '
+            f'extracted but not declared: {sorted(seen - declared)}'
         )
         for tracker, fields in per_tracker.items():
             assert fields, f'{tracker} yielded no fields'
