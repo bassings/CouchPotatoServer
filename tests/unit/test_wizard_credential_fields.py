@@ -36,8 +36,13 @@ pytestmark = pytest.mark.unit
 WIZARD = (Path(__file__).resolve().parents[2]
           / 'couchpotato/ui/templates/wizard.html')
 
+# `user_?key` and `auth` are here because review got an untyped
+# `entry.user_key` past the first version of this pattern. T48's own docstring
+# already listed `user_key` among the differently-named credentials it had to
+# fix, so this was a known name the pattern did not know.
 CREDENTIAL = re.compile(
-    r'(api_?key|passkey|pass_key|secret|token|password|cookie)', re.I)
+    r'(api_?key|user_?key|passkey|pass_key|secret|token|password|cookie|auth)',
+    re.I)
 
 
 def _text() -> str:
@@ -60,18 +65,34 @@ def _direct_inputs():
 
 
 def _tracker_fields():
-    """(tracker, field, declares_password) from the `privateTrackers` array."""
+    """(tracker, field, declares_password) from the `privateTrackers` array.
+
+    Extracts OBJECTS, not lines. The first version matched the literal
+    `"{ name: '"` on a single line, so review got two mutations past it: one
+    that removed the space (`{name:`), and one that split the object across
+    three lines. Both rendered `hdbits.passkey` as plain text with the suite
+    green -- the incidentally-passing shape, inside the class written to
+    prevent it. Someone adding a seventh tracker next quarter would format the
+    object across lines because it has four properties, and that is all it
+    would take.
+    """
     s = _text()
     start = s.index('    privateTrackers: [')
     block = s[start:s.index('\n    ],', start)]
-    current = None
-    for line in block.split('\n'):
-        m = re.search(r"id: '([^']+)'", line)
-        if m:
-            current = m.group(1)
-        f = re.search(r"\{ name: '([^']+)'", line)
-        if f:
-            yield current, f.group(1), "type: 'password'" in line
+
+    # Split into per-tracker chunks first so a field is attributed correctly
+    # however its own object is wrapped.
+    chunks = re.split(r"(?=\bid:\s*')", block)
+    for chunk in chunks:
+        m = re.search(r"id:\s*'([^']+)'", chunk)
+        if not m:
+            continue
+        tracker = m.group(1)
+        for obj in re.findall(r'\{[^{}]*\}', chunk, re.S):
+            f = re.search(r"name:\s*'([^']+)'", obj)
+            if f:
+                yield tracker, f.group(1), re.search(
+                    r"type:\s*'password'", obj) is not None
 
 
 class TestNoCredentialRendersAsPlainText:
@@ -113,8 +134,25 @@ class TestTheSweepsCannotPassVacuously:
         assert len(found) > 15, f'only {len(found)} credential inputs found'
         assert any('formData.password' in i for _, _, i in found)
 
-    def test_the_tracker_sweep_finds_the_known_trackers(self):
+    def test_the_tracker_sweep_sees_every_declared_tracker(self):
+        """Counts per tracker rather than asserting membership.
+
+        The first version asked `any(f == 'passkey')`, which passthepopcorn
+        alone satisfied -- so an extraction that silently stopped seeing
+        hdbits' fields still passed. Review demonstrated exactly that."""
         found = list(_tracker_fields())
-        names = {t for t, _, _ in found}
-        assert 'passthepopcorn' in names and 'hdbits' in names, names
-        assert any(f == 'passkey' for _, f, _ in found), 'no passkey field seen'
+        per_tracker = {}
+        for tracker, field, _ in found:
+            per_tracker.setdefault(tracker, set()).add(field)
+
+        declared = set(re.findall(r"id:\s*'([^']+)'", _text()[
+            _text().index('    privateTrackers: ['):]))
+        seen = set(per_tracker)
+        assert declared <= seen or not declared - seen, (
+            f'trackers declared but not extracted: {sorted(declared - seen)}'
+        )
+        for tracker, fields in per_tracker.items():
+            assert fields, f'{tracker} yielded no fields'
+        assert len(per_tracker) >= 6, (
+            f'only {len(per_tracker)} trackers extracted: {sorted(per_tracker)}'
+        )

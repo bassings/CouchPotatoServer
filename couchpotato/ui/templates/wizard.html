@@ -165,7 +165,7 @@
                   <input type="text" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'" 
                          x-model="entry.host"
                          class="flex-[2] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <input type="password" placeholder="API Key" x-model="entry.api_key"
+                  <input type="password" placeholder="API Key" x-model="entry.api_key" autocomplete="off"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="formData.newznab.entries.splice(idx, 1)" x-show="formData.newznab.entries.length > 1"
                           class="text-cp-muted hover:text-cp-danger transition-colors">
@@ -444,7 +444,7 @@
                   </div>
                   <div>
                     <label class="block text-xs text-cp-muted mb-1">API Key</label>
-                    <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" placeholder="Your SABnzbd API key"
+                    <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="off" placeholder="Your SABnzbd API key"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div>
@@ -630,7 +630,7 @@
                 <div class="space-y-3">
                   <div>
                     <label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
-                    <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" placeholder="Your Put.io OAuth token"
+                    <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="off" placeholder="Your Put.io OAuth token"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                 </div>
@@ -1398,7 +1398,7 @@ function setupWizard() {
           <div><label class="block text-xs text-cp-muted mb-1">Host</label>
           <input type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div><label class="block text-xs text-cp-muted mb-1">API Key</label>
-          <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" placeholder="Your SABnzbd API key" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="off" placeholder="Your SABnzbd API key" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div><label class="block text-xs text-cp-muted mb-1">Category (optional)</label>
           <input type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
         nzbget: `
@@ -1462,7 +1462,7 @@ function setupWizard() {
           </div>`,
         putio: `
           <div><label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
-          <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" placeholder="Your Put.io OAuth token" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`
+          <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="off" placeholder="Your Put.io OAuth token" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`
       };
       return configs[id] || '';
     },

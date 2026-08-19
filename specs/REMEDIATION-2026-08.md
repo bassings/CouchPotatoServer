@@ -2078,7 +2078,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       path `lhci autorun` never takes. The tick argued at length about the
       second and did not notice the first.
 
-- [ ] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: queued (no deps) — **security, pre-existing**
+- [x] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: **merged #275** (`b1ef797a`, 2026-08-19) — **security, pre-existing**. **Ticked late, 2026-08-20:** the merge commit never ticked its own entry, so the box stayed open for a day while the work was on master — found by review of T52, not by me. Exactly the staleness T18's parenthesis predicts about itself, and the reason the needs-list is now a test rather than a promise
 
       Found by the security lens while reviewing T47, and it is the larger half
       of that finding. Independent of Lighthouse: anyone who opens `/settings/`
@@ -2382,9 +2382,18 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
 - [x] T52: the first-run wizard renders credentials as `type="text"` — state: **fixed** (2026-08-20) — **security, pre-existing**
 
-      Seven fields typed: `newznab entry.api_key`, `sabnzbd.api_key` and
-      `putio.oauth_token` (each appearing twice — once in markup, once in a JS
-      template string), plus `passthepopcorn.passkey` and `hdbits.passkey`.
+      Seven fields typed, but **only five ever rendered**. `wizard.html:432` opens
+      `<template x-if="false && formData.downloader">` spanning lines 432-653, so the
+      `sabnzbd.api_key` at :447 and the `putio.oauth_token` at :633 are dead copies
+      that never enter the DOM. Review measured that in a real browser; my own
+      description said "each appearing twice — once in markup, once in a JS template
+      string", which implied two LIVE copies and was wrong.
+
+      The live leak was `newznab entry.api_key` (:168), `sabnzbd.api_key` (:1401),
+      `putio.oauth_token` (:1465), `passthepopcorn.passkey` and `hdbits.passkey`.
+      Typing the dead copies too is correct by consistency and harmless — but a
+      222-line dead duplicate that has to be kept in sync with the live template
+      literals is T18 material.
 
       **The enumeration nearly went wrong in the way this plan keeps recording.** A
       regex over `<input>` tags found the first five and reported the file clean
@@ -2499,7 +2508,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       several controls, and bundling it into a security fix would have made
       that fix harder to review for the thing it was actually for.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49, T50, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
