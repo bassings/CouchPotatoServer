@@ -2304,6 +2304,30 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       validation error, a disk-full write failure, a chroot rejection — into the
       same silent lie. This is worth fixing independently of what refuses.
 
+      **Scoped 2026-08-19, so it does not start cold.** The exact shape:
+
+          saveSetting()  ->  `return fetch(CP.apiBase + '/settings.save/', ...)`
+                             no .ok check, no body parse
+          caller         ->  `await Promise.all(saves)` , resolves regardless
+
+      `api.py` returns HTTP 200 even for `{'success': False}`, so `.ok` alone is
+      NOT sufficient — the body has to be read. That is the trap: a fix that
+      only checks `res.ok` would look correct, pass a naive test, and change
+      nothing.
+
+      **Testing level, decided by measurement rather than preference.** The
+      wizard's logic is inline in `wizard.html`; there is no shared JS module
+      (`couchpotato/ui/static/js/` does not exist) and the only two
+      `tests/unit/*.test.ts` files are about test configuration, not app code.
+      So it is not unit-testable without restructuring, and E2E is the honest
+      level: `/wizard/` is directly routable (`couchpotato/ui/__init__.py`), so
+      a Playwright test can `page.route` the `settings.save` call to return
+      `{"success": false}` and assert the user is actually told.
+
+      Write that test FIRST and watch it fail, because the failure mode here is
+      precisely a save that reports success — a test that does not force a
+      refusal cannot distinguish the fixed code from the broken code.
+
       Two things for whoever takes it. The settings page already does better
       (`partials/settings/scripts.html` checks `success: false`), so the wizard
       is the outlier rather than the pattern — copy that. And a refusal that
