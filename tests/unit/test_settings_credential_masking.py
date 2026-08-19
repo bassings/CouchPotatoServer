@@ -645,9 +645,14 @@ class TestTheNextCredentialCannotShipUntyped:
         # general register of opinions.
     }
 
+    # `token` already subsumes auth_token/oauth_token/bot_token/api_token, so
+    # they are not listed separately -- review caught them as dead
+    # alternatives. Kept deliberately flat rather than "documenting" the names
+    # that motivated the sweep: a pattern that lists redundant branches invites
+    # the reader to assume each one is load-bearing.
     CREDENTIAL_NAME = re.compile(
         r'(api_?key|_key|passkey|secret|token|password|cookiesetting'
-        r'|auth_token|oauth_token|webhook_url)', re.I)
+        r'|webhook_url)', re.I)
 
     @staticmethod
     def _literal(node):
