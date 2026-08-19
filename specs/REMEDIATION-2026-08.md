@@ -1922,11 +1922,24 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       naming it wrongly would have sent the implementer to build a duplicate of
       `dependency-review` while leaving the actual hole open. The actual hole:
 
-      - **Nothing scans the STANDING set.** `dependency-review` is a DIFF: it
-        fails only on newly-INTRODUCED vulnerabilities. The six extract-zip
-        HIGHs are green there *because* they are pre-existing. Its green carries
-        no information about the tree's current state, which is precisely why
-        citing it as coverage was wrong.
+      - **Nothing surfaces the standing set LOCALLY, which is the actual gap.**
+        An earlier draft said "nothing scans the standing set", and review
+        refuted it from this entry's own evidence: the `gh dependabot alerts` row
+        two paragraphs up returned a result, and Dependabot alerts are produced
+        by scanning the CURRENT dependency graph, not a PR diff. Something is
+        already scanning the standing set; it just reports to GitHub's UI.
+
+        What is missing is narrower and more useful: **no local command tells you
+        what that scan found**, so `make verify` can be green while an open alert
+        sits unread — which is exactly how this round's eight PRs went untriaged.
+        `dependency-review` genuinely is diff-only (`fail-on-severity: high` on
+        newly-INTRODUCED vulnerabilities, which is why the six pre-existing
+        extract-zip HIGHs are green there), so it is not the answer either.
+
+        Scoped this way, T45 may not need `pip-audit` at all: surfacing the
+        alerts that already exist, and requiring a recorded decision for each,
+        beats adding a dependency and a second scanner that duplicates work
+        GitHub is already doing. Decide that before installing anything.
       - **Dev dependencies are in no IMAGE, but they are not unscanned.** An
         earlier draft of this bullet said "nothing scans dev dependencies at
         all", which contradicts point (b) three paragraphs above and is wrong:
@@ -1999,9 +2012,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       A Lighthouse HTML report embeds full-page screenshots. The configured
       targets are `/`, `/available/`, `/add/` and `/settings/`.
 
-      **This originally said the payload was "the library, plus the directory
-      paths on the settings page". Review measured it and the payload is far
-      worse: the settings page renders CREDENTIALS IN PLAINTEXT.** Masking is
+      **This paragraph has now been wrong in BOTH directions, which is worth
+      more than either correction.** It first understated the payload as "the
+      library, plus directory paths". A security review pointed out the settings
+      page renders credentials unmasked, and I rewrote it to say the published
+      report carries API keys and tracker passkeys. **Review then measured the
+      screenshot itself and refuted that too**: Lighthouse only NAVIGATES to
+      `/settings/`, it does not click. `settingsPanel()` initialises
+      `activeTab: 'general'` and `showAdvanced: false`, the template renders only
+      the active tab's groups, and `core.api_key` sits in a group marked
+      `'advanced': True` — so the default screenshot cannot contain it, and the
+      tracker and notification credentials live on other tabs entirely.
+
+      **So the credential claim about the UPLOAD is withdrawn.** Demonstrating it
+      would need an interaction script that opens those tabs, or evidence from a
+      produced report, and I had neither — I verified that the settings *API*
+      returns credentials in the clear and then asserted something about the
+      *screenshot* that does not follow from it. Correcting an understatement by
+      overstating is not a correction, and the second error was the more
+      confident one.
+
+      T47 therefore stands on what was actually measured: a public upload of
+      rendered pages of the user's library, running even when assertions fail.
+      That is a real privacy defect and it does not need inflating.
+
+      **The unmasked rendering is real, independently verified, and is now T48.**
+      It has nothing to do with Lighthouse. Masking is
       gated on `type == 'password'` (`couchpotato/core/settings.py`), 22 options
       declare that type, and the credential fields below do not — so they come
       back from `getValues()` verbatim and render through the default
@@ -2011,24 +2047,18 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
           passthepopcorn.passkey  -> 'TRACKER_PASSKEY_9999'
           getType(core, api_key)  -> 'unicode'
 
-      So a published report can carry CouchPotato's own API key, private-tracker
-      passkeys, and notification/downloader tokens, as readable text in a
-      full-page screenshot, at a URL with no expiry the operator controls.
+      That is a defect on the PAGE, not in the upload: it fires for anyone who
+      opens the relevant tab, in a screen share, or in a support screenshot.
 
       **And the operator is most likely to trigger it at the moment they think
       nothing happened:** `autorun` runs the upload BEFORE it exits non-zero, so
       a failing accessibility assertion reads as "the run aborted" while four
       reports have already been POSTed and four public URLs printed.
 
-      That mis-ranking is the same one this task was created to correct, made one
-      notch further down: T47's first draft weighed screenshots-of-films against
-      a dev-only CWE-22, and did not notice it was also describing a secret leak.
-      `AGENTS.md` names the library as personal data, and CLAUDE.md's floor bans
-      credentials from LOGS — a public screenshot of them is strictly worse.
-
-      **`target: 'filesystem'` closes the upload path but NOT the unmasked
-      rendering**, which is independently a defect on any shared or recorded
-      screen. That half is T48.
+      `AGENTS.md` names the library as the personal data on this project, so the
+      upload is a genuine finding on its own terms. **`target: 'filesystem'`
+      closes it, and does not touch the unmasked rendering** — that half is T48
+      and needs its own fix.
 
       Mitigating, and the reason this is queued rather than urgent: nothing runs
       `lhci` automatically (no workflow, no `make` target — see tick 41), so it
@@ -2087,16 +2117,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       like `host`, and masking by absence-of-type would star those out in the UI.
       So the change is per-option and additive.
 
-      **Two things the implementer must not miss.** Masking is display-only —
-      the value still has to reach the plugin that uses it, so the round trip
+      **`core.api_key` is the exception, and review caught it before this task
+      could do harm.** It is declared `'ui-meta': 'ro'` and described as "Used by
+      third-party apps to communicate with CouchPotato" — the operator's job is
+      to READ it and paste it elsewhere. Password-typing it makes `getValues()`
+      return only stars, and the password template has no reveal or copy control,
+      so the operator could neither retrieve the key nor replace it. That turns a
+      disclosure defect into a lockout, which is a straight downgrade.
+
+      So `core.api_key` needs a reveal-or-regenerate path, not a mask, and it is
+      explicitly OUT of the blanket remedy. Listing it above alongside the others
+      was the error: "these all leak" is true, "these all take the same fix" is
+      not, and the task nearly shipped the second as if it followed from the
+      first.
+
+      **Two more things the implementer must not miss.** Masking is display-only
+      — the value still has to reach the plugin that uses it, so the round trip
       (save, reload, still works) is the test that matters, not just the render.
-      And `type: 'password'` must not be added to anything the UI needs to show,
-      so each field wants checking against its own template usage rather than
-      being swept by name.
+      And each field wants checking against its own template usage rather than
+      being swept by name, because `core.api_key` will not be the only one whose
+      whole purpose is to be read.
 
       Ranking: this sits above T47's upload path. The upload needs someone to
-      type one command; this leaks on every visit to a page the software invites
-      you to open.
+      type a command; this renders in the clear for anyone who opens the tab.
+      Stated carefully this time — the credentials are on non-default tabs or
+      behind the advanced toggle, so "every visit" would be the same
+      overstatement T47 has just been corrected for. One click, not zero.
 
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session

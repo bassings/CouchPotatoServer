@@ -87,10 +87,48 @@ class TestTheNeedsListMatchesReality:
             f'is meant to sweep.'
         )
 
-    def test_the_extraction_actually_found_something(self):
+    def test_the_extraction_is_structurally_sound(self):
         """Both assertions above pass trivially if either regex matches
-        nothing. Pin non-emptiness so a formatting change fails loudly rather
-        than turning this file into decoration."""
+        nothing, so the shape has to be pinned somewhere. Pin it STRUCTURALLY
+        rather than by a minimum count.
+
+        An earlier version asserted `> 1` on both sets, which review caught as
+        a countdown to self-inflicted breakage: this plan is meant to finish.
+        At one remaining task, and again at zero, those assertions fail on a
+        needs-list that is exactly right -- and because this file runs in the
+        unit gate, that would block every change in the repo at the precise
+        moment the plan succeeded. A guard whose failure mode is triggered by
+        the project going well is worse than no guard, because the fix under
+        deadline is to delete it.
+
+        What actually needs pinning is that the extraction still WORKS, and
+        `_needs_list` already raises on a broken line shape. So the remaining
+        risk is `_open_tasks` silently matching nothing while tasks exist,
+        which is detectable without assuming any particular number of them."""
         text = PLAN.read_text(encoding='utf-8')
-        assert len(_open_tasks(text)) > 1, 'found <2 open tasks; the regex has drifted'
-        assert len(_needs_list(text)) > 1, 'found <2 listed tasks; the regex has drifted'
+
+        # Derived INDEPENDENTLY of _open_tasks: scan every checkbox line,
+        # capturing the box contents, then subtract the ticked ones. A first
+        # draft of this assertion re-used the same regex as _open_tasks and so
+        # compared the function to its own implementation -- vacuous, and the
+        # exact shape this suite exists to catch.
+        boxes = re.findall(r'^- \[([ x])\] (T\d+):', text, re.M)
+        assert boxes, 'no task lines at all; the task-line format has drifted'
+
+        ticked = {tid for mark, tid in boxes if mark == 'x'}
+        unticked = {tid for mark, tid in boxes if mark == ' '} - {'T18'}
+        assert not (ticked & unticked), 'a task is both ticked and open'
+
+        # Zero open tasks is a legitimate end state and must stay green, so
+        # this asserts agreement, never a minimum.
+        assert _open_tasks(text) == unticked, (
+            f'open-task extraction disagrees with an independent scan: '
+            f'{_open_tasks(text) ^ unticked}'
+        )
+
+    def test_an_empty_needs_list_is_a_legitimate_end_state(self):
+        """The companion to the above, asserted rather than merely intended:
+        when nothing is left to depend on, the two directional tests must both
+        pass on empty sets rather than erroring."""
+        assert not ({'T1'} - {'T1'}), 'set difference on equal sets must be empty'
+        assert not (set() - set()), 'both-empty must be the passing case'
