@@ -1486,7 +1486,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
       is visible rather than just the current state.
 
-- [ ] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: pr-open #265 — **security, attacker-reachable**
+- [x] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: **merged #265** (`b27bd49f`, 2026-08-19) — **security, pre-existing**. Verified on master rather than from the merge report: the guard constants are present in `extractor.py` and `tests/unit/test_extractor.py` runs 54 passing. Fifteen review rounds; the last four added no code, only tests and records.
 
       Found by the security lens while reviewing the rarfile 4.5 bump, and
       confirmed independently by driving the real `sp()` rather than reading it:
@@ -1856,6 +1856,57 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Do NOT reuse `_ENTRY_DERIVED_ERRNOS` for this. Nothing raises an OSError
       here — the write succeeds, repeatedly. It needs its own refusal path.
 
+      **Second amplification site, same shape, raised on #265 round 15 and
+      also non-blocking.** The containment check runs
+      `isSubFolder(extr_file_path, extr_real_path)` per entry, and
+      `isSubFolder` calls `os.path.realpath()` on both arguments — including
+      on `extr_real_path`, which `extractArchive` has ALREADY resolved, so
+      that half is pure redundancy. `realpath` `lstat`s every path component,
+      so a header-only archive with a huge entry count buys the attacker
+      per-entry syscalls for free.
+
+      Smaller than the read loop and deliberately ranked below it: this is CPU
+      and syscalls, not disk, and the per-entry log caps already bound the
+      visible damage. It is recorded rather than fixed because the reason it is
+      worth writing down is the PATTERN, not the cost — the same "headers are
+      cheap, the per-entry loop is not" asymmetry, found on a third surface.
+      `ENAMETOOLONG -> EISDIR -> EILSEQ -> EINVAL` were each rediscovered
+      independently across four review rounds because the first was fixed as an
+      instance instead of a category. Whoever takes T44 should look for the
+      amplification everywhere the entry list is walked, not only in the two
+      places named here.
+
+      The redundant resolve is separately worth killing on its own merits:
+      hoisting it costs nothing and removes a syscall per entry regardless of
+      whether a budget ever lands.
+
+- [ ] T45: `make verify` never runs a Python dependency scanner — state: queued (no deps) — **security**
+
+      Found while triaging the owner's dependency ask (tick 41). The JS half of
+      §3a is covered — `npm audit` runs and the `dependency-review` CI job is
+      green — but there is no `pip-audit`, no `safety`, and no equivalent
+      anywhere in `make verify` or `.github/workflows/`. `.venv/bin/pip-audit`
+      is not installed, so the command a person would reach for does not exist.
+
+      The defect is not "a scan is missing". It is that **an unrun scanner and a
+      clean scanner produce the same sentence in a report.** Tick 41 nearly
+      recorded "dependencies triaged" on the strength of `npm audit` alone,
+      which would have described half the supply chain as checked when the
+      Python half — the half that actually ships to production, since the npm
+      tree is dev-only test tooling — had never been looked at.
+
+      This is a §9 case: the rule "remember to run pip-audit" is exactly the
+      kind of prose a future session skips. Add `pip-audit` to the dev
+      requirements and a `deps` step to `verify` that fails on a FIXABLE high,
+      so the absence of a scan cannot be mistaken for the absence of findings.
+
+      Two constraints for whoever takes it. It must distinguish **fixable** from
+      **unfixable** — this very tick holds `extract-zip`, which has no patched
+      release at all, and a gate that fails on unfixable findings gets bypassed
+      within a week and then teaches nothing. And it must not become a merge
+      blocker on a transitive advisory nobody can act on; per §3a the outcome is
+      a recorded decision, not a green number.
+
 - [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41, T43, T44 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
@@ -2085,6 +2136,117 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 41** — **T36 merged (#265, `b27bd49f`), closing the last of the four
+  tasks this run opened.** Sixteen checks green, head confirmed equal to local
+  immediately before merging, and the fix verified ON MASTER afterwards rather
+  than from the merge report: the guard constants are present in
+  `extractor.py`, and `tests/unit/test_extractor.py` runs 54 passing.
+
+  **Round 15 arrived after CI went green and was correctly not a fix.** A
+  `claude-review` nit: `isSubFolder` calls `os.path.realpath()` on BOTH
+  arguments per entry, including on `extr_real_path` which `extractArchive` has
+  already resolved. Recorded on T44 as a second amplification site and ranked
+  below the read loop — CPU and syscalls, not disk. The reviewer explicitly
+  asked for a record rather than a change, and got one. The interesting half is
+  the pattern, not the cost: `ENAMETOOLONG -> EISDIR -> EILSEQ -> EINVAL` were
+  each rediscovered one at a time across four rounds of this PR because the
+  first was fixed as an instance instead of a category, and this is that same
+  asymmetry on a third surface.
+
+  **Correction to my own reconciliation, before it becomes folklore.** Earlier
+  in this tick I recorded "T42's box is wrong, it still reads `pr-open #264`".
+  That was true of the file I was looking at and the wrong conclusion. The tick
+  existed in a local commit (`ebc1e15b`, rebased to `600f394c`) that had **never
+  been pushed**; the branch I read it from predated that commit. So the box was
+  ticked and the correction was published nowhere — `git show
+  origin/master:specs/REMEDIATION-2026-08.md` still read `[ ] pr-open #264`.
+  The drift was real as PUBLISHED and imaginary as WORK, which is a different
+  defect with a different fix: the failure was an unpushed commit, not a missed
+  update.
+
+  **T42 still carries a residual gap that ticking its box does not close.** The
+  scrub is proven against a *simulated* poisoned `GIT_DIR`. The real condition —
+  a push from a linked worktree, where git exports `GIT_DIR` into the hook
+  itself — has not been exercised since the fix landed, because every worktree
+  was removed before it could be. That needs a throwaway clone, not this
+  checkout: the failure mode under test IS corruption of the real repository.
+
+  **Dependency triage (the owner's ask), round 2.** T33 was round 1 and is
+  merged; this is new work. Measured, not relayed:
+
+      gh dependabot alerts (open)    1   extract-zip, HIGH, first_patched: null
+      gh pr list --author dependabot 0   no open PRs
+      npm audit                      7 high, 0 critical, 0 moderate
+      pip-audit                      NOT RUN — not installed in .venv
+
+  **Six of the seven npm highs are one root cause.** `extract-zip` <= 2.0.1 has
+  no patched release at all, and the chain above it — `@puppeteer/browsers`,
+  `puppeteer-core`, `lighthouse`, `@lhci/utils`, `@lhci/cli` — is flagged only
+  for carrying it. Decision: **HOLD**, on evidence rather than on a feeling that
+  dev dependencies do not matter.
+
+  1. **The offered remedy is a downgrade.** `npm audit` reports
+     `fixAvailable: @lhci/cli@0.12.0` against an installed `0.15.1`. Taking it
+     walks Lighthouse CI back three minor versions to silence a scanner.
+  2. **The real upstream fix is pinned away.** `@puppeteer/browsers@3.2.1`
+     drops `extract-zip` outright (deps are now `yargs` + `modern-tar`), so a
+     fix genuinely exists — but `puppeteer-core@24.37.3` depends on
+     `"@puppeteer/browsers": "2.12.1"`, an **exact** pin, not a range. An
+     override to 3.x hands `puppeteer-core` an API it does not expect, to fix a
+     path it does not execute.
+
+  **Reachability, measured:** `grep -rln "lhci|lighthouse|test:lighthouse"
+  .github/ Makefile scripts/` returns **nothing**. Lighthouse is in no workflow
+  and no `make` target; the vulnerable code runs only under a manual
+  `npm run test:lighthouse`, over a ZIP fetched from Google's CDN via HTTPS.
+  This BOUNDS the exposure. It is not a claim the bug is unreal, and it is the
+  half of the argument that expires first.
+
+  **Revisit conditions, either of which makes this a TAKE:** `puppeteer-core`
+  raising its `@puppeteer/browsers` pin to 3.x; or Lighthouse being wired into
+  CI or the gate.
+
+  **The seventh is a genuine TAKE:** `nanoid` < 3.3.18, reached via
+  `vitest -> vite -> postcss`, with a real transitive patch and no
+  `package.json` change implied. Applied in this commit — `package.json`
+  byte-identical, `npm ls --all` exit 0, 202 JS unit tests passing, `npm audit`
+  7 high -> 6.
+
+  **Applying it turned up two things worth more than the bump.**
+
+  1. **`npm audit fix` is not surgical, and its extra work bought nothing.** The
+     plain invocation moved **20** package entries, not one: `puppeteer-core`
+     24.37.3 -> 24.43.1, `@puppeteer/browsers` 2.12.1 -> 2.13.2, the whole
+     `bare-*` family, dropping `bare-os` and adding `teex`. Measured after:
+     `extract-zip@2.0.1` **still present**, and `@puppeteer/browsers@2.13.2`
+     **still depends on `extract-zip: ^2.0.1`** — so the advisory count fell
+     7 -> 6 purely from `nanoid`, and the entire puppeteer chain moved for
+     nothing. It was reverted and re-applied as `npm update nanoid`, giving a
+     one-package diff. Taking that churn would have silently contradicted the
+     HOLD recorded three paragraphs above, in the same commit, under a message
+     naming only `nanoid`.
+
+  2. **The lockfile and the installed tree disagreed, and npm's own bookkeeping
+     took the lockfile's side.** After the bump, `package-lock.json` said
+     `nanoid 3.3.18` and `node_modules/.package-lock.json` — npm's hidden
+     record of what it believes is installed — ALSO said 3.3.18, while
+     `node_modules/nanoid/package.json` on disk still said **3.3.17**. Two
+     successive `npm install` runs did not reconcile it; only `rm -rf
+     node_modules/nanoid && npm install` did. Anyone verifying the fix by
+     reading a lockfile, or by trusting `npm ls`, would have recorded a patch
+     that was not on disk.
+
+     This is §11's "correct in source, absent from the build" with the twist
+     that the build system's own metadata asserts the source version. The
+     general rule it earns: **for a dependency fix, verify the version in
+     `node_modules/<pkg>/package.json`, not in any lockfile.** Both lockfiles
+     are claims; only the installed file is the artefact that runs.
+
+  **`pip-audit` is absent, so the Python half of §3a did not actually run.**
+  Recorded as a gap rather than reported as a clean result — an unrun scanner
+  and a clean scanner are indistinguishable in a summary, which is why this
+  line exists. Wiring it into `make verify` is the §9 answer and is now T45.
 
 - **Tick 40** — **T35 done: SonarQube scanned against merged master. Nothing resolved, nothing dismissed.**
   `make sonar` exit 0 against `09a3d153`, so one scan covers both #261 and #262.
