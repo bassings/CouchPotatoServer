@@ -1423,30 +1423,61 @@ class TestAnUnencodableNameDoesNotSinkTheArchive:
     """
 
     def test_an_unencodable_name_is_skipped_and_the_rest_still_extract(self, tmp_path, caplog):
+        """EILSEQ is INJECTED, not provoked by a real filename.
+
+        The first version of this test used a lone surrogate and relied on the
+        filesystem to reject it. That passes on macOS (APFS rejects invalid
+        UTF-8) and FAILS on Linux (ext4 stores arbitrary bytes, so the name
+        writes fine and nothing is skipped) -- caught by CI, not locally,
+        because this project's production target is Alpine Linux and my local
+        run was macOS.
+
+        So the original "driven" evidence was real and platform-specific, and
+        the test built on it encoded one filesystem's behaviour as universal.
+        Injecting the errno tests the HANDLER, which is the thing that has to
+        be right on every platform, and leaves whether a given name provokes
+        it to the filesystem.
+        """
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
-        hostile = 'movie\udcff.mkv'
-        names = [hostile, 'good.mkv']
+        names = ['odd.mkv', 'good.mkv']
         handle = _make_rar_handle([_make_info(n) for n in names],
                                   {n: b'real' for n in names})
 
+        real_replace = os.replace
+
+        def replace_rejecting_odd(src, dst, *a, **kw):
+            if dst.endswith('odd.mkv'):
+                raise OSError(errno.EILSEQ, 'Illegal byte sequence')
+            return real_replace(src, dst, *a, **kw)
+
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor.os.replace',
+                   side_effect=replace_rejecting_odd), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
             extracted = _Extractor().extractArchive('a.rar', str(extr_path))
 
         assert extracted == [str(extr_path / 'good.mkv')], (
-            'an unencodable entry name aborted the archive; the good entry '
-            'after it was never extracted'
+            'an EILSEQ destination aborted the archive; the good entry after '
+            'it was never extracted'
         )
-        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert any('EILSEQ' in r.getMessage() for r in caplog.records)
 
-    def test_names_that_are_merely_odd_are_refused_without_raising(self, tmp_path):
+    def test_names_that_are_merely_odd_do_not_sink_the_archive(self, tmp_path):
         """The shapes the reviewer expected to break the containment check.
-        They do not -- recorded so the next reader does not re-test them."""
-        for hostile in ('movie\x00.mkv', 'B' * 4000 + '.mkv', '.' * 500):
-            extr_path = tmp_path / ('e%d' % len(hostile))
+        They do not -- recorded so the next reader does not re-test them.
+
+        Asserts only that the GOOD entry survives, deliberately. Whether a
+        given odd name is refused, skipped or written is the filesystem's
+        decision and differs by platform: macOS rejects invalid UTF-8 where
+        Linux stores arbitrary bytes, which is exactly how the sibling test
+        above passed locally and failed in CI. The property that must hold
+        everywhere is that one odd entry does not cost you the rest of the
+        archive."""
+        for i, hostile in enumerate(('movie\x00.mkv', 'B' * 4000 + '.mkv', '.' * 500)):
+            extr_path = tmp_path / ('e%d' % i)
             extr_path.mkdir()
             names = [hostile, 'good.mkv']
             handle = _make_rar_handle([_make_info(n) for n in names],
@@ -1454,6 +1485,8 @@ class TestAnUnencodableNameDoesNotSinkTheArchive:
             with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                        return_value=handle):
                 extracted = _Extractor().extractArchive('a.rar', str(extr_path))
-            assert extracted == [str(extr_path / 'good.mkv')], (
-                '%r did not leave the archive extractable' % hostile[:20]
+            assert str(extr_path / 'good.mkv') in extracted, (
+                '%r sank the archive; the good entry after it was lost'
+                % hostile[:20]
             )
+            assert (extr_path / 'good.mkv').read_bytes() == b'real'
