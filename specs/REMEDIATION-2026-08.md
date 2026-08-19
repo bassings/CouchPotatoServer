@@ -1486,7 +1486,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       rating D -> A, BLOCKER bugs 2 -> 0, coverage 0.0 -> 53.5%) so the trend
       is visible rather than just the current state.
 
-- [ ] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: pr-open #265 — **security, attacker-reachable**
+- [x] T36: a hostile archive entry escapes the extraction directory via BACKSLASHES — state: **merged #265** (`b27bd49f`, 2026-08-19) — **security, pre-existing**. Verified on master rather than from the merge report: the guard constants are present in `extractor.py` and `tests/unit/test_extractor.py` runs 54 passing. Fifteen review rounds; the last **two** commits added no production code, only tests and records. (First written as "the last four", which review measured and refuted: `5fde7144` and `d7c1e30e` both changed `extractor.py`, +66/-24 between them. The clause matters because "has the code stopped moving" was the signal used to decide the PR had converged, so overstating it flatters exactly the judgement it was offered to support.)
 
       Found by the security lens while reviewing the rarfile 4.5 bump, and
       confirmed independently by driving the real `sp()` rather than reading it:
@@ -1704,7 +1704,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       alternative rather than reasoning about it — the last two attempts in
       this area were both measured worse than what they replaced.
 
-- [ ] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: pr-open #264
+- [x] T42: gate fixtures inherit GIT_DIR from a worktree push and corrupt the real repo — state: **merged #264** (`0a7b197e`, 2026-08-18) — closed by a process-level scrub at import time, not by the AST guard; eleven review rounds. **Two numeric claims here were measured and refuted in review (2026-08-19) and are corrected rather than deleted, because the pattern is the point.** "A four-line scrub" was a ten-line construct (`tests/conftest.py`: a `for` over six variable names, then the `pop`), and #264 added 41 lines to that file. "Last four commits removed code" is false: the last four are +43/-15, +34/-44, +11/-2 and +16/-5, net **+104/-66**, and only one of them is net-negative. This is the SAME error review caught on T36's tick, on the same branch, written by the same hand — and the T36 correction was committed while this line sat one screen away, untouched. Correcting the instance in front of me and not enumerating what else falls under it is the recurring failure of this whole run; see also T18's needs-list, wrong four times. Residual verification gap tracked as T46
 
       **Not a theory. It has now corrupted this repository TWICE in one day,**
       both times flipping `core.bare` to `true` so the main checkout stopped
@@ -1856,7 +1856,333 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Do NOT reuse `_ENTRY_DERIVED_ERRNOS` for this. Nothing raises an OSError
       here — the write succeeds, repeatedly. It needs its own refusal path.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T36, T37, T38, T39, T40, T41, T43, T44 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale twice by enumeration alone. T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too.)
+      **Second amplification site, same shape, raised on #265 round 15 and
+      also non-blocking.** The containment check runs
+      `isSubFolder(extr_file_path, extr_real_path)` per entry, and
+      `isSubFolder` calls `os.path.realpath()` on both arguments — including
+      on `extr_real_path`, which `extractArchive` has ALREADY resolved, so
+      that half is pure redundancy. `realpath` `lstat`s every path component,
+      so a header-only archive with a huge entry count buys the attacker
+      per-entry syscalls for free.
+
+      Smaller than the read loop and deliberately ranked below it: this is CPU
+      and syscalls, not disk, and the per-entry log caps already bound the
+      visible damage. It is recorded rather than fixed because the reason it is
+      worth writing down is the PATTERN, not the cost — the same "headers are
+      cheap, the per-entry loop is not" asymmetry, found on a third surface.
+      `ENAMETOOLONG -> EISDIR -> EILSEQ -> EINVAL` were each rediscovered
+      independently across four review rounds because the first was fixed as an
+      instance instead of a category. Whoever takes T44 should look for the
+      amplification everywhere the entry list is walked, not only in the two
+      places named here.
+
+      The redundant resolve is separately worth killing — **but not by editing
+      `isSubFolder`.** Review caught a genuinely dangerous phrasing here: an
+      earlier draft said "hoisting it costs nothing". It does not. `isSubFolder`
+      has other production call sites that pass an UNRESOLVED base, including
+      `couchpotato/core/_base/_core.py` (`data_dir` vs `app_dir`) and
+      `renamer/scanner.py` (`sp(self.conf('from'))` — `sp` normalises separators,
+      it does not resolve symlinks). Removing `realpath(base_folder)` from the
+      shared helper would silently weaken symlink containment at both.
+
+      The safe shape is a pre-resolved variant, or an opt-out parameter used only
+      at the extractor call site where the caller has already resolved. Spelled
+      out because this branch's own history is a fix introducing a worse defect
+      than the one it replaced (T41), and "costs nothing" is how that happens.
+
+- [ ] T45: nothing scans the STANDING dependency set, in either ecosystem — state: queued (no deps) — **security**
+
+      Found while triaging the owner's dependency ask (tick 41), and **rewritten
+      after review demolished its first premise.** The original text claimed
+      "the JS half of §3a is covered — `npm audit` runs and the
+      `dependency-review` CI job is green — but there is no Python equivalent".
+      Three separate errors, all measured:
+
+      **(a) `npm audit` runs nowhere.** `grep -rn "npm audit|audit-level"
+      .github/ Makefile scripts/ .githooks/` is empty. It was run by hand in
+      tick 41, exactly as `pip-audit` would have been. Neither ecosystem is
+      automated.
+
+      **(b) `dependency-review` is not "the JS half".** It consumes GitHub's
+      dependency-graph compare endpoint, which is ecosystem-agnostic — the graph
+      carries the pypi packages too, and a PR introducing a vulnerable pip
+      package is already blocked by `fail-on-severity: high`.
+
+      **(c) Trivy already scans the production image's Python packages —
+      but only the FIXABLE ones.** `ci.yml` runs `trivy image` with `scanners:
+      vuln`, `severity: CRITICAL,HIGH`, `exit-code: 1`, and **`ignore-unfixed:
+      true`**. The runtime Python set is scanned on every PR and does find real
+      CVEs. It structurally cannot report a Python advisory with no patched
+      release — which is precisely the extract-zip-shaped class this task exists
+      to worry about. Right for fixable CVEs, silent for the others, and the
+      distinction matters because "Trivy covers it" was about to become the
+      reason not to build the check.
+
+      So the gap is NARROWER and differently shaped than first written, and
+      naming it wrongly would have sent the implementer to build a duplicate of
+      `dependency-review` while leaving the actual hole open. The actual hole:
+
+      - **Nothing surfaces the standing set LOCALLY, which is the actual gap.**
+        An earlier draft said "nothing scans the standing set", and review
+        refuted it from this entry's own evidence: the `gh dependabot alerts` row
+        two paragraphs up returned a result, and Dependabot alerts are produced
+        by scanning the CURRENT dependency graph, not a PR diff. Something is
+        already scanning the standing set; it just reports to GitHub's UI.
+
+        What is missing is narrower and more useful: **no local command tells you
+        what that scan found**, so `make verify` can be green while an open alert
+        sits unread — which is exactly how this round's eight PRs went untriaged.
+        `dependency-review` genuinely is diff-only (`fail-on-severity: high` on
+        newly-INTRODUCED vulnerabilities, which is why the six pre-existing
+        extract-zip HIGHs are green there), so it is not the answer either.
+
+        Scoped this way, T45 may not need `pip-audit` at all: surfacing the
+        alerts that already exist, and requiring a recorded decision for each,
+        beats adding a dependency and a second scanner that duplicates work
+        GitHub is already doing. Decide that before installing anything.
+      - **Dev dependencies are in no IMAGE, but they are not unscanned.** An
+        earlier draft of this bullet said "nothing scans dev dependencies at
+        all", which contradicts point (b) three paragraphs above and is wrong:
+        `requirements-dev.txt` IS a dependency-graph manifest, dev-only pypi
+        packages DO appear in the SBOM, and `dependency-review` therefore
+        already blocks a newly-introduced vulnerable dev pip package. Trivy is
+        the one that cannot see them, because it scans the runtime image and
+        `requirements-dev.txt` reaches no image. So the residual gap for dev
+        deps is the same as for runtime deps — the STANDING set, not the diff —
+        and stating it as total absence would send the implementer to rebuild
+        coverage that exists.
+      - **Nothing runs locally**, so `make verify` cannot tell you what
+        `npm audit` told a human in tick 41.
+
+      The §9 answer is a `deps` step in `verify` running BOTH `pip-audit` and
+      `npm audit` over the standing set. `.venv/bin/pip-audit` does not exist and
+      neither `pip-audit` nor `safety` appears in `requirements-dev.txt`, so that
+      is a real addition, not a rewiring.
+
+      Two constraints for whoever takes it. It must distinguish **fixable** from
+      **unfixable** — tick 41 holds `extract-zip`, which has no patched release
+      at all, and a gate that fails on findings nobody can act on gets bypassed
+      within a week and then teaches nothing. And per §3a the outcome is a
+      recorded decision, not a green number, so it must not become a merge
+      blocker on a transitive advisory with no remedy.
+
+      **Keep the thesis that survived its own premise being wrong:** an unrun
+      scanner and a clean scanner produce the same sentence in a report. That is
+      what happened here twice over — once to `pip-audit`, which was correctly
+      flagged, and once to `npm audit`, which was described as running when it
+      does not.
+
+- [x] T46: T42's fix has never been exercised under the condition it was written for — state: **done** (2026-08-19) — **the simulation is faithful, and the scrub is load-bearing.** Measured, not reasoned; evidence in tick 43
+
+      T42 is merged and its box is ticked, correctly: the scrub at
+      `tests/conftest.py` pops the six git location variables at import time,
+      before collection, and that is the right shape. But every test of it
+      SIMULATES the poison by setting `GIT_DIR` in the environment by hand.
+
+      The real condition is different in one way that matters: git exports
+      `GIT_DIR` into the hook process itself, and **only from a linked
+      worktree**. That path has not run since the fix landed, because every
+      worktree was removed before it could be. Ticking the box does not close
+      this, and the caveat currently lives 460 lines away in the tick 41 log
+      where nobody executing the plan will meet it — which is why it is a task.
+
+      There is precedent in this very file: T9 "was UNVERIFIABLE when the box
+      was first ticked, which review rightly flagged". Same shape.
+
+      **Do it in a throwaway clone, never in this checkout.** The failure mode
+      under test IS corruption of the real repository, and per the loss ranking
+      that is the irreplaceable class. Concretely: clone to scratch, create a
+      linked worktree, install the pre-push hook, push to a LOCAL bare remote,
+      and assert the clone's own `.git` is byte-identical afterwards. Then break
+      the scrub, watch it fail, restore — a guard nobody has watched fail is not
+      done.
+
+- [ ] T47: `lhci autorun` publishes screenshots of the user's library to a public Google endpoint — state: queued (no deps) — **privacy, pre-existing**
+
+      Surfaced by the security lens while reviewing tick 41's decision to KEEP
+      `@lhci/cli` in the tree. This is the risk that decision actually carries,
+      and it is larger than the advisory the tick spent a page holding.
+
+      `lighthouserc.js` sets `upload.target: 'temporary-public-storage'`, and
+      `@lhci/cli` POSTs the rendered HTML report to
+      `https://us-central1-lighthouse-infrastructure.cloudfunctions.net/saveHtmlReport`,
+      then prints the returned public URL. `autorun` runs the upload step **even
+      when the assertions fail**.
+
+      A Lighthouse HTML report embeds full-page screenshots. The configured
+      targets are `/`, `/available/`, `/add/` and `/settings/`.
+
+      **This paragraph has now been wrong in BOTH directions, which is worth
+      more than either correction.** It first understated the payload as "the
+      library, plus directory paths". A security review pointed out the settings
+      page renders credentials unmasked, and I rewrote it to say the published
+      report carries API keys and tracker passkeys. **Review then measured the
+      screenshot itself and refuted that too**: Lighthouse only NAVIGATES to
+      `/settings/`, it does not click. `settingsPanel()` initialises
+      `activeTab: 'general'` and `showAdvanced: false`, the template renders only
+      the active tab's groups, and `core.api_key` sits in a group marked
+      `'advanced': True` — so the default screenshot cannot contain it, and the
+      tracker and notification credentials live on other tabs entirely.
+
+      **So the credential claim about the UPLOAD is withdrawn.** Demonstrating it
+      would need an interaction script that opens those tabs, or evidence from a
+      produced report, and I had neither — I verified that the settings *API*
+      returns credentials in the clear and then asserted something about the
+      *screenshot* that does not follow from it. Correcting an understatement by
+      overstating is not a correction, and the second error was the more
+      confident one.
+
+      T47 therefore stands on what was actually measured: a public upload of
+      rendered pages of the user's library, running even when assertions fail.
+      That is a real privacy defect and it does not need inflating.
+
+      **The unmasked rendering is real, independently verified, and is now T48.**
+      It has nothing to do with Lighthouse. Masking is
+      gated on `type == 'password'` (`couchpotato/core/settings.py`), 22 options
+      declare that type, and the credential fields below do not — so they come
+      back from `getValues()` verbatim and render through the default
+      `<input type="text">` branch. Driven, not read:
+
+          core.api_key            -> 'SUPERSECRET_LIVE_KEY'
+          passthepopcorn.passkey  -> 'TRACKER_PASSKEY_9999'
+          getType(core, api_key)  -> 'unicode'
+
+      That is a defect on the PAGE, not in the upload: it fires for anyone who
+      opens the relevant tab, in a screen share, or in a support screenshot.
+
+      **And the operator is most likely to trigger it at the moment they think
+      nothing happened:** `autorun` runs the upload BEFORE it exits non-zero, so
+      a failing accessibility assertion reads as "the run aborted" while four
+      reports have already been POSTed and four public URLs printed.
+
+      `AGENTS.md` names the library as the personal data on this project, so the
+      upload is a genuine finding on its own terms. **`target: 'filesystem'`
+      closes it, and does not touch the unmasked rendering** — that half is T48
+      and needs its own fix.
+
+      Mitigating, and the reason this is queued rather than urgent: nothing runs
+      `lhci` automatically (no workflow, no `make` target — see tick 41), so it
+      fires only when a person types `npm run test:lighthouse` or `test:all`.
+      That is a one-command distance, not a barrier.
+
+      The fix is `target: 'filesystem'`, which keeps the reports local and loses
+      nothing this project uses. **Also fix the comment directly above it**,
+      which reads "Don't upload to Lighthouse CI server by default" — true and
+      thoroughly misleading, since it does not upload to OUR server while
+      uploading to a public one. A comment that reassures the reader about the
+      exact risk it introduces is worse than no comment.
+
+      Ranking note, recorded because tick 41 got this backwards: this is
+      disclosure of irreplaceable personal data triggered by one documented
+      command, versus a dev-only CWE-22 reachable through a browser-download
+      path `lhci autorun` never takes. The tick argued at length about the
+      second and did not notice the first.
+
+- [ ] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: queued (no deps) — **security, pre-existing**
+
+      Found by the security lens while reviewing T47, and it is the larger half
+      of that finding. Independent of Lighthouse: anyone who opens `/settings/`
+      sees these in the clear, and so does anyone looking over their shoulder, in
+      a screen share, or in a support screenshot.
+
+      **Mechanism.** `couchpotato/core/settings.py` masks a value only when
+      `getType(section, option) == 'password'`. `getType` falls back to
+      `'unicode'`, and `registerDefaults` calls `setType` only `if
+      option.get('type')`. Twenty-two options across the tree DO declare
+      `'type': 'password'`, so the convention exists and is honoured — these
+      simply never got it. The UI then takes the default branch in
+      `field_types.html` (`!opt.type || opt.type === 'string'`) and emits
+      `<input type="text">`.
+
+      Driven against the real object rather than reasoned about, registering
+      exactly as the live plugins do:
+
+          core.api_key            -> 'SUPERSECRET_LIVE_KEY'
+          passthepopcorn.passkey  -> 'TRACKER_PASSKEY_9999'
+          getType(core, api_key)  -> 'unicode'
+
+      **Affected, non-advanced (visible without expanding anything):**
+      `core.api_key` — CouchPotato's own API credential — plus `passkey` on
+      `awesomehd`, `passthepopcorn` and `hdbits`; `telegrambot.bot_token`;
+      `slack.token`; `pushbullet.api_key`; `pushover.user_key`; `emby.apikey`;
+      `sabnzbd.api_key`. Advanced adds `putio.oauth_token`, `plex.auth_token`,
+      `trakt.automation_oauth_token`, `pushover.api_token`, `join.apikey`.
+
+      **The fix is to declare `'type': 'password'` on each, NOT to change the
+      masking rule.** This is the trap: the obvious shortcut — "mask anything
+      not in `self.types`" — is exactly what T31 deliberately rejected, and
+      `tests/unit/test_settings_orphan_masking.py::
+      test_registered_plain_string_option_is_not_masked` pins that rejection.
+      Untyped-and-registered is the normal case for ordinary string settings
+      like `host`, and masking by absence-of-type would star those out in the UI.
+      So the change is per-option and additive.
+
+      **`core.api_key` is the exception, and review caught it before this task
+      could do harm.** It is declared `'ui-meta': 'ro'` and described as "Used by
+      third-party apps to communicate with CouchPotato" — the operator's job is
+      to READ it and paste it elsewhere. Password-typing it makes `getValues()`
+      return only stars, and the password template has no reveal or copy control,
+      so the operator could neither retrieve the key nor replace it. That turns a
+      disclosure defect into a lockout, which is a straight downgrade.
+
+      So `core.api_key` needs a reveal-or-regenerate path, not a mask, and it is
+      explicitly OUT of the blanket remedy. Listing it above alongside the others
+      was the error: "these all leak" is true, "these all take the same fix" is
+      not, and the task nearly shipped the second as if it followed from the
+      first.
+
+      **Two more things the implementer must not miss.** Masking is display-only
+      — the value still has to reach the plugin that uses it, so the round trip
+      (save, reload, still works) is the test that matters, not just the render.
+      And each field wants checking against its own template usage rather than
+      being swept by name, because `core.api_key` will not be the only one whose
+      whole purpose is to be read.
+
+      Ranking: this sits above T47's upload path. The upload needs someone to
+      type a command; this renders in the clear for anyone who opens the tab.
+      Stated carefully this time — the credentials are on non-default tabs or
+      behind the advanced toggle, so "every visit" would be the same
+      overstatement T47 has just been corrected for. One click, not zero.
+
+- [ ] T49: an E2E test times out only inside a full run — state: queued (no deps) — **flake**
+
+      `tests/e2e/add-via-url.spec.ts:110` ("keeps the title-search box available
+      alongside the URL flow") failed the local gate on 2026-08-19 with
+      `page.goto: Test timeout of 30000ms exceeded`, navigating to
+      `/add/?url=<encoded>`.
+
+      Re-run in isolation immediately afterwards, the whole file passes and that
+      test takes **1.5s against a 30s budget** — a 20x margin. So this is not a
+      broken test and not a slow one; it is a test that fails only under
+      full-suite load.
+
+      **Recorded rather than re-run, because §11 ranks a flake below an absent
+      test:** it teaches everyone to re-run until green, and a real regression
+      gets re-run away with it. This is the second time this repo has produced a
+      "fails only in a FULL run" E2E defect — T10 was the first, and its root
+      cause was NOT the obvious one.
+
+      Evidence to start from, gathered while diagnosing rather than guessing:
+
+      - The test one line above it (`:90`) navigates to the **same** URL and
+        passed in the same full run. So the URL-resolution path itself works;
+        whatever bites is timing, not the fetch.
+      - Playwright's own output in that run flagged
+        `Slow test file: interactions.e2e.spec.ts (5.8m)`. Contention with that
+        file is the first hypothesis to test, not a conclusion.
+      - `playwright.config.ts` pins `retries: 0` locally, which is correct and
+        should stay: retries would convert this into an invisible intermittent
+        rather than a caught one.
+
+      **The tempting wrong fix is raising the timeout.** A 20x margin says the
+      budget is not the problem, and a longer one would hide the next
+      regression in this flow behind a slower failure. Find why a 1.5s
+      navigation takes >30s under load first — the `/add/` route resolves a
+      user-supplied URL server-side, so a blocked or serialised handler is a
+      more likely explanation than a slow browser, and if so it is a
+      responsiveness defect rather than a test defect.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T48, T49 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
@@ -2085,6 +2411,478 @@ to download, but none of the ... downloaders are enabled" and returns
 `False`. No crash, nothing hadouken-specific to remove.
 
 ## Conductor log
+
+- **Tick 44** — **the Dependabot round is closed: 7 merged, 1 superseded, 0 open.**
+  Recorded with the date and the command, because the entry this closes is the
+  one that recorded `0 open` when eight were.
+
+      measured 2026-08-19 (after the merges)
+      gh pr list --author "app/dependabot" --state open  ->  0
+
+      #266 platformdirs 4.11.0 -> 4.11.3   PROD  TAKE       09e1a5ac
+      #271 packaging    26.2   -> 26.3     PROD  TAKE       bf7c1ecc
+      #273 certifi   2026.6.17 -> .7.22    PROD  TAKE       74fcb680
+      #272 coverage     7.15.2 -> 7.15.4   dev   TAKE       cbe51d10
+      #269 ruff         0.16.2 -> 0.16.3   dev   TAKE       c2af7554
+      #268 axe-core/playwright 4.12 -> .13 dev   TAKE       7a498dff
+      #267 stryker (core + vitest-runner)  dev   TAKE PAIR  d1b8cbbe
+      #270 stryker/vitest-runner           dev   SUPERSEDED closed
+
+  **§3a's graph check, run the way the earlier trap taught.** The adversarial
+  reviewer refused to run `pip check` in `.venv` because that venv still held
+  the PRE-bump versions — it would have returned "No broken requirements found"
+  while proving nothing. So this time the environment was brought up to the
+  merged pins first, and the versions confirmed from `pip show` (the installed
+  artefact) rather than from `requirements.txt` (the claim):
+
+      certifi 2026.7.22 · packaging 26.3 · platformdirs 4.11.3
+      pip check -> No broken requirements found.
+
+  **Two stale CI runs were hanging, and the fix was the same as the diagnosis.**
+  #273's `accessibility` had been "in progress" for **96 minutes** and #268's
+  `ui-e2e-tests` for 50, while master's E2E — started four minutes earlier —
+  progressed normally. Those runs were created before five merges moved the base
+  out from under them. Cancelled, both branches rebased onto master, and the
+  fresh runs went 16/16 green in about ten minutes each. The general point is
+  the one T44's neighbour already earned: **a Dependabot PR's green is a
+  statement about ITS base, and Dependabot does not rebase for you.** Reading
+  those two as "slow CI" and waiting would have burned the afternoon.
+
+  **A self-inflicted cost worth recording rather than quietly absorbing.** One
+  tick after writing "the gate is reading my working tree, so editing files now
+  would invalidate it", I checked out two other branches to rebase them — while
+  that gate was mid-E2E. The run was discarded, `node_modules` resynced with
+  `npm ci`, and the gate restarted from scratch. Nothing was corrupted and the
+  only loss was time, but the reasoning was already written down one screen
+  above the mistake. Knowing the rule and applying it are separate acts, and
+  this run keeps demonstrating that the first does not imply the second.
+
+  Gate on the rebased branch: `make verify` **exit 0**.
+
+- **Tick 43** — **T46 closed by measurement.** The question was whether T42's
+  tests, which SIMULATE a poisoned `GIT_DIR` by setting it themselves, actually
+  reproduce the condition git creates. Answered in a throwaway repo under the
+  scratchpad, never in this checkout, because the failure mode under test is
+  corruption of the repository.
+
+  **The control arm is the finding.** Same repo, same hook, same push, one
+  difference:
+
+      push from the main checkout   ->  GIT_DIR = <unset>
+      push from a linked worktree   ->  GIT_DIR = .../main/.git/worktrees/wt
+
+  So the asymmetry T42 was written for is real and is now measured rather than
+  cited. `GIT_WORK_TREE` stays unset in both, which is worth knowing: the leak is
+  `GIT_DIR` alone, and a fix that only guarded `GIT_WORK_TREE` would look
+  reasonable and do nothing.
+
+  **The control arm also nearly did not run.** The first attempt pushed `master`
+  into a repo whose `git init` had defaulted to `main`, so every control push
+  died on `src refspec master does not match any` and printed no hook output at
+  all. Read carelessly that is "the main checkout does not leak" — the right
+  conclusion from a test that never executed. It was caught only because the
+  ABSENCE of output looked wrong, not because anything failed loudly. A control
+  arm that silently does not run is the quietest false green there is.
+
+  **Why the simulation is faithful:** the scrub is `os.environ.pop(name, None)`,
+  which is value-independent. The real condition and the simulated one differ
+  only in who set the variable, and nothing downstream can tell. So the
+  simulated tests were testing the real thing all along — which is the answer
+  T46 asked for, and it was not knowable without running it.
+
+  **End to end, with `GIT_DIR` pointed at the THROWAWAY repo** so a failure could
+  not reach this one: `tests/unit/test_fixtures_do_not_leak_gitdir.py` 5 passed,
+  and this repo's HEAD byte-identical before and after.
+
+  **Mutation, because a guard nobody has watched fail is not done.** Replacing
+  the `pop` with `pass` — confirmed landed by SHA-256, not by assumption
+  (`933eb24d...` -> `05e61a2f...`) — produced:
+
+      AssertionError: the victim HEAD moved -- the scrub did not protect it
+      1 failed, 4 passed
+
+  The assertion names the actual corruption, not a proxy for it. Restored by
+  file copy rather than `git checkout --` (which would have reverted to HEAD and
+  eaten uncommitted work), and verified byte-identical by hash, with the suite
+  green again at 5 passed.
+
+  **T18's needs-list is now a test, not a promise.** Ticking T46 left T46 sitting
+  in that list minutes later — the FOURTH incident of an error the surrounding
+  parenthesis has been predicting about itself since it was written. Four of the
+  previous four were caught by a human or a reviewer re-deriving the list by
+  hand, which is the precise definition of §9's "a rule that should be a check":
+  prose asking the next author to remember something they have already forgotten
+  four times.
+
+  `tests/unit/test_plan_needs_list.py` now asserts the list is exactly the set of
+  open tasks. Deliberately a SET comparison — file order and reading order differ
+  (T11/T15 are transposed) and that carries no meaning, so an order-sensitive
+  assertion would fail on a CORRECT list, which is how guards get switched off.
+  Proven in both directions rather than assumed: leaving a ticked T46 in fails
+  with "T18 names ['T46'] as open, but they are ticked", and dropping an open T45
+  fails with "T18 omits open task(s) ['T45']". Plan restored by file copy and
+  verified byte-identical, suite green at 4 passed. There is also a guard on the
+  guard — if either regex stops matching, the file fails loudly instead of
+  passing vacuously on an empty set.
+
+  Measured with `git 2.50.1 (Apple Git-155)` — recorded because this is upstream
+  behaviour that could in principle change, and a claim about git with no version
+  attached is a claim about one machine on one day. Independently reproduced in
+  review, which found it slightly STRONGER than recorded: `GIT_COMMON_DIR` and
+  `GIT_INDEX_FILE` are unset in both cases too, so `GIT_DIR` really is the sole
+  leak.
+
+  **What this does NOT prove**, stated so the next reader does not over-claim it:
+  the pre-push hook was a synthetic three-line script, not `.githooks/pre-push`
+  running the real gate. What is established is that git exports `GIT_DIR` from
+  a worktree push and that the scrub removes it before collection. Whether the
+  full gate has some OTHER worktree-sensitive path is a different question, and
+  this experiment does not answer it.
+
+- **Tick 42** — **the Dependabot triage tick 41 recorded as "nothing to do".**
+  Owner asked for these directly, and two independent reviewers had already
+  flagged the false-zero, so this is the correction and the work in one place.
+  A decision for each of the eight, per §3a:
+
+      #266 platformdirs 4.11.0 -> 4.11.3   PROD   TAKE     merged 09e1a5ac
+      #271 packaging    26.2   -> 26.3     PROD   TAKE     merged bf7c1ecc
+      #272 coverage     7.15.2 -> 7.15.4   dev    TAKE     merged cbe51d10
+      #273 certifi      2026.6.17 -> .7.22 PROD   TAKE     awaiting checks
+      #268 axe-core/playwright 4.12 -> .13 dev    TAKE     awaiting checks
+      #269 ruff         0.16.2 -> 0.16.3   dev    TAKE + companion fix
+      #267 stryker/core        9 -> 10     dev    TAKE as a PAIR
+      #270 stryker/vitest-runner 9 -> 10   dev    CLOSED, superseded by #267
+
+  **Three needed more than a merge button, and each is a different lesson.**
+
+  **#269 `ruff` failed for the right reason.** `test_the_ruff_pin_agrees_across_
+  requirements_dev_and_both_ci_jobs` went red because Dependabot moved
+  `requirements-dev.txt` and `ci.yml` pins ruff TWICE more (the lint job and the
+  security-lint job). That guard exists precisely so the linter enforcing the
+  tree cannot silently differ from the one the developer runs, and it worked.
+  Fixed by moving both CI pins, then verified rather than assumed — a linter
+  bump ships new rules, so `ruff 0.16.3` was installed locally and run over the
+  tree: `All checks passed!`, pin suite 6 passed.
+
+  **#267 and #270 could never have merged separately, and no amount of
+  re-running would have shown why.** `@stryker-mutator/vitest-runner@9.6.1`
+  declares an EXACT peer dependency on `core@9.6.1`, so bumping either half
+  alone dies in `npm ci` with ERESOLVE — which is exactly how both failed. Taken
+  together in one commit on #267; #270 closed as **superseded, not rejected**,
+  with the reasoning in a comment so it does not read as a silent dismissal.
+  Stryker 10 drops Node 20, which is the §3a "drops a supported runtime" test:
+  checked, every `node-version` in `.github/workflows` is `'24'`, and mutation
+  testing never runs in the merge path. Verified after applying — `npm ls --all`
+  exit 0, both packages read 10.0.0 **from disk**, 202 vitest passing, and
+  `stryker run --dryRunOnly` completing on 194 tests.
+
+  **#273 `certifi` is the one that made the false zero matter.** It is the CA
+  trust store `requirements.txt` pins, `Dockerfile` installs and the runtime
+  image carries, so it is the single bump in the set that reaches
+  `ghcr.io/bassings/couchpotatoserver` and validates every outbound TLS call to
+  indexers, Jackett and TMDB. A `certifi` release is normally a distrust or an
+  addition to that store. Tick 41 spent a page on six advisories that cannot
+  execute in production and recorded this one as absent.
+
+  **What the two reviews changed in the record itself**, all corrected above
+  rather than defended: the false `0 open PRs` row (H1); the reachability grep,
+  which was a BRE whose literal pipes made it match nothing in any tree — a §11
+  vacuous guard cited as the load-bearing evidence for holding six HIGHs (H2);
+  a revisit trigger naming `puppeteer-core` when that trigger has ALREADY fired
+  and the real wall is `@lhci/cli@0.15.1` hard-pinning `lighthouse@12.6.1` (H3);
+  T45's premise, wrong in three ways — `npm audit` runs nowhere either,
+  `dependency-review` is ecosystem-agnostic rather than "the JS half", and Trivy
+  already scans the runtime Python set (H4); T36's tick claiming "the last four
+  commits added no code" when two of them changed `extractor.py` (M2); T18's
+  needs-list stale in BOTH directions for the third time, introduced by the
+  commit that ticked T36 and added T45 (M1); and T44's advice to hoist the
+  redundant `realpath` because it "costs nothing", when `isSubFolder` has other
+  callers passing an unresolved base and the edit would weaken symlink
+  containment at two of them (L1).
+
+  Two new tasks came out of the reviews rather than the bumps: **T46**, because
+  T42's fix has still never run under the worktree push it was written for, and
+  **T47**, because `lighthouserc.js` uploads rendered screenshots of the user's
+  library and settings paths to a public Google endpoint — a bigger privacy risk
+  than the advisory tick 41 was busy holding, sitting one typed command away.
+
+  **Three corrections from the adversarial pass, which found things the two
+  rubric reviews did not.**
+
+  1. **I broke the local gate while validating #269, and the breakage blocked
+     every branch in the checkout.** To check that ruff 0.16.3 was clean I
+     installed it into the shared `.venv`. But `scripts/verify.sh` fails at
+     preflight when the installed ruff differs from the `requirements-dev.txt`
+     pin, and master still pinned 0.16.2 — so `make verify` exited 2 before lint
+     or any test ran, and since `.githooks/pre-push` runs `verify.sh`, nothing
+     could be pushed at all. Measured, not theorised: the gate run launched for
+     this very branch came back `exit 2` on exactly that message.
+
+     The general shape is worth more than the incident. **Validating a bump by
+     installing it into the shared environment makes that environment disagree
+     with every branch that has not taken the bump yet** — including the branch
+     you are trying to push. The pin-agreement guard did its job by refusing;
+     the mistake was mine.
+
+     **This paragraph originally ended "Resolved by landing #269", and review
+     caught that #269 had not landed.** The plan was to land it; the sentence
+     described the plan as an accomplished fact. That is the same defect this
+     entire entry exists to correct — a state written into a durable file in the
+     past tense, where the query would have returned the opposite — committed
+     inside the correction, one screen below the new rule ("date every §3a
+     measurement") that forbids it. Three occurrences of one habit in a single
+     tick is not carelessness about a detail; it is the habit itself.
+
+     The honest form: the resolution path is to land #269, so the environment
+     and the repo converge rather than flip-flopping, and until it lands the
+     gate stays red and this branch cannot be pushed without `--no-verify`.
+
+     **Closed 2026-08-19, and dated this time.** #269 merged as `c2af7554`.
+     After rebasing, `requirements-dev.txt` pins `ruff==0.16.3`,
+     `.venv/bin/ruff --version` reports 0.16.3, and `scripts/verify.sh` gets
+     past preflight into "1/7 ruff lint — All checks passed!". The environment
+     and the repo agree, and nothing was downgraded to make that true.
+
+  2. **#269's CI green was measured against a stale base.** `db-ruff` forked at
+     `0a7b197e`, which predates #265 — so the tree its checks ran over did not
+     contain the T36 extraction fix, and a two-dot diff against master rendered
+     T36 as *removed*, which is a diff artefact rather than a reversion but
+     would badly mislead a reviewer. Rebased onto master before merging.
+     Generalising: **a Dependabot PR's green is a statement about its base**, and
+     Dependabot does not rebase for you.
+
+  3. **The Stryker engine floor cited above is the wrong floor.** The record says
+     Stryker 10 requires `node >=22`, which is Stryker's own `engines`. The
+     lockfile the bump actually produces drags in Babel 8, and **76 packages**
+     in it declare `"node": "^22.18.0 || >=24.11.0"`. The merge stays safe —
+     `setup-node` with `'24'` resolves to the latest 24.x — but the reasoning as
+     written would not have caught a pin to `24.0.0`, and it understates what the
+     bump imposes. Pinning `node-version` more precisely than `'24'` is the
+     follow-up.
+
+  **What the adversarial pass CONFIRMED**, so it is not re-litigated: a clean
+  venv built from master's pins gives `pip check` "No broken requirements found"
+  with all three merged bumps present; certifi's path to the runtime image lands
+  on exactly the three lines cited; mutation testing is genuinely outside the
+  merge path (`mutation.yml` is `schedule` + `workflow_dispatch` only, and is not
+  in the required checks); and the ruff pin guard is real, not vacuous — three
+  distinct mutations (each of the two `ci.yml` pins, plus unquoting one) each
+  produced a failure on the assertion that names the condition.
+
+  Also worth recording because it nearly produced a false green: the adversarial
+  pass was ASKED to run `pip check` in `.venv`, and refused, because that venv
+  still held the pre-bump versions. It would have returned "No broken
+  requirements found" while proving nothing about the three bumps — a real
+  command, a green result, unrelated to the claim. It built a clean venv from
+  master's pins instead. That is the incidentally-passing shape, caught in the
+  instruction I wrote rather than in the code.
+
+  The through-line, and it is the same failure in three costumes: **depth
+  applied to the interesting risk while step one is recorded from memory.**
+
+- **Tick 41** — **T36 merged (#265, `b27bd49f`), closing the last of the four
+  tasks this run opened.** Sixteen checks green, head confirmed equal to local
+  immediately before merging, and the fix verified ON MASTER afterwards rather
+  than from the merge report: the guard constants are present in
+  `extractor.py`, and `tests/unit/test_extractor.py` runs 54 passing.
+
+  **Round 15 arrived after CI went green and was correctly not a fix.** A
+  `claude-review` nit: `isSubFolder` calls `os.path.realpath()` on BOTH
+  arguments per entry, including on `extr_real_path` which `extractArchive` has
+  already resolved. Recorded on T44 as a second amplification site and ranked
+  below the read loop — CPU and syscalls, not disk. The reviewer explicitly
+  asked for a record rather than a change, and got one. The interesting half is
+  the pattern, not the cost: `ENAMETOOLONG -> EISDIR -> EILSEQ -> EINVAL` were
+  each rediscovered one at a time across four rounds of this PR because the
+  first was fixed as an instance instead of a category, and this is that same
+  asymmetry on a third surface.
+
+  **Correction to my own reconciliation, before it becomes folklore.** Earlier
+  in this tick I recorded "T42's box is wrong, it still reads `pr-open #264`".
+  That was true of the file I was looking at and the wrong conclusion. The tick
+  existed in a local commit (`ebc1e15b`, rebased to `600f394c`) that had **never
+  been pushed**; the branch I read it from predated that commit. So the box was
+  ticked and the correction was published nowhere — `git show
+  origin/master:specs/REMEDIATION-2026-08.md` still read `[ ] pr-open #264`.
+  The drift was real as PUBLISHED and imaginary as WORK, which is a different
+  defect with a different fix: the failure was an unpushed commit, not a missed
+  update.
+
+  **T42 still carries a residual gap that ticking its box does not close.** The
+  scrub is proven against a *simulated* poisoned `GIT_DIR`. The real condition —
+  a push from a linked worktree, where git exports `GIT_DIR` into the hook
+  itself — has not been exercised since the fix landed, because every worktree
+  was removed before it could be. That needs a throwaway clone, not this
+  checkout: the failure mode under test IS corruption of the real repository.
+
+  **Dependency triage (the owner's ask), round 2.** T33 was round 1 and is
+  merged; this is new work. Measured, not relayed:
+
+      gh dependabot alerts (open)         1   extract-zip, HIGH, first_patched: null
+      gh pr list --author app/dependabot  8   ALL EIGHT MISSED — see the correction below
+      npm audit                           7 high, 0 critical, 0 moderate
+      pip-audit                           NOT RUN — not installed in .venv
+
+  **CORRECTION, and it is the most important line in this entry.** The row above
+  originally read `0 no open PRs`. That was false, and it was false about the
+  only dependency in the whole exercise with a path to production. Eight
+  Dependabot PRs (#266-#273) were open, created `02:13:15Z`-`02:13:39Z`; the
+  commit recording zero was made at `02:24:43Z`, eleven minutes later. Five were
+  pip, including **#273 `certifi` 2026.6.17 -> 2026.7.22** — the CA trust store
+  that `requirements.txt:19` pins, `Dockerfile:27` installs and `Dockerfile:69`
+  copies into the runtime image, and therefore the store the production
+  container validates every outbound TLS call against.
+
+  **The failure is not "I forgot to check".** The query ran and returned empty,
+  and the empty result was written into a durable file as an undated fact. A
+  measurement is only evidence at the instant it is taken; recorded without a
+  timestamp it becomes a standing claim, and the next session reads the claim,
+  not the instant. Two rules follow, and they are cheap:
+
+  - **Date every §3a measurement in the record**, so a reader can see whether it
+    predates the thing it denies.
+  - **Take step 1 last, not first.** Advisories move on GitHub's schedule; a
+    triage that opens with the PR list and closes an hour later has stale
+    evidence at the top of the entry and fresh evidence at the bottom.
+
+  There is a real irony worth keeping: this entry spends a page reasoning
+  carefully about six HIGH advisories that **cannot execute in production** (the
+  npm tree is dev-only test tooling — `.dockerignore:80` excludes
+  `node_modules/`, the image installs no node runtime, and `package.json`
+  declares zero runtime dependencies), while step 1 of the checklist silently
+  dropped the one bump that reaches the shipped artefact. Depth on the
+  interesting risk is not a substitute for the boring first step.
+
+  **Six of the seven npm highs are one root cause.** `extract-zip` <= 2.0.1 has
+  no patched release at all, and the chain above it — `@puppeteer/browsers`,
+  `puppeteer-core`, `lighthouse`, `@lhci/utils`, `@lhci/cli` — is flagged only
+  for carrying it. Decision: **HOLD**, on evidence rather than on a feeling that
+  dev dependencies do not matter.
+
+  1. **The offered remedy is a downgrade.** `npm audit` reports
+     `fixAvailable: @lhci/cli@0.12.0` against an installed `0.15.1`. Taking it
+     walks Lighthouse CI back three minor versions to silence a scanner.
+  2. **The real upstream fix is pinned away.** `@puppeteer/browsers@3.2.1`
+     drops `extract-zip` outright (deps are now `yargs` + `modern-tar`), so a
+     fix genuinely exists — but `puppeteer-core@24.37.3` depends on
+     `"@puppeteer/browsers": "2.12.1"`, an **exact** pin, not a range. An
+     override to 3.x hands `puppeteer-core` an API it does not expect, to fix a
+     path it does not execute.
+
+  **Reachability — the conclusion holds, the evidence originally cited did not.**
+  This was first recorded as `grep -rln "lhci|lighthouse|test:lighthouse"
+  .github/ Makefile scripts/` returning nothing. That command is a **BRE**: the
+  pipes are literal, so it searches for the one string
+  `lhci|lighthouse|test:lighthouse`, which exists in no repository anywhere. It
+  returns empty for every possible tree, including a tree with Lighthouse wired
+  into CI on every job. It was cited as the load-bearing justification for
+  holding six HIGH advisories, and it is a §11 vacuous guard — an assertion that
+  cannot fail — reached in the course of arguing carefully about everything else.
+
+  Re-run correctly as `grep -rlnE`, the answer is genuinely empty: Lighthouse
+  appears in no workflow, no `make` target and no script, only in
+  `package.json:15,17` and `lighthouserc.js`. So the conclusion survived on luck,
+  which is exactly the property that makes a vacuous guard dangerous — it is
+  indistinguishable from a real one until the day the answer should have changed.
+
+  Two corrections to the surrounding prose while it is being fixed:
+
+  - "only under a manual `npm run test:lighthouse`" understated the entry
+    points: `package.json:17` `test:all` chains it too.
+  - "over a ZIP fetched from Google's CDN" describes a path `lhci autorun` does
+    not take. `extract-zip` is reached only from `@puppeteer/browsers`'s browser
+    **download** path; `@lhci/cli` launches a locally installed Chrome via
+    `chrome-launcher`. The real exposure is LOWER than recorded — which is still
+    not what was measured, and a hold argued from the wrong mechanism is not
+    improved by the mechanism turning out to be favourable.
+
+  **Revisit condition — the first version of this named the wrong package, and
+  its trigger had ALREADY fired.** It read "`puppeteer-core` raising its
+  `@puppeteer/browsers` pin to 3.x". Measured: `puppeteer-core@25.8.0` is
+  published today and already depends on `@puppeteer/browsers@3.2.1`, the clean
+  one. A future session checking that trigger literally would conclude a TAKE is
+  available, bump `puppeteer-core`, and find the advisory count unmoved. A
+  revisit condition that is already true is worse than none: it converts the
+  next reader's correct instinct into wasted work.
+
+  The actual wall is two links further up and was never named:
+
+      npm view @lhci/cli dist-tags.latest          -> 0.15.1  (newest release)
+      npm view @lhci/cli@0.15.1 deps.lighthouse    -> 12.6.1  (EXACT pin)
+      npm view lighthouse@12.6.1 deps.puppeteer-core -> ^24.10.0
+      npm view lighthouse version                  -> 13.4.1  (clean, unreachable)
+
+  So the correct trigger is: **`@lhci/cli` publishes a release pinning
+  `lighthouse >= 13.4.0`.** The other trigger stands unchanged: Lighthouse being
+  wired into CI or the gate, which changes the reachability half of the argument.
+
+  **A remedy this repo already uses twelve times was neither taken nor
+  rejected — it simply was not considered.** `package.json` carries an
+  `overrides` block (`tmp`, `vite`, `js-yaml`, `qs`, `ws`, `undici`, ...), and
+  `specs/CI-002-dependabot-unblock.md` records `js-yaml` being overridden
+  specifically to unblock `@lhci/utils`. An `overrides: {"lighthouse": "13.4.1"}`
+  is therefore the obvious candidate here. It may well be the wrong call — 12 to
+  13 across a programmatic API that `@lhci/utils` calls directly — but "rejected
+  with evidence" and "never considered" read identically in a record, and only
+  one of them is triage.
+
+  **The seventh is a genuine TAKE:** `nanoid` < 3.3.18, reached via
+  `vitest -> vite -> postcss`, with a real transitive patch and no
+  `package.json` change implied. Applied in this commit — `package.json`
+  byte-identical, `npm ls --all` exit 0, 202 JS unit tests passing, `npm audit`
+  7 high -> 6.
+
+  **Applying it turned up two things worth more than the bump.**
+
+  1. **`npm audit fix` is not surgical, and its extra work bought nothing.** The
+     plain invocation moved **20** package entries, not one: `puppeteer-core`
+     24.37.3 -> 24.43.1, `@puppeteer/browsers` 2.12.1 -> 2.13.2, the whole
+     `bare-*` family, dropping `bare-os` and adding `teex`. Measured after:
+     `extract-zip@2.0.1` **still present**, and `@puppeteer/browsers@2.13.2`
+     **still depends on `extract-zip: ^2.0.1`** — so the advisory count fell
+     7 -> 6 purely from `nanoid`, and the entire puppeteer chain moved for
+     nothing. It was reverted and re-applied as `npm update nanoid`, giving a
+     one-package diff. Taking that churn would have silently contradicted the
+     HOLD recorded three paragraphs above, in the same commit, under a message
+     naming only `nanoid`.
+
+  2. **The lockfile and the installed tree disagreed, and npm's own bookkeeping
+     took the lockfile's side.** After the bump, `package-lock.json` said
+     `nanoid 3.3.18` and `node_modules/.package-lock.json` — npm's hidden
+     record of what it believes is installed — ALSO said 3.3.18, while
+     `node_modules/nanoid/package.json` on disk still said **3.3.17**. Two
+     successive `npm install` runs did not reconcile it; only `rm -rf
+     node_modules/nanoid && npm install` did. Anyone verifying the fix by
+     reading a lockfile, or by trusting `npm ls`, would have recorded a patch
+     that was not on disk.
+
+     This is §11's "correct in source, absent from the build" with the twist
+     that the build system's own metadata asserts the source version. The
+     general rule it earns: **for a dependency fix, verify the version in
+     `node_modules/<pkg>/package.json`, not in any lockfile.** Both lockfiles
+     are claims; only the installed file is the artefact that runs.
+
+     **It happened a SECOND time in the same session, which is what turns this
+     from an anecdote into a rule.** While validating the Stryker pair, that
+     install silently reverted `node_modules/nanoid` to 3.3.17 — so review found
+     the checkout disagreeing with its own lockfile again, and the recorded
+     "7 high -> 6" did not reproduce locally, in the very tick that derived the
+     lesson. The deliverable was never wrong: the lockfile integrity hash
+     matches the registry byte-for-byte, so `npm ci` in CI always installed the
+     patched version. It is the local tree that drifts, and it drifts whenever
+     an unrelated install touches the same tree.
+
+     So the rule gains a second half: **`npm install` reconciles unreliably;
+     `npm ci` is what actually makes the tree match the lockfile.** Verified —
+     after `npm ci` the three packages read 3.3.18, 10.0.0 and 10.0.0 from disk.
+     A per-package `rm -rf` plus `npm install` also works but only for the
+     package you thought to name, which is precisely the trap: the drift is
+     never in the package you are looking at.
+
+  **`pip-audit` is absent, so the Python half of §3a did not actually run.**
+  Recorded as a gap rather than reported as a clean result — an unrun scanner
+  and a clean scanner are indistinguishable in a summary, which is why this
+  line exists. Wiring it into `make verify` is the §9 answer and is now T45.
 
 - **Tick 40** — **T35 done: SonarQube scanned against merged master. Nothing resolved, nothing dismissed.**
   `make sonar` exit 0 against `09a3d153`, so one scan covers both #261 and #262.
