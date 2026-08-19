@@ -68,6 +68,7 @@ config = [{
                 },
                 {
                     'name': 'apikey',
+                    'type': 'password',
                     'default': '',
                     'advanced': True,
                     'description': 'API Key for sending to all devices, or group'

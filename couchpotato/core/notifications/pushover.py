@@ -57,10 +57,12 @@ config = [{
                 },
                 {
                     'name': 'user_key',
+                    'type': 'password',
                     'description': 'Register on pushover.net to get one.'
                 },
                 {
                     'name': 'api_token',
+                    'type': 'password',
                     'description': '<a href="https://pushover.net/apps/clone/couchpotato" target="_blank">Register on pushover.net</a> to get one.',
                     'advanced': True,
                     'default': 'YkxHMYDZp285L265L3IwH3LmzkTaCy',

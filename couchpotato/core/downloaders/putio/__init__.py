@@ -24,6 +24,7 @@ config = [{
                 },
                 {
                     'name': 'oauth_token',
+                    'type': 'password',
                     'label': 'oauth_token',
                     'description': 'This is the OAUTH_TOKEN from your putio API',
                     'advanced': True,

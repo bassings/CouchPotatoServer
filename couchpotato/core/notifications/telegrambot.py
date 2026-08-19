@@ -71,6 +71,7 @@ config = [{
                 },
                 {
                     'name': 'bot_token',
+                    'type': 'password',
                     'label': 'Bot Token',
                     'description': 'Get one from <a href="http://telegram.me/BotFather" target="_blank">@BotFather</a> on Telegram.',
                 },

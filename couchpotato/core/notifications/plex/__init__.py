@@ -52,6 +52,7 @@ config = [{
                 },
                 {
                     'name': 'auth_token',
+                    'type': 'password',
                     'label': 'Auth Token',
                     'default': '',
                     'advanced': True,
