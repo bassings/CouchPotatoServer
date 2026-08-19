@@ -788,7 +788,19 @@
                     Both fixes were local-state fixes, so the second inherited
                     the first's defect. `passwordStored` is set only inside the
                     save's own `.then`, which `saveSetting` cannot reach for a
-                    refused save, and `skipStep` clears it. Typing sets nothing.
+                    refused save. Typing sets nothing, and `skipStep`
+                    deliberately does NOT clear it -- see its own comment: Skip
+                    makes no server call, so retracting the flag would claim
+                    "Disabled" while the server still holds the password and
+                    still enforces login. That was a third version of this same
+                    bug, pointing the other way.
+
+                    3. A draft of THIS comment still said "`skipStep` clears
+                       it" after that clear had been removed, contradicting the
+                       code 300 lines below. Recorded because a stale claim
+                       about stored state is precisely what this line keeps
+                       getting wrong, and a comment is no more exempt than the
+                       summary it describes.
 
                     The remaining honest limit: this still reflects what THIS
                     session saved, not what the server currently holds. It
