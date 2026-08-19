@@ -573,6 +573,30 @@ class Settings:
             self.log.warning('Option "%s.%s" isn\'t writable', section, option)
             return {'success': False}
 
+        # `getValues()` returns a password-typed option as a run of asterisks,
+        # and the settings form posts field values back. Without this, saving
+        # the DISPLAYED mask overwrites the real credential and reports
+        # success -- the user then has to re-issue it at the provider, which
+        # for a tracker passkey can mean contacting staff. Irreplaceable-class
+        # loss caused by opening a page and touching a field.
+        #
+        # The client happens not to trigger it today (the password input binds
+        # `@change`, not `@input`, so an untouched field posts nothing), but
+        # that is an accident of which events a browser fires -- a password
+        # manager autofilling the field dispatches `change`. The guard belongs
+        # here, where it does not depend on that.
+        #
+        # Known limit, accepted deliberately: a credential that genuinely
+        # contains an asterisk cannot be saved. None of the providers here
+        # issue such values, and the alternative -- a per-field nonce round
+        # trip -- is a far larger change for a case that does not arise.
+        if value and '*' in str(value) and self.getType(section, option) == 'password':
+            self.log.warning(
+                'Refused to save "%s.%s": the value looks like the displayed '
+                'mask rather than a credential. Clear the field and paste the '
+                'real value to change it.', section, option)
+            return {'success': False}
+
         from couchpotato.environment import Env
         soft_chroot = Env.get('softchroot')
 

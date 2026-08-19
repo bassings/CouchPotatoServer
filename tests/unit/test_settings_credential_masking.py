@@ -39,6 +39,25 @@ from couchpotato.core.settings import Settings
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _isolate_settings_class_state():
+    """`Settings.types` and `Settings.options` are CLASS attributes, so every
+    registration in this file mutates state shared with every other test in the
+    process. T31's own docstring warns about exactly this, and this file
+    registers 23 options.
+
+    Nothing fails today only because the names happen not to collide with
+    another suite's. That is luck, not isolation -- so restore the class state
+    around each test rather than relying on it."""
+    types_before = dict(Settings.types)
+    options_before = dict(Settings.options)
+    yield
+    Settings.types.clear()
+    Settings.types.update(types_before)
+    Settings.options.clear()
+    Settings.options.update(options_before)
+
+
 # (module path, section, option) for every credential this task covers.
 # Read from the live plugin modules below, never hand-copied values.
 CREDENTIALS = [
@@ -98,15 +117,23 @@ def _find_option(module_path, section, option):
     config = getattr(mod, 'config', None)
     assert config, f'{module_path} exposes no `config` to read'
     for entry in config:
+        # `loader.py` registers under the top-level ENTRY name, not the group
+        # name, so that is what `section` must match. An earlier version had a
+        # dead `if ... pass` here that filtered nothing, which review flagged:
+        # it returned the first option with that name in ANY group. Harmless
+        # while every lookup happens to be unique, and a trap the moment a
+        # module declares the same option name twice -- `_core.py` has two
+        # groups and is exactly where a second `api_key` would appear.
+        if entry.get('name') != section:
+            continue
         for group in entry.get('groups', []):
-            if group.get('name') != section and entry.get('name') != section:
-                # `name` lives on the group for most plugins, on the entry for
-                # a few; accept either rather than encoding one convention.
-                pass
             for opt in group.get('options', []):
                 if opt.get('name') == option:
                     return opt
-    raise AssertionError(f'no option {option!r} found in {module_path}')
+    raise AssertionError(
+        f'no option {section}.{option} in {module_path} -- if the plugin was '
+        f'renamed or its section changed, fix the CREDENTIALS list WITH it'
+    )
 
 
 class TestEveryCredentialDeclaresItsType:
@@ -164,6 +191,106 @@ class TestMaskingIsDisplayOnly:
         assert settings.get(option, section) == 'SECRET_VALUE_XYZ', (
             f'{section}.{option} is masked for the plugin too -- the '
             f'integration would break, which is worse than the disclosure'
+        )
+
+
+class TestSavingTheMaskBackDoesNotDestroyTheCredential:
+    """The failure that would make this whole change NEGATIVE value.
+
+    Masking is display-only on the read side, which the tests above pin. But
+    the settings form posts field values back, and `saveView` had no idea the
+    string it was handed was a mask. Driven end to end before this guard:
+
+        on disk before   'xoxb-REAL-SLACK-TOKEN-8842'
+        UI displays      '**************************'
+        saveView(mask)   -> {'success': True}
+        on disk AFTER    '**************************'
+
+    The credential is destroyed and the save reports success. On this
+    project's loss ranking a stored credential is irreplaceable-class: the
+    user must go and re-issue it at the provider, and for a tracker passkey
+    that can mean contacting staff.
+
+    **It was already reachable before this branch** -- 22 options were
+    password-typed -- so this is not a defect introduced here. What the branch
+    does is widen the blast radius to 37, while the only thing preventing it
+    was that `field_types.html` binds `@change` rather than `@input`, so an
+    untouched field posts nothing. That is a client-side accident, not a
+    guarantee: a password manager autofilling those inputs dispatches
+    `change`, and nothing server-side would object.
+
+    So the guard belongs on the server, where it does not depend on which
+    events a browser chooses to fire."""
+
+    def _settings(self, tmp_path, value):
+        cfg = tmp_path / 'config.ini'
+        cfg.write_text(f'[slack]\ntoken = {value}\n', encoding='utf-8')
+        s = Settings()
+        s.setFile(str(cfg))
+        s.registerDefaults('slack', {'token': {'default': '', 'type': 'password'}},
+                           save=False)
+        return s
+
+    def test_posting_the_mask_back_is_refused(self, tmp_path):
+        settings = self._settings(tmp_path, 'xoxb-REAL-TOKEN-8842')
+        masked = settings.getValues()['slack']['token']
+        assert set(masked) == {'*'}, 'precondition: the UI is showing a mask'
+
+        settings.saveView(section='slack', name='token', value=masked)
+
+        assert settings.get('token', 'slack') == 'xoxb-REAL-TOKEN-8842', (
+            'saving the displayed mask overwrote the real credential'
+        )
+
+    def test_a_partially_edited_mask_is_also_refused(self, tmp_path):
+        """The operator clicks in and appends rather than clearing first.
+        Nothing strips stars anywhere, so `****xyz` would be stored verbatim
+        and the credential is still gone."""
+        settings = self._settings(tmp_path, 'xoxb-REAL-TOKEN-8842')
+
+        settings.saveView(section='slack', name='token', value='*****xyz')
+
+        assert settings.get('token', 'slack') == 'xoxb-REAL-TOKEN-8842'
+
+    def test_a_genuine_new_credential_still_saves(self, tmp_path):
+        """The guard must not become a lockout -- rotating a credential is the
+        whole reason the field is writable. Fails in the other direction if the
+        refusal is too broad."""
+        settings = self._settings(tmp_path, 'xoxb-OLD-TOKEN')
+
+        settings.saveView(section='slack', name='token', value='xoxb-NEW-TOKEN')
+
+        assert settings.get('token', 'slack') == 'xoxb-NEW-TOKEN'
+
+    def test_clearing_a_credential_still_works(self, tmp_path):
+        """Emptying the field is how a user removes an integration. An empty
+        string is not a mask and must go through."""
+        settings = self._settings(tmp_path, 'xoxb-OLD-TOKEN')
+
+        settings.saveView(section='slack', name='token', value='')
+
+        assert settings.get('token', 'slack') == ''
+
+    def test_a_credential_containing_an_asterisk_is_the_accepted_casualty(self, tmp_path):
+        """Pinned deliberately rather than left implicit: the guard refuses any
+        password value CONTAINING an asterisk, so a credential that genuinely
+        has one cannot be saved.
+
+        That is broader than strictly necessary and it is the deliberate trade.
+        Matching the mask exactly would need the server to know the current
+        length, and would still miss the partial-edit case above; a per-field
+        nonce round trip is a far larger change. None of the providers here
+        (Slack, Discord, Pushover, Trakt, the trackers) issue values with
+        asterisks -- they are alphanumeric with `-_` or URL-safe.
+
+        Recorded so the trade is visible in the suite rather than buried in a
+        comment, and so it fails loudly the day someone needs it."""
+        settings = self._settings(tmp_path, 'xoxb-OLD-TOKEN')
+
+        settings.saveView(section='slack', name='token', value='****')
+
+        assert settings.get('token', 'slack') == 'xoxb-OLD-TOKEN', (
+            'documenting the known limit, not endorsing it'
         )
 
 
