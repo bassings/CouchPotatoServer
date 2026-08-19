@@ -213,10 +213,18 @@ test.describe('Settings: a password field cannot be half-edited', () => {
     const downloaders = page.getByRole('tab', { name: /downloader/i });
     await downloaders.click();
     await expect(downloaders).toHaveAttribute('aria-selected', 'true');
-    const field = page.locator('input[type="password"]').first();
-    await expect(field, 'no password input rendered on the downloaders tab').toBeVisible({
-      timeout: 5000,
-    });
+    // `.first()` on all password inputs was fragile: a disabled downloader's
+    // group is collapsed by provider_card.html, so the first match can be a
+    // HIDDEN input and the visibility assertion then fails for a reason that
+    // has nothing to do with what is under test. It passes today (CI green,
+    // 5m40s) -- this is hardening, not a repair.
+    const field = page.locator('input[type="password"]:visible').first();
+    await expect(
+      field,
+      'no VISIBLE password input on the downloaders tab -- if the seeded ' +
+        'config changed, point this at a group that is enabled rather than ' +
+        'loosening the selector',
+    ).toBeVisible({ timeout: 5000 });
     return field;
   }
 

@@ -2239,14 +2239,42 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `+`->`-`, swapping one errno member for another (which is exactly what T36
       did, sixteen times).
 
-      **Fix, and prefer the second:**
+      **The obvious remedy is WRONG, and this task originally recorded it.**
+      `PYTHONDONTWRITEBYTECODE=1` blocks the WRITE, not the READ, so it does
+      nothing about an existing stale `.pyc`. Measured with mtime and size
+      forced identical:
 
-          find . -name __pycache__ -type d -exec rm -rf {} +   # clean up after
-          PYTHONDONTWRITEBYTECODE=1                            # never create it
+          no env var                 -> SEEN: ro   (stale; disk says rw)
+          PYTHONDONTWRITEBYTECODE=1  -> SEEN: ro   (STILL STALE)
+          PYTHONPYCACHEPREFIX=fresh  -> SEEN: rw   (correct)
+          __pycache__ removed        -> SEEN: rw   (correct)
 
-      The env var is better because it prevents the stale cache existing rather
-      than removing it afterwards, so it cannot be forgotten halfway through a
-      cycle — which is when it would bite.
+      It is worse than useless in one case: by preventing the mutant's bytecode
+      being written it PRESERVES the pre-mutation `.pyc`, making the dangerous
+      false GREEN more likely, not less.
+
+      **Use `PYTHONPYCACHEPREFIX=$(mktemp -d)`.** Guaranteed cold, deletes
+      nothing in the working tree (which matters given this project's data-risk
+      stance), and keeps caching within the run. Cost measured at ~0.6s over
+      1437 modules, which is cheap enough that arguing to keep the warm cache is
+      not worth the words.
+
+      **The dangerous half is easier to trigger than the incident that found
+      it.** The false RED needs the RESTORE to land in the same second. The
+      false GREEN needs the MUTATION to land in the same second as the preceding
+      compile — which is the immediately preceding step of every mutation run.
+      So an agent following rule 10 on a fast machine is MORE likely to conclude
+      "this guard is vacuous, delete it" than to hit the loud failure.
+
+      **`pytest` replicates the bug in its own assertion rewriter**
+      (`_pytest/assertion/rewrite.py` writes and validates on mtime+size), so
+      mutating a TEST file carries the identical trap. And the E2E servers are
+      Python processes, so this reaches the Playwright layer too.
+
+      **No detector is possible.** In timestamp mode the `.pyc` carries no
+      content hash, so nothing can compare it against the source it claims to
+      represent. Anything proposed as a "stale pyc lint" cannot exist. The
+      answer is to eliminate the condition, not to detect it.
 
       **This wants promoting into `CLAUDE.md` rule 10 itself**, not just
       recorded here: every mutation claim made in this plan predates the

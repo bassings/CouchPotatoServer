@@ -606,8 +606,19 @@ class Settings:
         # set -- and the instance stayed public. A credential-protecting change
         # would have created an unauthenticated server.
         #
-        # Remaining casualty, now genuinely negligible: a credential whose
-        # value is asterisks and nothing else.
+        # Narrowed once more after review: matching "all asterisks" RESERVED a
+        # valid credential value, and the field it hurts most is `core.password`
+        # -- combined with the wizard discarding the response (T51), a user
+        # choosing `****` would be told authentication was on while the server
+        # stayed public. Reserving a value is the wrong shape when the failure
+        # mode is silent.
+        #
+        # So compare against the mask that WOULD be rendered for the value
+        # currently stored: same length, all asterisks, and something actually
+        # stored. A fresh `****` password saves fine. The only residue is
+        # changing an existing N-character credential to exactly N asterisks,
+        # which is as close to nothing as this can get without a round-trip
+        # token.
         #
         # Scope, stated so it is not mistaken for coverage: `getType` returns
         # 'unicode' for an option nobody registered, so this guard does NOT
@@ -616,8 +627,9 @@ class Settings:
         # from the settings page, which only renders registered options, but it
         # is reachable through the API. Deliberately not widened here: an
         # orphan's value belongs to a plugin that no longer exists.
-        if (value and set(str(value)) == {'*'}
-                and self.getType(section, option) == 'password'):
+        if (value and self.getType(section, option) == 'password'
+                and str(value) == len(str(self.get(option, section) or '')) * '*'
+                and self.get(option, section)):
             self.log.warning(
                 'Refused to save "%s.%s": the value is the displayed mask, not '
                 'a credential. Clear the field and paste the real value to '

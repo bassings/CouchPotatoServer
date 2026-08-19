@@ -341,21 +341,47 @@ class TestSavingTheMaskBackDoesNotDestroyTheCredential:
 
         assert settings.get('password', 'sabnzbd') == 'my*pass'
 
-    def test_a_credential_of_only_asterisks_is_the_remaining_casualty(self, tmp_path):
-        """The whole remaining casualty, now that the guard matches the mask's
-        exact shape rather than merely containing an asterisk: a credential
-        whose value is asterisks and nothing else cannot be saved.
+    def test_a_fresh_all_asterisk_credential_saves(self, tmp_path):
+        """The guard must not RESERVE a valid credential value.
 
-        This docstring previously described the BROAD rule and survived the
-        narrowing -- review caught it. Stale text in a suite that polices
-        staleness is worth fixing loudly rather than quietly."""
-        settings = self._settings(tmp_path, 'xoxb-OLD-TOKEN')
+        An earlier version refused anything that was entirely asterisks, which
+        reserved `****` as a sentinel. Review ranked that P1 and was right: the
+        field it hurts most is `core.password`, and combined with the wizard
+        discarding the save response (T51) a user choosing that password would
+        be told authentication was on while the server stayed public. A silent
+        failure mode is exactly where you must not reserve values.
+
+        The guard now compares against the mask that WOULD be rendered for the
+        currently stored value, so this saves."""
+        settings = self._settings(tmp_path, 'xoxb-REAL-TOKEN-8842')
 
         settings.saveView(section='slack', name='token', value='****')
 
-        assert settings.get('token', 'slack') == 'xoxb-OLD-TOKEN', (
+        assert settings.get('token', 'slack') == '****'
+
+    def test_the_only_residue_is_an_exact_length_match(self, tmp_path):
+        """What is left, pinned so the trade stays visible: changing an
+        N-character credential to exactly N asterisks is indistinguishable from
+        echoing the mask, because it IS the mask. Getting below this needs a
+        round-trip token per field, which is a much larger change for a case
+        that does not occur."""
+        settings = self._settings(tmp_path, 'abcd')       # 4 characters
+
+        settings.saveView(section='slack', name='token', value='****')
+
+        assert settings.get('token', 'slack') == 'abcd', (
             'documenting the known limit, not endorsing it'
         )
+
+    def test_the_mask_is_still_refused_at_the_real_length(self, tmp_path):
+        """And the guard still does its job: the actual rendered mask for the
+        stored value is refused."""
+        settings = self._settings(tmp_path, 'xoxb-REAL-TOKEN-8842')
+        masked = settings.getValues()['slack']['token']
+
+        settings.saveView(section='slack', name='token', value=masked)
+
+        assert settings.get('token', 'slack') == 'xoxb-REAL-TOKEN-8842'
 
 
 class TestOneFieldIsDeliberatelyNotMasked:
@@ -618,9 +644,29 @@ class TestTheNextCredentialCannotShipUntyped:
         r'(api_?key|passkey|pass_key|secret|token|password|cookiesetting'
         r'|user_key|auth_token|oauth_token|webhook_url)', re.I)
 
+    @staticmethod
+    def _literal(node):
+        """The constant string entries of a dict literal, ignoring the rest."""
+        got = {}
+        for k, v in zip(node.keys, node.values):
+            if (isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
+                    and isinstance(k.value, str)):
+                got[k.value] = v.value
+        return got
+
     def _all_options(self):
-        """Every option declared anywhere under `couchpotato/`, by AST rather
-        than by import, so a plugin that raises on import is still swept."""
+        """Every option under `couchpotato/`, WITH the section that owns it.
+
+        Descends the real `config = [{name, groups: [{options: [...]}]}]` shape
+        rather than walking every dict in the file. An earlier version did the
+        flat walk, which yielded options with no section attached -- and the
+        exemption check then compared bare option names, so `core.api_key`
+        silently exempted EVERY option called `api_key` in every plugin.
+        Review caught it: a future `newplugin.api_key` would have sailed
+        through the tripwire built to catch exactly that.
+
+        Parsed rather than imported so a plugin that raises on import is still
+        swept -- the point is to see declarations, not to run them."""
         root = Path(__file__).resolve().parents[2] / 'couchpotato'
         for path in sorted(root.rglob('*.py')):
             try:
@@ -630,29 +676,46 @@ class TestTheNextCredentialCannotShipUntyped:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Dict):
                     continue
-                keys = {k.value for k in node.keys
-                        if isinstance(k, ast.Constant) and isinstance(k.value, str)}
-                if 'name' not in keys:
+                entry = self._literal(node)
+                section = entry.get('name')
+                if not isinstance(section, str):
                     continue
-                got = {}
+                # An ENTRY is a dict with a name and a `groups` list; anything
+                # else is an option, a group, or unrelated.
+                groups = None
                 for k, v in zip(node.keys, node.values):
-                    if (isinstance(k, ast.Constant) and isinstance(v, ast.Constant)
-                            and isinstance(k.value, str)):
-                        got[k.value] = v.value
-                if 'name' in got:
-                    yield path, got
+                    if (isinstance(k, ast.Constant) and k.value == 'groups'
+                            and isinstance(v, ast.List)):
+                        groups = v
+                if groups is None:
+                    continue
+                for g in groups.elts:
+                    if not isinstance(g, ast.Dict):
+                        continue
+                    for gk, gv in zip(g.keys, g.values):
+                        if not (isinstance(gk, ast.Constant)
+                                and gk.value == 'options'
+                                and isinstance(gv, ast.List)):
+                            continue
+                        for o in gv.elts:
+                            if isinstance(o, ast.Dict):
+                                opt = self._literal(o)
+                                if isinstance(opt.get('name'), str):
+                                    yield path, section, opt
 
     def test_every_credential_shaped_option_is_masked_or_exempt(self):
         unmasked = []
-        for path, opt in self._all_options():
-            name = opt.get('name')
-            if not isinstance(name, str) or not self.CREDENTIAL_NAME.search(name):
+        for path, section, opt in self._all_options():
+            name = opt['name']
+            if not self.CREDENTIAL_NAME.search(name):
                 continue
             if opt.get('type') == 'password':
                 continue
-            if any(name == e.split('.', 1)[1] for e in self.EXEMPT):
+            # Full section.option identity. Comparing the bare name here was
+            # the bug review found: it exempted every `api_key` everywhere.
+            if f'{section}.{name}' in self.EXEMPT:
                 continue
-            unmasked.append(f'{path.name}:{name} (type={opt.get("type")!r})')
+            unmasked.append(f'{section}.{name} ({path.name}, type={opt.get("type")!r})')
 
         assert not unmasked, (
             'credential-shaped options with no password type and no recorded '
@@ -667,7 +730,7 @@ class TestTheNextCredentialCannotShipUntyped:
         found = list(self._all_options())
         assert len(found) > 300, f'AST walk found only {len(found)} options'
 
-        names = [o.get('name') for _, o in found if isinstance(o.get('name'), str)]
+        names = [o['name'] for _, _, o in found]
         matched = [n for n in names if self.CREDENTIAL_NAME.search(n)]
         assert len(matched) > 20, (
             f'the credential pattern matched only {len(matched)} names; if the '
@@ -678,10 +741,9 @@ class TestTheNextCredentialCannotShipUntyped:
         """An exemption for an option that no longer exists is dead weight that
         reads as coverage. Removed plugins have already caused that here --
         hadouken's options outlived its module."""
-        declared = {o.get('name') for _, o in self._all_options()}
-        for entry in self.EXEMPT:
-            option = entry.split('.', 1)[1]
-            assert option in declared, (
-                f'EXEMPT names {entry}, but no option {option!r} is declared '
+        declared = {f'{sec}.{o["name"]}' for _, sec, o in self._all_options()}
+        for entry in sorted(self.EXEMPT):
+            assert entry in declared, (
+                f'EXEMPT names {entry}, but no such section.option is declared '
                 f'anywhere under couchpotato/ -- delete the exemption'
             )
