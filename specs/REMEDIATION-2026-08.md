@@ -2814,7 +2814,48 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       step at all. The fragility that killed the three attempts was the
       navigation, not the assertion.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T60: two gate tests shell out to a whole-tree walk with no timeout — state: queued (no deps) — **flake**
+
+      Found by running the gate three times concurrently on 2026-08-20 and
+      watching it fail two different ways, neither of them a real defect.
+
+      `tests/unit/test_security.py:310` (`test_no_tenacity_imports_anywhere`)
+      runs `find . -name '*.py'` through `subprocess.run` with no `timeout=`,
+      then opens and reads every hit. Under load it exceeded pytest's global
+      60s cap and reported as a FAILED tenacity test, which is a diagnosis
+      pointing at the wrong thing entirely: there was no tenacity import, the
+      subprocess simply had not returned.
+
+      Measured on an idle machine: the walk takes 0.24s and finds 573 files.
+      So the 60s timeout represents roughly a 250x slowdown, and the immediate
+      cause was three heavy jobs sharing the box rather than the test. It is
+      still worth fixing, for two reasons.
+
+      First, the walk descends into `node_modules` (29,662 entries) and `.git`
+      (1,108) for nothing. `-not -path './.venv/*'` excludes one big tree and
+      not the bigger one. Excluding them is a one-line change that makes the
+      test strictly faster and no weaker.
+
+      Second, and the reason it is a task rather than a nit: this is §11's
+      flaky shape. It goes red under parallel load, someone re-runs it, it goes
+      green, and everyone learns that a red from this file means "run it
+      again". A real regression gets re-run away with it. The misleading
+      failure name makes that worse, not better.
+
+      The E2E worker-isolation pair (`isolation-a-mutate` /
+      `isolation-b-assert`) failed the same way for the same reason on the same
+      day: two `verify.sh` runs sharing the E2E data directory. That one is
+      arguably working as designed, since it exists to detect cross-worker
+      state leaking, but it cannot distinguish "the code leaked state" from
+      "another gate is running", and the message does not say so.
+
+      **The process half is not the repo's fault and is recorded so it is not
+      relearned:** do not run the gate concurrently with a sub-agent's gate,
+      and do not point two mutation-testing reviewers at one worktree. Both
+      produced false reds on this branch, and one reviewer had to re-derive a
+      finding against a hash-verified pristine copy because of it.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
