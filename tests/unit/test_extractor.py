@@ -161,7 +161,6 @@ def _real_reader(filename, file_size):
     return _RealClampBackedReader(filename, file_size)
 
 
-
 @pytest.fixture(autouse=True)
 def _restore_unrar_tool():
     """extractArchive can mutate the module-global rarfile.UNRAR_TOOL; restore it."""
