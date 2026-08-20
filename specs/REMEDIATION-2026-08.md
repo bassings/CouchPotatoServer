@@ -2903,7 +2903,56 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       produced false reds on this branch, and one reviewer had to re-derive a
       finding against a hash-verified pristine copy because of it.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T61: the archive extractor bounds one entry, not an archive — state: queued (no deps) — **security, carried over from T44**
+
+      Split out of T44 rather than left inside it, because T44 ticks when #280
+      merges and these two gaps would tick with it. Raised in review of #280,
+      which asked for exactly this: the residuals should not live only in a
+      code comment and a merged commit message.
+
+      What shipped in T44 bounds a SINGLE ENTRY at 128 GiB, against bytes
+      actually written. Two gaps remain, both measured:
+
+      1. **Archive-wide amplification.** N entries each honestly declaring a
+         size just under the cap still write N x 128 GiB in one archive, and
+         `extractFiles` loops over every archive in the folder. Measured during
+         the T44 rounds: 400 entries each declaring 256 KiB wrote 100 MB with
+         no refusal, and RAR5 duplicate-file references
+         (`RAR5_XREDIR_FILE_COPY`) let N distinct names share one stored
+         payload for the cost of N headers.
+
+      2. **The ENOSPC race on a constrained volume.** The cap is a fixed byte
+         count, not a function of free space, so on a volume with less than
+         128 GiB available a single hostile entry exhausts the disk before the
+         cap can fire. `ENOSPC` is not in `_ENTRY_DERIVED_ERRNOS`, so the
+         archive aborts, which is right but arrives after the damage.
+
+      **Severity, measured rather than inherited.** Extraction targets
+      `/downloads`, a NAS share with 1.9 TiB free, while the database sits on a
+      separate volume. So this is a download-share denial of service, not a
+      route to irrecoverable data loss, and (2) does not bite on this
+      deployment at all. It bites on a smaller volume and nothing detects that.
+
+      **The design to build, which two failed attempts point straight at.**
+      Do NOT thread a byte budget through per-entry return values; that shape
+      failed twice, once unreachable against `rarfile`'s clamp and once because
+      refused entries contributed nothing to the running total. Instead, refuse
+      PRE-FLIGHT on headers alone:
+
+          `read()` clamps to `file_size`, and `file_redir` plus `getinfo()`
+          resolve RAR5 copy and hard-link targets from headers, so the sum of
+          RESOLVED declared sizes is an exact upper bound on what the archive
+          can produce -- computable before a single byte is written.
+
+      Refusing on that sum, compared against both a fixed ceiling and free
+      space, closes both gaps at once because nothing is written to leak. It
+      also makes the free-space comparison safe to use, since it happens once
+      per archive rather than inside a hot read loop.
+
+      Whoever takes this: read T44's history first. Two guards shipped that
+      could not fire, and both looked correct in review.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60, T61 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
