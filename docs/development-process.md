@@ -348,9 +348,9 @@ recoverable afterwards — `:latest` has already moved by the time you deploy, s
 # SSH credentials in Openclaw memory (topics/couchpotato.md)
 cd /var/lib/plexmediaserver/CouchPotato
 
-# 1. Back up the DB + settings unless this promotion changed ONLY docs, tests
-#    or CI config (see "Backups" below; ~seconds, live-safe). When in doubt,
-#    take it: the cost is seconds and the alternative is unrecoverable.
+# 1. Back up the DB + settings unless every file this promotion changed is in
+#    the exempt list under "Backups" below (~seconds, live-safe). When in
+#    doubt, take it: the cost is seconds and the alternative is unrecoverable.
 ./scripts/backup.sh --retain 14
 
 # 2. Record what is running now, so rollback has a target.

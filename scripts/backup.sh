@@ -119,8 +119,8 @@ usage() {
 backup.sh — snapshot the CouchPotato SQLite database + settings.
 
 Run before any promotion carrying a change to a write path. The trigger is
-mechanical: take it UNLESS every file changed since the last promotion is docs,
-tests, or CI config. NOT nightly. Uses sqlite3 `.backup` (or Python's sqlite3
+mechanical: take it UNLESS every file changed since the last promotion is in
+the exempt list in this script's header. NOT nightly. Uses sqlite3 `.backup` (or Python's sqlite3
 backup API) so the copy is safe against a live database.
 
 Usage:

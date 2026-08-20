@@ -106,6 +106,71 @@ class TestTheTwoCopiesAgree:
         )
 
 
+#: A line that states the rule: "take it unless ... changed ...". Any such
+#: line must DEFER to the exempt list rather than enumerate it inline.
+_RULE_LINE = re.compile(r'unless\b.*\bchang', re.I)
+
+#: Words that mean someone has started enumerating the exempt set in prose.
+#: Deliberately crude: the point is to catch a paraphrase forming, not to
+#: validate its contents.
+_ENUMERATION = re.compile(r'\b(docs|tests|specs|CI config|config)\b\s*,', re.I)
+
+
+class TestNoFileRestatesTheRuleInPassing:
+    """The blind spot in the first version of this guard, found by review and
+    recorded because the shape matters more than the instance.
+
+    That version compared the two `Exempt:` lines and nothing else. It was
+    therefore blind to every RESTATEMENT elsewhere in the same files, and two
+    survived it in the copies an operator is most likely to read: `usage()`'s
+    heredoc in backup.sh, and the deploy runbook's step 1. Both said "docs,
+    tests or CI config", which silently drops `specs/` and compresses
+    `.github/`, so a promotion touching only `specs/` was exempt under the
+    canonical list and ambiguous under the paraphrase.
+
+    A guard that pins the canonical statement while ignoring every copy of it
+    is the same failure this project keeps finding elsewhere: it looks like
+    protection, it passes, and the thing it was built to prevent walks past it.
+
+    So the rule is now structural. Anywhere these files state the trigger, the
+    sentence must point at the exempt list instead of listing it again. There
+    is one place the list appears, and everywhere else defers to it.
+    """
+
+    @pytest.mark.parametrize('path', [BACKUP_SH, DEV_PROCESS, CLAUDE_MD],
+                             ids=lambda p: p.name)
+    def test_every_statement_of_the_rule_defers_to_the_list(self, path):
+        offenders = []
+        for n, line in enumerate(path.read_text(encoding='utf-8').splitlines(), 1):
+            if not _RULE_LINE.search(line):
+                continue
+            # The canonical statement is the one that hands off to the list.
+            if 'exempt' in line.lower():
+                continue
+            if _ENUMERATION.search(line):
+                offenders.append(f'{path.name}:{n}: {line.strip()}')
+        assert not offenders, (
+            'the backup trigger is restated with an inline enumeration '
+            'instead of deferring to the exempt list:\n  '
+            + '\n  '.join(offenders)
+            + '\n\nSay "in the exempt list" and point at it. Every inline '
+            'copy is another thing to drift, and two of them already did.'
+        )
+
+    def test_the_rule_is_actually_stated_somewhere(self):
+        """Vacuity guard. If the regex stops matching the rule at all, the
+        test above iterates over nothing and passes for ever."""
+        found = [
+            p.name for p in (BACKUP_SH, DEV_PROCESS)
+            if any(_RULE_LINE.search(l)
+                   for l in p.read_text(encoding='utf-8').splitlines())
+        ]
+        assert len(found) == 2, (
+            f'the rule statement was found in {found} but expected both files '
+            f'-- the pattern has stopped matching, so the check above is inert'
+        )
+
+
 class TestNobodyElseRestatesIt:
     """`CLAUDE.md` grew a third, compressed paraphrase and nobody noticed
     until review. A pointer cannot drift; a copy can."""
