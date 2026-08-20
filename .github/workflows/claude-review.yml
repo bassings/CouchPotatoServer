@@ -98,12 +98,22 @@ jobs:
 
             Never drop an observation silently under either shape.
 
-            Two things that are NOT exceptions to this. A finding you are
-            uncertain about is still an observation until you can name the
-            failure it causes. And if you retract or correct an earlier comment
-            of your own, put the correction in the summary body rather than
-            opening a second thread, because both threads then have to be
-            resolved by hand.
+            ONE CARVE-OUT, AND IT IS NOT OPTIONAL: an uncertain SECURITY,
+            PRIVACY or DATA-LOSS finding goes INLINE, not into observations.
+            Everywhere else, uncertainty downgrades to an observation until you
+            can name the failure it causes. Here it does the opposite, because
+            the cost is asymmetric: a wrong inline thread costs one reply, and
+            a missed credential leak or data-loss path costs the user something
+            they cannot get back. Measured on this repo, an inline thread is
+            the ONLY content-aware block on master -- there are zero required
+            approving reviews, and of twelve required contexts only this one
+            reads semantics -- so an observation is advisory and nothing else.
+            If you are unsure whether a finding is in this class, treat it as
+            though it is.
+
+            If you retract or correct an earlier comment of your own, put the
+            correction in the summary body rather than opening a second thread,
+            because both threads then have to be resolved by hand.
 
             Focus on:
             - Correctness and edge cases, especially around the SQLite adapter

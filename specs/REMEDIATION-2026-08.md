@@ -2965,6 +2965,27 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
           #281 (edits claude-review.yml)  -> claude-review check: PASS
           claude[bot] comments on #281    -> 0
 
+      The job log carries the reason 568 lines in, where nobody looks:
+
+          ##[warning]Skipping action due to workflow validation: the workflow
+          file must exist and have identical content to the version on the
+          repository's default branch.
+          Exiting due to workflow validation skip
+
+      Runs on such a branch complete in 13-17 seconds against about four
+      minutes for a real review, which is the cheapest available tell and
+      nothing reads it.
+
+      **Recurring, not a one-off: four for four.** PRs #129, #132 and #149 each
+      edited this file and each carries ZERO `claude[bot]` comments, alongside
+      #281. Two of those were themselves fixes to the reviewer -- #129's
+      "always post a visible verdict" and #132's `permission_denials` fix --
+      so the changes least able to afford going unreviewed are precisely the
+      ones that did.
+
+      The behaviour is also undocumented: grepping `docs/`, `CLAUDE.md`,
+      `AGENTS.md` and this file for "workflow validation" returns nothing.
+
       That is a required gate returning green for a review that did not happen,
       which is the precise shape this plan keeps recording. It is worse than
       the usual instance because the gate is the thing that is supposed to
@@ -2980,11 +3001,19 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       The fix is not to make the workflow run on itself, which is the security
       property GitHub is deliberately enforcing. It is to make the false green
-      impossible to mistake for a real one: have the job detect that it is
-      running against a PR which edits its own definition and fail, or post an
-      explicit "review skipped, workflow modified by this PR" comment, so the
-      absence is visible rather than inferred. A skipped review must not be
-      indistinguishable from a clean one.
+      impossible to mistake for a real one.
+
+      **And it must NOT simply fail the job.** Review raised that explicitly:
+      failing deadlocks every future edit to this workflow, since the only way
+      to fix the file would be a PR that the gate now blocks. The workable
+      shape is a step with `if: always()` after the action that detects the
+      skip -- by the validation warning, or by re-querying for a `claude[bot]`
+      comment on the head SHA -- and posts "claude-review was SKIPPED because
+      this PR edits the workflow file; review it by other means before merge".
+      Record the constraint beside the required-contexts list in
+      `docs/development-process.md`.
+
+      A skipped review must not be indistinguishable from a clean one.
 
       Note this is the same distinction the harness ledger got wrong on the
       same day: "no trace" and "not looked" must be distinguishable in the
