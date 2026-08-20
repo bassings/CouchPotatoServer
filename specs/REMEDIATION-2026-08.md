@@ -1857,7 +1857,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       pass it. So the archive survives and the loss is recoverable by
       re-extracting. That is what keeps this off the irreplaceable tier.
 
-- [ ] T44: a single archive entry can decompress to an unbounded size — state: building, **premise corrected 2026-08-20** (no deps) — **security, pre-existing**
+- [ ] T44: a single archive entry can decompress to an unbounded size — state: building, **reduced in scope by rule 11 after two failed designs** (no deps) — **security, pre-existing**
 
       Raised on #265 as explicitly non-blocking and correctly so: the read loop
       in `_extractOneAtomic` is untouched by that PR. Recorded because the file
@@ -1922,7 +1922,38 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       carries an errno not in `_ENTRY_DERIVED_ERRNOS`, and the archive aborts
       AFTER the disk is full, on the volume that also holds the database.
 
-      So the fix is a whole-archive byte budget, plus the per-entry hard cap
+      **Round two also shipped a guard that could not fire, and the task was
+      reduced rather than attempted a third time (rule 11).** The whole-archive
+      budget added in round two never advanced: `_extractOneAtomic` returned
+      bytes only on success, so a refused entry contributed nothing, and
+      because `_ARCHIVE_HARD_CAP = _ENTRY_HARD_CAP + 16 GiB` the entry cap
+      always tripped first. Measured at scaled constants: 26.7x the archive cap
+      written to disk with the running total still at zero. Two further leaks
+      in the same layer: the entry-derived `OSError` arm dropped bytes the same
+      way (10x the budget with no oversized entry at all), and the budget reset
+      every scan, so a large archive extracted in full across repeated scans
+      (measured: complete by scan 7, and `renamer.force_scan` runs every 2
+      hours by default).
+
+      **What shipped, and what did not.** Owner's call was to bank what works:
+      keep `_ENTRY_HARD_CAP`, which checks bytes actually written, does fire,
+      and is load-bearing under four independent mutations. Delete the archive
+      budget entirely rather than attempt a third variant of it.
+
+      **So the amplification is OPEN DEBT, not fixed.** The remaining guard
+      bounds ONE ENTRY at 128 GiB. N entries each just under it still write
+      N x 128 GiB, and each refused entry writes its full 128 GiB before being
+      unlinked. Anyone reopening this should note the frame that review
+      proposed and nobody has built: `read()` clamps to `file_size`, and
+      `file_redir` plus `getinfo()` resolve RAR5 copy and hard-link targets
+      FROM HEADERS ALONE, so the sum of resolved declared sizes is an exact
+      upper bound on what an archive can produce, computable before a single
+      byte is written. A pre-flight refusal on that sum closes all three leaks
+      at once because nothing is written to leak. That is a different shape
+      from a byte budget threaded through per-entry return values, which is
+      the shape that has now failed twice.
+
+      Superseded by the above: the fix is a whole-archive byte budget, plus the per-entry hard cap
       kept explicitly as defence-in-depth against a future rarfile rather than
       described as the fix. A FIXED constant, not a free-space-derived bound:
       deterministic, unit-testable and free of operator surprise, which are the
