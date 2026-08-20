@@ -2,26 +2,39 @@
 #
 # backup.sh — snapshot the CouchPotato SQLite database + settings.
 #
-# Run this before a promotion that could touch the database: a schema change or
-# migration, or any release carrying changes to the persistence layer
-# (`couchpotato/core/db/`) or to a write path that runs unattended, such as the
-# library scanner or the renamer. It is NOT run nightly and NOT run before every
-# deploy: a docs-only or packaging-only promotion cannot damage data, and a
-# backup ritual applied to every release is one people stop taking seriously.
+# Run this before any promotion that carries a change to a write path. NOT
+# nightly, and the trigger is a MECHANICAL test rather than a judgement about
+# how risky the release feels:
 #
-# "UI-only" is NOT on that safe list, and saying so was a defect in the first
-# draft of this policy. This project's UI calls destructive APIs directly:
-# `couchpotato/ui/templates/partials/movie_detail.html` fires `media.delete`,
-# and both `wizard.html` and the settings partial fire `settings.save`. A UI
-# change that sends the wrong id or the wrong value destroys library records or
-# corrupts configuration just as thoroughly as a migration would. Classify a UI
-# change by whether it can reach a write API, not by the fact that it is UI.
+#   Take the backup UNLESS every file changed since the last promotion is in
+#   the exempt set below. If anything else changed, take it.
 #
-# The reason the trigger is "could touch the database" rather than "changes the
-# schema" is that this project has already lost data the other way. The
-# `_query_index` defects fixed in 2026-02 corrupted records during an ordinary
-# library scan, with no migration and no schema change involved. Ask what the
-# release can WRITE, not what it declares.
+#   Exempt: docs (`docs/`, `specs/`, `*.md`), tests (`tests/`), CI and tooling
+#   config that does not ship in the image (`.github/`, lint and formatter
+#   config), and pure-presentation assets with no script in them.
+#
+# The rule is phrased as "unless" on purpose. An earlier draft asked the
+# operator to decide whether a release "could touch the database", and that
+# framing has one failure mode: the judgement is made by whoever wants to
+# deploy, under time pressure, and "this one is fine" is free to say and
+# expensive to be wrong about. Defaulting to taking it costs seconds.
+#
+# Two things the earlier draft got wrong, kept here because they are the
+# reason the exempt list is short:
+#
+#   "UI-only cannot damage data" is FALSE in this codebase. The UI calls
+#   destructive APIs directly: `ui/templates/partials/movie_detail.html` fires
+#   `media.delete`, and both `wizard.html` and the settings partial fire
+#   `settings.save`. A wrong id destroys library records as thoroughly as a
+#   migration would.
+#
+#   "No schema change" does not mean "cannot corrupt". The `_query_index`
+#   defects fixed in 2026-02 corrupted records during an ordinary library
+#   scan, with no migration involved.
+#
+# The reason the trigger is exempt-list-shaped rather than "changes the schema"
+# is that this project has already lost data the other way, and because the
+# person deciding is the person who wants to ship.
 #
 # Be honest about what that example does NOT establish, because it cuts both
 # ways. That corruption happened during NORMAL RUNNING, not during a promotion,
@@ -91,12 +104,10 @@ usage() {
   cat <<'USAGE'
 backup.sh — snapshot the CouchPotato SQLite database + settings.
 
-Run before a promotion that could touch the database: a schema change or
-migration, anything under couchpotato/core/db/, an unattended write path such as
-the scanner or renamer, or a UI change that can reach a destructive API (the UI
-calls media.delete and settings.save directly). NOT nightly, NOT before every
-deploy. Uses sqlite3 `.backup` (or Python's sqlite3 backup API) so the copy is
-safe against a live database.
+Run before any promotion carrying a change to a write path. The trigger is
+mechanical: take it UNLESS every file changed since the last promotion is docs,
+tests, or CI config. NOT nightly. Uses sqlite3 `.backup` (or Python's sqlite3
+backup API) so the copy is safe against a live database.
 
 Usage:
   ./scripts/backup.sh                 snapshot, keep everything

@@ -2595,10 +2595,18 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       days old, and all three that existed were taken by hand.
 
       **Closed by an owner decision rather than by installing the schedule.**
-      The policy is now: take a snapshot before a promotion that could touch
-      the database, and not otherwise. No nightly. A backup ritual applied to
-      every release is one people stop taking seriously, and a nightly nobody
-      installed was never providing cover in the first place.
+      No nightly. The trigger went through two rounds, and the second is the
+      one that shipped:
+
+          first  "take one before a promotion that could touch the database"
+          final  "take one UNLESS every file changed since the last promotion
+                  is docs, tests or CI config"
+
+      The first form was rejected by the owner on the grounds that it asks the
+      person who wants to deploy to judge, under time pressure, whether their
+      own change is risky. "This one is fine" is free to say and expensive to
+      be wrong about. The exempt-list form removes the judgement without
+      reintroducing the nightly nobody installed.
 
       **The residual risk is recorded rather than glossed, because the evidence
       cited for the trigger also argues against it.** The `_query_index`

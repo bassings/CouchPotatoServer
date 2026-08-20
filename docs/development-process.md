@@ -337,10 +337,10 @@ promotion). Full design: `specs/FEAT-release-channels.md`.
 
 ### Deploying to prod (backup → rollback tag → restart → verify)
 
-A promotion that could touch the database is reversible only if you capture two
-things *before* restarting: the database, and the digest of the image currently
-running. The image digest is worth recording for EVERY promotion; the database
-snapshot follows the trigger in "Backups" below. Neither is
+A promotion is reversible only if you capture two things *before* restarting:
+the database, and the digest of the image currently running. The image digest is
+worth recording for EVERY promotion; the database snapshot follows the trigger
+in "Backups" below, which in practice means almost every promotion. Neither is
 recoverable afterwards — `:latest` has already moved by the time you deploy, so
 "just re-pull the old one" is not available.
 
@@ -348,9 +348,9 @@ recoverable afterwards — `:latest` has already moved by the time you deploy, s
 # SSH credentials in Openclaw memory (topics/couchpotato.md)
 cd /var/lib/plexmediaserver/CouchPotato
 
-# 1. Back up the DB + settings, IF this promotion could touch the database
-#    (see "Backups" below for the trigger; ~seconds, live-safe). When in
-#    doubt, take it: the cost is seconds and the alternative is unrecoverable.
+# 1. Back up the DB + settings unless this promotion changed ONLY docs, tests
+#    or CI config (see "Backups" below; ~seconds, live-safe). When in doubt,
+#    take it: the cost is seconds and the alternative is unrecoverable.
 ./scripts/backup.sh --retain 14
 
 # 2. Record what is running now, so rollback has a target.
@@ -478,16 +478,33 @@ independently-chosen one are both true of the same suite — reviewers found
 survivors this way twice. Treat a score as "these specific behaviours are pinned",
 never as "the tests are sufficient".
 
-**When to take one.** Before a promotion that could touch the database, and not
-otherwise. That means a schema change or migration, or a release carrying
-changes to `couchpotato/core/db/` or to a write path that runs unattended, such
-as the library scanner or the renamer. A UI-only, docs-only or packaging-only
-promotion does not need one.
+**When to take one.** Before any promotion carrying a change to a write path.
+The trigger is a mechanical test, not a judgement about how risky the release
+feels:
 
-The trigger is deliberately "could touch the database" rather than "changes the
-schema", because this project has already lost data the other way: the
-`_query_index` defects fixed in 2026-02 corrupted records during an ordinary
-library scan, with no migration involved. Ask what the release can write.
+> Take the backup **unless** every file changed since the last promotion is in
+> the exempt set. If anything else changed, take it.
+>
+> Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`, and lint or
+> formatter config that does not ship in the image.
+
+**Phrased as "unless" on purpose.** An earlier draft asked the operator to
+decide whether a release "could touch the database". That has one failure mode
+and it is a reliable one: the judgement is made by the person who wants to
+deploy, under time pressure, and "this one is fine" is free to say and expensive
+to be wrong about. Defaulting to taking it costs seconds.
+
+Two things an earlier draft of this policy got wrong, kept here because they are
+why the exempt list is short rather than long:
+
+- **"UI-only cannot damage data" is false in this codebase.** The UI calls
+  destructive APIs directly: `ui/templates/partials/movie_detail.html` fires
+  `media.delete`, and both `wizard.html` and the settings partial fire
+  `settings.save`. A wrong id destroys library records as thoroughly as a
+  migration would.
+- **"No schema change" does not mean "cannot corrupt".** The `_query_index`
+  defects fixed in 2026-02 corrupted records during an ordinary library scan,
+  with no migration involved.
 
 **What this policy does not cover, stated rather than left implicit.** That same
 example is the argument against a promotion-gated trigger as well as for a broad
@@ -568,7 +585,7 @@ toggle.
 | `scripts/check_test_traps.py` | False-green guard — stage 2 of `make verify` |
 | `scripts/check_conformance.py` | Design-system drift gate |
 | `scripts/mutation_changed.py` | Mutation testing scoped to changed files |
-| `scripts/backup.sh` | Prod DB + settings snapshot, before a promotion that could touch the database. Not nightly |
+| `scripts/backup.sh` | Prod DB + settings snapshot, before any promotion carrying a write-path change. Not nightly |
 
 Each of these is itself unit-tested (`tests/unit/test_check_test_traps.py`,
 `test_check_conformance.py`, `test_mutation_changed.py`, `test_backup_script.py`)
