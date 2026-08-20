@@ -26,9 +26,10 @@ from couchpotato.environment import Env
 
 log = CPLog(__name__)
 
-#: Cap on per-entry log lines a single archive may produce, for ALL FOUR
-#: per-entry counters: refusals, name collisions, unreadable entries, and
-#: entries that could not be written to their destination.
+#: Cap on per-entry log lines a single archive may produce, for ALL FIVE
+#: per-entry counters: refusals, name collisions, unreadable entries, entries
+#: that could not be written to their destination, and entries refused for
+#: decompressing far beyond their declared size.
 #: (This said "BOTH refusals and name collisions" until the third counter was
 #: added a commit later and this line was not updated -- the same drift the
 #: rest of this branch keeps correcting.)
@@ -70,6 +71,59 @@ _ENTRY_DERIVED_ERRNOS = frozenset((
     errno.EILSEQ,
     errno.EINVAL,
 ))
+
+#: Slack allowed above an entry's declared `info.file_size` before the
+#: streaming read loop refuses it (see `_ArchiveEntryTooLarge` and
+#: `_extractOneAtomic` below). `info.file_size` comes from the archive
+#: HEADER, which `rarfile.infolist()` parses without decompressing anything
+#: -- it is attacker-supplied and free to fabricate, so it cannot be trusted
+#: as a limit on its own. It is still the only per-entry size hint available,
+#: and a LEGITIMATE entry decompresses to exactly the declared size. This
+#: margin exists only to absorb the read loop's own chunking (the final
+#: chunk of a genuine entry lands the running total on file_size exactly, but
+#: nothing guarantees that alignment for every archive/tool combination) --
+#: it is not slack for the attacker. Sized to one read() chunk, not derived
+#: from disk state.
+_ENTRY_SIZE_MARGIN = 1024 * 1024  # one read() chunk
+
+#: Absolute per-entry ceiling, independent of anything the archive header
+#: claims. The cross-check above (declared file_size + margin) is defeated
+#: the moment the header lies about file_size too: an entry that declares
+#: itself "this will decompress to 400 GiB" and then does exactly that
+#: sails straight through a check that only compares actual output against
+#: the declared figure. This is the belt to that braces -- no single media
+#: file this application manages is anywhere near this size, so refusing a
+#: "movie" that would blow past it is never a false positive on the real
+#: workload.
+#:
+#: Deliberately NOT derived from `shutil.disk_usage()`. A free-space-based
+#: bound would make one extraction's outcome depend on how much OTHER,
+#: unrelated data already sits on the volume: nondeterministic (races with
+#: concurrent downloads/scans on the same disk), unrepresentable in a test
+#: without faking disk state, and it would surprise an operator with an
+#: extraction that fails today and would have succeeded yesterday against an
+#: identical archive purely because something else filled the disk in the
+#: meantime. A fixed ceiling is deterministic and directly testable instead.
+_ENTRY_HARD_CAP = 200 * 1024 ** 3  # 200 GiB
+
+
+class _ArchiveEntryTooLarge(Exception):
+    """Raised internally by `_extractOneAtomic` when a single entry writes
+    more than its budget allows for.
+
+    Deliberately its own type, not `OSError`/`rarfile.Error`: the write
+    SUCCEEDS every time this fires. There is no I/O failure to observe here,
+    only an entry that keeps producing more bytes than it is allowed to, so
+    it cannot share `_ENTRY_DERIVED_ERRNOS`'s handling -- nothing raises an
+    OSError on this path.
+    """
+
+    def __init__(self, written, budget):
+        super().__init__(
+            'entry wrote at least %d bytes, exceeding its %d-byte budget'
+            % (written, budget))
+        self.written = written
+        self.budget = budget
 
 # rarfile forces the extractor tool to be selected via the process-global
 # ``rarfile.UNRAR_TOOL`` (there is no per-call parameter), so setting it and
@@ -318,6 +372,7 @@ class ExtractorMixin:
             collisions = 0
             unreadable = 0
             unwritable = 0
+            oversized = 0
             extracted = []
             # Parallel set purely for membership. `extracted` stays a list
             # because its ORDER is the return contract, but `x in list` is a
@@ -389,6 +444,36 @@ class ExtractorMixin:
                             # of the broader catch going in, which is the whole
                             # argument for the narrow one.
                             raise
+                        except _ArchiveEntryTooLarge as e:
+                            # T44: the entry decompressed to far more than its
+                            # header declared -- `info.file_size` costs the
+                            # attacker nothing (`infolist()` never
+                            # decompresses to check it), so a header claiming
+                            # a small entry is free cover for a bomb. The
+                            # write ALWAYS succeeds here; there is no OSError
+                            # to sort by errno, which is why this needs its
+                            # own except clause rather than joining
+                            # `_ENTRY_DERIVED_ERRNOS`.
+                            #
+                            # Attacker-controlled like a hostile name or a
+                            # corrupt entry, so the same treatment applies:
+                            # refuse this one, keep the archive. Its own
+                            # counter for the same reason `unwritable` has
+                            # one -- "refused for exceeding its declared
+                            # size" is a different remedy from "could not be
+                            # read" or "could not be written".
+                            oversized += 1
+                            if oversized <= _MAX_ENTRY_LOGS:
+                                log.error(
+                                    'Archive entry decompressed far beyond '
+                                    'its declared size (declared %d bytes, '
+                                    'wrote at least %d before refusing it), '
+                                    'skipping it: %r',
+                                    info.file_size if isinstance(info.file_size, int) else -1,
+                                    e.written,
+                                    info.filename,
+                                )
+                            continue
                         except OSError as e:
                             # ENAMETOOLONG is an OSError, but it is derived
                             # from THIS entry's attacker-controlled name, not
@@ -493,12 +578,12 @@ class ExtractorMixin:
                 # per-entry lines, an abort, and no totals -- the diagnostic
                 # deleted at the moment it was needed.
                 self._logArchiveSummary(
-                    refused, collisions, unreadable, unwritable)
+                    refused, collisions, unreadable, unwritable, oversized)
 
         return extracted
 
     @staticmethod
-    def _logArchiveSummary(refused, collisions, unreadable, unwritable):
+    def _logArchiveSummary(refused, collisions, unreadable, unwritable, oversized):
         """Report totals when per-entry logging was capped.
 
         The cap exists so a hostile archive cannot flood the log, but a cap
@@ -526,6 +611,10 @@ class ExtractorMixin:
             log.error('%d archive entries could not be written to their '
                       'destination in total (only the first %d were logged '
                       'individually).', unwritable, _MAX_ENTRY_LOGS)
+        if oversized > _MAX_ENTRY_LOGS:
+            log.error('%d archive entries exceeded their declared size and '
+                      'were refused in total (only the first %d were logged '
+                      'individually).', oversized, _MAX_ENTRY_LOGS)
 
     @staticmethod
     def _safeEntryBasename(filename):
@@ -566,17 +655,46 @@ class ExtractorMixin:
     def _extractOneAtomic(rar_handle, info, extr_file_path, extr_path):
         """Stream a single archive entry to a temp file in extr_path, then
         atomically ``os.replace`` it into extr_file_path. On ANY error the
-        temp file is removed so no partial output survives at the real path."""
+        temp file is removed so no partial output survives at the real path.
+
+        The read loop enforces a per-entry byte budget derived from
+        ``info.file_size`` (see ``_ENTRY_SIZE_MARGIN``) and capped absolutely
+        at ``_ENTRY_HARD_CAP``. Without it, a header claiming a small size is
+        free for the attacker -- ``rarfile.infolist()`` parses headers only --
+        while the loop below writes whatever the decompressor actually
+        produces with no limit. Raises ``_ArchiveEntryTooLarge`` (checked
+        BEFORE each chunk is written, so the temp file never grows past the
+        budget) rather than silently truncating the entry, so the caller
+        treats it as a refusal like any other hostile entry, not as a
+        successful partial extract.
+        """
+        # declared may itself be attacker-fabricated (including negative or
+        # non-numeric); treat anything untrustworthy as "declares nothing",
+        # which still leaves _ENTRY_SIZE_MARGIN of slack for a genuinely tiny
+        # legitimate entry.
+        declared = info.file_size
+        if not isinstance(declared, int) or declared < 0:
+            declared = 0
+        budget = min(declared + _ENTRY_SIZE_MARGIN, _ENTRY_HARD_CAP)
+
         # Temp file in the SAME directory so os.replace is atomic (same fs).
         fd, tmp_path = tempfile.mkstemp(dir=extr_path, prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX)
         try:
             # fdopen first so the fd is always owned/closed by the `with`, even
             # if rar_handle.open(info) raises before we start reading.
             with os.fdopen(fd, 'wb') as target, rar_handle.open(info) as source:
+                written = 0
                 while True:
                     chunk = source.read(1024 * 1024)
                     if not chunk:
                         break
+                    written += len(chunk)
+                    if written > budget:
+                        # Checked before the write: the temp file this
+                        # entry has produced so far never exceeds `budget`,
+                        # so the transient disk usage of a refused entry is
+                        # bounded even though it is unlinked either way.
+                        raise _ArchiveEntryTooLarge(written, budget)
                     target.write(chunk)
             # tempfile.mkstemp always creates the file 0600 (owner-only),
             # ignoring umask; without this the extracted media file would be
