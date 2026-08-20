@@ -19,7 +19,6 @@ from couchpotato.core.plugins.renamer.extractor import (
     DEFAULT_UNRAR_TOOL,
     NO_EXTRACTOR_TOOL_MESSAGE,
     ExtractorMixin,
-    _ArchiveTooLarge,
 )
 
 
@@ -1738,137 +1737,20 @@ class TestEntryHardCapLoggingIsAlsoBounded:
         )
 
 
-class TestArchiveHardCapCatchesTheReachableAmplification:
-    """The NEW guard this rework adds. Review measured that many entries,
-    each individually honest and comfortably under `_ENTRY_HARD_CAP`, can
-    still sum to far more than any single release plausibly needs: RAR5 lets
-    N distinct entry names redirect to ONE stored payload (FILE_COPY/
-    HARD_LINK) for the cost of N headers, and even without redirects, many
-    small honestly-sized entries cost the attacker one header each while the
-    extractor writes every one of them out in full. Driven: 400 entries each
-    honestly declaring 256 KiB extracted 100 MB with no refusal from the
-    per-entry check alone. No single entry lies here, so no PER-ENTRY
-    ceiling can catch it -- only a ceiling on the ARCHIVE's total output can.
+class TestTheShippedEntryHardCapValueIsPinned:
+    """Every test above patches `_ENTRY_HARD_CAP` down to something a test
+    can actually write, which is correct for exercising the MECHANISM -- but
+    it also means none of them would notice if the constant actually shipped
+    with a different value. Raising it in the source right now fails nothing
+    in this file. Pin the literal separately."""
 
-    `_ArchiveTooLarge` is deliberately allowed to propagate out of
-    `extractArchive` rather than being caught as a per-entry refusal (see
-    its docstring): once the budget for this run is gone, letting the loop
-    keep processing further entries only spends more disk on exactly the
-    amplification this guard exists to stop.
-    """
-
-    def test_entries_before_the_threshold_extract_and_the_one_that_crosses_it_aborts_the_archive(
-            self, tmp_path, caplog):
-        patched_archive_cap = 3 * 1024 * 1024  # 3 MiB
-        entry_size = 1024 * 1024  # 1 MiB, comfortably under _ENTRY_HARD_CAP
-        extr_path = tmp_path / 'extract_here'
-        extr_path.mkdir()
-
-        # Five 1 MiB entries against a 3 MiB archive budget: the first three
-        # land exactly on the ceiling (1+1+1 MiB == 3 MiB, allowed), the
-        # fourth's first chunk pushes the running total to 4 MiB and aborts,
-        # and the fifth is never even opened.
-        names = ['part%d.mkv' % i for i in range(5)]
-        infos = [_make_info(n) for n in names]
-        handle = MagicMock()
-        handle.infolist.return_value = infos
-        handle.open.side_effect = lambda i: _real_reader(i.filename, entry_size)
-
-        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
-                   return_value=handle), \
-             patch('couchpotato.core.plugins.renamer.extractor._ARCHIVE_HARD_CAP',
-                   patched_archive_cap), \
-             caplog.at_level(logging.ERROR,
-                             logger='couchpotato.core.plugins.renamer.extractor'):
-            with pytest.raises(_ArchiveTooLarge) as excinfo:
-                _Extractor().extractArchive('a.rar', str(extr_path))
-
-        assert excinfo.value.budget == patched_archive_cap
-        assert excinfo.value.written > patched_archive_cap
-
-        written_files = sorted(p.name for p in extr_path.iterdir())
-        assert written_files == ['part0.mkv', 'part1.mkv', 'part2.mkv'], (
-            'the entries that fit under the archive budget were not all '
-            'written, or a later entry (or its temp file) leaked through: '
-            'got %r' % written_files
-        )
-        for name in written_files:
-            assert (extr_path / name).stat().st_size == entry_size
-
-        # part4.mkv must never even be OPENED: the archive was already over
-        # budget the moment part3.mkv's first chunk crossed it, and
-        # continuing to the next entry would only spend more disk on the
-        # exact amplification this guard exists to stop.
-        opened = [c.args[0].filename for c in handle.open.call_args_list]
-        assert 'part4.mkv' not in opened, (
-            'processing continued past the entry that exceeded the archive '
-            'budget'
-        )
-
-    def test_the_archive_wide_abort_is_never_miscounted_as_a_per_entry_refusal(
-            self, tmp_path, caplog):
-        """`_ArchiveTooLarge` must not increment `oversized` or any other
-        per-entry counter -- it is not a per-entry failure, and folding it
-        into one would send an operator chasing "one bad entry" when the
-        real story is the archive's total."""
-        patched_archive_cap = 1024  # bytes: the very first entry blows it
-        extr_path = tmp_path / 'extract_here'
-        extr_path.mkdir()
-
-        infos = [_make_info('a.mkv')]
-        handle = MagicMock()
-        handle.infolist.return_value = infos
-        handle.open.side_effect = lambda i: _real_reader(i.filename, 1024 * 1024)
-
-        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
-                   return_value=handle), \
-             patch('couchpotato.core.plugins.renamer.extractor._ARCHIVE_HARD_CAP',
-                   patched_archive_cap), \
-             caplog.at_level(logging.ERROR,
-                             logger='couchpotato.core.plugins.renamer.extractor'):
-            with pytest.raises(_ArchiveTooLarge):
-                _Extractor().extractArchive('a.rar', str(extr_path))
-
-        messages = '\n'.join(r.getMessage() for r in caplog.records)
-        assert 'per-entry size ceiling' not in messages, (
-            'an archive-wide budget abort was logged as a per-entry '
-            'oversized refusal'
-        )
-
-
-class TestExtractFilesSkipsAnArchiveThatExceedsTheBudgetWithoutTagging:
-    """`extractFiles`' side of `_ArchiveTooLarge`: caught, logged with the
-    operator-facing budget numbers, and turned into a skip-not-tag exactly
-    like every other archive-level failure on this path (a bad archive, a
-    missing extractor tool), so the release is retried on a later scan
-    rather than silently marked complete with files missing."""
-
-    def test_the_archive_is_skipped_logged_and_not_tagged(self, tmp_path, caplog):
-        folder = tmp_path / 'downloads'
-        folder.mkdir()
-        archive = folder / 'Movie.One.2020.rar'
-        archive.write_bytes(b'not-a-real-rar')
-
-        fake = _FakeRenamer(from_folder=str(folder))
-        fake.extractArchive = MagicMock(
-            side_effect=_ArchiveTooLarge(written=200 * 1024 * 1024,
-                                          budget=144 * 1024 ** 3))
-
-        with caplog.at_level(logging.ERROR, logger='couchpotato.core.plugins.renamer.extractor'):
-            result_folder, media_folder, files, extr_files = fake.extractFiles(
-                folder=str(folder),
-                media_folder=str(folder),
-                files=[str(archive)],
-            )
-
-        assert extr_files == []
-        assert fake.tagged == [], (
-            'an archive that exceeded the per-archive budget was tagged as '
-            'extracted'
-        )
-        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
-        assert len(errors) == 1
-        assert str(144 * 1024 ** 3) in errors[0], (
-            'the operator-facing message did not name the budget that was '
-            'exceeded'
+    def test_the_cap_is_128_gib(self):
+        from couchpotato.core.plugins.renamer import extractor
+        assert extractor._ENTRY_HARD_CAP == 128 * 1024 ** 3, (
+            'the shipped per-entry ceiling drifted from 128 GiB -- that '
+            'value is deliberate headroom (~28 GiB) over the largest '
+            'legitimate single media file this application manages, a UHD '
+            'Blu-ray remux at roughly 100 GB; a silent change here changes '
+            'how much disk a single hostile entry can consume before being '
+            'refused'
         )

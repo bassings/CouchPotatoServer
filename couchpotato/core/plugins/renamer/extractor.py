@@ -30,9 +30,6 @@ log = CPLog(__name__)
 #: per-entry counters: refusals, name collisions, unreadable entries, entries
 #: that could not be written to their destination, and entries refused for
 #: producing more than the fixed per-entry size ceiling (`_ENTRY_HARD_CAP`).
-#: (A whole-archive abort on `_ARCHIVE_HARD_CAP` is NOT one of these five --
-#: it ends the archive outright and is logged once at `extractFiles`, not as
-#: a capped per-entry line here.)
 #: (This said "BOTH refusals and name collisions" until the third counter was
 #: added a commit later and this line was not updated -- the same drift the
 #: rest of this branch keeps correcting.)
@@ -75,11 +72,10 @@ _ENTRY_DERIVED_ERRNOS = frozenset((
     errno.EINVAL,
 ))
 
-#: T44 REWORK, 2026-08-20: this file previously carried a per-entry
-#: cross-check comparing bytes actually written against `info.file_size`
-#: (declared header size) plus a margin. Review measured it dead on the
-#: pinned `rarfile==4.5`, and worse than dead: actively unsafe. Read before
-#: changing either constant below.
+#: T44, 2026-08-20: this file previously carried a per-entry cross-check
+#: comparing bytes actually written against `info.file_size` (declared
+#: header size) plus a margin. Review measured it dead on the pinned
+#: `rarfile==4.5`, and worse than dead: actively unsafe.
 #:
 #: MEASURED, not assumed, against
 #: `.venv/lib/python3.14/site-packages/rarfile.py`:
@@ -116,80 +112,56 @@ _ENTRY_DERIVED_ERRNOS = frozenset((
 #: (no rar/unrar/7z/7zz/unar, only bsdtar) -- deleting the cross-check makes
 #: that question moot rather than resolving it.
 #:
-#: What is left below is TWO fixed ceilings, neither derived from anything
-#: the archive header claims:
+#: What replaced it is ONE fixed ceiling, never derived from anything the
+#: archive header claims: an entry whose header self-consistently says
+#: "400 GiB" and then produces 400 GiB sails straight through rarfile's own
+#: clamp, since that clamp only stops an entry producing MORE than its
+#: header declares, not how large that declaration may honestly be. This is
+#: the LIVE guard against the pinned library version, and because it checks
+#: bytes ACTUALLY WRITTEN it is also defence-in-depth against a hypothetical
+#: future rarfile that weakens or removes the `_remain` clamp entirely (see
+#: the "NOTE for the next bump" at requirements.txt:52-55, about rarfile
+#: 5.0's *unrelated* config-location break): if that clamp ever went away,
+#: an entry could then both lie about its header AND overproduce, and this
+#: ceiling would still catch it on actual output alone.
 #:
-#:   `_ENTRY_HARD_CAP`   the LIVE guard for a single entry. rarfile's own
-#:                       invariant stops an entry producing MORE than its
-#:                       header declares, but declares nothing about how
-#:                       LARGE that declaration may honestly be -- an entry
-#:                       whose header self-consistently says "400 GiB" and
-#:                       then produces 400 GiB sails straight through
-#:                       rarfile's own clamp. This is what catches it.
+#: Deliberately NOT derived from `shutil.disk_usage()`. A free-space-based
+#: bound would make one extraction's outcome depend on how much OTHER,
+#: unrelated data already sits on the volume: nondeterministic (races with
+#: concurrent downloads/scans on the same disk), unrepresentable in a test
+#: without faking disk state, and it would surprise an operator with an
+#: extraction that fails today and would have succeeded yesterday against an
+#: identical archive purely because something else filled the disk in the
+#: meantime. A fixed ceiling is deterministic and directly testable instead.
 #:
-#:   `_ARCHIVE_HARD_CAP` the LIVE guard for the reachable amplification: RAR5
-#:                       lets many entries (duplicate/FILE_COPY references,
-#:                       or simply many honestly-small entries) each cost the
-#:                       attacker one header while the extractor still writes
-#:                       each one out in full. Measured: 400 entries each
-#:                       honestly declaring 256 KiB extracted 100 MB with no
-#:                       refusal from the (now-deleted) per-entry check
-#:                       alone. No single entry lies here, so no per-entry
-#:                       ceiling on its own can catch it; the ARCHIVE's total
-#:                       output needs its own fixed ceiling.
+#: 200 GiB (the value this constant shipped with originally) bought nothing
+#: over a tighter figure: a UHD Blu-ray remux, the largest legitimate single
+#: media file this application is ever asked to manage, tops out around
+#: 100 GB. 128 GiB leaves that real ceiling ~28 GiB of headroom without
+#: leaving the attacker another 72 GiB of it to abuse for free.
 #:
-#: Both check bytes ACTUALLY WRITTEN, never `info.file_size` -- which is why
-#: both are simultaneously the LIVE guard against today's `rarfile==4.5` and
-#: DEFENSE-IN-DEPTH against a hypothetical future `rarfile` that weakens or
-#: removes the `_remain` clamp entirely (see the "NOTE for the next bump" at
-#: requirements.txt:52-55, about rarfile 5.0's *unrelated* config-location
-#: break): if that clamp ever went away, an entry could then both lie about
-#: its header AND overproduce, and these two ceilings would still catch it on
-#: actual output alone, with no extra code. That dual role is exactly what
-#: the deleted cross-check did NOT have -- it depended entirely on trusting
-#: `info.file_size` as the comparison baseline, which is the same trust that
-#: made it unsafe against redirects.
-#:
-#: Deliberately NOT derived from `shutil.disk_usage()`, for both ceilings.
-#: A free-space-based bound would make one extraction's outcome depend on
-#: how much OTHER, unrelated data already sits on the volume: nondeterministic
-#: (races with concurrent downloads/scans on the same disk), unrepresentable
-#: in a test without faking disk state, and it would surprise an operator
-#: with an extraction that fails today and would have succeeded yesterday
-#: against an identical archive purely because something else filled the
-#: disk in the meantime. A fixed ceiling is deterministic and directly
-#: testable instead.
-#:
-#: 200 GiB (the value this constant shipped with before this note) bought
-#: nothing over a tighter figure: a UHD Blu-ray remux, the largest legitimate
-#: single media file this application is ever asked to manage, tops out
-#: around 100 GB. 128 GiB leaves that real ceiling ~28 GiB of headroom
-#: without leaving the attacker another 72 GiB of it to abuse for free.
+#: WHAT THIS DOES NOT DO, stated plainly because a second guard in this area
+#: was already built and removed here for overclaiming (see git history on
+#: this branch): this bounds ONE ENTRY, not an ARCHIVE. N entries each just
+#: under 128 GiB still write N * 128 GiB combined, and a REFUSED entry still
+#: writes up to just-under-128 GiB transiently to its temp file (unlinked
+#: afterward, but present on disk while the entry streams) before this check
+#: catches it. An archive-wide budget was attempted on this branch and
+#: removed because it could not fire on the input it was built for: many
+#: entries each individually tripping this per-entry cap contributed ZERO to
+#: a running total, because a refused entry's bytes were discarded before
+#: they were ever counted (measured: 26.7x the intended archive budget
+#: written to disk with the running total still at zero). An archive of many
+#: large or many small honest entries summing past any sane per-release
+#: total is therefore OPEN DEBT, not fixed here.
 _ENTRY_HARD_CAP = 128 * 1024 ** 3  # 128 GiB
-
-#: One feature file at `_ENTRY_HARD_CAP`, plus what a real release
-#: legitimately bundles alongside it -- a sample, subtitles, an NFO, maybe an
-#: alternate cut. None of that plausibly adds up to double digits of GiB, so
-#: 16 GiB of headroom over the entry ceiling is generous for a legitimate
-#: multi-file release. It is deliberately NOT generous enough to let a
-#: duplicate-reference bomb hide behind "it's just extras": the amplification
-#: this constant exists to catch is entries whose sum runs to many multiples
-#: of a single release, not a fraction over one.
-#:
-#: Checked against bytes ACTUALLY WRITTEN across every entry processed so far
-#: in ONE extractArchive() call (see `_extractOneAtomic`'s
-#: `archive_written_so_far` parameter) -- entries already confirmed present
-#: on disk from a PRIOR scan (the idempotency skip, `os.path.isfile`) are not
-#: re-read and so contribute nothing to this run's total, which is correct:
-#: no bytes are written for them this scan.
-_ARCHIVE_HARD_CAP = _ENTRY_HARD_CAP + 16 * 1024 ** 3  # 144 GiB
 
 
 class _ArchiveEntryTooLarge(Exception):
     """Raised internally by `_extractOneAtomic` when a single entry's ACTUAL
     output crosses the fixed `_ENTRY_HARD_CAP` -- never anything the archive
-    header claims (see the T44 REWORK note above for why the header cannot
-    be trusted as a budget input, only rarfile's own clamp on it).
+    header claims (see the note above `_ENTRY_HARD_CAP` for why the header
+    cannot be trusted as a budget input, only rarfile's own clamp on it).
 
     Deliberately its own type, not `OSError`/`rarfile.Error`: the write
     SUCCEEDS every time this fires. There is no I/O failure to observe here,
@@ -202,33 +174,6 @@ class _ArchiveEntryTooLarge(Exception):
         super().__init__(
             'entry wrote at least %d bytes, exceeding the fixed %d-byte '
             'per-entry ceiling' % (written, budget))
-        self.written = written
-        self.budget = budget
-
-
-class _ArchiveTooLarge(Exception):
-    """Raised internally when the RUNNING TOTAL of bytes actually written
-    across every entry processed so far in ONE `extractArchive()` call
-    crosses the fixed `_ARCHIVE_HARD_CAP`.
-
-    Unlike `_ArchiveEntryTooLarge`, no single entry need be at fault: this is
-    the reachable amplification -- many entries, each individually honest and
-    under `_ENTRY_HARD_CAP`, whose SUM the extractor would otherwise write in
-    full for the cost of one header each.
-
-    Deliberately left UNCAUGHT by the per-entry try/except inside
-    `extractArchive`'s loop (see the comment at that call site), so it
-    propagates out of `extractArchive` entirely and abandons the WHOLE
-    archive rather than continuing to spend disk on further entries once the
-    budget is already gone. `extractFiles`' except chain is where it is
-    caught, logged, and turned into a skip-not-tag -- the archive is retried
-    on a later scan, same as any other archive-level failure here.
-    """
-
-    def __init__(self, written, budget):
-        super().__init__(
-            'archive wrote at least %d bytes across its entries, exceeding '
-            'the fixed %d-byte per-archive ceiling' % (written, budget))
         self.written = written
         self.budget = budget
 
@@ -333,24 +278,6 @@ class ExtractorMixin:
             except rarfile.Error as e:
                 # Known archive problem (corrupt/bad RAR, wrong password, etc.).
                 log.error('Skipping archive with a known RAR problem %s: %s %s', archive['file'], e, traceback.format_exc())
-                continue
-            except _ArchiveTooLarge as e:
-                # T44: this archive's entries have, TOGETHER, actually
-                # written more than the fixed per-archive budget allows --
-                # see _ArchiveTooLarge's docstring for why extractArchive
-                # deliberately lets this propagate rather than skipping just
-                # the one entry that tipped it over. Not tagged, so it is
-                # retried on a later scan like any other archive-level
-                # failure here (a genuinely hostile archive will hit this
-                # same ceiling again next scan, which is the same retry
-                # characteristic an environmental OSError or a corrupt
-                # archive already has on this path, not something new).
-                log.error(
-                    'Archive %s requested more data than the %d-byte '
-                    'per-archive extraction budget allows (wrote at least '
-                    '%d bytes before aborting), skipping it: %s',
-                    archive['file'], _ARCHIVE_HARD_CAP, e.written, e,
-                )
                 continue
             except Exception as e:
                 # Anything else (I/O error, permissions, unexpected bug).
@@ -498,12 +425,6 @@ class ExtractorMixin:
             unreadable = 0
             unwritable = 0
             oversized = 0
-            # Running total of bytes ACTUALLY WRITTEN across every entry
-            # processed so far in this call, checked against
-            # `_ARCHIVE_HARD_CAP` inside `_extractOneAtomic`. Never derived
-            # from any entry's declared file_size -- see the T44 REWORK note
-            # above `_ENTRY_HARD_CAP` for why that would be unsafe.
-            archive_written = 0
             extracted = []
             # Parallel set purely for membership. `extracted` stays a list
             # because its ORDER is the return contract, but `x in list` is a
@@ -560,15 +481,8 @@ class ExtractorMixin:
                         # because the entry was never refused.
                         log.debug('Extracting %r...', info.filename)
                         try:
-                            # Returns bytes actually written for THIS entry,
-                            # accumulated into the archive-wide running total
-                            # -- an augmented assignment only completes on a
-                            # successful return, so a refused entry (either
-                            # exception below) contributes nothing to it: its
-                            # work was discarded along with its temp file.
-                            archive_written += self._extractOneAtomic(
-                                rar_handle, info, extr_file_path, extr_path,
-                                archive_written)
+                            self._extractOneAtomic(
+                                rar_handle, info, extr_file_path, extr_path)
                         except rarfile.RarCannotExec:
                             # The extractor TOOL is missing. Environmental, and
                             # it will fail identically for every remaining
@@ -582,28 +496,15 @@ class ExtractorMixin:
                             # of the broader catch going in, which is the whole
                             # argument for the narrow one.
                             raise
-                        # _ArchiveTooLarge is DELIBERATELY not caught here.
-                        # Unlike _ArchiveEntryTooLarge (one hostile/oversized
-                        # entry, skip it, keep going), _ArchiveTooLarge means
-                        # this run has ALREADY written more than a single
-                        # release plausibly needs -- continuing to process
-                        # further entries only spends more disk on exactly
-                        # the amplification this budget exists to stop. Let
-                        # it propagate past every except clause below, out of
-                        # the try/finally (still logging the per-entry
-                        # summary on the way out -- see the `finally` below),
-                        # and out of extractArchive entirely; extractFiles'
-                        # except chain is where it is caught, logged, and
-                        # turned into a skip-not-tag.
                         except _ArchiveEntryTooLarge as e:
                             # T44: this entry's ACTUAL output crossed the
                             # fixed per-entry ceiling -- never anything its
                             # header claims (rarfile's own read() already
                             # clamps output to the declared file_size; see
-                            # the T44 REWORK note above `_ENTRY_HARD_CAP`).
-                            # The write ALWAYS succeeds here; there is no
-                            # OSError to sort by errno, which is why this
-                            # needs its own except clause rather than joining
+                            # the note above `_ENTRY_HARD_CAP`). The write
+                            # ALWAYS succeeds here; there is no OSError to
+                            # sort by errno, which is why this needs its own
+                            # except clause rather than joining
                             # `_ENTRY_DERIVED_ERRNOS`.
                             #
                             # Attacker-controlled like a hostile name or a
@@ -612,7 +513,9 @@ class ExtractorMixin:
                             # counter for the same reason `unwritable` has
                             # one -- "refused for exceeding the fixed size
                             # ceiling" is a different remedy from "could not
-                            # be read" or "could not be written".
+                            # be read" or "could not be written". Note this
+                            # bounds only THIS entry, not the archive as a
+                            # whole -- see `_ENTRY_HARD_CAP`'s comment.
                             oversized += 1
                             if oversized <= _MAX_ENTRY_LOGS:
                                 log.error(
@@ -801,42 +704,26 @@ class ExtractorMixin:
                 pass
 
     @staticmethod
-    def _extractOneAtomic(rar_handle, info, extr_file_path, extr_path,
-                           archive_written_so_far):
+    def _extractOneAtomic(rar_handle, info, extr_file_path, extr_path):
         """Stream a single archive entry to a temp file in extr_path, then
         atomically ``os.replace`` it into extr_file_path. On ANY error the
         temp file is removed so no partial output survives at the real path.
 
-        Returns the number of bytes actually written for THIS entry, so the
-        caller can accumulate the archive-wide running total.
+        The read loop enforces a per-entry byte ceiling against
+        ``_ENTRY_HARD_CAP``, checked against bytes ACTUALLY WRITTEN -- never
+        against ``info.file_size`` or anything else the archive header
+        claims. See the note above ``_ENTRY_HARD_CAP`` for why a
+        header-derived budget was tried and removed (measured unreachable
+        against the pinned ``rarfile==4.5``, and actively unsafe besides),
+        and for what this ceiling does and does not bound -- it stops ONE
+        entry whose header honestly declares, and rarfile then honours, far
+        more than any real media file this application manages; it does NOT
+        bound an archive's total output across many entries.
 
-        The read loop enforces two independent size guards, both against
-        FIXED ceilings and both checked against bytes ACTUALLY WRITTEN --
-        never against ``info.file_size`` or anything else the archive header
-        claims. See the T44 REWORK note above ``_ENTRY_HARD_CAP`` for why a
-        header-derived budget was tried, measured unreachable against the
-        pinned ``rarfile==4.5`` (its own ``RarExtFile.read()`` already clamps
-        output to the declared ``file_size``), and actively unsafe besides
-        (RAR5 FILE_COPY/HARD_LINK redirects swap in a DIFFERENT entry's
-        ``file_size`` for the actual stream).
-
-          ``_ENTRY_HARD_CAP``   stops ONE entry whose header honestly
-                                 declares -- and rarfile then honours -- far
-                                 more than any real media file this
-                                 application manages.
-          ``_ARCHIVE_HARD_CAP`` stops the ARCHIVE as a whole once entries
-                                 processed so far (this one included) have
-                                 actually written more than a single release
-                                 plausibly needs -- the reachable
-                                 amplification, since many small honest
-                                 entries (or RAR5 duplicate-file references)
-                                 can sum to far more than any one entry alone.
-
-        Raises ``_ArchiveEntryTooLarge`` for the first, ``_ArchiveTooLarge``
-        for the second -- checked BEFORE each chunk is written, so the temp
-        file for a refused entry never grows past whichever ceiling it
-        crossed, rather than silently truncating the entry. The caller
-        treats both as refusals, never as a successful partial extract.
+        Raises ``_ArchiveEntryTooLarge`` -- checked BEFORE each chunk is
+        written, so the temp file for a refused entry never grows past the
+        ceiling, rather than silently truncating the entry. The caller
+        treats this as a refusal, never as a successful partial extract.
         """
         # Temp file in the SAME directory so os.replace is atomic (same fs).
         fd, tmp_path = tempfile.mkstemp(dir=extr_path, prefix=_TEMP_PREFIX, suffix=_TEMP_SUFFIX)
@@ -856,9 +743,6 @@ class ExtractorMixin:
                         # so the transient disk usage of a refused entry is
                         # bounded even though it is unlinked either way.
                         raise _ArchiveEntryTooLarge(written, _ENTRY_HARD_CAP)
-                    if archive_written_so_far + written > _ARCHIVE_HARD_CAP:
-                        raise _ArchiveTooLarge(
-                            archive_written_so_far + written, _ARCHIVE_HARD_CAP)
                     target.write(chunk)
             # tempfile.mkstemp always creates the file 0600 (owner-only),
             # ignoring umask; without this the extracted media file would be
@@ -867,7 +751,6 @@ class ExtractorMixin:
             # permission before the atomic rename, matching mover.py.
             os.chmod(tmp_path, Env.getPermission('file'))
             os.replace(tmp_path, extr_file_path)
-            return written
         except BaseException:
             try:
                 os.unlink(tmp_path)
