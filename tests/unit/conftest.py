@@ -10,6 +10,7 @@ import os
 import pytest
 
 from couchpotato.core.logger import reset_log_suppression
+from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
 
 # Git sets GIT_DIR (and its siblings) in the environment of hook subprocesses
 # launched from a `git worktree` checkout -- but not from the main checkout.
@@ -56,21 +57,27 @@ from couchpotato.core.logger import reset_log_suppression
 #
 # So `sanitized_git_env()` now strips the WHOLE `GIT_*` namespace and allows
 # back only the commit-identity variables named in
-# GIT_IDENTITY_ENV_PREFIXES below. Those change what a commit RECORDS
-# (author/committer name, email, date), never where an operation LANDS or
-# what git EXECUTES, which is the distinction that makes them safe to let
-# through.
+# GIT_IDENTITY_ENV_PREFIXES, imported above from `tests/conftest.py` rather
+# than redefined here. Those change what a commit RECORDS (author/committer
+# name, email, date), never where an operation LANDS or what git EXECUTES,
+# which is the distinction that makes them safe to let through.
+#
+# Imported, not redefined, because `tests/conftest.py` holds the OTHER
+# application of this same rule -- a process-wide `os.environ` pop that runs
+# before collection -- and T57's own argument is that a rule stated twice
+# goes stale the moment one copy is updated and the other is not. That
+# import is safe: pytest collects the root conftest before this one, and
+# both `tests/` and `tests/unit/` are packages via `__init__.py`, so
+# `import tests.conftest` here resolves to the module pytest already loaded
+# rather than re-running its module-level scrub. See that file's own comment
+# for the process-wide pop this constant also drives.
 #
 # Deliberately a plain function, not a fixture and not autouse: importing it
 # is each caller's explicit choice, so it carries none of the blast radius
 # the autouse fixtures above do across this file's ~150+ dependents. See
 # `tests/unit/test_fixtures_do_not_leak_gitdir.py` (the GIT_DIR leak and the
 # call-site audit) and `tests/unit/test_git_env_namespace_scrub.py` (this
-# namespace rule).
-GIT_IDENTITY_ENV_PREFIXES = (
-    'GIT_AUTHOR_',
-    'GIT_COMMITTER_',
-)
+# namespace rule, both layers).
 
 
 def assert_git_dir_is(directory, env=None):

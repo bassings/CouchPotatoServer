@@ -1,4 +1,4 @@
-"""`sanitized_git_env()` strips git's whole `GIT_*` namespace, not a list of
+r"""`sanitized_git_env()` strips git's whole `GIT_*` namespace, not a list of
 names (T57).
 
 `tests/unit/conftest.py` used to deny six specific "location" variables --
@@ -28,12 +28,48 @@ back to a six-name denylist. `TestTheNamespaceIsStrippedNotAList` below is
 written to fail that same way: it asserts against variable names git has
 never defined and never will, which no list of REAL names -- however long --
 can ever satisfy.
+
+TWO LAYERS apply this rule, and both are covered here.
+`tests/unit/conftest.py`'s `sanitized_git_env()` returns a sanitised COPY for
+an explicit `env=`, tested by `TestTheNamespaceIsStrippedNotAList` and the
+rest of the classes above `TestTheRootProcessWideScrubAppliesTheSameRule`.
+`tests/conftest.py` also pops the same namespace directly out of
+`os.environ`, once, for the WHOLE test process, before anything is
+collected -- a denylist reverted there would leave `sanitized_git_env()`
+correct while every subprocess that never calls it (the whole point of that
+layer, per its own comment) stayed exposed. `TestTheRootProcessWideScrubAppliesTheSameRule`
+proves that layer independently, in a subprocess, because its scrub runs
+once at import time, before any test in THIS process starts -- there is no
+way to poison `os.environ` and re-trigger it from inside a running test.
+
+The whole-tree sweep for anything that reads a `GIT_*` variable (the claim
+`tests/conftest.py`'s "safe to do unconditionally" comment rests on,
+widened from GIT_DIR alone to the full namespace for T57's follow-up):
+
+    grep -rn "GIT_" --include='*.py' --include='*.sh' --include='*.yml' \
+      --include='*.yaml' . | grep -v '\.venv' | grep -v '/\.git/'
+
+and, with no extension filter at all, to catch anything outside those
+extensions:
+
+    grep -rn "GIT_" . | grep -vE '\.venv/|/\.git/|node_modules/|\.pytest_cache/|__pycache__/|/\.next/|/dist/|/build/'
+
+Every hit outside this file, `tests/conftest.py`, `tests/unit/conftest.py`,
+`test_fixtures_do_not_leak_gitdir.py`, `test_hybrid_gate.py` and
+`test_mutation_changed.py` (all already accounted for above) is
+documentation in `specs/REMEDIATION-2026-08.md`. Nothing reads a `GIT_*`
+variable, so nothing depends on inheriting one outside the identity
+allowlist.
 """
 import os
 import stat
 import subprocess
+import sys
+from pathlib import Path
 
 from tests.unit.conftest import GIT_IDENTITY_ENV_PREFIXES, sanitized_git_env
+
+REPO = Path(__file__).resolve().parents[2]
 
 
 class TestTheNamespaceIsStrippedNotAList:
@@ -244,4 +280,88 @@ class TestTheTemplateDirEscapeIsClosed:
             'EXECUTED during the fixture\'s own seed commit -- '
             'sanitized_git_env() did not strip GIT_TEMPLATE_DIR from the '
             'environment handed to git'
+        )
+
+
+class TestTheRootProcessWideScrubAppliesTheSameRule:
+    """`tests/conftest.py` pops the same `GIT_*` namespace directly out of
+    `os.environ`, once, for the whole test process, before collection --
+    the layer `test_fixtures_do_not_leak_gitdir.py`'s
+    `test_the_process_scrub_protects_a_file_that_never_heard_of_the_helper`
+    already exercises for the GIT_DIR leak specifically. This class is the
+    T57 equivalent of that test: it proves the ROOT scrub applies the
+    namespace rule, not a list, independently of `sanitized_git_env()`.
+
+    Every case here runs a fresh Python subprocess rather than poisoning
+    `os.environ` in-process. `tests/conftest.py`'s scrub is a MODULE-LEVEL
+    side effect that fires once, the moment the module is first imported --
+    by the time any test in this file runs, that has already happened in
+    THIS process, using whatever `os.environ` looked like at collection
+    start. Setting a variable now and re-importing would hit Python's module
+    cache and run nothing. A subprocess is the only way to observe the
+    scrub actually firing.
+    """
+
+    @staticmethod
+    def _import_conftest_and_report(env_vars):
+        """Run `import tests.conftest` in a fresh subprocess with the given
+        environment, and report which of `env_vars` survived into
+        `os.environ` afterwards -- one name per output line, in the same
+        order as `env_vars`, so the caller can assert on each independently
+        without a second subprocess round-trip per variable."""
+        poisoned = os.environ.copy()
+        poisoned.update(env_vars)
+        probe = (
+            'import tests.conftest, os\n'
+            + '\n'.join(
+                "print('PRESENT' if %r in os.environ else 'ABSENT')" % name
+                for name in env_vars
+            )
+        )
+        result = subprocess.run(
+            [sys.executable, '-c', probe], cwd=str(REPO), env=poisoned,
+            capture_output=True, text=True, timeout=30,
+        )
+        assert result.returncode == 0, (
+            'importing tests.conftest failed outright, which proves nothing '
+            'about the scrub: stdout=%s stderr=%s'
+            % (result.stdout, result.stderr)
+        )
+        lines = result.stdout.strip().splitlines()
+        assert len(lines) == len(env_vars), (
+            'expected one PRESENT/ABSENT line per probed variable, got: %r'
+            % result.stdout
+        )
+        return dict(zip(env_vars, lines))
+
+    def test_an_unknown_GIT_variable_does_not_survive_process_start(self):
+        report = self._import_conftest_and_report(
+            {'GIT_NOT_A_REAL_VARIABLE_47B3F9': 'anything'},
+        )
+        assert report['GIT_NOT_A_REAL_VARIABLE_47B3F9'] == 'ABSENT', (
+            'an unrecognised GIT_* variable survived importing '
+            'tests.conftest -- the root scrub is pinning specific names '
+            'again, not the namespace'
+        )
+
+    def test_commit_identity_variables_survive_process_start(self):
+        report = self._import_conftest_and_report({
+            'GIT_AUTHOR_NAME': 'Test Author',
+            'GIT_COMMITTER_NAME': 'Test Committer',
+        })
+        assert report['GIT_AUTHOR_NAME'] == 'PRESENT', (
+            'GIT_AUTHOR_NAME did not survive the root scrub -- a scripted '
+            'commit relying on ambient author identity would silently lose it'
+        )
+        assert report['GIT_COMMITTER_NAME'] == 'PRESENT', (
+            'GIT_COMMITTER_NAME did not survive the root scrub'
+        )
+
+    def test_an_unrelated_variable_survives_process_start(self):
+        report = self._import_conftest_and_report(
+            {'COUCHPOTATO_TEST_UNRELATED_VAR': 'kept'},
+        )
+        assert report['COUCHPOTATO_TEST_UNRELATED_VAR'] == 'PRESENT', (
+            'a variable outside the GIT_* namespace was removed by the root '
+            'scrub -- it is too broad, not just too narrow'
         )
