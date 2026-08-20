@@ -1560,6 +1560,40 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       That is AC-SEC-42's protection removed entirely, leaving bcrypt's ~166ms
       as the only brake on credential stuffing.
 
+      **Correction, measured 2026-08-20: LATENT here, not live, and the entry
+      above overstated where it bites.** Two claims in it are wrong.
+
+      This repo documents no reverse proxy at all: `nginx`, `caddy`, `traefik`
+      and "reverse proxy" appear nowhere in `docs/` or `CLAUDE.md`, so "the
+      deployment shape this project documents" describes a shape the project
+      does not document. And production does not have one: the compose file
+      publishes `5050:5050` straight to the container, with no proxy in front.
+
+      The "proxy container talking to a port-mapped app" half is wrong for a
+      different reason, and this was measured rather than argued. Connections
+      were opened from a LAN client while the container's own socket table was
+      read:
+
+          tcp  172.19.0.2:5050  172.16.11.<lan-client>:58536  ESTABLISHED
+
+      The container sees the TRUE client address, not loopback and not the
+      Docker gateway. So `ProxyHeadersMiddleware` does not trust the peer,
+      `X-Forwarded-For` is ignored, and the bypass is not reachable on this
+      deployment as it stands.
+
+      It stays a real defect and stays queued, because the distance to live is
+      one ordinary decision: the moment a TLS terminator is put on that host
+      the trust becomes real, and certbot already runs there. Rank it as latent
+      rather than exploitable, and do not let the ranking be an argument for
+      closing it.
+
+      **A design constraint the entry does not name, and the fix has to solve
+      it.** The localhost exemption deliberately does NOT apply to auth routes.
+      So simply passing `proxy_headers=False` would put every remote user
+      behind a proxy into ONE shared `127.0.0.1` bucket, converting a bypass
+      into a global lockout that one attacker can trigger for everybody. The
+      fix has to be an explicit trusted-proxy opt-in, not a flag flip.
+
       Not caused by the uvicorn 0.51->0.52 bump: the default is identical at
       0.51.0, and neither release touched proxy headers.
 
@@ -2697,7 +2731,33 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       widening it touches more than the `repo` fixtures. Check nothing depends
       on inheriting a `GIT_*` variable before removing the namespace.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T56, T57 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T58: the wizard's credential masking is verified statically, never in a DOM — state: queued (no deps) — **security, test-coverage**
+
+      Raised on #277 and promoted out of T52's prose deliberately. T52 recorded
+      this gap honestly, but it recorded it as "whoever closes this", which is
+      not an owner and not a date. Review's objection is the right one: T48
+      went stale the same way, and a gap living only inside a ticked task's
+      body is a gap nobody is counting.
+
+      `tests/unit/test_wizard_credential_fields.py` proves the tracker
+      credentials are masked by reading the `privateTrackers` data array and
+      the shared input's `:type="field.type || 'text'"` expression, then
+      INFERRING the resolved attribute. That is a real guard and it caught real
+      leaks, but it is not a measurement of what the browser renders, and the
+      thing being guarded is credential masking.
+
+      Three attempts at a full-navigation Playwright test were abandoned under
+      T52, for a good reason: `getByRole` excludes hidden elements, so "wrong
+      wizard step" and "element missing" produce the same failure and cannot be
+      told apart from the message.
+
+      Review's suggestion sidesteps that entirely and is the approach to take
+      first: render the template in isolation with `page.setContent()`, Alpine
+      loaded, and a fixed `field.type`, rather than navigating to the Providers
+      step at all. The fragility that killed the three attempts was the
+      navigation, not the assertion.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T56, T57, T58 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

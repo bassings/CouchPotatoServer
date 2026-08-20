@@ -319,7 +319,17 @@
                             Applied on the shared input because every tracker
                             credential goes through it -- setting it per-field
                             would need the attribute in the data, which is the
-                            shape that hid the passkeys from the first sweep. -#}
+                            shape that hid the passkeys from the first sweep.
+
+                            Known side effect, not an oversight: this input
+                            also renders each tracker's `username`, so a
+                            password manager is told that field is not a login
+                            field and may not offer username autofill there.
+                            That is the accepted cost of the shared-input
+                            shape. Anyone here because "autofill does not work
+                            for tracker usernames" has found the cause, and the
+                            fix is to move the attribute into the field data,
+                            not to drop it. -#}
                         <input :type="field.type || 'text'" x-model="formData.privateTrackers[tracker.id][field.name]"
                                autocomplete="new-password"
                                :placeholder="field.placeholder || ''"

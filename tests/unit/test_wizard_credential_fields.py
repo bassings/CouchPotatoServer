@@ -40,6 +40,14 @@ WIZARD = (Path(__file__).resolve().parents[2]
 # `entry.user_key` past the first version of this pattern. T48's own docstring
 # already listed `user_key` among the differently-named credentials it had to
 # fix, so this was a known name the pattern did not know.
+#
+# `auth` is an unanchored substring, so it also fires on `author`,
+# `authorization` and `authorize`. That breadth is deliberate, and it is the
+# safe direction to be wrong in: a false hit fails the build and gets looked
+# at, a miss ships a credential in the clear. Nothing in the template matches
+# it today for a non-credential reason. When something does, narrow the
+# IDENTIFIER the sweep feeds this pattern -- do not loosen the pattern, which
+# is the same instruction the assertion message carries.
 CREDENTIAL = re.compile(
     r'(api_?key|user_?key|passkey|pass_key|secret|token|password|cookie|auth)',
     re.I)
@@ -50,7 +58,20 @@ def _text() -> str:
 
 
 def _direct_inputs():
-    """(line, type, identifier) for every credential-ish `<input>` tag."""
+    """(line, type, identifier) for every credential-ish `<input>` tag.
+
+    Known simplification, in the same spirit as this file's vacuity guards:
+    `placeholder="([^"]+)"` cannot tell a literal `placeholder="..."` from an
+    Alpine-bound `:placeholder="..."`, because it matches from just after the
+    colon and so reads the BOUND EXPRESSION as if it were placeholder text.
+    Two consequences, neither live today. A dynamically-bound placeholder on a
+    non-credential field that happened to contain a credential word would trip
+    this test with a message pointing at something that is not a credential.
+    And a genuine credential identified ONLY by a dynamic placeholder cannot be
+    told apart from that case. `x-model` is the primary signal and covers every
+    credential field in this template, which is why the simplification is
+    tolerable rather than merely unnoticed.
+    """
     s = _text()
     for m in re.finditer(r'<input\b[^>]*>', s, re.S):
         tag = m.group(0)
