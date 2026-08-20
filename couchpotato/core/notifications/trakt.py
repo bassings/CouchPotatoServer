@@ -23,19 +23,19 @@ class Trakt(Notification, TraktBase):
     listen_to = ['renamer.after']
     enabled_option = 'notification_enabled'
 
-    def conf(self, attr, *args, **kwargs):
-        """Override conf to read OAuth credentials from automation settings."""
-        # These settings are shared with the automation module
-        shared_settings = ['automation_client_id', 'automation_client_secret', 
-                          'automation_oauth_token', 'automation_oauth_refresh']
-
-        if attr in shared_settings:
-            # Read from the automation config section
-            from couchpotato.environment import Env
-            value = Env.setting(attr, 'trakt_automation')
-            return value
-
-        return super().conf(attr, *args, **kwargs)
+    # T53: no `conf()` override here any more. This class and the automation
+    # provider (`.../automation/trakt/main.py`) both declare their plugin
+    # `config` under the SAME top-level entry name, `'trakt'` -- see that
+    # module's `config[0]['name']` and this file's own, below -- and
+    # `Plugin.conf()`'s default section is `self.getName().lower()`, which is
+    # `'trakt'` for this class too (nothing calls `setName` on it). So the
+    # inherited `Plugin.conf()` already reads the OAuth credentials the
+    # automation module writes; a previous version of this method
+    # deliberately redirected `automation_client_id` and friends to section
+    # `'trakt_automation'`, which is the automation module's GROUP name, not
+    # its entry name -- `loader.py` never registers anything under a group
+    # name -- so every read there came back `''` and this notifier could
+    # never authorise.
 
     def notify(self, message='', data=None, listener=None):
         if not data:
