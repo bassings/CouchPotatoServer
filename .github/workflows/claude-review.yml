@@ -76,6 +76,22 @@ jobs:
             If you are unsure which a finding is, ask yourself whether you would
             block the merge over it. If the answer is no, it is an observation.
 
+            OBSERVATIONS MUST SURVIVE A RE-RUN, and this needs deliberate work
+            because the summary is a STICKY comment: `use_sticky_comment: true`
+            means each run REWRITES the single summary comment rather than
+            adding one. An inline thread persists until somebody resolves it;
+            a sticky body does not. So an observation you do not re-emit is
+            silently deleted, which would make this routing lose findings
+            rather than relocate them.
+
+            Before writing the summary, READ the existing one (`gh pr view` or
+            the comment tool). Then carry forward every observation from it
+            that the current diff has NOT addressed, alongside anything new you
+            find. If an earlier observation no longer applies because the code
+            changed, drop it and say so in one line ("resolved since last
+            review: ..."), so the author can see it was dealt with rather than
+            forgotten. Never drop one silently.
+
             Two things that are NOT exceptions to this. A finding you are
             uncertain about is still an observation until you can name the
             failure it causes. And if you retract or correct an earlier comment
