@@ -2952,7 +2952,45 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Whoever takes this: read T44's history first. Two guards shipped that
       could not fire, and both looked correct in review.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60, T61 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T63: `claude-review` reports green on PRs where it never ran — state: queued (no deps) — **security, false green**
+
+      Found by `lens-operability` during the first `/review-cycle` run, and
+      confirmed by measurement on #281.
+
+      GitHub declines to run a workflow from a pull request that modifies that
+      workflow's own file. `claude-review` is a REQUIRED status check. So on
+      any PR touching `.github/workflows/claude-review.yml`, the check reports
+      success while the reviewer never executed:
+
+          #281 (edits claude-review.yml)  -> claude-review check: PASS
+          claude[bot] comments on #281    -> 0
+
+      That is a required gate returning green for a review that did not happen,
+      which is the precise shape this plan keeps recording. It is worse than
+      the usual instance because the gate is the thing that is supposed to
+      notice, and because the PRs it silently exempts are exactly the ones
+      changing the reviewer.
+
+      Two consequences worth separating. The obvious one is that no change to
+      the review prompt can ever be verified before it merges, so the first
+      real exercise of any prompt change is on the NEXT pull request. The
+      sharper one is that an attacker or a careless edit could weaken the
+      review prompt, and the check guarding that change would pass without
+      objection.
+
+      The fix is not to make the workflow run on itself, which is the security
+      property GitHub is deliberately enforcing. It is to make the false green
+      impossible to mistake for a real one: have the job detect that it is
+      running against a PR which edits its own definition and fail, or post an
+      explicit "review skipped, workflow modified by this PR" comment, so the
+      absence is visible rather than inferred. A skipped review must not be
+      indistinguishable from a clean one.
+
+      Note this is the same distinction the harness ledger got wrong on the
+      same day: "no trace" and "not looked" must be distinguishable in the
+      output, or the instrument reproduces the class it exists to detect.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60, T61, T63 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

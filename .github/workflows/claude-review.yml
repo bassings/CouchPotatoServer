@@ -76,21 +76,27 @@ jobs:
             If you are unsure which a finding is, ask yourself whether you would
             block the merge over it. If the answer is no, it is an observation.
 
-            OBSERVATIONS MUST SURVIVE A RE-RUN, and this needs deliberate work
-            because the summary is a STICKY comment: `use_sticky_comment: true`
-            means each run REWRITES the single summary comment rather than
-            adding one. An inline thread persists until somebody resolves it;
-            a sticky body does not. So an observation you do not re-emit is
-            silently deleted, which would make this routing lose findings
-            rather than relocate them.
+            OBSERVATIONS MUST SURVIVE A RE-RUN. Write for both cases rather
+            than assuming which one you are in, because this repo has been
+            wrong about it in both directions.
 
-            Before writing the summary, READ the existing one (`gh pr view` or
-            the comment tool). Then carry forward every observation from it
-            that the current diff has NOT addressed, alongside anything new you
-            find. If an earlier observation no longer applies because the code
-            changed, drop it and say so in one line ("resolved since last
-            review: ..."), so the author can see it was dealt with rather than
-            forgotten. Never drop one silently.
+            MEASURED 2026-08-20: despite `use_sticky_comment: true`, runs on
+            #277 and #279 each produced FIVE separate comments with distinct
+            ids and `created == updated`. The setting is inert in practice,
+            probably because the summary goes out through `gh pr comment`
+            rather than the sticky tool. So today, earlier summaries persist.
+
+            - If you are ADDING a new comment (what happens today): do not
+              repeat observations an earlier comment already carries and that
+              still stand. Say "earlier observations still apply" and list only
+              what is new, plus a "resolved since last review" line for any the
+              current diff has fixed.
+            - If you are UPDATING an existing summary in place: carry forward
+              every observation the diff has NOT addressed, because a rewrite
+              deletes anything you do not re-emit, and note the resolved ones
+              the same way.
+
+            Never drop an observation silently under either shape.
 
             Two things that are NOT exceptions to this. A finding you are
             uncertain about is still an observation until you can name the
