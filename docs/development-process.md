@@ -483,6 +483,14 @@ schema", because this project has already lost data the other way: the
 `_query_index` defects fixed in 2026-02 corrupted records during an ordinary
 library scan, with no migration involved. Ask what the release can write.
 
+**What this policy does not cover, stated rather than left implicit.** That same
+example is the argument against a promotion-gated trigger as well as for a broad
+one: the corruption happened during normal running, not during a promotion, so
+no pre-promotion snapshot would have caught it. A write path that corrupts data
+three days after a deploy falls between backups here, where a nightly would not
+have. That residual risk is accepted deliberately. If this policy is ever
+revisited, that is the thread to pull.
+
 **There is no nightly backup and none is wanted.** Snapshots are taken at the
 moment that makes them recoverable, which is immediately before a risky
 promotion, rather than on a schedule that drifts out of date and gets ignored.

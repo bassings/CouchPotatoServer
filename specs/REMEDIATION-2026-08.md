@@ -2600,6 +2600,19 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       every release is one people stop taking seriously, and a nightly nobody
       installed was never providing cover in the first place.
 
+      **The residual risk is recorded rather than glossed, because the evidence
+      cited for the trigger also argues against it.** The `_query_index`
+      corruption happened during NORMAL RUNNING, so a promotion-gated snapshot
+      would not have caught it: a write path that corrupts data days after a
+      deploy falls between backups under this policy, where a nightly would not
+      have. "Dropping nightly costs nothing because the nightly was never
+      installed" is true of the past and does not carry forward, since the
+      counterfactual is what a REAL nightly would provide. Accepted
+      deliberately on the owner's decision, and written down so the next reader
+      inherits the decision rather than only the rule. That is the thread to
+      pull if this is ever revisited, and T59 (nobody has restored a backup)
+      matters more because of it.
+
       One argument was put and answered rather than dropped, and it is why the
       trigger is worded the way it is. "Changes the database" and "can damage
       the database" are not the same set: the `_query_index` defects fixed in

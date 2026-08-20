@@ -15,6 +15,15 @@
 # library scan, with no migration and no schema change involved. Ask what the
 # release can WRITE, not what it declares.
 #
+# Be honest about what that example does NOT establish, because it cuts both
+# ways. That corruption happened during NORMAL RUNNING, not during a promotion,
+# so a promotion-gated snapshot would not have caught it either: a scan that
+# corrupts data three days after a deploy falls between backups under this
+# policy, where a nightly would have caught it. That residual risk is accepted
+# deliberately, on the owner's decision, and it is the thread to pull if this
+# policy ever needs revisiting. It is written down rather than left implicit so
+# the next reader inherits the decision and not just the rule.
+#
 # When it does apply, it is not optional: a promotion is only reversible if the
 # database was captured first, because `:latest` has already moved by deploy
 # time, so "re-pull the old image" does not recover data.
