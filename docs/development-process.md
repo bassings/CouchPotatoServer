@@ -337,8 +337,10 @@ promotion). Full design: `specs/FEAT-release-channels.md`.
 
 ### Deploying to prod (backup → rollback tag → restart → verify)
 
-A promotion is reversible only if you capture two things *before* restarting:
-the database, and the digest of the image currently running. Neither is
+A promotion that could touch the database is reversible only if you capture two
+things *before* restarting: the database, and the digest of the image currently
+running. The image digest is worth recording for EVERY promotion; the database
+snapshot follows the trigger in "Backups" below. Neither is
 recoverable afterwards — `:latest` has already moved by the time you deploy, so
 "just re-pull the old one" is not available.
 
@@ -346,8 +348,10 @@ recoverable afterwards — `:latest` has already moved by the time you deploy, s
 # SSH credentials in Openclaw memory (topics/couchpotato.md)
 cd /var/lib/plexmediaserver/CouchPotato
 
-# 1. Back up the DB + settings (see "Backups" below; ~seconds, live-safe).
-./scripts/backup.sh
+# 1. Back up the DB + settings, IF this promotion could touch the database
+#    (see "Backups" below for the trigger; ~seconds, live-safe). When in
+#    doubt, take it: the cost is seconds and the alternative is unrecoverable.
+./scripts/backup.sh --retain 14
 
 # 2. Record what is running now, so rollback has a target.
 #    The digest is the only reliable handle — the tag :latest is about to move.
@@ -443,8 +447,10 @@ and prunes only its own timestamped output.
 the Docker image puts it — `Dockerfile:97` runs
 `--config_file=/config/config.ini` with `--data_dir=/data`, so it sits one level
 above the data dir). Checking only the first would have meant prod snapshots
-quietly containing the database alone: the script warns and exits 0, so a nightly
-cron would report success forever while never capturing settings.
+quietly containing the database alone: the script warns and exits 0, so every run
+would report success while never capturing settings. That is why the
+verification below checks `config.ini` is present in the snapshot rather than
+only that the database opens.
 
 Both paths default to the prod layout, so on the server it takes no arguments
 (`make backup` is a shortcut for the no-argument form):
@@ -500,17 +506,50 @@ the script there once:
 
 ```bash
 scp scripts/backup.sh homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/
-ssh homemedia 'cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh'
+ssh homemedia 'cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh --retain 14'
 ```
 
-**Verify the snapshot rather than trusting exit 0.** `PRAGMA integrity_check`
-does not check foreign keys, and this schema declares them, so run both:
+**Pass `--retain N`.** Retention used to live only on the nightly cron line, so
+removing the nightly took the only pruning mechanism in the documented workflow
+with it. Without it `backups/` grows by one full DB plus settings snapshot per
+risky promotion, forever, on the volume that also holds the live database. That
+is a slow way to reproduce the disk-full failure these snapshots exist to
+survive.
+
+**Verify the snapshot rather than trusting exit 0.** Three things, and the
+second and third are the ones people skip.
 
 ```bash
-sqlite3 <BACKUP_DIR>/<stamp>/couchpotato.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+B=<BACKUP_DIR>/<stamp>
+sqlite3 "$B/couchpotato.db" 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+test -r "$B/config.ini" && echo 'settings present'
 ```
 
-`integrity_check` must print `ok` and `foreign_key_check` must return no rows.
+1. `integrity_check` must print `ok`.
+2. `foreign_key_check` must return **no rows**. `integrity_check` does not check
+   foreign keys, and this schema declares them (`media_identifiers` and
+   `media_tags` both `REFERENCES documents(_id)`), so an orphaned row passes the
+   first check and fails recovery.
+3. `config.ini` must be present. `backup.sh` deliberately WARNS and exits 0 when
+   it cannot find the settings file, so both PRAGMAs can pass on a snapshot with
+   no settings in it at all. The database alone does not restore a working
+   install.
+
+**If `sqlite3` is not on the host**, use the interpreter instead. The script
+itself falls back to Python's `sqlite3` module for exactly this case, so a
+verification step that only speaks `sqlite3` fails on precisely the hosts the
+fallback exists to support:
+
+```bash
+python3 - "$B/couchpotato.db" <<'CHECK'
+import sqlite3, sys
+c = sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True)
+print('integrity_check:', c.execute('PRAGMA integrity_check').fetchall())
+print('foreign_key_check rows:', c.execute('PRAGMA foreign_key_check').fetchall())
+CHECK
+```
+
+Expect `[('ok',)]` and an empty list.
 
 ### Beta testers
 
@@ -529,7 +568,7 @@ toggle.
 | `scripts/check_test_traps.py` | False-green guard — stage 2 of `make verify` |
 | `scripts/check_conformance.py` | Design-system drift gate |
 | `scripts/mutation_changed.py` | Mutation testing scoped to changed files |
-| `scripts/backup.sh` | Prod DB + settings snapshot (pre-deploy and nightly) |
+| `scripts/backup.sh` | Prod DB + settings snapshot, before a promotion that could touch the database. Not nightly |
 
 Each of these is itself unit-tested (`tests/unit/test_check_test_traps.py`,
 `test_check_conformance.py`, `test_mutation_changed.py`, `test_backup_script.py`)

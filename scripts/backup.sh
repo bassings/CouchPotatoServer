@@ -6,8 +6,16 @@
 # migration, or any release carrying changes to the persistence layer
 # (`couchpotato/core/db/`) or to a write path that runs unattended, such as the
 # library scanner or the renamer. It is NOT run nightly and NOT run before every
-# deploy: a UI-only or docs-only promotion cannot damage data, and a backup
-# ritual applied to every release is one people stop taking seriously.
+# deploy: a docs-only or packaging-only promotion cannot damage data, and a
+# backup ritual applied to every release is one people stop taking seriously.
+#
+# "UI-only" is NOT on that safe list, and saying so was a defect in the first
+# draft of this policy. This project's UI calls destructive APIs directly:
+# `couchpotato/ui/templates/partials/movie_detail.html` fires `media.delete`,
+# and both `wizard.html` and the settings partial fire `settings.save`. A UI
+# change that sends the wrong id or the wrong value destroys library records or
+# corrupts configuration just as thoroughly as a migration would. Classify a UI
+# change by whether it can reach a write API, not by the fact that it is UI.
 #
 # The reason the trigger is "could touch the database" rather than "changes the
 # schema" is that this project has already lost data the other way. The
@@ -83,8 +91,12 @@ usage() {
   cat <<'USAGE'
 backup.sh — snapshot the CouchPotato SQLite database + settings.
 
-Run before every prod promotion, and nightly from cron. Uses sqlite3 `.backup`
-(or Python's sqlite3 backup API) so the copy is safe against a live database.
+Run before a promotion that could touch the database: a schema change or
+migration, anything under couchpotato/core/db/, an unattended write path such as
+the scanner or renamer, or a UI change that can reach a destructive API (the UI
+calls media.delete and settings.save directly). NOT nightly, NOT before every
+deploy. Uses sqlite3 `.backup` (or Python's sqlite3 backup API) so the copy is
+safe against a live database.
 
 Usage:
   ./scripts/backup.sh                 snapshot, keep everything
@@ -146,8 +158,10 @@ DB_SRC="$CP_DATA_DIR/database_v2/couchpotato.db"
 #   * DATA_DIR/../config.ini   — what the Docker image uses, where
 #                                `--config_file=/config/config.ini` sits one
 #                                level above `--data_dir=/data`
-# Picking the wrong one is invisible: the script warns and exits 0, so a nightly
-# cron reports success forever while never capturing settings.
+# Picking the wrong one is invisible: the script warns and exits 0, so every run
+# reports success while never capturing settings. That is why the documented
+# verification checks config.ini is PRESENT in the snapshot, not just that the
+# database opens.
 SETTINGS_SRC=""
 for candidate in "$CP_DATA_DIR/config.ini" "$CP_DATA_DIR/../config.ini"; do
   if [ -f "$candidate" ]; then
@@ -256,7 +270,7 @@ info "snapshot complete: $DEST"
 # still holds an UNPADDED `-N` directory from an older version of this script can
 # still mis-sort: with `<stamp>` and a legacy `<stamp>-2` present, `--retain 1`
 # keeps `-2` and prunes the fresh `<stamp>-02` (reproduced). Unreachable under
-# the documented usage — nightly `--retain 14` plus one manual pre-promotion run
+# the documented usage — `--retain N` on a pre-promotion run
 # would need 15+ snapshots inside a single second. If you ever hit it, delete or
 # rename the legacy unpadded directories once and it cannot recur.
 #
@@ -268,7 +282,7 @@ info "snapshot complete: $DEST"
 #   2. `set -o pipefail` + `head` closing the pipe early made the whole script
 #      exit 141 (SIGPIPE) on a *successful* backup once the snapshot list
 #      exceeded the pipe buffer (~1050 snapshots at the default path length), so
-#      cron reported failure for a good backup.
+#      the run reported failure for a good backup.
 # The array is already correct; sort and slice it in-process instead.
 prune_snapshots() {
   local keep="$1"

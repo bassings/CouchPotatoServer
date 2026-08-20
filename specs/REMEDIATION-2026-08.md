@@ -2655,6 +2655,32 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Do it once, concretely: restore `20260820-100129` into a scratch data dir
       and boot the app against it.
 
+      **Isolate the automation BEFORE booting, or the rehearsal is itself a
+      destructive action.** Raised in review of #279 and confirmed against the
+      tree. The restored `config.ini` carries the production settings, and two
+      of them fire on `app.load`:
+
+          manage.py:58              `startup_scan` -> updateLibraryQuick
+          searcher.py:81            `run_on_launch` -> searchAll
+
+      plus the renamer scheduling its own scan. So a naive rehearsal walks the
+      real media paths, contacts the configured indexers and downloaders, and
+      can move or rename files. A drill meant to prove recoverability would be
+      mutating the thing it is protecting.
+
+      Neutralise it in the restored copy before the first boot rather than
+      trusting a flag: unset `manage.startup_scan`, `movie.searcher.run_on_launch`
+      and the renamer's `enabled` in the scratch `config.ini`, point every
+      library path at a throwaway directory, and clear the downloader and
+      indexer credentials so a mistake cannot reach a real service. Note
+      `manage.py:58` also short-circuits under `Env.get('dev')`, which is a
+      useful second layer but is NOT sufficient on its own -- it guards the
+      scan and not the searcher.
+
+      That requirement is the reason this is a task rather than a five-minute
+      job, and it is exactly the sort of thing that would have been discovered
+      the hard way at 2am.
+
 - [ ] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: queued (no deps) — **security, test-infrastructure**
 
       Raised by a peer session working on the same harness, and confirmed here
