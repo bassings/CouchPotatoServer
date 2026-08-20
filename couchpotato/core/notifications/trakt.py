@@ -20,6 +20,22 @@ class Trakt(Notification, TraktBase):
         'test': 'sync/last_activities',
     }
 
+    # NECESSARY BUT NOT SUFFICIENT, and worth reading before concluding that
+    # Trakt works. T53 fixed credential resolution: `conf()` now reads the
+    # section the automation module actually writes, so the settings page's
+    # Test button genuinely authorises. The COLLECTION path below is still
+    # dead, because `renamer.after` is never fired -- the only dispatch in the
+    # renamer package is `fireEvent('renamer.scan', ...)`, whose auto-derived
+    # suffix is `renamer.scan.after`. Measured on the loaded app: 24 handlers
+    # registered on `renamer.after`, zero firing sites in the tree. Tracked as
+    # the renamer event chain in `docs/technical-debt.md` and
+    # `specs/RENAMER-EVENT-CHAIN.md`.
+    #
+    # The consequence is a signal that lies in the user's favour: after T53 the
+    # Test button reports healthy while downloads are never added to the
+    # collection. Do NOT close that by widening `listen_to` here --
+    # `tests/unit/test_downloaded_review_notify.py` deliberately pins that this
+    # notifier must not listen to `movie.downloaded`/`movie.snatched`.
     listen_to = ['renamer.after']
     enabled_option = 'notification_enabled'
 

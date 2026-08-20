@@ -177,7 +177,15 @@ def _collect_section_literal_call_sites(root):
                 continue
             func = node.func
 
-            if func.attr == 'setting' and isinstance(func.value, ast.Name) and func.value.id == 'Env':
+            # Matched on the ATTRIBUTE alone, deliberately, rather than on
+            # `Env.setting`. `.setting()` has no other meaning in this tree
+            # (measured: zero aliased `Env` imports and zero dotted
+            # `environment.Env` access today), and pinning the receiver to the
+            # name `Env` is how the same guard family has been evaded here
+            # before -- `conftest.py`'s header records an AST guard that missed
+            # `subprocess as sp`. Widening costs nothing and closes the alias,
+            # the dotted access, and whatever spelling arrives next.
+            if func.attr == 'setting':
                 if (len(node.args) >= 2 and isinstance(node.args[1], ast.Constant)
                         and isinstance(node.args[1].value, str)):
                     sites.append((path, node.lineno, node.args[1].value))
@@ -299,6 +307,38 @@ class TestSweepFindsSomethingRealNotNothing:
             f'only {len(sweep["call_sites"])} section-literal call sites '
             f'found -- a guard that finds zero, or close to it, and then '
             f'passes is exactly the failure this sweep exists to prevent'
+        )
+
+    def test_groups_and_entries_are_not_conflated(self, sweep):
+        """The guard's one silently-fatal regression, and neither the vacuity
+        counts nor a reintroduced defect can see it.
+
+        Every other check here asks "did the sweep find enough?". Folding group
+        names into `entries` makes it find MORE, so the counts get happier
+        while `test_no_call_site_names_a_group_instead_of_an_entry` becomes a
+        tautology: every group name is now an entry name, so nothing can ever
+        violate it. Measured: with that one line added AND the original T53
+        defect restored in `notifications/trakt.py`, all ten tests in this file
+        passed.
+
+        So this asserts the distinction the guard rests on, not the volume:
+        `trakt_automation` is the canonical group-that-is-not-an-entry, and the
+        two sets must stay meaningfully different in bulk."""
+        assert 'trakt_automation' in sweep['groups'], (
+            'the sweep no longer sees the group name whose confusion with an '
+            'entry name is the entire reason this file exists'
+        )
+        assert 'trakt_automation' not in sweep['entries'], (
+            '`trakt_automation` has been collected as an ENTRY name. Either a '
+            'plugin now genuinely declares it as one, or the collector is '
+            'folding group names into entries -- which makes the guard below '
+            'unable to fail'
+        )
+        only_groups = sweep['groups'] - sweep['entries']
+        assert len(only_groups) >= 25, (
+            f'only {len(only_groups)} group names are not also entry names '
+            f'(36 at the time of writing). A collapse toward zero means the '
+            f'two sets have been conflated and the guard cannot fail'
         )
 
     def test_known_call_sites_are_among_them(self, sweep):
