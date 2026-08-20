@@ -1857,7 +1857,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       pass it. So the archive survives and the loss is recoverable by
       re-extracting. That is what keeps this off the irreplaceable tier.
 
-- [ ] T44: a single archive entry can decompress to an unbounded size — state: queued (no deps) — **security, pre-existing**
+- [ ] T44: a single archive entry can decompress to an unbounded size — state: building (no deps) — **security, pre-existing**
 
       Raised on #265 as explicitly non-blocking and correctly so: the read loop
       in `_extractOneAtomic` is untouched by that PR. Recorded because the file
@@ -2491,7 +2491,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the real option declarations instead, which would make this class of
       drift impossible rather than fixed-once.
 
-- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: pr-open (no deps)
+- [x] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: **merged #278** (`8016eaa6`, 2026-08-20)
 
       Found by an adversarial reviewer while tracing T48's read paths, and
       unrelated to that work.
@@ -2716,7 +2716,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       step at all. The fragility that killed the three attempts was the
       navigation, not the assertion.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T57, T58, T59 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
@@ -5861,6 +5861,21 @@ Every audit finding maps to a PR or to the deferred table above.
   -> @puppeteer/browsers`, and `lhci` runs in neither CI nor `make verify` --
   only `npm run test:lighthouse` by hand. Revisit when a patch ships or when
   T47 changes that path, whichever comes first.
+- 2026-08-20 11:15 — RELEASED v3.65.0 to production. Promoted
+  `v3.65.0-beta.1` byte-for-byte after confirming CI, Beta Build and CodeQL
+  green on `4cc87966`; stable release cut, `:latest` re-pointed, host pulled
+  and recreated. Verified rather than assumed: the container reports
+  `VERSION = '3.65.0'`, health `healthy`, zero errors or tracebacks in the
+  startup logs, HTTP 302 externally. The previous prod image was 1 August, so
+  the jump is v3.25.0 -> v3.65.0. Pre-promotion backup `20260820-100129`
+  verified first.
+  Note for the next promotion: `/root/update.sh` runs `docker compose pull &&
+  up -d` daily at 01:00, so `:latest` is effectively the deploy trigger and a
+  promotion reaches the host within a day whether or not anyone deploys it.
+  T52 merged `4cc87966`, T53 merged `8016eaa6`, worktrees and branches
+  disposed. T44 delegated: the decompression bomb, chosen as the most
+  attacker-reachable item left, since the archive arrives from any indexer and
+  the volume it fills also holds the database.
 
 - 2026-08-20 10:05 — #277 (T52) CI fully green (16/16). Merge was still
   BLOCKED, and not by CI: two unresolved review threads on this very file.
