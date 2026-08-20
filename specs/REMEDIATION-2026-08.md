@@ -1872,11 +1872,28 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
               if not chunk: break
               target.write(chunk)
 
-      A hostile release therefore fills the disk. On this project that is worse
-      than it sounds: the same volume holds the SQLite database and settings,
-      and a full disk is exactly how this session lost a gate run to
-      `sqlite3.OperationalError: disk I/O error`. Data at the top of the
-      loss ranking sits behind a limit that does not exist.
+      A hostile release therefore fills the disk.
+
+      **Blast radius corrected by measurement on the real host, 2026-08-20.**
+      This entry said "the same volume holds the SQLite database and settings".
+      On production that is FALSE, and it inflated the severity:
+
+          /                     364G, 85G avail   <- database, settings, config.bak
+          /var/cache/sab (NAS)  44T,  1.9T avail  <- /downloads, where extraction writes
+          /var/media     (NAS)  44T,  1.9T avail  <- the library
+
+      The renamer's `from` is `/downloads/`, which is the NAS download share,
+      so a decompression bomb exhausts a 1.9 TiB share and does NOT reach the
+      volume carrying the database. It is a download-share denial of service,
+      not a route to irrecoverable data loss. Still worth fixing, and still
+      security-tagged, but it should not be ranked above things that can
+      actually destroy the library.
+
+      That correction also makes the shipped bound meaningful rather than
+      theatrical: a 144 GiB per-archive cap against 1.9 TiB free is a real
+      limit. Note it is PER ARCHIVE and `extractFiles` loops, so roughly
+      thirteen hostile archives still sum to the free space. Worth knowing
+      before anyone calls this closed.
 
       **The premise above is WRONG against the pinned library, measured
       2026-08-20, and the first implementation shipped a guard for a threat
