@@ -2,9 +2,22 @@
 #
 # backup.sh — snapshot the CouchPotato SQLite database + settings.
 #
-# Run this BEFORE every prod promotion, and nightly from cron. A promotion is
-# only reversible if the database was captured first: `:latest` has already
-# moved by deploy time, so "re-pull the old image" does not recover data.
+# Run this before a promotion that could touch the database: a schema change or
+# migration, or any release carrying changes to the persistence layer
+# (`couchpotato/core/db/`) or to a write path that runs unattended, such as the
+# library scanner or the renamer. It is NOT run nightly and NOT run before every
+# deploy: a UI-only or docs-only promotion cannot damage data, and a backup
+# ritual applied to every release is one people stop taking seriously.
+#
+# The reason the trigger is "could touch the database" rather than "changes the
+# schema" is that this project has already lost data the other way. The
+# `_query_index` defects fixed in 2026-02 corrupted records during an ordinary
+# library scan, with no migration and no schema change involved. Ask what the
+# release can WRITE, not what it declares.
+#
+# When it does apply, it is not optional: a promotion is only reversible if the
+# database was captured first, because `:latest` has already moved by deploy
+# time, so "re-pull the old image" does not recover data.
 # Full procedure: docs/development-process.md → "Deploying to prod".
 #
 # The DB is copied with sqlite3's `.backup` (or Python's sqlite3 backup API when

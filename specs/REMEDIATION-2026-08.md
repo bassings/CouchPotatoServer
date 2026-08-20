@@ -2585,121 +2585,62 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       several controls, and bundling it into a security fix would have made
       that fix harder to review for the thing it was actually for.
 
-- [ ] T56: the nightly backup the script documents does not exist on the host — state: queued (no deps) — **operability, data**
+- [x] T56: the backup policy said nightly, nothing ran nightly — state: **closed by decision** (2026-08-20) — **operability, data**
 
-      Found while taking the pre-promotion backup on 2026-08-20, which is the
-      only reason it was found at all.
+      Found while taking a pre-promotion backup on 2026-08-20. `backup.sh`'s
+      header said "Run this BEFORE every prod promotion, and nightly from
+      cron", and `docs/development-process.md` gave a `crontab -e` recipe as a
+      manual setup step. On the host there was no cron entry, no `cron.d` file
+      and no systemd timer. The newest snapshot was from 1 August, nineteen
+      days old, and all three that existed were taken by hand.
 
-      `scripts/backup.sh`'s own header says: "Run this BEFORE every prod
-      promotion, and nightly from cron." Measured on homemedia:
+      **Closed by an owner decision rather than by installing the schedule.**
+      The policy is now: take a snapshot before a promotion that could touch
+      the database, and not otherwise. No nightly. A backup ritual applied to
+      every release is one people stop taking seriously, and a nightly nobody
+      installed was never providing cover in the first place.
 
-          cron, /etc/cron.d and systemd timers -> no backup schedule of any kind
-          backups/                             -> 20260731-111800,
-                                                  20260731-121928,
-                                                  20260801-203328
+      One argument was put and answered rather than dropped, and it is why the
+      trigger is worded the way it is. "Changes the database" and "can damage
+      the database" are not the same set: the `_query_index` defects fixed in
+      2026-02 corrupted records during an ordinary library scan, with no
+      migration and no schema change. So the trigger is "could touch the
+      database" -- schema or migration, `couchpotato/core/db/`, or an
+      unattended write path such as the scanner or the renamer -- rather than
+      "declares a schema change".
 
-      (The full listings are deliberately not reproduced. They fingerprint the
-      distribution and name what else runs as root on the box, and this repo is
-      public. What is load-bearing for the task is the absence, not the rest of
-      the crontab.)
+      Landed in the same change: the `nightly from cron` claim removed from
+      `backup.sh` and `development-process.md`, `CLAUDE.md`'s command table
+      corrected from "run before every deploy", and the stale cron rationales
+      in `tests/unit/test_backup_script.py` reworded. Verification guidance
+      added too, since `PRAGMA integrity_check` does not check foreign keys and
+      this schema declares them: `foreign_key_check` must also return zero rows.
 
-      So the newest snapshot before today was 1 August, nineteen days old, and
-      every one of the three that exist was taken by hand. The nightly half of
-      that sentence has never been true, and the directory listing proves it
-      rather than merely suggesting it: the script landed 2026-07-31 in #214,
-      nineteen days of a `--retain 14` nightly would leave fourteen dated
-      directories, three exist, two of them from the day it landed, and not one
-      of the three is stamped 03:00.
+      What did NOT close, and is now T59: nobody has ever restored one.
 
-      Be precise about the shape, because it changes the fix. The repo did NOT
-      fail to tell anyone. `docs/development-process.md:475-483` says "Two
-      manual steps, both on the server — neither is automated by this repo",
-      and gives a copy-pasteable `crontab -e` recipe with `--retain 14`. So
-      this is a documented setup step that was never performed, not a false
-      claim in a header. What IS false is `backup.sh:5`, which states the
-      nightly as though it were a property of the system rather than something
-      the operator has to install.
+- [ ] T59: no backup has ever been restored, so recoverability is a hypothesis — state: queued (no deps) — **data**
 
-      It ranks high on the project's own data-risk ordering either way: the
-      database is irreplaceable, and the promotion procedure is only reversible
-      because a backup was taken first. The header sentence is exactly what
-      someone reads when deciding whether they still need to take one.
+      Split out of T56 rather than closed with it, because the owner's decision
+      changed WHEN backups are taken and not whether they work.
 
-      Five parts. (1) and (5) are the task; (2) to (4) are what makes the
-      answer believable next time:
+      Nothing in `docs/`, `scripts/backup.sh` or
+      `tests/unit/test_backup_script.py` mentions a restore rehearsal.
+      `docs/development-process.md` gives a restore recipe, but "confirmed
+      healthy" there refers to the pinned image, not to a restored database.
 
-      1. Install the schedule (systemd timer preferred over cron on this host,
-         since it gives a queryable last-run and a failure state) with
-         `--retain` set, so the backup directory does not grow without bound.
-      2. Verify a snapshot with a check that can see this schema's damage.
-         `PRAGMA integrity_check` does NOT check foreign keys, and
-         `couchpotato/core/db/schema.sql` declares them (`media_identifiers`
-         and `media_tags` both `REFERENCES documents(_id) ON DELETE CASCADE`,
-         with `PRAGMA foreign_keys = ON` set in `sqlite_adapter.py`). An
-         orphaned `media_identifiers` row is exactly the damage a row COUNT
-         cannot see and `integrity_check` will not report. The check is:
+      A backup verified only by reading it is a hypothesis about restore.
+      Reading cannot exercise the sidecar `-wal` left in the live directory,
+      file ownership under `su-exec`, or whether `config.ini` lands in the
+      layout the container expects -- `backup.sh` picks between two candidate
+      paths and warns-and-continues if it finds neither, which is precisely the
+      shape that produces a snapshot that looks complete and is not.
 
-             sqlite3 <snapshot>/couchpotato.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+      This matters MORE under the new policy, not less. Backups are now taken
+      only before risky promotions, so every one of them is load-bearing: there
+      is no nightly sitting behind it to fall back on.
 
-         `foreign_key_check` must return zero rows, and it works regardless of
-         the `foreign_keys` pragma setting. Run against `20260820-100129` after
-         this was raised: zero rows, and `quick_check` ok.
-
-      3. Rehearse a RESTORE, once. Nothing in `docs/`, `scripts/backup.sh` or
-         `tests/unit/test_backup_script.py` mentions one, and a backup verified
-         only by reading it is a hypothesis about restore rather than a test of
-         it. Reading cannot exercise the sidecar `-wal` left in the live
-         directory, file ownership under `su-exec`, or whether `config.ini`
-         lands in the layout the container expects (`backup.sh` picks between
-         two candidate paths and warns-and-continues if it finds neither).
-         Restore `20260820-100129` into a scratch data dir and boot against it.
-
-      4. Make the claim falsifiable rather than trusting it a second time.
-         A timer that fires and fails silently reproduces the current state
-         exactly, and nothing in the repo can see the host. The check belongs
-         where it can fail: the promotion path should refuse when the newest
-         snapshot is older than some threshold, rather than the runbook asking
-         a human to remember.
-
-      5. Update the two places that describe the schedule so they describe what
-         was actually installed: `backup.sh`'s header sentence, and
-         `docs/development-process.md`'s "Two manual steps" block, which
-         documents the `crontab -e` form. Whichever mechanism lands, only one of
-         them should be described anywhere. Skipping this part reproduces the
-         defect the task exists to fix, one file to the left, which is the whole
-         reason it is listed rather than left implied.
-
-      Until (1) lands, the pre-promotion backup stays a manual step and must be
-      taken and VERIFIED each time — exit 0 is not enough on a live SQLite
-      database.
-
-      Be exact about why, because the obvious summary welds together two
-      failure modes that are actually disjoint, and gets the dangerous one
-      backwards:
-
-      - **Stale.** `cp` of `couchpotato.db` alone, ignoring the sidecar WAL.
-        The result is internally consistent, opens cleanly and PASSES
-        `PRAGMA integrity_check`, while silently missing every commit still in
-        that WAL. On 2026-08-20 the WAL was 8.6 MB and eight hours newer than
-        the main file, so this is the live risk. **No integrity check can see
-        it**, precisely because it is not corruption.
-      - **Torn.** `cp` of the whole set while a writer or checkpointer is
-        running. That one `integrity_check` DOES catch.
-
-      So an `integrity_check` pass does not rule out a bad `cp`; it only rules
-      out the half that was never the quiet one.
-
-      By the same discipline, be honest about what the 2026-08-20 comparison
-      established. `sqlite3 .backup` reads through a connection, so it sees
-      WAL-resident commits BY CONSTRUCTION: equality with the live read is the
-      expected output of a working tool, not independent corroboration. It
-      falsifies "stale checkpoint" and nothing else. `max(rowid)` is not a row
-      count, and all three metrics are blind to an UPDATE, so a snapshot in
-      which every `documents.data` blob had been truncated would pass every one
-      of them. `backup.sh` refuses to fall
-      through to `cp` at all (see its "Never fall through to `cp`" note and the
-      `NO BACKUP WAS TAKEN` exit) rather than degrade, which is the right call
-      for the same reason.
+      Do it once, concretely: restore `20260820-100129` into a scratch data dir
+      and boot the app against it.
 
 - [ ] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: queued (no deps) — **security, test-infrastructure**
 
@@ -2775,7 +2716,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       step at all. The fragility that killed the three attempts was the
       navigation, not the assertion.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T56, T57, T58 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T57, T58, T59 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

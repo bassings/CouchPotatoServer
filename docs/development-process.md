@@ -472,15 +472,37 @@ independently-chosen one are both true of the same suite — reviewers found
 survivors this way twice. Treat a score as "these specific behaviours are pinned",
 never as "the tests are sufficient".
 
-Two manual steps, both on the server — neither is automated by this repo:
+**When to take one.** Before a promotion that could touch the database, and not
+otherwise. That means a schema change or migration, or a release carrying
+changes to `couchpotato/core/db/` or to a write path that runs unattended, such
+as the library scanner or the renamer. A UI-only, docs-only or packaging-only
+promotion does not need one.
 
-1. The server holds a compose + config directory, **not** a repo checkout, so
-   copy `scripts/backup.sh` there once (`scp scripts/backup.sh
-   homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/`).
-2. Schedule it with `crontab -e`:
-   ```cron
-   0 3 * * * cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh --retain 14 >> /var/log/couchpotato-backup.log 2>&1
-   ```
+The trigger is deliberately "could touch the database" rather than "changes the
+schema", because this project has already lost data the other way: the
+`_query_index` defects fixed in 2026-02 corrupted records during an ordinary
+library scan, with no migration involved. Ask what the release can write.
+
+**There is no nightly backup and none is wanted.** Snapshots are taken at the
+moment that makes them recoverable, which is immediately before a risky
+promotion, rather than on a schedule that drifts out of date and gets ignored.
+
+The server holds a compose + config directory, **not** a repo checkout, so copy
+the script there once:
+
+```bash
+scp scripts/backup.sh homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/
+ssh homemedia 'cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh'
+```
+
+**Verify the snapshot rather than trusting exit 0.** `PRAGMA integrity_check`
+does not check foreign keys, and this schema declares them, so run both:
+
+```bash
+sqlite3 <BACKUP_DIR>/<stamp>/couchpotato.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+```
+
+`integrity_check` must print `ok` and `foreign_key_check` must return no rows.
 
 ### Beta testers
 

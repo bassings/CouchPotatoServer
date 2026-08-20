@@ -114,7 +114,7 @@ def test_script_is_executable_and_has_a_shebang():
     assert BACKUP_SCRIPT.exists(), f"{BACKUP_SCRIPT} does not exist"
     assert BACKUP_SCRIPT.read_text().startswith("#!"), "missing shebang"
     mode = BACKUP_SCRIPT.stat().st_mode
-    assert mode & stat.S_IXUSR, "backup.sh must be executable (cron runs it directly)"
+    assert mode & stat.S_IXUSR, "backup.sh must be executable (it is invoked directly on the host)"
 
 
 def test_creates_one_timestamped_snapshot_with_db_and_settings(prod_layout):
@@ -227,7 +227,7 @@ def test_falls_back_to_python_when_the_sqlite3_cli_is_unusable(prod_layout, tmp_
 
     assert "written with Python" in (result.stdout + result.stderr), (
         "expected the Python success line, so a silently degraded backup path is "
-        "visible in the cron log"
+        "visible to whoever ran it"
     )
 
 
@@ -354,7 +354,7 @@ def test_retention_still_works_when_backup_dir_has_a_trailing_slash(prod_layout)
 
     `dirname` normalises the slash away while `$BACKUP_DIR` kept it, so every
     prune candidate was rejected: exit 0, no warning, and the disk grows forever
-    while cron reports success. A regression introduced by the very guard that was
+    while the run reports success. A regression introduced by the very guard that was
     meant to make `rm -rf` safer.
     """
     backup_dir = prod_layout["backup_dir"]
@@ -478,7 +478,7 @@ def test_retain_zero_or_negative_is_rejected_rather_than_deleting_everything(pro
 
 
 def test_fails_loudly_when_the_database_is_missing(prod_layout):
-    """A silent success with no DB is worse than no backup — it looks fine in cron.
+    """A silent success with no DB is worse than no backup — it reads as done.
 
     Asserting on the *diagnosis*, not just the exit code: without the up-front
     existence check the script still fails, but it fails several steps later with
@@ -515,8 +515,8 @@ def test_finds_config_ini_one_level_above_the_data_dir(prod_layout):
     """The Docker image puts config.ini at /config/config.ini with --data_dir=/data.
 
     Only looking in the data dir meant prod snapshots silently contained the
-    database alone — and since the script warns and exits 0, a nightly cron would
-    report success forever while never capturing settings.
+    database alone — and since the script warns and exits 0, every run would
+    report success while never capturing settings.
     """
     (prod_layout["data_dir"] / "config.ini").unlink()
     parent_config = prod_layout["data_dir"].parent / "config.ini"

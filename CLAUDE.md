@@ -64,7 +64,7 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
 | `make check-secrets` | Secret scan of the working tree (same command CI runs) |
 | `make coverage` | Generate the Python + JS coverage reports SonarQube ingests |
 | `make sonar` | Scan into self-hosted SonarQube after a merge that changed analysed code. Reporting only — **never a gate, never in CI**. Runs `coverage` first so the reports cannot be forgotten |
-| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings — run before every deploy |
+| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings — run before a promotion that could touch the database (schema, migration, `couchpotato/core/db/`, or an unattended write path such as the scanner or renamer). Not nightly, not before every deploy |
 
 ## Hard rules — never break these
 
