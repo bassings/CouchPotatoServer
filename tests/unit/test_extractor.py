@@ -1737,6 +1737,97 @@ class TestEntryHardCapLoggingIsAlsoBounded:
         )
 
 
+class TestTheEntryHardCapBoundaryIsExact:
+    """The comparison is strict (`written + len(chunk) > cap`), so an entry
+    that writes EXACTLY the cap is allowed and one byte more is refused. That
+    is a deliberate choice and nothing pinned it, so a later "tidy-up" to `>=`
+    would start refusing a legitimate entry sitting precisely on the boundary
+    and no test would notice.
+
+    Both directions are asserted, because a boundary test that only checks the
+    refusing side cannot tell a correct `>` from an over-eager `>=`.
+    """
+
+    def test_an_entry_writing_exactly_the_cap_is_allowed(self, tmp_path):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024  # a whole number of 1 MiB read chunks
+
+        info = _make_info('exact.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, cap)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'exact.mkv')], (
+            'an entry writing exactly the cap was refused -- the comparison '
+            'has become `>=` and legitimate content on the boundary is now '
+            'dropped'
+        )
+        assert (extr_path / 'exact.mkv').stat().st_size == cap
+
+    def test_one_byte_past_the_cap_is_refused(self, tmp_path):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024
+
+        info = _make_info('over.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, cap + 1)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [], 'one byte past the cap was extracted'
+        assert list(extr_path.iterdir()) == []
+
+
+class TestARefusalReportsBytesOnDiskNotBytesRead:
+    """`written` must mean bytes that reached the file. Review caught the
+    earlier form incrementing before the cap test, so a refusal reported the
+    chunk it had just declined to write -- up to 1 MiB that reached the reader
+    and never reached disk, in a message whose verb is "wrote".
+
+    Not cosmetic. The number is what an operator uses to decide whether a
+    refusal was marginal or wild, and the whole test suite passed while it was
+    wrong, which is why it needs pinning rather than fixing quietly.
+    """
+
+    def test_the_reported_byte_count_matches_what_reached_the_file(self, tmp_path, caplog):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024  # exactly 4 read chunks
+
+        info = _make_info('over.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, 16 * 1024 * 1024)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert str(cap) in messages, 'the refusal did not name the ceiling'
+        assert str(cap + 1024 * 1024) not in messages, (
+            'the refusal reported a chunk that was never written: the count '
+            'is bytes READ, not bytes on disk'
+        )
+
+
 class TestTheShippedEntryHardCapValueIsPinned:
     """Every test above patches `_ENTRY_HARD_CAP` down to something a test
     can actually write, which is correct for exercising the MECHANISM -- but

@@ -155,6 +155,25 @@ _ENTRY_DERIVED_ERRNOS = frozenset((
 #: large or many small honest entries summing past any sane per-release
 #: total is therefore OPEN DEBT, not fixed here.
 _ENTRY_HARD_CAP = 128 * 1024 ** 3  # 128 GiB
+#: **A THIRD limit this does not provide, raised in review of #280 and recorded
+#: rather than fixed.** The cap is a fixed byte count, not a function of free
+#: space, so on a volume with less than 128 GiB available a single hostile
+#: entry exhausts the disk and raises `ENOSPC` BEFORE the cap can fire. That
+#: errno is not in `_ENTRY_DERIVED_ERRNOS`, so the archive aborts, which is the
+#: right response but arrives after the damage. Measured on the deployment this
+#: project actually runs: extraction targets `/downloads`, a NAS share with
+#: 1.9 TiB free, so 128 GiB fits with room to spare and the case does not bite
+#: there. It bites on a smaller volume, and nothing here detects that.
+#:
+#: A free-space-derived bound was considered and rejected for making one
+#: extraction's outcome depend on unrelated data already on the disk:
+#: nondeterministic, hard to test without faking disk state, and surprising to
+#: an operator. The better answer is the pre-flight frame recorded in T44:
+#: `read()` clamps to `file_size`, and `file_redir` plus `getinfo()` resolve
+#: RAR5 copy and hard-link targets from headers alone, so the sum of resolved
+#: declared sizes is an exact upper bound computable BEFORE any byte is
+#: written. Refusing on that sum, compared against free space, costs nothing
+#: and writes nothing. It is not built.
 
 
 class _ArchiveEntryTooLarge(Exception):
@@ -736,14 +755,23 @@ class ExtractorMixin:
                     chunk = source.read(1024 * 1024)
                     if not chunk:
                         break
-                    written += len(chunk)
-                    if written > _ENTRY_HARD_CAP:
-                        # Checked before the write: the temp file this
-                        # entry has produced so far never exceeds the cap,
-                        # so the transient disk usage of a refused entry is
-                        # bounded even though it is unlinked either way.
+                    # `written` counts bytes ON DISK, and the cap is tested
+                    # against the PROSPECTIVE total, so the temp file never
+                    # exceeds the cap even transiently. An earlier form
+                    # incremented first and tested after, which meant a refusal
+                    # reported the chunk it had just declined to write: up to
+                    # 1 MiB of bytes that reached the reader and never reached
+                    # the file, in a message that says "wrote". Diagnostics
+                    # that overstate are how an operator ends up hunting the
+                    # wrong entry.
+                    #
+                    # The comparison stays strict, so an entry that writes
+                    # EXACTLY the cap is allowed through. That boundary is
+                    # deliberate and is pinned by a test.
+                    if written + len(chunk) > _ENTRY_HARD_CAP:
                         raise _ArchiveEntryTooLarge(written, _ENTRY_HARD_CAP)
                     target.write(chunk)
+                    written += len(chunk)
             # tempfile.mkstemp always creates the file 0600 (owner-only),
             # ignoring umask; without this the extracted media file would be
             # unreadable by Plex/Kodi/other users (and broken under the Docker
