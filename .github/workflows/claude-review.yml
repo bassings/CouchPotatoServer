@@ -55,10 +55,65 @@ jobs:
             PR NUMBER: ${{ github.event.pull_request.number }}
 
             Review the changes in this pull request as a principal engineer for
-            CouchPotatoServer (Python 3.10+ FastAPI media server; see CLAUDE.md
-            and AGENTS.md for project rules). Post specific findings as inline PR
-            review comments (mcp__github_inline_comment__create_inline_comment),
-            grouped by severity.
+            CouchPotatoServer (Python 3.14 FastAPI media server; see CLAUDE.md
+            and AGENTS.md for project rules).
+
+            WHERE A FINDING GOES DEPENDS ON WHETHER IT MUST CHANGE, and this
+            matters more than it looks. `required_conversation_resolution` is
+            enabled on master, so EVERY inline review thread is a merge gate,
+            including one you label "nit" or "not blocking". A thread costs a
+            reply, a resolution and a full re-run of twelve checks.
+
+            - Something that MUST change before merge (correctness, security,
+              a test that cannot fail, a broken contract): post it as an inline
+              review comment (mcp__github_inline_comment__create_inline_comment)
+              at the exact line. Say what breaks and under what input.
+            - Everything else (nits, style, praise, "consider", "worth knowing",
+              anything you would label low or non-blocking): put it in the
+              SUMMARY COMMENT BODY as a short bulleted "Observations" section,
+              naming file:line. Do NOT open an inline thread for it.
+
+            If you are unsure which a finding is, ask yourself whether you would
+            block the merge over it. If the answer is no, it is an observation.
+
+            OBSERVATIONS MUST SURVIVE A RE-RUN. Write for both cases rather
+            than assuming which one you are in, because this repo has been
+            wrong about it in both directions.
+
+            MEASURED 2026-08-20: despite `use_sticky_comment: true`, runs on
+            #277 and #279 each produced FIVE separate comments with distinct
+            ids and `created == updated`. The setting is inert in practice,
+            probably because the summary goes out through `gh pr comment`
+            rather than the sticky tool. So today, earlier summaries persist.
+
+            - If you are ADDING a new comment (what happens today): do not
+              repeat observations an earlier comment already carries and that
+              still stand. Say "earlier observations still apply" and list only
+              what is new, plus a "resolved since last review" line for any the
+              current diff has fixed.
+            - If you are UPDATING an existing summary in place: carry forward
+              every observation the diff has NOT addressed, because a rewrite
+              deletes anything you do not re-emit, and note the resolved ones
+              the same way.
+
+            Never drop an observation silently under either shape.
+
+            ONE CARVE-OUT, AND IT IS NOT OPTIONAL: an uncertain SECURITY,
+            PRIVACY or DATA-LOSS finding goes INLINE, not into observations.
+            Everywhere else, uncertainty downgrades to an observation until you
+            can name the failure it causes. Here it does the opposite, because
+            the cost is asymmetric: a wrong inline thread costs one reply, and
+            a missed credential leak or data-loss path costs the user something
+            they cannot get back. Measured on this repo, an inline thread is
+            the ONLY content-aware block on master -- there are zero required
+            approving reviews, and of twelve required contexts only this one
+            reads semantics -- so an observation is advisory and nothing else.
+            If you are unsure whether a finding is in this class, treat it as
+            though it is.
+
+            If you retract or correct an earlier comment of your own, put the
+            correction in the summary body rather than opening a second thread,
+            because both threads then have to be resolved by hand.
 
             Focus on:
             - Correctness and edge cases, especially around the SQLite adapter
@@ -72,6 +127,10 @@ jobs:
 
             ALWAYS post a brief summary comment with an explicit overall verdict —
             start it with `✅ LGTM` or `⚠️ Changes requested` — even when there
-            are no issues, so the review is clearly visible. Be specific and
+            are no issues, so the review is clearly visible. Follow the verdict
+            with the "Observations" section if you have any. Be specific and
             actionable; if the change is safe and complete, say so plainly rather
             than inventing nits.
+
+            A review that blocks on nothing and observes three things is a good
+            review, not a lazy one.
