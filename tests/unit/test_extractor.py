@@ -97,6 +97,70 @@ class _RaisingOpenResult:
         return False
 
 
+class _RealRarInfoStandIn:
+    """A minimal stand-in for rarfile.RarInfo, carrying only the attributes
+    RarExtFile actually touches: enough for rarfile's REAL `read()` to run
+    against it (and clamp output to `file_size`) without a full RarFile or
+    an archive on disk.
+
+    T44 review measured (against the pinned rarfile==4.5 source) that
+    RarExtFile.read() already clamps a well-behaved entry's output to its own
+    declared `file_size` via `self._remain`, and that a fixture reader
+    without that clamp is MORE permissive than production -- three of the
+    four tests this file originally shipped for T44 only passed because of
+    that gap. Using rarfile's OWN `RarExtFile` (see `_RealClampBackedReader`
+    below) instead of reimplementing the clamp closes it: fidelity comes from
+    running the real code, not from a second hand-written copy of it that
+    could itself drift from what production does.
+
+    `_md_class`/`_md_expect = None` skip RarExtFile's CRC verification
+    (`_check`), which needs real compressed data this fixture does not
+    have -- the read()/clamp behaviour under test does not depend on it.
+    """
+
+    _md_class = None
+    _md_expect = None
+
+    def __init__(self, filename, file_size):
+        self.filename = filename
+        self.file_size = file_size
+
+    def isdir(self):
+        return False
+
+
+class _RealClampBackedReader(rarfile.RarExtFile):
+    """A REAL `rarfile.RarExtFile`, opened against a `_RealRarInfoStandIn`,
+    supplying synthetic (but genuinely streamed, chunk by chunk) bytes.
+
+    Subclassing rather than faking means `source.read(n)` in
+    `_extractOneAtomic` runs rarfile's OWN `read()` -- the exact method whose
+    `self._remain` clamp this whole rework depends on -- not a test-side
+    reimplementation of it. `_read` is the one seam RarExtFile leaves for a
+    concrete reader to fill in; overriding it to keep producing zero bytes
+    for as long as asked models a decompressor willing to emit unlimited
+    output, so what actually bounds the entry is rarfile's clamp (to
+    `file_size`) composed with `_extractOneAtomic`'s own fixed ceilings, the
+    same as it would be against a real unrar/7z/bsdtar subprocess.
+    """
+
+    def __init__(self, filename, file_size):
+        super().__init__()
+        self._open_extfile(None, _RealRarInfoStandIn(filename, file_size))
+
+    def _read(self, cnt):
+        return b'\x00' * cnt
+
+
+def _real_reader(filename, file_size):
+    """Build a `_RealClampBackedReader` for `filename` declaring `file_size`.
+    Use as `handle.open.side_effect = lambda i: _real_reader(i.filename, N)`.
+    The returned object is ALREADY a context manager (io.IOBase provides
+    `__enter__`/`__exit__`), so no separate wrapper is needed the way the
+    plain-bytes fixtures above need `_FakeOpenResult`."""
+    return _RealClampBackedReader(filename, file_size)
+
+
 @pytest.fixture(autouse=True)
 def _restore_unrar_tool():
     """extractArchive can mutate the module-global rarfile.UNRAR_TOOL; restore it."""
@@ -1536,3 +1600,247 @@ class TestAnEINVALDestinationDoesNotSinkTheArchive:
             'it was never extracted'
         )
         assert any('EINVAL' in r.getMessage() for r in caplog.records)
+
+
+class TestEntryHardCapIsTheLiveGuardAgainstAnHonestlyDeclaredEntry:
+    """T44, REWORKED 2026-08-20. The original cross-check here (bytes
+    written vs `info.file_size` plus a margin) was measured, by review,
+    unreachable against the pinned `rarfile==4.5`:
+    `rarfile.RarExtFile.read()` already clamps a well-behaved entry's output
+    to its own declared `file_size` (`self._remain`, set in
+    `_open_extfile`), so `written > declared` cannot happen -- a header
+    claiming a SMALL size can never hide a bomb, because rarfile itself will
+    not let the entry produce more than it declared. Three of the four tests
+    this file originally shipped for T44 only passed because their fixture
+    reader had no such clamp and was therefore MORE permissive than
+    production -- exactly the incidentally-passing shape CLAUDE.md's guard
+    rule exists to catch.
+
+    What rarfile does NOT bound is how large that declaration may honestly
+    be. An entry whose header says "400 GiB" and then genuinely decompresses
+    to 400 GiB sails straight through rarfile's own clamp -- that is the
+    reachable attack `_ENTRY_HARD_CAP` exists to stop, and it is the LIVE
+    guard against the pinned library version, not defence-in-depth.
+
+    The fixture below (`_real_reader`, backed by `_RealClampBackedReader`,
+    a genuine subclass of `rarfile.RarExtFile`) runs rarfile's OWN `read()`,
+    so this test exercises the exact clamp production hits rather than a
+    hand-written stand-in that could itself drift from what rarfile does.
+    """
+
+    def test_an_honestly_declared_enormous_entry_is_refused_and_the_archive_continues(
+            self, tmp_path, caplog):
+        patched_cap = 2 * 1024 * 1024  # 2 MiB, so the test writes almost none
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+
+        infos = [_make_info('huge.mkv'), _make_info('good.mkv')]
+        handle = MagicMock()
+        handle.infolist.return_value = infos
+        handle.open.side_effect = lambda i: (
+            _real_reader(i.filename, 5 * 1024 * 1024)  # honestly declares 5 MiB
+            if i.filename == 'huge.mkv' else _FakeOpenResult(b'real')
+        )
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   patched_cap), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'the oversized entry sank the archive, or was extracted instead '
+            'of refused'
+        )
+        assert not (extr_path / 'huge.mkv').exists(), (
+            'a bomb payload (partial or full) was left on disk'
+        )
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert sorted(p.name for p in extr_path.iterdir()) == ['good.mkv'], (
+            'a temp file from the aborted write was left behind -- the '
+            'atomic-write cleanup must fire on this failure path exactly as '
+            'it does on the other entry-derived failures'
+        )
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert str(patched_cap) in messages, (
+            'the refusal did not name the fixed ceiling an operator would '
+            'need to diagnose it'
+        )
+        assert 'declared' not in messages.lower(), (
+            'the refusal referenced a declared size again -- this arm no '
+            'longer trusts anything the header claims'
+        )
+
+
+class TestEntryHardCapLoggingIsAlsoBounded:
+    """The `oversized` counter's own bounded-logging discipline, matched to
+    every other per-entry counter in this file. `infolist()` is header-only,
+    so a thousand entries each honestly declaring an oversized `file_size`
+    cost the attacker one header each -- the same amplification shape as
+    every other counter here.
+
+    Each entry is sized so the FIRST chunk trips the (patched, small) cap
+    without writing anything: real `rarfile.RarExtFile.read()` still governs
+    how much any one `.read()` call can return (clamped to the declared
+    `file_size`), so a small declared size keeps this test's real I/O
+    trivial despite the entry count. The version of this test T44 originally
+    shipped declared TINY sizes with huge ACTUAL output via a fixture that
+    ignored rarfile's clamp -- which both misrepresented the threat and did
+    roughly 1 GB of real disk I/O per run, timing out the suite's 60s limit.
+    """
+
+    def test_a_thousand_oversized_entries_do_not_produce_a_thousand_errors(
+            self, tmp_path, caplog):
+        patched_cap = 50  # bytes -- deliberately smaller than one entry
+        extr_path = tmp_path / 'extract_here'
+        extr_path.mkdir()
+
+        names = ['bomb%d.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
+        handle = MagicMock()
+        handle.infolist.return_value = infos
+        # Each entry honestly declares 200 bytes -- comfortably above the
+        # patched cap, so the FIRST (and only) chunk read trips the guard
+        # before target.write() is ever called for it.
+        handle.open.side_effect = lambda i: _real_reader(i.filename, 200)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   patched_cap), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = [r.getMessage() for r in caplog.records]
+        # 'skipping it:' is the PER-ENTRY phrase, deliberately not a phrase
+        # the summary line also uses -- the same trap
+        # TestOverlongNameLoggingIsAlsoBounded documents for the unwritable
+        # counter.
+        per_entry = [m for m in messages if 'skipping it:' in m]
+        assert len(per_entry) <= 5, (
+            'unbounded oversized-entry logging: %d ERROR lines from one '
+            'archive' % len(per_entry)
+        )
+        summary = [m for m in messages
+                   if 'per-entry size ceiling' in m and 'in total' in m]
+        assert summary and '1000' in summary[0], (
+            'the oversized-entry total was not reported, so the cap hides '
+            'the scale'
+        )
+        assert extracted == []
+        assert list(extr_path.iterdir()) == [], (
+            'a refused entry left a temp file behind'
+        )
+
+
+class TestTheEntryHardCapBoundaryIsExact:
+    """The comparison is strict (`written + len(chunk) > cap`), so an entry
+    that writes EXACTLY the cap is allowed and one byte more is refused. That
+    is a deliberate choice and nothing pinned it, so a later "tidy-up" to `>=`
+    would start refusing a legitimate entry sitting precisely on the boundary
+    and no test would notice.
+
+    Both directions are asserted, because a boundary test that only checks the
+    refusing side cannot tell a correct `>` from an over-eager `>=`.
+    """
+
+    def test_an_entry_writing_exactly_the_cap_is_allowed(self, tmp_path):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024  # a whole number of 1 MiB read chunks
+
+        info = _make_info('exact.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, cap)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [str(extr_path / 'exact.mkv')], (
+            'an entry writing exactly the cap was refused -- the comparison '
+            'has become `>=` and legitimate content on the boundary is now '
+            'dropped'
+        )
+        assert (extr_path / 'exact.mkv').stat().st_size == cap
+
+    def test_one_byte_past_the_cap_is_refused(self, tmp_path):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024
+
+        info = _make_info('over.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, cap + 1)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap):
+            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+
+        assert extracted == [], 'one byte past the cap was extracted'
+        assert list(extr_path.iterdir()) == []
+
+
+class TestARefusalReportsBytesOnDiskNotBytesRead:
+    """`written` must mean bytes that reached the file. Review caught the
+    earlier form incrementing before the cap test, so a refusal reported the
+    chunk it had just declined to write -- up to 1 MiB that reached the reader
+    and never reached disk, in a message whose verb is "wrote".
+
+    Not cosmetic. The number is what an operator uses to decide whether a
+    refusal was marginal or wild, and the whole test suite passed while it was
+    wrong, which is why it needs pinning rather than fixing quietly.
+    """
+
+    def test_the_reported_byte_count_matches_what_reached_the_file(self, tmp_path, caplog):
+        extr_path = tmp_path / 'out'
+        extr_path.mkdir()
+        cap = 4 * 1024 * 1024  # exactly 4 read chunks
+
+        info = _make_info('over.mkv')
+        handle = MagicMock()
+        handle.infolist.return_value = [info]
+        handle.open.side_effect = lambda i: _real_reader(i.filename, 16 * 1024 * 1024)
+
+        with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
+                   return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   cap), \
+             caplog.at_level(logging.ERROR,
+                             logger='couchpotato.core.plugins.renamer.extractor'):
+            _Extractor().extractArchive('a.rar', str(extr_path))
+
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert str(cap) in messages, 'the refusal did not name the ceiling'
+        assert str(cap + 1024 * 1024) not in messages, (
+            'the refusal reported a chunk that was never written: the count '
+            'is bytes READ, not bytes on disk'
+        )
+
+
+class TestTheShippedEntryHardCapValueIsPinned:
+    """Every test above patches `_ENTRY_HARD_CAP` down to something a test
+    can actually write, which is correct for exercising the MECHANISM -- but
+    it also means none of them would notice if the constant actually shipped
+    with a different value. Raising it in the source right now fails nothing
+    in this file. Pin the literal separately."""
+
+    def test_the_cap_is_128_gib(self):
+        from couchpotato.core.plugins.renamer import extractor
+        assert extractor._ENTRY_HARD_CAP == 128 * 1024 ** 3, (
+            'the shipped per-entry ceiling drifted from 128 GiB -- that '
+            'value is deliberate headroom (~28 GiB) over the largest '
+            'legitimate single media file this application manages, a UHD '
+            'Blu-ray remux at roughly 100 GB; a silent change here changes '
+            'how much disk a single hostile entry can consume before being '
+            'refused'
+        )
