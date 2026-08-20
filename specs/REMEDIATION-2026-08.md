@@ -2380,7 +2380,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `error` string to its own refusal, and the other refusal paths in
       `saveView` still need one.
 
-- [x] T52: the first-run wizard renders credentials as `type="text"` — state: **fixed** (2026-08-20) — **security, pre-existing**
+- [x] T52: the first-run wizard renders credentials as `type="text"` — state: **fixed on #277, awaiting merge** (2026-08-20) — **security, pre-existing**
 
       Seven fields typed, but **only five ever rendered**. `wizard.html:432` opens
       `<template x-if="false && formData.downloader">` spanning lines 432-653, so the
@@ -2436,19 +2436,19 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the type, and every tracker `password` did. The convention existed; a handful
       were missed. That is the argument for a sweep rather than a list.
 
-      T48 fixed the settings page by declaring `'type': 'password'` on the
-      plugin options. The wizard does NOT read plugin `config` — it carries its
-      own hard-coded field list — so it is unaffected and still renders
-      credentials in the clear.
-
-      Inconsistent within the single template, which is what makes it a
-      defect rather than a decision: `jackett_api_key` and the tracker
-      `password` fields already declare `type: 'password'`, while beside them
-      the tracker `passkey` fields, `sabnzbd.api_key`, `putio.oauth_token` and
-      `newznab.api_key` are hardcoded `type="text"`.
+      Why the wizard was missed by T48: that task fixed the settings page by
+      declaring `'type': 'password'` on the plugin options, and the wizard does
+      not read plugin `config` at all — it carries its own hard-coded field
+      list. So the fix could not reach it, and the wizard went on rendering
+      credentials in the clear until this task. It was inconsistent within the
+      single template, which is what made it a defect rather than a decision:
+      `jackett_api_key` and the tracker `password` fields already declared
+      `type: 'password'`, while beside them the tracker `passkey` fields,
+      `sabnzbd.api_key`, `putio.oauth_token` and `newznab.api_key` were
+      hardcoded `type="text"`.
 
       Lower severity than T48 because the wizard only ever shows what the user
-      is currently typing, never a stored secret — but it is the same
+      is currently typing, never a stored secret — but it was the same
       shoulder-surf and screenshot class, on the one page every new install
       walks through.
 
@@ -2457,7 +2457,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the real option declarations instead, which would make this class of
       drift impossible rather than fixed-once.
 
-- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: queued (no deps)
+- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: building (no deps)
 
       Found by an adversarial reviewer while tracing T48's read paths, and
       unrelated to that work.
@@ -2533,7 +2533,171 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       several controls, and bundling it into a security fix would have made
       that fix harder to review for the thing it was actually for.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it.)
+- [ ] T56: the nightly backup the script documents does not exist on the host — state: queued (no deps) — **operability, data**
+
+      Found while taking the pre-promotion backup on 2026-08-20, which is the
+      only reason it was found at all.
+
+      `scripts/backup.sh`'s own header says: "Run this BEFORE every prod
+      promotion, and nightly from cron." Measured on homemedia:
+
+          cron, /etc/cron.d and systemd timers -> no backup schedule of any kind
+          backups/                             -> 20260731-111800,
+                                                  20260731-121928,
+                                                  20260801-203328
+
+      (The full listings are deliberately not reproduced. They fingerprint the
+      distribution and name what else runs as root on the box, and this repo is
+      public. What is load-bearing for the task is the absence, not the rest of
+      the crontab.)
+
+      So the newest snapshot before today was 1 August, nineteen days old, and
+      every one of the three that exist was taken by hand. The nightly half of
+      that sentence has never been true, and the directory listing proves it
+      rather than merely suggesting it: the script landed 2026-07-31 in #214,
+      nineteen days of a `--retain 14` nightly would leave fourteen dated
+      directories, three exist, two of them from the day it landed, and not one
+      of the three is stamped 03:00.
+
+      Be precise about the shape, because it changes the fix. The repo did NOT
+      fail to tell anyone. `docs/development-process.md:475-483` says "Two
+      manual steps, both on the server — neither is automated by this repo",
+      and gives a copy-pasteable `crontab -e` recipe with `--retain 14`. So
+      this is a documented setup step that was never performed, not a false
+      claim in a header. What IS false is `backup.sh:5`, which states the
+      nightly as though it were a property of the system rather than something
+      the operator has to install.
+
+      It ranks high on the project's own data-risk ordering either way: the
+      database is irreplaceable, and the promotion procedure is only reversible
+      because a backup was taken first. The header sentence is exactly what
+      someone reads when deciding whether they still need to take one.
+
+      Five parts. (1) and (5) are the task; (2) to (4) are what makes the
+      answer believable next time:
+
+      1. Install the schedule (systemd timer preferred over cron on this host,
+         since it gives a queryable last-run and a failure state) with
+         `--retain` set, so the backup directory does not grow without bound.
+      2. Verify a snapshot with a check that can see this schema's damage.
+         `PRAGMA integrity_check` does NOT check foreign keys, and
+         `couchpotato/core/db/schema.sql` declares them (`media_identifiers`
+         and `media_tags` both `REFERENCES documents(_id) ON DELETE CASCADE`,
+         with `PRAGMA foreign_keys = ON` set in `sqlite_adapter.py`). An
+         orphaned `media_identifiers` row is exactly the damage a row COUNT
+         cannot see and `integrity_check` will not report. The check is:
+
+             sqlite3 <snapshot>/couchpotato.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+
+         `foreign_key_check` must return zero rows, and it works regardless of
+         the `foreign_keys` pragma setting. Run against `20260820-100129` after
+         this was raised: zero rows, and `quick_check` ok.
+
+      3. Rehearse a RESTORE, once. Nothing in `docs/`, `scripts/backup.sh` or
+         `tests/unit/test_backup_script.py` mentions one, and a backup verified
+         only by reading it is a hypothesis about restore rather than a test of
+         it. Reading cannot exercise the sidecar `-wal` left in the live
+         directory, file ownership under `su-exec`, or whether `config.ini`
+         lands in the layout the container expects (`backup.sh` picks between
+         two candidate paths and warns-and-continues if it finds neither).
+         Restore `20260820-100129` into a scratch data dir and boot against it.
+
+      4. Make the claim falsifiable rather than trusting it a second time.
+         A timer that fires and fails silently reproduces the current state
+         exactly, and nothing in the repo can see the host. The check belongs
+         where it can fail: the promotion path should refuse when the newest
+         snapshot is older than some threshold, rather than the runbook asking
+         a human to remember.
+
+      5. Update the two places that describe the schedule so they describe what
+         was actually installed: `backup.sh`'s header sentence, and
+         `docs/development-process.md`'s "Two manual steps" block, which
+         documents the `crontab -e` form. Whichever mechanism lands, only one of
+         them should be described anywhere. Skipping this part reproduces the
+         defect the task exists to fix, one file to the left, which is the whole
+         reason it is listed rather than left implied.
+
+      Until (1) lands, the pre-promotion backup stays a manual step and must be
+      taken and VERIFIED each time — exit 0 is not enough on a live SQLite
+      database.
+
+      Be exact about why, because the obvious summary welds together two
+      failure modes that are actually disjoint, and gets the dangerous one
+      backwards:
+
+      - **Stale.** `cp` of `couchpotato.db` alone, ignoring the sidecar WAL.
+        The result is internally consistent, opens cleanly and PASSES
+        `PRAGMA integrity_check`, while silently missing every commit still in
+        that WAL. On 2026-08-20 the WAL was 8.6 MB and eight hours newer than
+        the main file, so this is the live risk. **No integrity check can see
+        it**, precisely because it is not corruption.
+      - **Torn.** `cp` of the whole set while a writer or checkpointer is
+        running. That one `integrity_check` DOES catch.
+
+      So an `integrity_check` pass does not rule out a bad `cp`; it only rules
+      out the half that was never the quiet one.
+
+      By the same discipline, be honest about what the 2026-08-20 comparison
+      established. `sqlite3 .backup` reads through a connection, so it sees
+      WAL-resident commits BY CONSTRUCTION: equality with the live read is the
+      expected output of a working tool, not independent corroboration. It
+      falsifies "stale checkpoint" and nothing else. `max(rowid)` is not a row
+      count, and all three metrics are blind to an UPDATE, so a snapshot in
+      which every `documents.data` blob had been truncated would pass every one
+      of them. `backup.sh` refuses to fall
+      through to `cp` at all (see its "Never fall through to `cp`" note and the
+      `NO BACKUP WAS TAKEN` exit) rather than degrade, which is the right call
+      for the same reason.
+
+- [ ] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: queued (no deps) — **security, test-infrastructure**
+
+      Raised by a peer session working on the same harness, and confirmed here
+      by measurement rather than taken on report.
+
+      `tests/unit/conftest.py:32-39` strips six variables before any fixture
+      shells out to git. The list was derived from "what redirects the repo",
+      which is the wrong axis: the question is what git EXPORTS. Two escapes
+      follow from that, and the second is the serious one.
+
+      1. `GIT_CONFIG_PARAMETERS`. A plain commit exports GIT_INDEX_FILE,
+         GIT_PREFIX and the GIT_AUTHOR_* set, but `git -c foo=bar commit` also
+         exports `GIT_CONFIG_PARAMETERS='foo'='bar'`, which then rides into
+         every subprocess. `git -c ... push` from a worktree therefore hands
+         the suite arbitrary config. Same trigger and same class as the GIT_DIR
+         leak already recorded, one name the list does not have.
+
+      2. `GIT_TEMPLATE_DIR` is arbitrary code execution, and it is not a
+         location variable at all, so no denylist built on that axis would ever
+         have contained it. Measured here, not reasoned:
+
+             template dir with an executable hooks/pre-commit
+             GIT_TEMPLATE_DIR=../tmpl git init -q .
+             -> .git/hooks/pre-commit present in the NEW repo
+             -> it EXECUTED during the fixture's own seed commit
+
+         Every throwaway repo the suite creates would run it.
+
+      The fix is to invert: strip git's whole `GIT_*` namespace and allow back
+      only the commit-identity variables (`GIT_AUTHOR_*`, `GIT_COMMITTER_*`),
+      which change what a commit RECORDS rather than where it LANDS. A denylist
+      cannot be finished, because it is wrong again the next time git adds a
+      variable and nothing announces that; a namespace rule excludes the new
+      one the day it ships.
+
+      **The test is the hard part, and the peer's own first attempt at it was
+      proved vacuous.** A test that names `GIT_TEMPLATE_DIR` and
+      `GIT_CONFIG_COUNT` pins two variables while its docstring claims to pin
+      the property, and stays green through three mutations including a revert
+      to a denylist. The assertion that cannot be satisfied by any list of real
+      names is the one to write: a variable that does not exist, e.g.
+      `GIT_NOT_A_REAL_VARIABLE_47B3F9`, must be stripped. Prove it by reverting
+      to the denylist and watching that specific test fail.
+
+      Note `sanitized_git_env()` is also used by `needs_e2e.sh` callers, so
+      widening it touches more than the `repo` fixtures. Check nothing depends
+      on inheriting a `GIT_*` variable before removing the namespace.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T56, T57 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
@@ -5659,3 +5823,33 @@ Every audit finding maps to a PR or to the deferred table above.
 | PR 6 | C1, C2, C3, C4, D2, D3, D5, O3, O4, O6, Q3, S9 (remainder), **Q2 (narrow start)** |
 | Deferred | A4, A5, P4 (fix), Q1 (bulk), Q2 (beyond `core/db/*`), mutmut scope |
 | Won't fix | D4 (legacy deps: a decision, see above) |
+
+- 2026-08-20 10:05 — #277 (T52) CI fully green (16/16). Merge was still
+  BLOCKED, and not by CI: two unresolved review threads on this very file.
+  The finding was correct and is fixed in this commit — the paragraphs
+  describing T52 as unfixed were left in place beneath the block marking it
+  `[x] fixed`, so the entry contradicted itself. Same failure T18 spends four
+  paragraphs on, reproduced inside a task body rather than a dependency list.
+  Pre-promotion backup TAKEN and verified on the prod host:
+  `backups/20260820-100129`, `PRAGMA integrity_check` = ok,
+  `PRAGMA foreign_key_check` = zero rows (added after review pointed out that
+  integrity_check ignores foreign keys and this schema has them), and documents /
+  max(rowid) / media_identifiers all equal to the live database read through
+  its 8.6 MB WAL (4357 / 21039 / 1099), so the snapshot is not a stale
+  checkpoint. Host `scripts/backup.sh` is byte-identical to the repo copy.
+  T53 -> building. The entry-vs-group sweep the task asks for was run first,
+  by AST over the whole tree: 68 config entry names, 32 group names that are
+  not entry names, and exactly ONE call site using a group name as a section
+  (`notifications/trakt.py` -> `trakt_automation`). Every other explicit
+  section literal (`core`, `renamer`, `torrent`, `moviesearcher`, `searcher`,
+  `nzb`, `automation`, `themoviedb`, `tmdb_charts`) is a real entry name; the
+  four configs `ast.literal_eval` cannot evaluate were checked by hand and are
+  all entry names too. Delegated with that sweep required as a mechanised
+  guard rather than a one-off result, since it goes stale on the next plugin.
+  SSH to homemedia: reachable once the owner loaded their identity into
+  `ssh-agent`. Two corrections worth keeping — the earlier "port 22 times out"
+  measurement was wrong, and the hostname stalls intermittently from here while
+  the host's LAN address is reliable, so scripted access should use the
+  address. The address itself belongs in the owner's private host notes, which
+  is where `CLAUDE.md` already routes host-access facts, and not in a file on a
+  public repo.
