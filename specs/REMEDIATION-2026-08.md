@@ -1857,7 +1857,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       pass it. So the archive survives and the loss is recoverable by
       re-extracting. That is what keeps this off the irreplaceable tier.
 
-- [ ] T44: a single archive entry can decompress to an unbounded size — state: building (no deps) — **security, pre-existing**
+- [ ] T44: a single archive entry can decompress to an unbounded size — state: building, **premise corrected 2026-08-20** (no deps) — **security, pre-existing**
 
       Raised on #265 as explicitly non-blocking and correctly so: the read loop
       in `_extractOneAtomic` is untouched by that PR. Recorded because the file
@@ -1878,10 +1878,61 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `sqlite3.OperationalError: disk I/O error`. Data at the top of the
       loss ranking sits behind a limit that does not exist.
 
-      The fix is a per-entry byte budget in the read loop, refusing the entry
-      when it exceeds what `info.file_size` claimed (plus a margin), and
-      treating the refusal exactly like the other entry-derived failures —
-      skip one entry, keep the archive, count it, cap the log.
+      **The premise above is WRONG against the pinned library, measured
+      2026-08-20, and the first implementation shipped a guard for a threat
+      that cannot happen.** `rarfile==4.5` already clamps every entry's stream
+      at the declared header size: `RarExtFile.read()` does
+      `elif n > self._remain: n = self._remain`, and `_open_extfile` sets
+      `self._remain = self._inf.file_size`. Driven with an underlying reader
+      willing to emit unlimited bytes:
+
+          declared file_size : 1024
+          bytes handed out   : 1024
+          _read calls        : [1024]
+
+      So `written <= declared` ALWAYS, and a cross-check of the form
+      `written > declared + margin` is unreachable. A header claiming a SMALL
+      size therefore costs the attacker nothing and gains them nothing: the
+      library truncates the stream, and the CRC mismatch is already counted as
+      `unreadable`.
+
+      **What IS reachable is entry COUNT, which nothing bounds.** The budget is
+      per entry with no archive-level total. Measured with 400 entries each
+      honestly declaring 256 KiB: 400 extracted, 100 MB written, no refusal.
+      RAR5 duplicate-file references (`RAR5_XREDIR_FILE_COPY`) let N distinct
+      names share one stored payload for the cost of N headers, so a few-MB
+      archive can request terabytes. The volume fills, the resulting `ENOSPC`
+      carries an errno not in `_ENTRY_DERIVED_ERRNOS`, and the archive aborts
+      AFTER the disk is full, on the volume that also holds the database.
+
+      So the fix is a whole-archive byte budget, plus the per-entry hard cap
+      kept explicitly as defence-in-depth against a future rarfile rather than
+      described as the fix. A FIXED constant, not a free-space-derived bound:
+      deterministic, unit-testable and free of operator surprise, which are the
+      same virtues that justify the per-entry cap.
+
+      **And the fixture must obey `RarExtFile.read()`'s clamping contract.** The
+      first implementation's stub reader had no `_remain`, so it was more
+      permissive than production, and three of its four tests passed because of
+      that rather than because of the code. An independent `min` -> `max`
+      mutation failed all four tests and was read as proof the guard was
+      load-bearing; it was measuring the stub. Until the fixture matches
+      production, no test on this branch can say whether the guard works. This
+      is the §11 incidentally-passing shape, found while explicitly defending
+      against it.
+
+      Two smaller findings from the same review, both to fix in the rework:
+      the 1000-entry test performs about 1 GiB of real I/O against the global
+      60s timeout and has already timed out once on a clean tree, so patch the
+      margin down rather than moving that much data; and the only reachable
+      refusal currently logs "wrote 3 MiB, exceeding its declared 4 MiB", which
+      is self-contradictory and would be every production refusal.
+
+      Superseded (kept because it is what the first attempt built): a per-entry
+      byte budget in the read loop, refusing the entry when it exceeds what
+      `info.file_size` claimed plus a margin, and treating the refusal exactly
+      like the other entry-derived failures — skip one entry, keep the archive,
+      count it, cap the log.
 
       Note `info.file_size` is attacker-supplied, so it bounds nothing on its
       own; it is useful only as a CROSS-CHECK against bytes actually written.
