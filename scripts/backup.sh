@@ -9,9 +9,17 @@
 #   Take the backup UNLESS every file changed since the last promotion is in
 #   the exempt set below. If anything else changed, take it.
 #
-#   Exempt: docs (`docs/`, `specs/`, `*.md`), tests (`tests/`), CI and tooling
-#   config that does not ship in the image (`.github/`, lint and formatter
-#   config), and pure-presentation assets with no script in them.
+#   Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`, and lint or
+#   formatter config that does not ship in the image.
+#
+#   That list is deliberately identical to the one in
+#   docs/development-process.md, word for word. An earlier draft of this
+#   header also exempted "pure-presentation assets with no script in them",
+#   which the doc did not. Two problems with it, and either is enough:
+#   it reintroduced the judgement call this whole form exists to remove
+#   (who decides what counts as presentation, and as no script), and it was
+#   wrong anyway, because a template in this project can reach a write API.
+#   If these two lists ever disagree again, the shorter one wins.
 #
 # The rule is phrased as "unless" on purpose. An earlier draft asked the
 # operator to decide whether a release "could touch the database", and that
