@@ -485,8 +485,23 @@ feels:
 > Take the backup **unless** every file changed since the last promotion is in
 > the exempt set. If anything else changed, take it.
 >
-> Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`, and lint or
-> formatter config that does not ship in the image.
+> Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`
+
+Get the changed-file list mechanically rather than from memory. The last
+promotion is the newest stable tag:
+
+```bash
+git diff --name-only "$(git tag -l 'v*' | grep -v -- '-beta' | sort -V | tail -1)"..HEAD
+```
+
+Two categories were proposed for this list and removed, both for the same
+reason. "Pure-presentation assets with no script in them" needs someone to
+decide what counts as presentation, and is wrong here anyway because a template
+can reach a write API. "Lint or formatter config that does not ship in the
+image" is an **empty category**: ruff's config lives in `pyproject.toml`, and
+the Dockerfile's `COPY . ${APP_DIR}/` ships the whole tree, so nothing
+qualifies. A category that names nothing, or that needs a judgement to apply,
+has no place in a rule whose purpose is removing the judgement.
 
 **Phrased as "unless" on purpose.** An earlier draft asked the operator to
 decide whether a release "could touch the database". That has one failure mode

@@ -64,7 +64,7 @@ persona from memory; `AGENTS.md` is the review rubric they apply.
 | `make check-secrets` | Secret scan of the working tree (same command CI runs) |
 | `make coverage` | Generate the Python + JS coverage reports SonarQube ingests |
 | `make sonar` | Scan into self-hosted SonarQube after a merge that changed analysed code. Reporting only — **never a gate, never in CI**. Runs `coverage` first so the reports cannot be forgotten |
-| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings. Run before any promotion carrying a change to a write path — mechanically: take it **unless** every file changed since the last promotion is docs, tests or CI config. Not nightly |
+| `./scripts/backup.sh` | Snapshot prod SQLite DB + settings before a promotion. Not nightly. The trigger is an exempt list, stated once in `scripts/backup.sh`'s header and mirrored in `docs/development-process.md` — do not paraphrase it here, a third copy is a third thing to drift |
 
 ## Hard rules — never break these
 

@@ -9,17 +9,23 @@
 #   Take the backup UNLESS every file changed since the last promotion is in
 #   the exempt set below. If anything else changed, take it.
 #
-#   Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`, and lint or
-#   formatter config that does not ship in the image.
+#   Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`
 #
-#   That list is deliberately identical to the one in
-#   docs/development-process.md, word for word. An earlier draft of this
-#   header also exempted "pure-presentation assets with no script in them",
-#   which the doc did not. Two problems with it, and either is enough:
-#   it reintroduced the judgement call this whole form exists to remove
-#   (who decides what counts as presentation, and as no script), and it was
-#   wrong anyway, because a template in this project can reach a write API.
-#   If these two lists ever disagree again, the shorter one wins.
+#   Get the file list mechanically rather than from memory. The last
+#   promotion is the newest stable tag, so:
+#
+#       git diff --name-only "$(git tag -l 'v*' | grep -v -- '-beta' | sort -V | tail -1)"..HEAD
+#
+#   That list is byte-identical to the one in docs/development-process.md and
+#   is checked by tests/unit/test_backup_policy_exempt_list.py, because prose
+#   alone has failed three times on this change alone. Two categories were
+#   proposed and removed, both for the same reason: "pure-presentation assets
+#   with no script in them" (who decides what counts as presentation, and a
+#   template here can reach a write API), and "lint or formatter config that
+#   does not ship in the image" (an EMPTY category, since ruff's config lives
+#   in pyproject.toml and the Dockerfile's `COPY . ${APP_DIR}/` ships the whole
+#   tree). A category that names nothing, or that needs a judgement to apply,
+#   belongs nowhere near a rule whose entire purpose is removing the judgement.
 #
 # The rule is phrased as "unless" on purpose. An earlier draft asked the
 # operator to decide whether a release "could touch the database", and that
