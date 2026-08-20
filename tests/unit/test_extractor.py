@@ -10,7 +10,6 @@ import errno
 import logging
 import os
 import stat
-import zlib
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -20,6 +19,7 @@ from couchpotato.core.plugins.renamer.extractor import (
     DEFAULT_UNRAR_TOOL,
     NO_EXTRACTOR_TOOL_MESSAGE,
     ExtractorMixin,
+    _ArchiveTooLarge,
 )
 
 
@@ -98,38 +98,69 @@ class _RaisingOpenResult:
         return False
 
 
-class _ChunkedReader:
-    """Serves `data` back in caller-sized pieces, mirroring a real streaming
-    decompressor's stdout pipe -- unlike `_BytesReader` above, which hands
-    back its ENTIRE payload on the first `.read()` regardless of the size
-    requested. T44's entry-size cap has to hold across many loop iterations
-    of `_extractOneAtomic`'s `source.read(1024 * 1024)`, not just survive a
-    single oversized read, so this fixture forces exactly that."""
+class _RealRarInfoStandIn:
+    """A minimal stand-in for rarfile.RarInfo, carrying only the attributes
+    RarExtFile actually touches: enough for rarfile's REAL `read()` to run
+    against it (and clamp output to `file_size`) without a full RarFile or
+    an archive on disk.
 
-    def __init__(self, data):
-        self._data = data
-        self._pos = 0
+    T44 review measured (against the pinned rarfile==4.5 source) that
+    RarExtFile.read() already clamps a well-behaved entry's output to its own
+    declared `file_size` via `self._remain`, and that a fixture reader
+    without that clamp is MORE permissive than production -- three of the
+    four tests this file originally shipped for T44 only passed because of
+    that gap. Using rarfile's OWN `RarExtFile` (see `_RealClampBackedReader`
+    below) instead of reimplementing the clamp closes it: fidelity comes from
+    running the real code, not from a second hand-written copy of it that
+    could itself drift from what production does.
 
-    def read(self, size=-1):
-        if size is None or size < 0:
-            size = len(self._data) - self._pos
-        chunk = self._data[self._pos:self._pos + size]
-        self._pos += len(chunk)
-        return chunk
+    `_md_class`/`_md_expect = None` skip RarExtFile's CRC verification
+    (`_check`), which needs real compressed data this fixture does not
+    have -- the read()/clamp behaviour under test does not depend on it.
+    """
 
+    _md_class = None
+    _md_expect = None
 
-class _ChunkedOpenResult:
-    """Context manager standing in for rarfile.RarFile.open()'s return value,
-    backed by a `_ChunkedReader`."""
+    def __init__(self, filename, file_size):
+        self.filename = filename
+        self.file_size = file_size
 
-    def __init__(self, data):
-        self._reader = _ChunkedReader(data)
-
-    def __enter__(self):
-        return self._reader
-
-    def __exit__(self, exc_type, exc, tb):
+    def isdir(self):
         return False
+
+
+class _RealClampBackedReader(rarfile.RarExtFile):
+    """A REAL `rarfile.RarExtFile`, opened against a `_RealRarInfoStandIn`,
+    supplying synthetic (but genuinely streamed, chunk by chunk) bytes.
+
+    Subclassing rather than faking means `source.read(n)` in
+    `_extractOneAtomic` runs rarfile's OWN `read()` -- the exact method whose
+    `self._remain` clamp this whole rework depends on -- not a test-side
+    reimplementation of it. `_read` is the one seam RarExtFile leaves for a
+    concrete reader to fill in; overriding it to keep producing zero bytes
+    for as long as asked models a decompressor willing to emit unlimited
+    output, so what actually bounds the entry is rarfile's clamp (to
+    `file_size`) composed with `_extractOneAtomic`'s own fixed ceilings, the
+    same as it would be against a real unrar/7z/bsdtar subprocess.
+    """
+
+    def __init__(self, filename, file_size):
+        super().__init__()
+        self._open_extfile(None, _RealRarInfoStandIn(filename, file_size))
+
+    def _read(self, cnt):
+        return b'\x00' * cnt
+
+
+def _real_reader(filename, file_size):
+    """Build a `_RealClampBackedReader` for `filename` declaring `file_size`.
+    Use as `handle.open.side_effect = lambda i: _real_reader(i.filename, N)`.
+    The returned object is ALREADY a context manager (io.IOBase provides
+    `__enter__`/`__exit__`), so no separate wrapper is needed the way the
+    plain-bytes fixtures above need `_FakeOpenResult`."""
+    return _RealClampBackedReader(filename, file_size)
+
 
 
 @pytest.fixture(autouse=True)
@@ -1573,196 +1604,271 @@ class TestAnEINVALDestinationDoesNotSinkTheArchive:
         assert any('EINVAL' in r.getMessage() for r in caplog.records)
 
 
-class TestEntrySizeCapPreventsAnArchiveBomb:
-    """T44: `rarfile.infolist()` parses headers only, so a header claiming a
-    small size costs the attacker nothing -- the streaming read loop in
-    `_extractOneAtomic` previously wrote whatever the decompressor produced
-    with NO cap, so a single entry could fill the disk. On this project the
-    same volume holds the SQLite database and settings, which sits above a
-    completed download on the loss ranking (CLAUDE.md).
+class TestEntryHardCapIsTheLiveGuardAgainstAnHonestlyDeclaredEntry:
+    """T44, REWORKED 2026-08-20. The original cross-check here (bytes
+    written vs `info.file_size` plus a margin) was measured, by review,
+    unreachable against the pinned `rarfile==4.5`:
+    `rarfile.RarExtFile.read()` already clamps a well-behaved entry's output
+    to its own declared `file_size` (`self._remain`, set in
+    `_open_extfile`), so `written > declared` cannot happen -- a header
+    claiming a SMALL size can never hide a bomb, because rarfile itself will
+    not let the entry produce more than it declared. Three of the four tests
+    this file originally shipped for T44 only passed because their fixture
+    reader had no such clamp and was therefore MORE permissive than
+    production -- exactly the incidentally-passing shape CLAUDE.md's guard
+    rule exists to catch.
 
-    The fixture below is genuinely hostile, not a stand-in for one: it REALLY
-    zlib-compresses a large all-zero payload (real compression, not a claim
-    about what compression would achieve) and streams the REAL decompressed
-    bytes back through the extractor's own 1 MiB read loop, chunk by chunk,
-    via `_ChunkedReader` -- exactly as rarfile's RarExtFile streams from the
-    external unrar/7z/bsdtar subprocess. The archive's header
-    (`info.file_size`) then LIES about how big the entry is, which is the
-    actual attack: the header is free to fabricate, because `infolist()`
-    never decompresses anything to check it against.
+    What rarfile does NOT bound is how large that declaration may honestly
+    be. An entry whose header says "400 GiB" and then genuinely decompresses
+    to 400 GiB sails straight through rarfile's own clamp -- that is the
+    reachable attack `_ENTRY_HARD_CAP` exists to stop, and it is the LIVE
+    guard against the pinned library version, not defence-in-depth.
+
+    The fixture below (`_real_reader`, backed by `_RealClampBackedReader`,
+    a genuine subclass of `rarfile.RarExtFile`) runs rarfile's OWN `read()`,
+    so this test exercises the exact clamp production hits rather than a
+    hand-written stand-in that could itself drift from what rarfile does.
     """
 
-    def test_an_entry_that_decompresses_far_beyond_its_declared_size_is_capped(
+    def test_an_honestly_declared_enormous_entry_is_refused_and_the_archive_continues(
             self, tmp_path, caplog):
-        # Real compression, not a synthetic stand-in: prove the fixture is
-        # actually hostile before trusting anything that follows. A 1x1
-        # placeholder cannot demonstrate an unbounded write; this must.
-        bomb_size = 5 * 1024 * 1024  # 5 MiB of real decompressed output
-        raw = b'\x00' * bomb_size
-        compressed = zlib.compress(raw, level=9)
-        ratio = len(raw) / len(compressed)
-        assert ratio > 100, (
-            'the fixture is not compressible enough to model a bomb: '
-            '%d bytes compressed to %d (%.0fx)' % (len(raw), len(compressed), ratio)
-        )
-
+        patched_cap = 2 * 1024 * 1024  # 2 MiB, so the test writes almost none
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
 
-        info = _make_info('tiny-looking.mkv')
-        # The header's declared size: attacker-chosen and free to fabricate.
-        # A 5 MiB bomb LOOKS like a 1 KiB file.
-        info.file_size = 1024
-
+        infos = [_make_info('huge.mkv'), _make_info('good.mkv')]
         handle = MagicMock()
-        handle.infolist.return_value = [info]
-        handle.open.side_effect = lambda i: _ChunkedOpenResult(raw)
+        handle.infolist.return_value = infos
+        handle.open.side_effect = lambda i: (
+            _real_reader(i.filename, 5 * 1024 * 1024)  # honestly declares 5 MiB
+            if i.filename == 'huge.mkv' else _FakeOpenResult(b'real')
+        )
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   patched_cap), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
             extracted = _Extractor().extractArchive('a.rar', str(extr_path))
 
-        assert extracted == [], (
-            'the oversized entry was extracted instead of refused'
+        assert extracted == [str(extr_path / 'good.mkv')], (
+            'the oversized entry sank the archive, or was extracted instead '
+            'of refused'
         )
-        assert not (extr_path / 'tiny-looking.mkv').exists(), (
+        assert not (extr_path / 'huge.mkv').exists(), (
             'a bomb payload (partial or full) was left on disk'
         )
-        assert list(extr_path.iterdir()) == [], (
+        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+        assert sorted(p.name for p in extr_path.iterdir()) == ['good.mkv'], (
             'a temp file from the aborted write was left behind -- the '
             'atomic-write cleanup must fire on this failure path exactly as '
             'it does on the other entry-derived failures'
         )
         messages = '\n'.join(r.getMessage() for r in caplog.records)
-        assert 'declared' in messages.lower() and '1024' in messages, (
-            'the refusal was silent, or did not name the declared size an '
-            'operator would need to diagnose it'
+        assert str(patched_cap) in messages, (
+            'the refusal did not name the fixed ceiling an operator would '
+            'need to diagnose it'
+        )
+        assert 'declared' not in messages.lower(), (
+            'the refusal referenced a declared size again -- this arm no '
+            'longer trusts anything the header claims'
         )
 
-    def test_a_thousand_bomb_entries_do_not_produce_a_thousand_errors(
+
+class TestEntryHardCapLoggingIsAlsoBounded:
+    """The `oversized` counter's own bounded-logging discipline, matched to
+    every other per-entry counter in this file. `infolist()` is header-only,
+    so a thousand entries each honestly declaring an oversized `file_size`
+    cost the attacker one header each -- the same amplification shape as
+    every other counter here.
+
+    Each entry is sized so the FIRST chunk trips the (patched, small) cap
+    without writing anything: real `rarfile.RarExtFile.read()` still governs
+    how much any one `.read()` call can return (clamped to the declared
+    `file_size`), so a small declared size keeps this test's real I/O
+    trivial despite the entry count. The version of this test T44 originally
+    shipped declared TINY sizes with huge ACTUAL output via a fixture that
+    ignored rarfile's clamp -- which both misrepresented the threat and did
+    roughly 1 GB of real disk I/O per run, timing out the suite's 60s limit.
+    """
+
+    def test_a_thousand_oversized_entries_do_not_produce_a_thousand_errors(
             self, tmp_path, caplog):
-        """The cap's own per-entry counter must be bounded and summarised
-        exactly like `refused`/`collisions`/`unreadable`/`unwritable` --
-        `infolist()` is header-only, so a thousand poisoned entries cost the
-        attacker one header each, same as every other amplification vector
-        on this path."""
+        patched_cap = 50  # bytes -- deliberately smaller than one entry
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
-        raw = b'\xAB' * (2 * 1024 * 1024)
-        infos = []
-        for i in range(1000):
-            info = _make_info('bomb%d.mkv' % i)
-            info.file_size = 100
-            infos.append(info)
 
+        names = ['bomb%d.mkv' % i for i in range(1000)]
+        infos = [_make_info(n) for n in names]
         handle = MagicMock()
         handle.infolist.return_value = infos
-        handle.open.side_effect = lambda i: _ChunkedOpenResult(raw)
+        # Each entry honestly declares 200 bytes -- comfortably above the
+        # patched cap, so the FIRST (and only) chunk read trips the guard
+        # before target.write() is ever called for it.
+        handle.open.side_effect = lambda i: _real_reader(i.filename, 200)
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
+                   patched_cap), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
             extracted = _Extractor().extractArchive('a.rar', str(extr_path))
 
         messages = [r.getMessage() for r in caplog.records]
-        # 'skipping it:' is the PER-ENTRY phrase, deliberately not 'declared'
-        # alone -- the summary line below also says "their declared size",
-        # which is exactly the same trap TestOverlongNameLoggingIsAlsoBounded
-        # documents for the unwritable counter three classes up.
+        # 'skipping it:' is the PER-ENTRY phrase, deliberately not a phrase
+        # the summary line also uses -- the same trap
+        # TestOverlongNameLoggingIsAlsoBounded documents for the unwritable
+        # counter.
         per_entry = [m for m in messages if 'skipping it:' in m]
         assert len(per_entry) <= 5, (
             'unbounded oversized-entry logging: %d ERROR lines from one '
             'archive' % len(per_entry)
         )
         summary = [m for m in messages
-                   if 'exceeded' in m.lower() and 'in total' in m.lower()]
+                   if 'per-entry size ceiling' in m and 'in total' in m]
         assert summary and '1000' in summary[0], (
             'the oversized-entry total was not reported, so the cap hides '
             'the scale'
         )
         assert extracted == []
+        assert list(extr_path.iterdir()) == [], (
+            'a refused entry left a temp file behind'
+        )
 
 
-class TestEntrySizeCapAlsoBoundsASelfConsistentLie:
-    """The cross-check above compares actual bytes written against the
-    header's declared size -- but the header is exactly as free to declare a
-    large size as a small one. An entry that declares itself correctly
-    (writer and header agree) sails straight through that check alone.
+class TestArchiveHardCapCatchesTheReachableAmplification:
+    """The NEW guard this rework adds. Review measured that many entries,
+    each individually honest and comfortably under `_ENTRY_HARD_CAP`, can
+    still sum to far more than any single release plausibly needs: RAR5 lets
+    N distinct entry names redirect to ONE stored payload (FILE_COPY/
+    HARD_LINK) for the cost of N headers, and even without redirects, many
+    small honestly-sized entries cost the attacker one header each while the
+    extractor writes every one of them out in full. Driven: 400 entries each
+    honestly declaring 256 KiB extracted 100 MB with no refusal from the
+    per-entry check alone. No single entry lies here, so no PER-ENTRY
+    ceiling can catch it -- only a ceiling on the ARCHIVE's total output can.
 
-    The absolute ceiling in `_ENTRY_HARD_CAP` is the belt to that braces:
-    independent of anything the header claims. Patched down to a size a test
-    can actually write, since the real ceiling is deliberately far larger
-    than any legitimate media file this application manages (see the
-    constant's comment for why it is fixed rather than free-space-derived).
+    `_ArchiveTooLarge` is deliberately allowed to propagate out of
+    `extractArchive` rather than being caught as a per-entry refusal (see
+    its docstring): once the budget for this run is gone, letting the loop
+    keep processing further entries only spends more disk on exactly the
+    amplification this guard exists to stop.
     """
 
-    def test_a_correctly_declared_but_still_enormous_entry_is_refused(
+    def test_entries_before_the_threshold_extract_and_the_one_that_crosses_it_aborts_the_archive(
             self, tmp_path, caplog):
-        small_cap = 2 * 1024 * 1024
-        payload_size = 4 * 1024 * 1024  # exceeds the patched ceiling
-        raw = b'\xCD' * payload_size
-
+        patched_archive_cap = 3 * 1024 * 1024  # 3 MiB
+        entry_size = 1024 * 1024  # 1 MiB, comfortably under _ENTRY_HARD_CAP
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
 
-        info = _make_info('honest-but-huge.mkv')
-        info.file_size = payload_size  # the header does NOT lie this time
-
+        # Five 1 MiB entries against a 3 MiB archive budget: the first three
+        # land exactly on the ceiling (1+1+1 MiB == 3 MiB, allowed), the
+        # fourth's first chunk pushes the running total to 4 MiB and aborts,
+        # and the fifth is never even opened.
+        names = ['part%d.mkv' % i for i in range(5)]
+        infos = [_make_info(n) for n in names]
         handle = MagicMock()
-        handle.infolist.return_value = [info]
-        handle.open.side_effect = lambda i: _ChunkedOpenResult(raw)
+        handle.infolist.return_value = infos
+        handle.open.side_effect = lambda i: _real_reader(i.filename, entry_size)
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle), \
-             patch('couchpotato.core.plugins.renamer.extractor._ENTRY_HARD_CAP',
-                   small_cap), \
+             patch('couchpotato.core.plugins.renamer.extractor._ARCHIVE_HARD_CAP',
+                   patched_archive_cap), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
-            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+            with pytest.raises(_ArchiveTooLarge) as excinfo:
+                _Extractor().extractArchive('a.rar', str(extr_path))
 
-        assert extracted == [], (
-            'an entry whose declared size ALSO matches its ceiling-busting '
-            'payload was extracted -- the cross-check alone cannot catch a '
-            'self-consistent lie, which is exactly why the hard cap exists'
+        assert excinfo.value.budget == patched_archive_cap
+        assert excinfo.value.written > patched_archive_cap
+
+        written_files = sorted(p.name for p in extr_path.iterdir())
+        assert written_files == ['part0.mkv', 'part1.mkv', 'part2.mkv'], (
+            'the entries that fit under the archive budget were not all '
+            'written, or a later entry (or its temp file) leaked through: '
+            'got %r' % written_files
+        )
+        for name in written_files:
+            assert (extr_path / name).stat().st_size == entry_size
+
+        # part4.mkv must never even be OPENED: the archive was already over
+        # budget the moment part3.mkv's first chunk crossed it, and
+        # continuing to the next entry would only spend more disk on the
+        # exact amplification this guard exists to stop.
+        opened = [c.args[0].filename for c in handle.open.call_args_list]
+        assert 'part4.mkv' not in opened, (
+            'processing continued past the entry that exceeded the archive '
+            'budget'
         )
 
-
-class TestEntrySizeCapDoesNotSinkTheArchive:
-    """The invariant this whole file enforces, completed for the fifth
-    per-entry failure mode: one hostile entry must skip, not abandon."""
-
-    def test_an_oversized_entry_is_skipped_and_the_rest_still_extract(
+    def test_the_archive_wide_abort_is_never_miscounted_as_a_per_entry_refusal(
             self, tmp_path, caplog):
+        """`_ArchiveTooLarge` must not increment `oversized` or any other
+        per-entry counter -- it is not a per-entry failure, and folding it
+        into one would send an operator chasing "one bad entry" when the
+        real story is the archive's total."""
+        patched_archive_cap = 1024  # bytes: the very first entry blows it
         extr_path = tmp_path / 'extract_here'
         extr_path.mkdir()
 
-        bomb_info = _make_info('bomb.mkv')
-        bomb_info.file_size = 100
-        good_info = _make_info('good.mkv')
-        good_info.file_size = 4
-
-        bomb_raw = b'\x00' * (2 * 1024 * 1024)
-
-        def open_entry(i):
-            if i.filename == 'bomb.mkv':
-                return _ChunkedOpenResult(bomb_raw)
-            return _FakeOpenResult(b'real')
-
+        infos = [_make_info('a.mkv')]
         handle = MagicMock()
-        handle.infolist.return_value = [bomb_info, good_info]
-        handle.open.side_effect = open_entry
+        handle.infolist.return_value = infos
+        handle.open.side_effect = lambda i: _real_reader(i.filename, 1024 * 1024)
 
         with patch('couchpotato.core.plugins.renamer.extractor.rarfile.RarFile',
                    return_value=handle), \
+             patch('couchpotato.core.plugins.renamer.extractor._ARCHIVE_HARD_CAP',
+                   patched_archive_cap), \
              caplog.at_level(logging.ERROR,
                              logger='couchpotato.core.plugins.renamer.extractor'):
-            extracted = _Extractor().extractArchive('a.rar', str(extr_path))
+            with pytest.raises(_ArchiveTooLarge):
+                _Extractor().extractArchive('a.rar', str(extr_path))
 
-        assert extracted == [str(extr_path / 'good.mkv')], (
-            'a bomb entry aborted the archive; the good entry after it was '
-            'never extracted'
+        messages = '\n'.join(r.getMessage() for r in caplog.records)
+        assert 'per-entry size ceiling' not in messages, (
+            'an archive-wide budget abort was logged as a per-entry '
+            'oversized refusal'
         )
-        assert (extr_path / 'good.mkv').read_bytes() == b'real'
+
+
+class TestExtractFilesSkipsAnArchiveThatExceedsTheBudgetWithoutTagging:
+    """`extractFiles`' side of `_ArchiveTooLarge`: caught, logged with the
+    operator-facing budget numbers, and turned into a skip-not-tag exactly
+    like every other archive-level failure on this path (a bad archive, a
+    missing extractor tool), so the release is retried on a later scan
+    rather than silently marked complete with files missing."""
+
+    def test_the_archive_is_skipped_logged_and_not_tagged(self, tmp_path, caplog):
+        folder = tmp_path / 'downloads'
+        folder.mkdir()
+        archive = folder / 'Movie.One.2020.rar'
+        archive.write_bytes(b'not-a-real-rar')
+
+        fake = _FakeRenamer(from_folder=str(folder))
+        fake.extractArchive = MagicMock(
+            side_effect=_ArchiveTooLarge(written=200 * 1024 * 1024,
+                                          budget=144 * 1024 ** 3))
+
+        with caplog.at_level(logging.ERROR, logger='couchpotato.core.plugins.renamer.extractor'):
+            result_folder, media_folder, files, extr_files = fake.extractFiles(
+                folder=str(folder),
+                media_folder=str(folder),
+                files=[str(archive)],
+            )
+
+        assert extr_files == []
+        assert fake.tagged == [], (
+            'an archive that exceeded the per-archive budget was tagged as '
+            'extracted'
+        )
+        errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+        assert len(errors) == 1
+        assert str(144 * 1024 ** 3) in errors[0], (
+            'the operator-facing message did not name the budget that was '
+            'exceeded'
+        )
