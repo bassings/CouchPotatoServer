@@ -2,9 +2,66 @@
 #
 # backup.sh — snapshot the CouchPotato SQLite database + settings.
 #
-# Run this BEFORE every prod promotion, and nightly from cron. A promotion is
-# only reversible if the database was captured first: `:latest` has already
-# moved by deploy time, so "re-pull the old image" does not recover data.
+# Run this before any promotion that carries a change to a write path. NOT
+# nightly, and the trigger is a MECHANICAL test rather than a judgement about
+# how risky the release feels:
+#
+#   Take the backup UNLESS every file changed since the last promotion is in
+#   the exempt set below. If anything else changed, take it.
+#
+#   Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`
+#
+#   Get the file list mechanically rather than from memory. The last
+#   promotion is the newest stable tag, so:
+#
+#       git diff --name-only "$(git tag -l 'v*' | grep -v -- '-beta' | sort -V | tail -1)"..HEAD
+#
+#   That list is byte-identical to the one in docs/development-process.md and
+#   is checked by tests/unit/test_backup_policy_exempt_list.py, because prose
+#   alone has failed three times on this change alone. Two categories were
+#   proposed and removed, both for the same reason: "pure-presentation assets
+#   with no script in them" (who decides what counts as presentation, and a
+#   template here can reach a write API), and "lint or formatter config that
+#   does not ship in the image" (an EMPTY category, since ruff's config lives
+#   in pyproject.toml and the Dockerfile's `COPY . ${APP_DIR}/` ships the whole
+#   tree). A category that names nothing, or that needs a judgement to apply,
+#   belongs nowhere near a rule whose entire purpose is removing the judgement.
+#
+# The rule is phrased as "unless" on purpose. An earlier draft asked the
+# operator to decide whether a release "could touch the database", and that
+# framing has one failure mode: the judgement is made by whoever wants to
+# deploy, under time pressure, and "this one is fine" is free to say and
+# expensive to be wrong about. Defaulting to taking it costs seconds.
+#
+# Two things the earlier draft got wrong, kept here because they are the
+# reason the exempt list is short:
+#
+#   "UI-only cannot damage data" is FALSE in this codebase. The UI calls
+#   destructive APIs directly: `ui/templates/partials/movie_detail.html` fires
+#   `media.delete`, and both `wizard.html` and the settings partial fire
+#   `settings.save`. A wrong id destroys library records as thoroughly as a
+#   migration would.
+#
+#   "No schema change" does not mean "cannot corrupt". The `_query_index`
+#   defects fixed in 2026-02 corrupted records during an ordinary library
+#   scan, with no migration involved.
+#
+# The reason the trigger is exempt-list-shaped rather than "changes the schema"
+# is that this project has already lost data the other way, and because the
+# person deciding is the person who wants to ship.
+#
+# Be honest about what that example does NOT establish, because it cuts both
+# ways. That corruption happened during NORMAL RUNNING, not during a promotion,
+# so a promotion-gated snapshot would not have caught it either: a scan that
+# corrupts data three days after a deploy falls between backups under this
+# policy, where a nightly would have caught it. That residual risk is accepted
+# deliberately, on the owner's decision, and it is the thread to pull if this
+# policy ever needs revisiting. It is written down rather than left implicit so
+# the next reader inherits the decision and not just the rule.
+#
+# When it does apply, it is not optional: a promotion is only reversible if the
+# database was captured first, because `:latest` has already moved by deploy
+# time, so "re-pull the old image" does not recover data.
 # Full procedure: docs/development-process.md → "Deploying to prod".
 #
 # The DB is copied with sqlite3's `.backup` (or Python's sqlite3 backup API when
@@ -61,8 +118,10 @@ usage() {
   cat <<'USAGE'
 backup.sh — snapshot the CouchPotato SQLite database + settings.
 
-Run before every prod promotion, and nightly from cron. Uses sqlite3 `.backup`
-(or Python's sqlite3 backup API) so the copy is safe against a live database.
+Run before any promotion carrying a change to a write path. The trigger is
+mechanical: take it UNLESS every file changed since the last promotion is in
+the exempt list in this script's header. NOT nightly. Uses sqlite3 `.backup` (or Python's sqlite3
+backup API) so the copy is safe against a live database.
 
 Usage:
   ./scripts/backup.sh                 snapshot, keep everything
@@ -124,8 +183,10 @@ DB_SRC="$CP_DATA_DIR/database_v2/couchpotato.db"
 #   * DATA_DIR/../config.ini   — what the Docker image uses, where
 #                                `--config_file=/config/config.ini` sits one
 #                                level above `--data_dir=/data`
-# Picking the wrong one is invisible: the script warns and exits 0, so a nightly
-# cron reports success forever while never capturing settings.
+# Picking the wrong one is invisible: the script warns and exits 0, so every run
+# reports success while never capturing settings. That is why the documented
+# verification checks config.ini is PRESENT in the snapshot, not just that the
+# database opens.
 SETTINGS_SRC=""
 for candidate in "$CP_DATA_DIR/config.ini" "$CP_DATA_DIR/../config.ini"; do
   if [ -f "$candidate" ]; then
@@ -234,7 +295,7 @@ info "snapshot complete: $DEST"
 # still holds an UNPADDED `-N` directory from an older version of this script can
 # still mis-sort: with `<stamp>` and a legacy `<stamp>-2` present, `--retain 1`
 # keeps `-2` and prunes the fresh `<stamp>-02` (reproduced). Unreachable under
-# the documented usage — nightly `--retain 14` plus one manual pre-promotion run
+# the documented usage — `--retain N` on a pre-promotion run
 # would need 15+ snapshots inside a single second. If you ever hit it, delete or
 # rename the legacy unpadded directories once and it cannot recur.
 #
@@ -246,7 +307,7 @@ info "snapshot complete: $DEST"
 #   2. `set -o pipefail` + `head` closing the pipe early made the whole script
 #      exit 141 (SIGPIPE) on a *successful* backup once the snapshot list
 #      exceeded the pipe buffer (~1050 snapshots at the default path length), so
-#      cron reported failure for a good backup.
+#      the run reported failure for a good backup.
 # The array is already correct; sort and slice it in-process instead.
 prune_snapshots() {
   local keep="$1"

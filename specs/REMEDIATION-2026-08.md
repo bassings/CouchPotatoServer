@@ -1857,7 +1857,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       pass it. So the archive survives and the loss is recoverable by
       re-extracting. That is what keeps this off the irreplaceable tier.
 
-- [ ] T44: a single archive entry can decompress to an unbounded size — state: queued (no deps) — **security, pre-existing**
+- [ ] T44: a single archive entry can decompress to an unbounded size — state: building, **reduced in scope by rule 11 after two failed designs** (no deps) — **security, pre-existing**
 
       Raised on #265 as explicitly non-blocking and correctly so: the read loop
       in `_extractOneAtomic` is untouched by that PR. Recorded because the file
@@ -1872,16 +1872,115 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
               if not chunk: break
               target.write(chunk)
 
-      A hostile release therefore fills the disk. On this project that is worse
-      than it sounds: the same volume holds the SQLite database and settings,
-      and a full disk is exactly how this session lost a gate run to
-      `sqlite3.OperationalError: disk I/O error`. Data at the top of the
-      loss ranking sits behind a limit that does not exist.
+      A hostile release therefore fills the disk.
 
-      The fix is a per-entry byte budget in the read loop, refusing the entry
-      when it exceeds what `info.file_size` claimed (plus a margin), and
-      treating the refusal exactly like the other entry-derived failures —
-      skip one entry, keep the archive, count it, cap the log.
+      **Blast radius corrected by measurement on the real host, 2026-08-20.**
+      This entry said "the same volume holds the SQLite database and settings".
+      On production that is FALSE, and it inflated the severity:
+
+          /                     364G, 85G avail   <- database, settings, config.bak
+          /var/cache/sab (NAS)  44T,  1.9T avail  <- /downloads, where extraction writes
+          /var/media     (NAS)  44T,  1.9T avail  <- the library
+
+      The renamer's `from` is `/downloads/`, which is the NAS download share,
+      so a decompression bomb exhausts a 1.9 TiB share and does NOT reach the
+      volume carrying the database. It is a download-share denial of service,
+      not a route to irrecoverable data loss. Still worth fixing, and still
+      security-tagged, but it should not be ranked above things that can
+      actually destroy the library.
+
+      That correction also makes the shipped bound meaningful rather than
+      theatrical: a 144 GiB per-archive cap against 1.9 TiB free is a real
+      limit. Note it is PER ARCHIVE and `extractFiles` loops, so roughly
+      thirteen hostile archives still sum to the free space. Worth knowing
+      before anyone calls this closed.
+
+      **The premise above is WRONG against the pinned library, measured
+      2026-08-20, and the first implementation shipped a guard for a threat
+      that cannot happen.** `rarfile==4.5` already clamps every entry's stream
+      at the declared header size: `RarExtFile.read()` does
+      `elif n > self._remain: n = self._remain`, and `_open_extfile` sets
+      `self._remain = self._inf.file_size`. Driven with an underlying reader
+      willing to emit unlimited bytes:
+
+          declared file_size : 1024
+          bytes handed out   : 1024
+          _read calls        : [1024]
+
+      So `written <= declared` ALWAYS, and a cross-check of the form
+      `written > declared + margin` is unreachable. A header claiming a SMALL
+      size therefore costs the attacker nothing and gains them nothing: the
+      library truncates the stream, and the CRC mismatch is already counted as
+      `unreadable`.
+
+      **What IS reachable is entry COUNT, which nothing bounds.** The budget is
+      per entry with no archive-level total. Measured with 400 entries each
+      honestly declaring 256 KiB: 400 extracted, 100 MB written, no refusal.
+      RAR5 duplicate-file references (`RAR5_XREDIR_FILE_COPY`) let N distinct
+      names share one stored payload for the cost of N headers, so a few-MB
+      archive can request terabytes. The volume fills, the resulting `ENOSPC`
+      carries an errno not in `_ENTRY_DERIVED_ERRNOS`, and the archive aborts
+      AFTER the disk is full, on the volume that also holds the database.
+
+      **Round two also shipped a guard that could not fire, and the task was
+      reduced rather than attempted a third time (rule 11).** The whole-archive
+      budget added in round two never advanced: `_extractOneAtomic` returned
+      bytes only on success, so a refused entry contributed nothing, and
+      because `_ARCHIVE_HARD_CAP = _ENTRY_HARD_CAP + 16 GiB` the entry cap
+      always tripped first. Measured at scaled constants: 26.7x the archive cap
+      written to disk with the running total still at zero. Two further leaks
+      in the same layer: the entry-derived `OSError` arm dropped bytes the same
+      way (10x the budget with no oversized entry at all), and the budget reset
+      every scan, so a large archive extracted in full across repeated scans
+      (measured: complete by scan 7, and `renamer.force_scan` runs every 2
+      hours by default).
+
+      **What shipped, and what did not.** Owner's call was to bank what works:
+      keep `_ENTRY_HARD_CAP`, which checks bytes actually written, does fire,
+      and is load-bearing under four independent mutations. Delete the archive
+      budget entirely rather than attempt a third variant of it.
+
+      **So the amplification is OPEN DEBT, not fixed.** The remaining guard
+      bounds ONE ENTRY at 128 GiB. N entries each just under it still write
+      N x 128 GiB, and each refused entry writes its full 128 GiB before being
+      unlinked. Anyone reopening this should note the frame that review
+      proposed and nobody has built: `read()` clamps to `file_size`, and
+      `file_redir` plus `getinfo()` resolve RAR5 copy and hard-link targets
+      FROM HEADERS ALONE, so the sum of resolved declared sizes is an exact
+      upper bound on what an archive can produce, computable before a single
+      byte is written. A pre-flight refusal on that sum closes all three leaks
+      at once because nothing is written to leak. That is a different shape
+      from a byte budget threaded through per-entry return values, which is
+      the shape that has now failed twice.
+
+      Superseded by the above: the fix is a whole-archive byte budget, plus the per-entry hard cap
+      kept explicitly as defence-in-depth against a future rarfile rather than
+      described as the fix. A FIXED constant, not a free-space-derived bound:
+      deterministic, unit-testable and free of operator surprise, which are the
+      same virtues that justify the per-entry cap.
+
+      **And the fixture must obey `RarExtFile.read()`'s clamping contract.** The
+      first implementation's stub reader had no `_remain`, so it was more
+      permissive than production, and three of its four tests passed because of
+      that rather than because of the code. An independent `min` -> `max`
+      mutation failed all four tests and was read as proof the guard was
+      load-bearing; it was measuring the stub. Until the fixture matches
+      production, no test on this branch can say whether the guard works. This
+      is the §11 incidentally-passing shape, found while explicitly defending
+      against it.
+
+      Two smaller findings from the same review, both to fix in the rework:
+      the 1000-entry test performs about 1 GiB of real I/O against the global
+      60s timeout and has already timed out once on a clean tree, so patch the
+      margin down rather than moving that much data; and the only reachable
+      refusal currently logs "wrote 3 MiB, exceeding its declared 4 MiB", which
+      is self-contradictory and would be every production refusal.
+
+      Superseded (kept because it is what the first attempt built): a per-entry
+      byte budget in the read loop, refusing the entry when it exceeds what
+      `info.file_size` claimed plus a margin, and treating the refusal exactly
+      like the other entry-derived failures — skip one entry, keep the archive,
+      count it, cap the log.
 
       Note `info.file_size` is attacker-supplied, so it bounds nothing on its
       own; it is useful only as a CROSS-CHECK against bytes actually written.
@@ -2491,7 +2590,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the real option declarations instead, which would make this class of
       drift impossible rather than fixed-once.
 
-- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: pr-open (no deps)
+- [x] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: **merged #278** (`8016eaa6`, 2026-08-20)
 
       Found by an adversarial reviewer while tracing T48's read paths, and
       unrelated to that work.
@@ -2585,121 +2684,109 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       several controls, and bundling it into a security fix would have made
       that fix harder to review for the thing it was actually for.
 
-- [ ] T56: the nightly backup the script documents does not exist on the host — state: queued (no deps) — **operability, data**
+- [x] T56: the backup policy said nightly, nothing ran nightly — state: **closed by decision** (2026-08-20) — **operability, data**
 
-      Found while taking the pre-promotion backup on 2026-08-20, which is the
-      only reason it was found at all.
+      Found while taking a pre-promotion backup on 2026-08-20. `backup.sh`'s
+      header said "Run this BEFORE every prod promotion, and nightly from
+      cron", and `docs/development-process.md` gave a `crontab -e` recipe as a
+      manual setup step. On the host there was no cron entry, no `cron.d` file
+      and no systemd timer. The newest snapshot was from 1 August, nineteen
+      days old, and all three that existed were taken by hand.
 
-      `scripts/backup.sh`'s own header says: "Run this BEFORE every prod
-      promotion, and nightly from cron." Measured on homemedia:
+      **Closed by an owner decision rather than by installing the schedule.**
+      No nightly. The trigger went through two rounds, and the second is the
+      one that shipped:
 
-          cron, /etc/cron.d and systemd timers -> no backup schedule of any kind
-          backups/                             -> 20260731-111800,
-                                                  20260731-121928,
-                                                  20260801-203328
+          first  "take one before a promotion that could touch the database"
+          final  "take one UNLESS every file changed since the last promotion
+                  is docs, tests or CI config"
 
-      (The full listings are deliberately not reproduced. They fingerprint the
-      distribution and name what else runs as root on the box, and this repo is
-      public. What is load-bearing for the task is the absence, not the rest of
-      the crontab.)
+      The first form was rejected by the owner on the grounds that it asks the
+      person who wants to deploy to judge, under time pressure, whether their
+      own change is risky. "This one is fine" is free to say and expensive to
+      be wrong about. The exempt-list form removes the judgement without
+      reintroducing the nightly nobody installed.
 
-      So the newest snapshot before today was 1 August, nineteen days old, and
-      every one of the three that exist was taken by hand. The nightly half of
-      that sentence has never been true, and the directory listing proves it
-      rather than merely suggesting it: the script landed 2026-07-31 in #214,
-      nineteen days of a `--retain 14` nightly would leave fourteen dated
-      directories, three exist, two of them from the day it landed, and not one
-      of the three is stamped 03:00.
+      **The residual risk is recorded rather than glossed, because the evidence
+      cited for the trigger also argues against it.** The `_query_index`
+      corruption happened during NORMAL RUNNING, so a promotion-gated snapshot
+      would not have caught it: a write path that corrupts data days after a
+      deploy falls between backups under this policy, where a nightly would not
+      have. "Dropping nightly costs nothing because the nightly was never
+      installed" is true of the past and does not carry forward, since the
+      counterfactual is what a REAL nightly would provide. Accepted
+      deliberately on the owner's decision, and written down so the next reader
+      inherits the decision rather than only the rule. That is the thread to
+      pull if this is ever revisited, and T59 (nobody has restored a backup)
+      matters more because of it.
 
-      Be precise about the shape, because it changes the fix. The repo did NOT
-      fail to tell anyone. `docs/development-process.md:475-483` says "Two
-      manual steps, both on the server — neither is automated by this repo",
-      and gives a copy-pasteable `crontab -e` recipe with `--retain 14`. So
-      this is a documented setup step that was never performed, not a false
-      claim in a header. What IS false is `backup.sh:5`, which states the
-      nightly as though it were a property of the system rather than something
-      the operator has to install.
+      One argument was put and answered rather than dropped, and it is why the
+      trigger is worded the way it is. "Changes the database" and "can damage
+      the database" are not the same set: the `_query_index` defects fixed in
+      2026-02 corrupted records during an ordinary library scan, with no
+      migration and no schema change. So the trigger is "could touch the
+      database" -- schema or migration, `couchpotato/core/db/`, or an
+      unattended write path such as the scanner or the renamer -- rather than
+      "declares a schema change".
 
-      It ranks high on the project's own data-risk ordering either way: the
-      database is irreplaceable, and the promotion procedure is only reversible
-      because a backup was taken first. The header sentence is exactly what
-      someone reads when deciding whether they still need to take one.
+      Landed in the same change: the `nightly from cron` claim removed from
+      `backup.sh` and `development-process.md`, `CLAUDE.md`'s command table
+      corrected from "run before every deploy", and the stale cron rationales
+      in `tests/unit/test_backup_script.py` reworded. Verification guidance
+      added too, since `PRAGMA integrity_check` does not check foreign keys and
+      this schema declares them: `foreign_key_check` must also return zero rows.
 
-      Five parts. (1) and (5) are the task; (2) to (4) are what makes the
-      answer believable next time:
+      What did NOT close, and is now T59: nobody has ever restored one.
 
-      1. Install the schedule (systemd timer preferred over cron on this host,
-         since it gives a queryable last-run and a failure state) with
-         `--retain` set, so the backup directory does not grow without bound.
-      2. Verify a snapshot with a check that can see this schema's damage.
-         `PRAGMA integrity_check` does NOT check foreign keys, and
-         `couchpotato/core/db/schema.sql` declares them (`media_identifiers`
-         and `media_tags` both `REFERENCES documents(_id) ON DELETE CASCADE`,
-         with `PRAGMA foreign_keys = ON` set in `sqlite_adapter.py`). An
-         orphaned `media_identifiers` row is exactly the damage a row COUNT
-         cannot see and `integrity_check` will not report. The check is:
+- [ ] T59: no backup has ever been restored, so recoverability is a hypothesis — state: queued (no deps) — **data**
 
-             sqlite3 <snapshot>/couchpotato.db 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+      Split out of T56 rather than closed with it, because the owner's decision
+      changed WHEN backups are taken and not whether they work.
 
-         `foreign_key_check` must return zero rows, and it works regardless of
-         the `foreign_keys` pragma setting. Run against `20260820-100129` after
-         this was raised: zero rows, and `quick_check` ok.
+      Nothing in `docs/`, `scripts/backup.sh` or
+      `tests/unit/test_backup_script.py` mentions a restore rehearsal.
+      `docs/development-process.md` gives a restore recipe, but "confirmed
+      healthy" there refers to the pinned image, not to a restored database.
 
-      3. Rehearse a RESTORE, once. Nothing in `docs/`, `scripts/backup.sh` or
-         `tests/unit/test_backup_script.py` mentions one, and a backup verified
-         only by reading it is a hypothesis about restore rather than a test of
-         it. Reading cannot exercise the sidecar `-wal` left in the live
-         directory, file ownership under `su-exec`, or whether `config.ini`
-         lands in the layout the container expects (`backup.sh` picks between
-         two candidate paths and warns-and-continues if it finds neither).
-         Restore `20260820-100129` into a scratch data dir and boot against it.
+      A backup verified only by reading it is a hypothesis about restore.
+      Reading cannot exercise the sidecar `-wal` left in the live directory,
+      file ownership under `su-exec`, or whether `config.ini` lands in the
+      layout the container expects -- `backup.sh` picks between two candidate
+      paths and warns-and-continues if it finds neither, which is precisely the
+      shape that produces a snapshot that looks complete and is not.
 
-      4. Make the claim falsifiable rather than trusting it a second time.
-         A timer that fires and fails silently reproduces the current state
-         exactly, and nothing in the repo can see the host. The check belongs
-         where it can fail: the promotion path should refuse when the newest
-         snapshot is older than some threshold, rather than the runbook asking
-         a human to remember.
+      This matters MORE under the new policy, not less. Backups are now taken
+      only before risky promotions, so every one of them is load-bearing: there
+      is no nightly sitting behind it to fall back on.
 
-      5. Update the two places that describe the schedule so they describe what
-         was actually installed: `backup.sh`'s header sentence, and
-         `docs/development-process.md`'s "Two manual steps" block, which
-         documents the `crontab -e` form. Whichever mechanism lands, only one of
-         them should be described anywhere. Skipping this part reproduces the
-         defect the task exists to fix, one file to the left, which is the whole
-         reason it is listed rather than left implied.
+      Do it once, concretely: restore `20260820-100129` into a scratch data dir
+      and boot the app against it.
 
-      Until (1) lands, the pre-promotion backup stays a manual step and must be
-      taken and VERIFIED each time — exit 0 is not enough on a live SQLite
-      database.
+      **Isolate the automation BEFORE booting, or the rehearsal is itself a
+      destructive action.** Raised in review of #279 and confirmed against the
+      tree. The restored `config.ini` carries the production settings, and two
+      of them fire on `app.load`:
 
-      Be exact about why, because the obvious summary welds together two
-      failure modes that are actually disjoint, and gets the dangerous one
-      backwards:
+          manage.py:58              `startup_scan` -> updateLibraryQuick
+          searcher.py:81            `run_on_launch` -> searchAll
 
-      - **Stale.** `cp` of `couchpotato.db` alone, ignoring the sidecar WAL.
-        The result is internally consistent, opens cleanly and PASSES
-        `PRAGMA integrity_check`, while silently missing every commit still in
-        that WAL. On 2026-08-20 the WAL was 8.6 MB and eight hours newer than
-        the main file, so this is the live risk. **No integrity check can see
-        it**, precisely because it is not corruption.
-      - **Torn.** `cp` of the whole set while a writer or checkpointer is
-        running. That one `integrity_check` DOES catch.
+      plus the renamer scheduling its own scan. So a naive rehearsal walks the
+      real media paths, contacts the configured indexers and downloaders, and
+      can move or rename files. A drill meant to prove recoverability would be
+      mutating the thing it is protecting.
 
-      So an `integrity_check` pass does not rule out a bad `cp`; it only rules
-      out the half that was never the quiet one.
+      Neutralise it in the restored copy before the first boot rather than
+      trusting a flag: unset `manage.startup_scan`, `movie.searcher.run_on_launch`
+      and the renamer's `enabled` in the scratch `config.ini`, point every
+      library path at a throwaway directory, and clear the downloader and
+      indexer credentials so a mistake cannot reach a real service. Note
+      `manage.py:58` also short-circuits under `Env.get('dev')`, which is a
+      useful second layer but is NOT sufficient on its own -- it guards the
+      scan and not the searcher.
 
-      By the same discipline, be honest about what the 2026-08-20 comparison
-      established. `sqlite3 .backup` reads through a connection, so it sees
-      WAL-resident commits BY CONSTRUCTION: equality with the live read is the
-      expected output of a working tool, not independent corroboration. It
-      falsifies "stale checkpoint" and nothing else. `max(rowid)` is not a row
-      count, and all three metrics are blind to an UPDATE, so a snapshot in
-      which every `documents.data` blob had been truncated would pass every one
-      of them. `backup.sh` refuses to fall
-      through to `cp` at all (see its "Never fall through to `cp`" note and the
-      `NO BACKUP WAS TAKEN` exit) rather than degrade, which is the right call
-      for the same reason.
+      That requirement is the reason this is a task rather than a five-minute
+      job, and it is exactly the sort of thing that would have been discovered
+      the hard way at 2am.
 
 - [ ] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: queued (no deps) — **security, test-infrastructure**
 
@@ -2775,7 +2862,97 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       step at all. The fragility that killed the three attempts was the
       navigation, not the assertion.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T53, T54, T55, T56, T57, T58 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T60: two gate tests shell out to a whole-tree walk with no timeout — state: queued (no deps) — **flake**
+
+      Found by running the gate three times concurrently on 2026-08-20 and
+      watching it fail two different ways, neither of them a real defect.
+
+      `tests/unit/test_security.py:310` (`test_no_tenacity_imports_anywhere`)
+      runs `find . -name '*.py'` through `subprocess.run` with no `timeout=`,
+      then opens and reads every hit. Under load it exceeded pytest's global
+      60s cap and reported as a FAILED tenacity test, which is a diagnosis
+      pointing at the wrong thing entirely: there was no tenacity import, the
+      subprocess simply had not returned.
+
+      Measured on an idle machine: the walk takes 0.24s and finds 573 files.
+      So the 60s timeout represents roughly a 250x slowdown, and the immediate
+      cause was three heavy jobs sharing the box rather than the test. It is
+      still worth fixing, for two reasons.
+
+      First, the walk descends into `node_modules` (29,662 entries) and `.git`
+      (1,108) for nothing. `-not -path './.venv/*'` excludes one big tree and
+      not the bigger one. Excluding them is a one-line change that makes the
+      test strictly faster and no weaker.
+
+      Second, and the reason it is a task rather than a nit: this is §11's
+      flaky shape. It goes red under parallel load, someone re-runs it, it goes
+      green, and everyone learns that a red from this file means "run it
+      again". A real regression gets re-run away with it. The misleading
+      failure name makes that worse, not better.
+
+      The E2E worker-isolation pair (`isolation-a-mutate` /
+      `isolation-b-assert`) failed the same way for the same reason on the same
+      day: two `verify.sh` runs sharing the E2E data directory. That one is
+      arguably working as designed, since it exists to detect cross-worker
+      state leaking, but it cannot distinguish "the code leaked state" from
+      "another gate is running", and the message does not say so.
+
+      **The process half is not the repo's fault and is recorded so it is not
+      relearned:** do not run the gate concurrently with a sub-agent's gate,
+      and do not point two mutation-testing reviewers at one worktree. Both
+      produced false reds on this branch, and one reviewer had to re-derive a
+      finding against a hash-verified pristine copy because of it.
+
+- [ ] T61: the archive extractor bounds one entry, not an archive — state: queued (no deps) — **security, carried over from T44**
+
+      Split out of T44 rather than left inside it, because T44 ticks when #280
+      merges and these two gaps would tick with it. Raised in review of #280,
+      which asked for exactly this: the residuals should not live only in a
+      code comment and a merged commit message.
+
+      What shipped in T44 bounds a SINGLE ENTRY at 128 GiB, against bytes
+      actually written. Two gaps remain, both measured:
+
+      1. **Archive-wide amplification.** N entries each honestly declaring a
+         size just under the cap still write N x 128 GiB in one archive, and
+         `extractFiles` loops over every archive in the folder. Measured during
+         the T44 rounds: 400 entries each declaring 256 KiB wrote 100 MB with
+         no refusal, and RAR5 duplicate-file references
+         (`RAR5_XREDIR_FILE_COPY`) let N distinct names share one stored
+         payload for the cost of N headers.
+
+      2. **The ENOSPC race on a constrained volume.** The cap is a fixed byte
+         count, not a function of free space, so on a volume with less than
+         128 GiB available a single hostile entry exhausts the disk before the
+         cap can fire. `ENOSPC` is not in `_ENTRY_DERIVED_ERRNOS`, so the
+         archive aborts, which is right but arrives after the damage.
+
+      **Severity, measured rather than inherited.** Extraction targets
+      `/downloads`, a NAS share with 1.9 TiB free, while the database sits on a
+      separate volume. So this is a download-share denial of service, not a
+      route to irrecoverable data loss, and (2) does not bite on this
+      deployment at all. It bites on a smaller volume and nothing detects that.
+
+      **The design to build, which two failed attempts point straight at.**
+      Do NOT thread a byte budget through per-entry return values; that shape
+      failed twice, once unreachable against `rarfile`'s clamp and once because
+      refused entries contributed nothing to the running total. Instead, refuse
+      PRE-FLIGHT on headers alone:
+
+          `read()` clamps to `file_size`, and `file_redir` plus `getinfo()`
+          resolve RAR5 copy and hard-link targets from headers, so the sum of
+          RESOLVED declared sizes is an exact upper bound on what the archive
+          can produce -- computable before a single byte is written.
+
+      Refusing on that sum, compared against both a fixed ceiling and free
+      space, closes both gaps at once because nothing is written to leak. It
+      also makes the free-space comparison safe to use, since it happens once
+      per archive rather than inside a hot read loop.
+
+      Whoever takes this: read T44's history first. Two guards shipped that
+      could not fire, and both looked correct in review.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60, T61 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
@@ -5920,6 +6097,21 @@ Every audit finding maps to a PR or to the deferred table above.
   -> @puppeteer/browsers`, and `lhci` runs in neither CI nor `make verify` --
   only `npm run test:lighthouse` by hand. Revisit when a patch ships or when
   T47 changes that path, whichever comes first.
+- 2026-08-20 11:15 — RELEASED v3.65.0 to production. Promoted
+  `v3.65.0-beta.1` byte-for-byte after confirming CI, Beta Build and CodeQL
+  green on `4cc87966`; stable release cut, `:latest` re-pointed, host pulled
+  and recreated. Verified rather than assumed: the container reports
+  `VERSION = '3.65.0'`, health `healthy`, zero errors or tracebacks in the
+  startup logs, HTTP 302 externally. The previous prod image was 1 August, so
+  the jump is v3.25.0 -> v3.65.0. Pre-promotion backup `20260820-100129`
+  verified first.
+  Note for the next promotion: `/root/update.sh` runs `docker compose pull &&
+  up -d` daily at 01:00, so `:latest` is effectively the deploy trigger and a
+  promotion reaches the host within a day whether or not anyone deploys it.
+  T52 merged `4cc87966`, T53 merged `8016eaa6`, worktrees and branches
+  disposed. T44 delegated: the decompression bomb, chosen as the most
+  attacker-reachable item left, since the archive arrives from any indexer and
+  the volume it fills also holds the database.
 
 - 2026-08-20 10:05 — #277 (T52) CI fully green (16/16). Merge was still
   BLOCKED, and not by CI: two unresolved review threads on this very file.

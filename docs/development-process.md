@@ -338,7 +338,9 @@ promotion). Full design: `specs/FEAT-release-channels.md`.
 ### Deploying to prod (backup → rollback tag → restart → verify)
 
 A promotion is reversible only if you capture two things *before* restarting:
-the database, and the digest of the image currently running. Neither is
+the database, and the digest of the image currently running. The image digest is
+worth recording for EVERY promotion; the database snapshot follows the trigger
+in "Backups" below, which in practice means almost every promotion. Neither is
 recoverable afterwards — `:latest` has already moved by the time you deploy, so
 "just re-pull the old one" is not available.
 
@@ -346,8 +348,10 @@ recoverable afterwards — `:latest` has already moved by the time you deploy, s
 # SSH credentials in Openclaw memory (topics/couchpotato.md)
 cd /var/lib/plexmediaserver/CouchPotato
 
-# 1. Back up the DB + settings (see "Backups" below; ~seconds, live-safe).
-./scripts/backup.sh
+# 1. Back up the DB + settings unless every file this promotion changed is in
+#    the exempt list under "Backups" below (~seconds, live-safe). When in
+#    doubt, take it: the cost is seconds and the alternative is unrecoverable.
+./scripts/backup.sh --retain 14
 
 # 2. Record what is running now, so rollback has a target.
 #    The digest is the only reliable handle — the tag :latest is about to move.
@@ -443,8 +447,10 @@ and prunes only its own timestamped output.
 the Docker image puts it — `Dockerfile:97` runs
 `--config_file=/config/config.ini` with `--data_dir=/data`, so it sits one level
 above the data dir). Checking only the first would have meant prod snapshots
-quietly containing the database alone: the script warns and exits 0, so a nightly
-cron would report success forever while never capturing settings.
+quietly containing the database alone: the script warns and exits 0, so every run
+would report success while never capturing settings. That is why the
+verification below checks `config.ini` is present in the snapshot rather than
+only that the database opens.
 
 Both paths default to the prod layout, so on the server it takes no arguments
 (`make backup` is a shortcut for the no-argument form):
@@ -472,15 +478,110 @@ independently-chosen one are both true of the same suite — reviewers found
 survivors this way twice. Treat a score as "these specific behaviours are pinned",
 never as "the tests are sufficient".
 
-Two manual steps, both on the server — neither is automated by this repo:
+**When to take one.** Before any promotion carrying a change to a write path.
+The trigger is a mechanical test, not a judgement about how risky the release
+feels:
 
-1. The server holds a compose + config directory, **not** a repo checkout, so
-   copy `scripts/backup.sh` there once (`scp scripts/backup.sh
-   homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/`).
-2. Schedule it with `crontab -e`:
-   ```cron
-   0 3 * * * cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh --retain 14 >> /var/log/couchpotato-backup.log 2>&1
-   ```
+> Take the backup **unless** every file changed since the last promotion is in
+> the exempt set. If anything else changed, take it.
+>
+> Exempt: `docs/`, `specs/`, `*.md`, `tests/`, `.github/`
+
+Get the changed-file list mechanically rather than from memory. The last
+promotion is the newest stable tag:
+
+```bash
+git diff --name-only "$(git tag -l 'v*' | grep -v -- '-beta' | sort -V | tail -1)"..HEAD
+```
+
+Two categories were proposed for this list and removed, both for the same
+reason. "Pure-presentation assets with no script in them" needs someone to
+decide what counts as presentation, and is wrong here anyway because a template
+can reach a write API. "Lint or formatter config that does not ship in the
+image" is an **empty category**: ruff's config lives in `pyproject.toml`, and
+the Dockerfile's `COPY . ${APP_DIR}/` ships the whole tree, so nothing
+qualifies. A category that names nothing, or that needs a judgement to apply,
+has no place in a rule whose purpose is removing the judgement.
+
+**Phrased as "unless" on purpose.** An earlier draft asked the operator to
+decide whether a release "could touch the database". That has one failure mode
+and it is a reliable one: the judgement is made by the person who wants to
+deploy, under time pressure, and "this one is fine" is free to say and expensive
+to be wrong about. Defaulting to taking it costs seconds.
+
+Two things an earlier draft of this policy got wrong, kept here because they are
+why the exempt list is short rather than long:
+
+- **"UI-only cannot damage data" is false in this codebase.** The UI calls
+  destructive APIs directly: `ui/templates/partials/movie_detail.html` fires
+  `media.delete`, and both `wizard.html` and the settings partial fire
+  `settings.save`. A wrong id destroys library records as thoroughly as a
+  migration would.
+- **"No schema change" does not mean "cannot corrupt".** The `_query_index`
+  defects fixed in 2026-02 corrupted records during an ordinary library scan,
+  with no migration involved.
+
+**What this policy does not cover, stated rather than left implicit.** That same
+example is the argument against a promotion-gated trigger as well as for a broad
+one: the corruption happened during normal running, not during a promotion, so
+no pre-promotion snapshot would have caught it. A write path that corrupts data
+three days after a deploy falls between backups here, where a nightly would not
+have. That residual risk is accepted deliberately. If this policy is ever
+revisited, that is the thread to pull.
+
+**There is no nightly backup and none is wanted.** Snapshots are taken at the
+moment that makes them recoverable, which is immediately before a risky
+promotion, rather than on a schedule that drifts out of date and gets ignored.
+
+The server holds a compose + config directory, **not** a repo checkout, so copy
+the script there once:
+
+```bash
+scp scripts/backup.sh homemedia:/var/lib/plexmediaserver/CouchPotato/scripts/
+ssh homemedia 'cd /var/lib/plexmediaserver/CouchPotato && ./scripts/backup.sh --retain 14'
+```
+
+**Pass `--retain N`.** Retention used to live only on the nightly cron line, so
+removing the nightly took the only pruning mechanism in the documented workflow
+with it. Without it `backups/` grows by one full DB plus settings snapshot per
+risky promotion, forever, on the volume that also holds the live database. That
+is a slow way to reproduce the disk-full failure these snapshots exist to
+survive.
+
+**Verify the snapshot rather than trusting exit 0.** Three things, and the
+second and third are the ones people skip.
+
+```bash
+B=<BACKUP_DIR>/<stamp>
+sqlite3 "$B/couchpotato.db" 'PRAGMA integrity_check; PRAGMA foreign_key_check;'
+test -r "$B/config.ini" && echo 'settings present'
+```
+
+1. `integrity_check` must print `ok`.
+2. `foreign_key_check` must return **no rows**. `integrity_check` does not check
+   foreign keys, and this schema declares them (`media_identifiers` and
+   `media_tags` both `REFERENCES documents(_id)`), so an orphaned row passes the
+   first check and fails recovery.
+3. `config.ini` must be present. `backup.sh` deliberately WARNS and exits 0 when
+   it cannot find the settings file, so both PRAGMAs can pass on a snapshot with
+   no settings in it at all. The database alone does not restore a working
+   install.
+
+**If `sqlite3` is not on the host**, use the interpreter instead. The script
+itself falls back to Python's `sqlite3` module for exactly this case, so a
+verification step that only speaks `sqlite3` fails on precisely the hosts the
+fallback exists to support:
+
+```bash
+python3 - "$B/couchpotato.db" <<'CHECK'
+import sqlite3, sys
+c = sqlite3.connect('file:%s?mode=ro' % sys.argv[1], uri=True)
+print('integrity_check:', c.execute('PRAGMA integrity_check').fetchall())
+print('foreign_key_check rows:', c.execute('PRAGMA foreign_key_check').fetchall())
+CHECK
+```
+
+Expect `[('ok',)]` and an empty list.
 
 ### Beta testers
 
@@ -499,7 +600,7 @@ toggle.
 | `scripts/check_test_traps.py` | False-green guard — stage 2 of `make verify` |
 | `scripts/check_conformance.py` | Design-system drift gate |
 | `scripts/mutation_changed.py` | Mutation testing scoped to changed files |
-| `scripts/backup.sh` | Prod DB + settings snapshot (pre-deploy and nightly) |
+| `scripts/backup.sh` | Prod DB + settings snapshot, before any promotion carrying a write-path change. Not nightly |
 
 Each of these is itself unit-tested (`tests/unit/test_check_test_traps.py`,
 `test_check_conformance.py`, `test_mutation_changed.py`, `test_backup_script.py`)
