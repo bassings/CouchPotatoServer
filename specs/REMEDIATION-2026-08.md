@@ -2414,7 +2414,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       `error` string to its own refusal, and the other refusal paths in
       `saveView` still need one.
 
-- [x] T52: the first-run wizard renders credentials as `type="text"` — state: **fixed on #277, awaiting merge** (2026-08-20) — **security, pre-existing**
+- [x] T52: the first-run wizard renders credentials as `type="text"` — state: **merged #277** (`4cc87966`, 2026-08-20) — **security, pre-existing**
 
       Seven fields typed, but **only five ever rendered**. `wizard.html:432` opens
       `<template x-if="false && formData.downloader">` spanning lines 432-653, so the
@@ -2491,7 +2491,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       the real option declarations instead, which would make this class of
       drift impossible rather than fixed-once.
 
-- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: building (no deps)
+- [ ] T53: the Trakt notifier reads a section that does not exist, so it can never authorise — state: pr-open (no deps)
 
       Found by an adversarial reviewer while tracing T48's read paths, and
       unrelated to that work.
@@ -2509,6 +2509,24 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       never worked, and the failure mode is a log line that reads like a user
       configuration problem rather than a bug — which is presumably why it has
       survived.
+
+      **The relationship to the renamer chain is closer than "same family",
+      and both reviewers landed on it independently.** T53 fixes credential
+      RESOLUTION, not reachability. This notifier's only automatic trigger is
+      `renamer.after`, which has 24 registered handlers and zero firing sites:
+      the single dispatch in the renamer package is `fireEvent('renamer.scan',
+      ...)`, whose auto-derived suffix is `renamer.scan.after`. So after T53 the
+      collection path is still dead and only the settings page's Test button is
+      live.
+
+      That combination is worse than either half alone, and it is the thing to
+      say in a release note. Before T53 the Test button failed, which at least
+      matched reality. After T53 it succeeds, so the one signal a user can
+      reach reports healthy while nothing is ever added to their collection.
+      "The Trakt notifier now authorises" is the honest claim; "now notifies"
+      is not. Recorded at the `listen_to` line in the source as well, with an
+      explicit warning against closing it by widening `listen_to` --
+      `tests/unit/test_downloaded_review_notify.py` pins that deliberately.
 
       Same family as the renamer event chain (see the `renamer.before/after`
       note): correct-looking plugin code wired to something that is not there.
@@ -5883,6 +5901,25 @@ Every audit finding maps to a PR or to the deferred table above.
 | PR 6 | C1, C2, C3, C4, D2, D3, D5, O3, O4, O6, Q3, S9 (remainder), **Q2 (narrow start)** |
 | Deferred | A4, A5, P4 (fix), Q1 (bulk), Q2 (beyond `core/db/*`), mutmut scope |
 | Won't fix | D4 (legacy deps: a decision, see above) |
+
+- 2026-08-20 10:50 — #277 (T52) MERGED as `4cc87966` after two review rounds:
+  the self-contradicting spec entry, then four nits, all taken. T53 rebased on
+  it and pushed. Two reviewers on T53, security CLEAN, correctness found the
+  guard could disable itself: nothing asserted the entry-name and group-name
+  sets stay distinct, so one plausible line folding groups into entries makes
+  the guard a tautology. Measured with that line AND the original defect
+  restored: 10 passed. The existing vacuity checks cannot see it because
+  conflation makes the sweep find MORE. Closed with a positive control, proven
+  by re-running that mutation. Note the shape rather than the instance: three
+  guards on this branch have now been defeated by something the author did not
+  think to mutate, and each was found by a reviewer attacking the guard rather
+  than the code.
+  Dependabot #114 (`extract-zip`, high) TRIAGED as HOLD, with the condition
+  written down: no patched version exists (`first_patched_version` is null),
+  it is dev-only and transitive via `@lhci/cli -> lighthouse -> puppeteer-core
+  -> @puppeteer/browsers`, and `lhci` runs in neither CI nor `make verify` --
+  only `npm run test:lighthouse` by hand. Revisit when a patch ships or when
+  T47 changes that path, whichever comes first.
 
 - 2026-08-20 10:05 — #277 (T52) CI fully green (16/16). Merge was still
   BLOCKED, and not by CI: two unresolved review threads on this very file.
