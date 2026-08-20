@@ -22,6 +22,16 @@ Review at minimum for:
 - Performance: avoid unnecessary client JavaScript, slow or unbounded queries, blocking startup work, excessive polling, expensive rendering, and changes that make the UI feel heavy on lower-powered home servers.
 - Deployment and operations: Docker, compose files, environment variables, health checks, persistent volumes, restart behaviour, release workflows, dependency submission, and production build compatibility.
 
+**A finding class that recurs across rounds is a mechanism request, not a review finding.**
+
+If the same KIND of defect comes back in a second or third round on one pull request, stop reporting instances and ask for the check instead. Standard 9 says a rule that can be a lint rule, a test or a guard script should be one, and a reviewer who keeps finding new instances of a class is the signal that it is not.
+
+Measured on #279, which is why this is written down. That change set out to stop a backup policy drifting between the two files that state it. Review then found the same class six times: a category in one copy and not the other, a third paraphrase in `CLAUDE.md`, a fourth in `usage()`'s heredoc, a fifth in the deploy runbook. Each was fixed by hand, each round cost a re-run of twelve checks, and it ended only when the seventh round produced a test asserting the copies agree. That test now catches all six forms, and would have caught them in round one.
+
+Four review rounds is the most expensive possible route to "this wants a mechanism". So: when you notice you are writing the same finding again in different words, say so explicitly, and propose the check that would make the class impossible rather than listing the next instance.
+
+The corollary matters too. A reviewer who finds one instance of a class should say whether they expect more, because "here is the third of these" is information the author does not have and the reviewer does.
+
 Treat these as high-priority review findings:
 
 - Any privacy leak, secret leak, or exposure of personal media paths, credentials, API keys, or local-network details.
