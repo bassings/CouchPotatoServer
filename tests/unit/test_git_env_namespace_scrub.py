@@ -55,7 +55,7 @@ extensions:
     grep -rn "GIT_" . | grep -vE '\.venv/|/\.git/|node_modules/|\.pytest_cache/|__pycache__/|/\.next/|/dist/|/build/'
 
 Every hit outside this file, `tests/conftest.py`, `tests/unit/conftest.py`,
-`test_fixtures_do_not_leak_gitdir.py`, `test_hybrid_gate.py` and
+`test_fixtures_do_not_leak_gitdir.py`, `test_mutation_changed.py` and
 `test_mutation_changed.py` (all already accounted for above) is
 documentation in `specs/REMEDIATION-2026-08.md`. Nothing reads a `GIT_*`
 variable, so nothing depends on inheriting one outside the identity
@@ -160,6 +160,27 @@ class TestNonGitVariablesAreUntouched:
         env = sanitized_git_env()
         assert env.get('LEGIT_UNRELATED_TOKEN') == 'kept'
 
+    def test_a_variable_beginning_GIT_without_the_separator_survives(
+        self, monkeypatch,
+    ):
+        # The likelier typo than a containment bug: a prefix one character
+        # short. `startswith('GIT')` still strips every GIT_* the tests above
+        # check, so all of them stay green while GITHUB_* is silently deleted
+        # from every environment this function hands to a subprocess. On a CI
+        # runner that is GITHUB_TOKEN, GITHUB_REF and the rest of the family.
+        # Nothing in this suite reads them today, which is exactly why no
+        # other assertion here can see the mistake.
+        monkeypatch.setenv('GITHUB_TOKEN', 'kept')
+        monkeypatch.setenv('GOPATH', 'kept')
+        env = sanitized_git_env()
+        assert env.get('GITHUB_TOKEN') == 'kept', (
+            'a variable starting with "GIT" but outside the GIT_ namespace '
+            'was stripped -- the prefix is missing its trailing underscore'
+        )
+        assert env.get('GOPATH') == 'kept', (
+            'GOPATH was stripped -- the prefix has collapsed to "G"'
+        )
+
     def test_PATH_survives(self):
         # Without PATH, git itself cannot be exec'd by any caller of this
         # function -- the strongest available check that the strip has not
@@ -236,10 +257,30 @@ class TestTheTemplateDirEscapeIsClosed:
         repo_dir.mkdir()
 
         monkeypatch.setenv('GIT_TEMPLATE_DIR', str(template))
-        # Deliberately the RAW ambient environment, not sanitized_git_env()
-        # -- this is what a fixture would hand git if the scrub did not
-        # exist at all.
-        raw_env = os.environ.copy()
+        # GIT_TEMPLATE_DIR ONLY, carried on an otherwise-sanitised
+        # environment. It is tempting to hand git the raw ambient
+        # `os.environ.copy()` here, on the reasoning that the control should
+        # reproduce what a fixture would face with no scrub at all -- and
+        # that is what this test did until review measured the cost. An
+        # ambient GIT_DIR (exactly what git exports into a `pre-push` hook
+        # from a worktree, which is the leak this whole file exists to close)
+        # would redirect every command below into the developer's REAL
+        # repository, and `assert sentinel.exists()` says nothing about where
+        # the commit landed, so it reports PASS while doing it. Measured on a
+        # victim repo with the root scrub removed: a stray commit, `user.name`
+        # overwritten, a tracked file dropped from the index, test green.
+        #
+        # The control's safety must not be borrowed from the root scrub in
+        # `tests/conftest.py`, because this test is one of the things that
+        # has to keep working when that layer regresses -- and it is defined
+        # BEFORE the tests covering that layer, so on exactly the run where
+        # it regressed, the damage would land before the red appeared.
+        #
+        # Poisoning the single variable under test is what the control
+        # actually needs: the hook still gets copied and still runs, which is
+        # the whole claim being proved.
+        raw_env = sanitized_git_env()
+        raw_env['GIT_TEMPLATE_DIR'] = str(template)
 
         self._seed_commit(repo_dir, raw_env)
 
@@ -364,4 +405,22 @@ class TestTheRootProcessWideScrubAppliesTheSameRule:
         assert report['COUCHPOTATO_TEST_UNRELATED_VAR'] == 'PRESENT', (
             'a variable outside the GIT_* namespace was removed by the root '
             'scrub -- it is too broad, not just too narrow'
+        )
+
+    def test_a_variable_beginning_GIT_without_the_separator_survives_process_start(self):
+        # The same one-character-short prefix mutation survives at THIS layer
+        # too, and this is the higher-leverage of the two: the root scrub
+        # mutates os.environ for the whole test process, so a prefix of 'GIT'
+        # deletes GITHUB_* from every test and every subprocess any of them
+        # spawns. Measured under that mutation: the full unit suite passed.
+        report = self._import_conftest_and_report(
+            {'GITHUB_TOKEN': 'kept', 'GOPATH': 'kept'},
+        )
+        assert report['GITHUB_TOKEN'] == 'PRESENT', (
+            'GITHUB_TOKEN did not survive the root scrub -- the prefix is '
+            'missing its trailing underscore and is eating GITHUB_*'
+        )
+        assert report['GOPATH'] == 'PRESENT', (
+            'GOPATH did not survive the root scrub -- the prefix has '
+            'collapsed to "G"'
         )

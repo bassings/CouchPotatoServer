@@ -61,6 +61,20 @@ import os as _os
 # it ambiently -- every commit this suite scripts today sets identity
 # explicitly via `git config user.*` or `-c`, so the allowlist is a floor
 # for a future caller, not a fix for an existing dependency.
+#
+# What that carve-out COSTS, recorded because review measured it rather than
+# leaving it implied. `git commit` exports GIT_AUTHOR_NAME/EMAIL/DATE into
+# its own hook environment, and for git, environment beats `git config`. So
+# in that one scenario the allowlist lets an ambient identity OVERRIDE the
+# identity a fixture set explicitly, and an ambient malformed
+# GIT_COMMITTER_DATE fails every scripted commit outright. Neither is live:
+# `.githooks/` holds only `pre-push`, no test asserts on author, committer
+# or date, and nothing in the tree sets these. The strict alternative --
+# strip GIT_* with no exception at all -- is one rule instead of a rule plus
+# an exception, and closes the last GIT_* class that can alter a fixture
+# commit. It is not taken here because T57 specified the identity carve-out
+# and it is the honest reading of the axis this rule is built on, but the
+# trade is real and belongs in writing rather than in a reviewer's head.
 GIT_IDENTITY_ENV_PREFIXES = (
     'GIT_AUTHOR_',
     'GIT_COMMITTER_',
