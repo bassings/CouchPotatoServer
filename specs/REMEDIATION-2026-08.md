@@ -2788,7 +2788,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       job, and it is exactly the sort of thing that would have been discovered
       the hard way at 2am.
 
-- [ ] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: queued (no deps) — **security, test-infrastructure**
+- [x] T57: the git-env denylist protecting the unit fixtures is enumerated on the wrong axis — state: **fixed** (2026-08-23) — **security, test-infrastructure**
 
       Raised by a peer session working on the same harness, and confirmed here
       by measurement rather than taken on report.
@@ -3019,7 +3019,46 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       same day: "no trace" and "not looked" must be distinguishable in the
       output, or the instrument reproduces the class it exists to detect.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T57, T58, T59, T60, T61, T63 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T62: the pre-push hook gates a commit that may not be the one pushed — state: queued (no deps) — **process, undermines hard rule 2**
+
+      Observed twice on 2026-08-20, on the same branch, and reproducible.
+
+      `git push` reported `ee3ea2af..6dc67488` while the remote ended up at
+      `4a0a405b`. The earlier occurrence was the same shape:
+      `b51d10db...23705812` reported, `810f7c5d` on the remote. Both times the
+      extra commit was made WHILE the hook was still running, which on this
+      repo is a twenty-minute window because the gate includes E2E.
+
+      **Mechanism, measured rather than guessed.** Git passes each ref being
+      pushed to `pre-push` on stdin as
+      `<local ref> <local sha> <remote ref> <remote sha>`. `.githooks/pre-push`
+      never reads stdin: `grep -n "stdin\|while read"` returns nothing, and its
+      only ref handling is `git rev-parse --show-toplevel`. So it gates the
+      working tree as it stands when the hook runs, and git then sends whatever
+      the ref resolves to at send time. Those are the same commit only if
+      nothing lands in between.
+
+      **Why this matters more than it looks.** CLAUDE.md rule 2 says the gate
+      must pass locally before every push, and the hook is what makes that
+      enforced rather than remembered. A gate that validates a different commit
+      from the one it lets through is the exact shape this plan keeps
+      recording: it looks like protection, it exits zero, and the thing it
+      exists to stop goes past it. Both observed instances were docs-only and
+      harmless, which is luck, not design. Committing during a twenty-minute
+      hook is a completely ordinary thing to do.
+
+      The fix is to gate what is actually being pushed. Read the sha from
+      stdin, or capture `git rev-parse HEAD` at hook start and refuse the push
+      if HEAD has moved by the time the gate finishes. The second is cruder and
+      may be the better fit here, since the gate runs against the working tree
+      rather than an arbitrary commit, and "HEAD moved under the gate" is a
+      clearer refusal than silently re-running.
+
+      Prove it by reproducing: start a push, commit during the hook, and assert
+      the push is refused. A guard for this that has not been watched to fail
+      is worth nothing, which is the whole reason this entry exists.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T58, T59, T60, T61, T62, T63 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
