@@ -68,8 +68,12 @@ import os as _os
 # in that one scenario the allowlist lets an ambient identity OVERRIDE the
 # identity a fixture set explicitly, and an ambient malformed
 # GIT_COMMITTER_DATE fails every scripted commit outright. Neither is live:
-# `.githooks/` holds only `pre-push`, no test asserts on author, committer
-# or date, and nothing in the tree sets these. The strict alternative --
+# `.githooks/` holds only `pre-push`, nothing in the tree sets these, and no
+# test asserts on the author, committer or date of a commit made by `git`.
+# `test_updater.py:112` does assert on `author_time`, which looks like a
+# counter-example and is not: that commit is made by dulwich in-process with
+# author and committer passed explicitly, and dulwich was measured ignoring
+# the ambient values outright. The strict alternative --
 # strip GIT_* with no exception at all -- is one rule instead of a rule plus
 # an exception, and closes the last GIT_* class that can alter a fixture
 # commit. It is not taken here because T57 specified the identity carve-out

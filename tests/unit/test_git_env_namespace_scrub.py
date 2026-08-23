@@ -56,7 +56,7 @@ extensions:
 
 Every hit outside this file, `tests/conftest.py`, `tests/unit/conftest.py`,
 `test_fixtures_do_not_leak_gitdir.py`, `test_mutation_changed.py` and
-`test_mutation_changed.py` (all already accounted for above) is
+`test_hybrid_gate.py` (all already accounted for above) is
 documentation in `specs/REMEDIATION-2026-08.md`. Nothing reads a `GIT_*`
 variable, so nothing depends on inheriting one outside the identity
 allowlist.
@@ -244,7 +244,7 @@ class TestTheTemplateDirEscapeIsClosed:
             'not just the assertion under test'
         )
 
-    def test_the_attack_is_real_without_the_scrub(self, tmp_path, monkeypatch):
+    def test_the_attack_is_real_without_the_scrub(self, tmp_path):
         """Positive control, run FIRST so the negative result below means
         something: proves the sentinel-presence/absence assertion is
         actually pinned on the scrub, not on this platform or git version
@@ -256,39 +256,49 @@ class TestTheTemplateDirEscapeIsClosed:
         repo_dir = tmp_path / 'repo'
         repo_dir.mkdir()
 
-        monkeypatch.setenv('GIT_TEMPLATE_DIR', str(template))
-        # GIT_TEMPLATE_DIR ONLY, carried on an otherwise-sanitised
-        # environment. It is tempting to hand git the raw ambient
-        # `os.environ.copy()` here, on the reasoning that the control should
-        # reproduce what a fixture would face with no scrub at all -- and
-        # that is what this test did until review measured the cost. An
-        # ambient GIT_DIR (exactly what git exports into a `pre-push` hook
-        # from a worktree, which is the leak this whole file exists to close)
-        # would redirect every command below into the developer's REAL
+        # An environment built from NOTHING, carrying only what git needs to
+        # run plus the single variable under test. Not `os.environ.copy()`,
+        # and not `sanitized_git_env()` either, and the difference between
+        # those two rejected options is the whole point.
+        #
+        # The raw ambient copy is what this test used until review measured
+        # the cost. An ambient GIT_DIR -- exactly what git exports into a
+        # `pre-push` hook from a worktree, which is the leak this file exists
+        # to close -- redirects every command below into the developer's REAL
         # repository, and `assert sentinel.exists()` says nothing about where
         # the commit landed, so it reports PASS while doing it. Measured on a
-        # victim repo with the root scrub removed: a stray commit, `user.name`
-        # overwritten, a tracked file dropped from the index, test green.
+        # victim repo with the root scrub regressed: a stray commit,
+        # `user.name` overwritten, a tracked file dropped from the index,
+        # test green.
         #
-        # The control's safety must not be borrowed from the root scrub in
-        # `tests/conftest.py`, because this test is one of the things that
-        # has to keep working when that layer regresses -- and it is defined
-        # BEFORE the tests covering that layer, so on exactly the run where
-        # it regressed, the damage would land before the red appeared.
+        # `sanitized_git_env()` fixes that single fault and was the first fix
+        # taken here, but it only MOVES the dependency: this test would then
+        # be safe because of a function that this same file exists to prove
+        # can regress, and a second review measured a double fault (root
+        # scrub regressed AND the sanitiser no-oped) still damaging the
+        # victim while reporting PASS.
         #
-        # Poisoning the single variable under test is what the control
-        # actually needs: the hook still gets copied and still runs, which is
-        # the whole claim being proved.
-        raw_env = sanitized_git_env()
-        raw_env['GIT_TEMPLATE_DIR'] = str(template)
+        # A literal dict depends on neither layer, so the control keeps
+        # working when either or both regress -- which is the point of a
+        # control. HOME is aimed at tmp_path as well, so a developer's global
+        # `init.templateDir` cannot influence the result either.
+        # `_seed_commit` sets user.email/user.name locally, so nothing
+        # further is needed.
+        raw_env = {
+            'PATH': os.environ['PATH'],
+            'HOME': str(tmp_path),
+            'GIT_TEMPLATE_DIR': str(template),
+        }
 
         self._seed_commit(repo_dir, raw_env)
 
         assert sentinel.exists(), (
-            'the hook did not run even against the raw, unsanitised ambient '
-            'environment -- this platform/git version does not exercise the '
-            'attack this guard exists to close, so the test below would '
-            'pass for the wrong reason'
+            'the hook did not run even with GIT_TEMPLATE_DIR set and '
+            'nothing stripping it -- this platform/git version does not '
+            'exercise the attack this guard exists to close, so the test '
+            'below would pass for the wrong reason. Look at git version and '
+            'core.hooksPath, NOT at the ambient environment: this test does '
+            'not read it'
         )
 
     def test_a_hook_in_a_poisoned_template_dir_never_runs(
@@ -399,12 +409,24 @@ class TestTheRootProcessWideScrubAppliesTheSameRule:
         )
 
     def test_an_unrelated_variable_survives_process_start(self):
+        # LEGIT_UNRELATED_TOKEN contains "GIT_" at index 2, so it also pins
+        # the containment direction at THIS layer. The per-call class has
+        # covered that since the first commit; this layer did not, which left
+        # the higher-leverage of the two scrubs able to delete a non-git
+        # variable from the whole test process with every test still green.
         report = self._import_conftest_and_report(
-            {'COUCHPOTATO_TEST_UNRELATED_VAR': 'kept'},
+            {
+                'COUCHPOTATO_TEST_UNRELATED_VAR': 'kept',
+                'LEGIT_UNRELATED_TOKEN': 'kept',
+            },
         )
         assert report['COUCHPOTATO_TEST_UNRELATED_VAR'] == 'PRESENT', (
             'a variable outside the GIT_* namespace was removed by the root '
             'scrub -- it is too broad, not just too narrow'
+        )
+        assert report['LEGIT_UNRELATED_TOKEN'] == 'PRESENT', (
+            'a variable merely CONTAINING "GIT_" was removed by the root '
+            'scrub -- it is matching containment, not a leading namespace'
         )
 
     def test_a_variable_beginning_GIT_without_the_separator_survives_process_start(self):
