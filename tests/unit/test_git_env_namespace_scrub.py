@@ -280,13 +280,34 @@ class TestTheTemplateDirEscapeIsClosed:
         #
         # A literal dict depends on neither layer, so the control keeps
         # working when either or both regress -- which is the point of a
-        # control. HOME is aimed at tmp_path as well, so a developer's global
-        # `init.templateDir` cannot influence the result either.
-        # `_seed_commit` sets user.email/user.name locally, so nothing
-        # further is needed.
+        # control. `_seed_commit` sets user.email/user.name locally, so
+        # nothing further is needed.
+        #
+        # HOME is carried from the ambient environment ON PURPOSE, and an
+        # earlier revision of this test got that wrong in a way worth
+        # recording. Aiming HOME at `tmp_path` looks like extra isolation and
+        # is really a hole: git reads GLOBAL config from HOME, and a global
+        # `core.hooksPath` copies a template hook into a new repo while
+        # SUPPRESSING its execution. Measured: hook copied YES, hook executed
+        # NO. That is precisely "this platform silently declines to run
+        # hooks", the condition the assertion below exists to announce, and a
+        # synthetic HOME hides it -- the negative test then passes because
+        # hooks are globally off rather than because anything stripped
+        # GIT_TEMPLATE_DIR, and this control cannot tell you so. The control
+        # must share the global-config regime of the test it validates.
+        #
+        # The isolation that change claimed to buy did not exist: an explicit
+        # GIT_TEMPLATE_DIR overrides a global `init.templateDir` anyway,
+        # because environment beats config. Measured both ways.
+        #
+        # Neither PATH nor HOME is in the GIT_* namespace, so carrying them
+        # keeps this dict independent of both scrub layers. Note the residual
+        # limit: HOME covers global config only, so a SYSTEM-level
+        # (`/etc/gitconfig`) `core.hooksPath` is still caught here, since no
+        # GIT_CONFIG_NOSYSTEM is set.
         raw_env = {
-            'PATH': os.environ['PATH'],
-            'HOME': str(tmp_path),
+            'PATH': os.environ.get('PATH', ''),
+            'HOME': os.environ.get('HOME', str(tmp_path)),
             'GIT_TEMPLATE_DIR': str(template),
         }
 
@@ -297,8 +318,9 @@ class TestTheTemplateDirEscapeIsClosed:
             'nothing stripping it -- this platform/git version does not '
             'exercise the attack this guard exists to close, so the test '
             'below would pass for the wrong reason. Look at git version and '
-            'core.hooksPath, NOT at the ambient environment: this test does '
-            'not read it'
+            'core.hooksPath (global config is deliberately in scope here), '
+            'NOT at an ambient GIT_* variable: this test reads only PATH and '
+            'HOME from the environment'
         )
 
     def test_a_hook_in_a_poisoned_template_dir_never_runs(
