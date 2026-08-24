@@ -2957,6 +2957,21 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Found by `lens-operability` during the first `/review-cycle` run, and
       confirmed by measurement on #281.
 
+      **Premise corrected 2026-08-24 by review, after this entry was written
+      and before it was closed.** This said GitHub declines to run a workflow
+      from a pull request that modifies that workflow's own file. GitHub runs
+      it: every step of run 32337224625 on #281 reports success. It is
+      `anthropics/claude-code-action` that refuses to act, logging "Skipping
+      action due to workflow validation" and exiting quietly. The observable
+      effect is identical, which is why the entry stood, but the cause is a
+      THIRD-PARTY ACTION'S self-check pinned to a floating `@v1` tag rather than
+      a platform invariant, so it can change in any release with nothing here
+      noticing. The entry below also ruled out an alternative design on the
+      false premise ("the fix is not to make the workflow run on itself, which
+      is the security property GitHub is deliberately enforcing"); since the
+      workflow does run, that option was in fact available. The shipped fix does
+      not depend on which is true, but the recorded reason should be.
+
       GitHub declines to run a workflow from a pull request that modifies that
       workflow's own file. `claude-review` is a REQUIRED status check. So on
       any PR touching `.github/workflows/claude-review.yml`, the check reports

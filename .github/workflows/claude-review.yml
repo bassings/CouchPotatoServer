@@ -23,21 +23,37 @@ jobs:
   claude-review:
     name: claude-review
     runs-on: ubuntu-latest
-    # Skip if the secret isn't configured yet, so PRs aren't blocked by a
-    # missing token while you finish setup.
-    # Also skip for Dependabot: claude-code-action@v1 rejects bot actors by
-    # default ("Workflow initiated by non-human actor"), and registering
-    # CLAUDE_CODE_OAUTH_TOKEN as a separate Dependabot secret isn't wanted. A
-    # job skipped via `if:` reports conclusion `skipped`, which satisfies the
-    # required-status-check branch protection (unlike a workflow that never
-    # runs at all).
-    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
+    # The fork/Dependabot exclusion lives on the REVIEW STEP below, not on the
+    # job, and moving it there was a security fix rather than a tidy-up.
+    #
+    # A job skipped via a job-level `if:` runs ZERO steps -- an `if: always()`
+    # step included. Measured on run 31556193805: conclusion "skipped", steps 0.
+    # With the exclusion on the job, the skip-detection step at the bottom of
+    # this file could never fire for a fork or Dependabot PR, which is exactly
+    # the population that matters most here: `.github/dependabot.yml` watches
+    # the `github-actions` ecosystem weekly, so Dependabot will periodically
+    # open a PR bumping `anthropics/claude-code-action` -- a PR that EDITS THIS
+    # FILE, and therefore one where the reviewer silently does not run. A
+    # supply-chain bump to the reviewer itself, merging on a green required
+    # check with nobody told.
+    #
+    # With the gate on the step instead, the job always runs and reports
+    # `success`, which satisfies branch protection the same way `skipped` did,
+    # and the detection step fires for every pull request.
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
       - name: Claude PR review
+        id: review
+        # Skip if the secret isn't configured yet, so PRs aren't blocked by a
+        # missing token while you finish setup. Also skip for Dependabot:
+        # claude-code-action@v1 rejects bot actors by default ("Workflow
+        # initiated by non-human actor"), and registering
+        # CLAUDE_CODE_OAUTH_TOKEN as a separate Dependabot secret isn't wanted.
+        # Moved here from the job's `if:` -- see the note above `steps:`.
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]' }}
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -135,70 +151,120 @@ jobs:
             A review that blocks on nothing and observes three things is a good
             review, not a lazy one.
 
-      # T63. GitHub refuses to run a workflow from a pull request that edits
-      # that workflow's own file: "the workflow file must exist and have
-      # identical content to the version on the repository's default branch."
-      # `claude-review` is a REQUIRED status check, so on those PRs the check
-      # reported SUCCESS while the reviewer never executed. Four for four:
+      # T63. On a pull request that edits THIS FILE, the reviewer does not run
+      # and the required `claude-review` check goes green anyway. Four for four:
       # #129, #132, #149 and #281 each edit this file and each carries zero
-      # claude[bot] comments -- and two of them were themselves fixes to the
-      # reviewer, so the changes least able to afford going unreviewed are
-      # exactly the ones that did. The reason sits in the job log 568 lines in,
-      # where nobody looks.
+      # claude[bot] comments, while every non-Dependabot PR around them has
+      # them. All four were themselves changes to the reviewer, so the changes
+      # least able to afford going unreviewed are exactly the ones that did.
       #
-      # This step must NOT fail the job, and that is a hard constraint rather
-      # than a preference: failing deadlocks every future edit to this file,
-      # because the only way to repair it would be a PR this gate now blocks.
-      # A skipped review must be VISIBLE, not blocking.
+      # WHAT ACTUALLY SKIPS, corrected after review measured it. GitHub runs the
+      # workflow normally; it is `anthropics/claude-code-action` that refuses to
+      # act, logging "Skipping action due to workflow validation: the workflow
+      # file must exist and have identical content to the version on the
+      # repository's default branch". Run 32337224625 on #281 shows every step
+      # reporting success with that warning buried in the log. So this guard
+      # tracks a THIRD-PARTY ACTION'S self-check, pinned to a floating @v1 tag,
+      # not a platform invariant: Anthropic can change the condition, the
+      # message or the scope in any release and nothing here would notice.
+      # The behavioural tests in tests/unit/test_claude_review_skip_is_visible.py
+      # pin our side of it; they cannot pin theirs.
       #
-      # Detection is content equality with the default branch, because that is
-      # GitHub's own rule for skipping. The alternative tell -- a skipped run
-      # finishes in 13-17 seconds against about four minutes for a real review
-      # -- is a heuristic that rots the first time the reviewer changes speed.
+      # TWO WAYS THE REVIEW DOES NOT RUN, and both must be reported, because a
+      # reader told to "look for the skip notice" is misled by whichever one is
+      # missing:
+      #   1. the action's own workflow validation (this file differs from the
+      #      default-branch copy)
+      #   2. the review step's `if:` gate (fork PR, or Dependabot) -- which is
+      #      the population that matters most, since dependabot.yml watches the
+      #      github-actions ecosystem weekly and will open PRs bumping the
+      #      reviewer action itself
       #
-      # Deliberately no nested heredoc in `run:`. An earlier attempt built the
-      # comment body with `<<BODY`, whose lines land at column 0 and silently
-      # terminate the YAML block scalar, corrupting the whole file. printf
-      # keeps every line inside the block.
-      - name: Report when claude-review was skipped by workflow validation
+      # This step must NOT fail the job. Failing deadlocks every future edit to
+      # this file, because the only way to repair it would be a PR this gate now
+      # blocks. A skipped review must be VISIBLE, not BLOCKING. Every path below
+      # exits 0, including the ones that cannot determine an answer.
+      #
+      # Deliberately no nested heredoc in `run:`: heredoc lines land at column 0
+      # and silently terminate the YAML block scalar, corrupting the file.
+      - name: Report when the review did not actually run
         if: always()
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REVIEW_OUTCOME: ${{ steps.review.outcome }}
           SELF: .github/workflows/claude-review.yml
         run: |
           set -uo pipefail
 
-          if ! git fetch --quiet --depth=1 origin "$DEFAULT_BRANCH" 2>/dev/null; then
-            echo "::warning::could not fetch origin/$DEFAULT_BRANCH, so whether claude-review was skipped is unknown. Treat this check as unproven."
+          # Every expansion is `${VAR:-}` on purpose. Under `set -u` a genuinely
+          # unset variable aborts with exit 1, and exit 1 here deadlocks the
+          # workflow. GitHub always sets an `env:`-declared variable, so that is
+          # unreachable as written and reachable the moment someone deletes an
+          # `env:` line while leaving the shell alone -- which is what a careless
+          # edit looks like, and which review demonstrated deadlocking the job
+          # while the whole suite stayed green.
+          BRANCH="${DEFAULT_BRANCH:-}"
+          FILE="${SELF:-.github/workflows/claude-review.yml}"
+          PR="${PR_NUMBER:-}"
+          OUTCOME="${REVIEW_OUTCOME:-}"
+          MARKER="<!-- claude-review-did-not-run -->"
+
+          post () {
+            echo "::warning::$1"
+            if [ -z "$PR" ]; then
+              echo "::warning::no pull request number available, so this log line is the only record."
+              return 0
+            fi
+            # Post ONCE per pull request, not once per push. The reviewer's own
+            # summaries already demonstrate the failure mode this avoids: #277
+            # and #279 each accumulated five separate comments. Repeating the
+            # one notice that must not be ignored is how it gets ignored.
+            if gh pr view "$PR" --json comments --jq '.comments[].body' 2>/dev/null | grep -qF "$MARKER"; then
+              echo "notice already present on PR $PR; not posting a duplicate."
+              return 0
+            fi
+            if ! gh pr comment "$PR" --body "$2"; then
+              echo "::warning::could not post the notice, so this log line is the only record."
+            fi
+          }
+
+          body () {
+            printf '%s\n' \
+              "$MARKER" \
+              '### :warning: `claude-review` did NOT run on this pull request' \
+              '' \
+              "$1" \
+              '' \
+              'The `claude-review` check is REQUIRED, so it reports green regardless.' \
+              'Green here does **not** mean the review passed. It means no review' \
+              'happened, and without this notice that is indistinguishable from a' \
+              'clean one.' \
+              '' \
+              '**Review this pull request by other means before merging.**'
+          }
+
+          if [ "$OUTCOME" = "skipped" ]; then
+            post "the review step was skipped by its own condition (fork pull request, or Dependabot), so no review ran." \
+                 "$(body 'The review step was skipped by its own condition: this is a fork pull request, or it was opened by Dependabot. Dependabot pull requests that bump `anthropics/claude-code-action` change the reviewer itself, and are the least safe of all to merge unreviewed.')"
             exit 0
           fi
 
-          if git diff --quiet "origin/$DEFAULT_BRANCH" -- "$SELF"; then
-            echo "$SELF matches origin/$DEFAULT_BRANCH: claude-review was not skipped by workflow validation."
+          if [ -z "$BRANCH" ]; then
+            echo "::warning::DEFAULT_BRANCH is empty, so whether the review ran is unknown. Treat this check as unproven."
             exit 0
           fi
 
-          echo "::warning::claude-review was SKIPPED by GitHub workflow validation because this PR edits $SELF. The green check does NOT mean the review passed."
-
-          body=$(printf '%s\n' \
-            '### :warning: `claude-review` was SKIPPED, not clean' \
-            '' \
-            "This pull request edits \`$SELF\`. GitHub declines to run a workflow from" \
-            "a pull request that modifies that workflow's own file, so the automated" \
-            '**reviewer never executed on this PR**, even though the `claude-review`' \
-            'check reports green.' \
-            '' \
-            'That is a deliberate GitHub security property, not a bug to work around.' \
-            'This notice exists because the check is REQUIRED: without it, a skipped' \
-            'review is indistinguishable from a clean one.' \
-            '' \
-            '**Review this PR by other means before merging.** If the diff changes the' \
-            'review prompt or the permissions the reviewer runs with, that change is' \
-            'unreviewed by definition, and the first pull request it actually runs' \
-            'against will be the next one.')
-
-          if ! gh pr comment "$PR_NUMBER" --body "$body"; then
-            echo "::warning::could not post the skip notice, so the workflow warning above is the only record that claude-review did not run."
+          if ! git fetch --quiet --depth=1 origin "$BRANCH" 2>/dev/null; then
+            echo "::warning::could not fetch origin/$BRANCH, so whether the review ran is unknown. Treat this check as unproven."
+            exit 0
           fi
+
+          if git diff --quiet "origin/$BRANCH" -- "$FILE"; then
+            echo "$FILE matches origin/$BRANCH and the review step ran, so the review was not skipped."
+            exit 0
+          fi
+
+          post "the review was SKIPPED by workflow validation because this pull request edits $FILE. The green check does NOT mean the review passed." \
+               "$(body "This pull request edits \`$FILE\`. \`anthropics/claude-code-action\` refuses to act when that file differs from the copy on the default branch, so the **reviewer never executed here**.")"
