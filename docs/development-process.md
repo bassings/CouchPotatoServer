@@ -163,6 +163,8 @@ review gate.
 
 **Note:** GitHub only runs `claude-review` with its token once the workflow
 exists on `master`; the PR that introduces/edits it is a no-op (expected).
+For `claude-review` specifically that no-op is a **security hole**, not a
+harmless quirk — see "`claude-review` can pass without running" below.
 
 ## Required CI checks
 
@@ -177,6 +179,56 @@ Required (i.e. enforced by branch protection on `master`, verified via
 
 **Runs but does NOT gate:** `security-lint` only — informational by design (see
 below). A PR can merge with it red.
+
+### `claude-review` can pass without running (T63)
+
+`anthropics/claude-code-action` refuses to act when the workflow file it runs
+from differs from the copy on the default branch, logging *"Skipping action due
+to workflow validation"* and exiting quietly. **GitHub still runs the workflow**
+— every step reports success — so the required `claude-review` check goes green
+with no review behind it.
+
+That happened four times out of four: #129, #132, #149 and #281, each editing
+`.github/workflows/claude-review.yml`, each with zero `claude[bot]` comments,
+while every non-Dependabot PR around them has them. **All four were themselves
+changes to the reviewer** (visible verdict, comment permissions, the Dependabot
+skip, finding routing), so the changes least able to afford going unreviewed are
+exactly the ones that did. The reason sits a few hundred lines into the job log.
+
+Measured gap: a skipped run finishes in **13–20 seconds**; the median real
+review across 51 successful runs is **about five minutes** (range 67–528s).
+
+As of T63 the workflow ends with an `if: always()` step that reports **either**
+way the review can fail to happen, and posts a comment saying green does not
+mean reviewed. Pinned by `tests/unit/test_claude_review_skip_is_visible.py`,
+which **executes** the step against a throwaway repo rather than grepping it.
+
+**Four constraints, all load-bearing and all tested:**
+
+1. **The exclusion for forks and Dependabot lives on the review STEP, never on
+   the job.** A job skipped by a job-level `if:` runs *zero* steps, `always()`
+   ones included (measured: run 31556193805, conclusion `skipped`, steps 0). With
+   it on the job, the detection could never fire for Dependabot — and
+   `dependabot.yml` watches the `github-actions` ecosystem weekly, so Dependabot
+   will open PRs bumping the reviewer action itself. That is a supply-chain
+   change to the reviewer, on a PR the reviewer does not review.
+2. **It must not fail the job.** Failing deadlocks every future edit to this
+   workflow, because the only way to repair the file would be a PR the gate now
+   blocks. A skipped review must be *visible*, not *blocking*.
+3. **Detection is content equality with the default branch**, not a duration
+   heuristic — a tell that rots the first time the reviewer changes speed.
+4. **The notice posts once per PR, not once per push**, keyed on a marker
+   comment. The reviewer's own summaries show why: #277 and #279 each
+   accumulated five separate comments.
+
+**This guard tracks a third-party action's self-check, pinned to a floating
+`@v1` tag — not a platform guarantee.** Anthropic can change the condition, the
+message or its scope in any release, and nothing here would notice. The tests
+pin our side of the behaviour; they cannot pin theirs.
+
+So: on a PR that edits this workflow, or one opened by Dependabot or from a
+fork, a green `claude-review` means nothing. Look for the notice, and review the
+change by other means.
 
 `secrets` (gitleaks) **is** enforced as of 2026-07-31: it was added to `master`'s
 required status checks immediately after #214 merged, which is the first moment

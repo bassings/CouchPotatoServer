@@ -2952,10 +2952,25 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Whoever takes this: read T44's history first. Two guards shipped that
       could not fire, and both looked correct in review.
 
-- [ ] T63: `claude-review` reports green on PRs where it never ran — state: queued (no deps) — **security, false green**
+- [x] T63: `claude-review` reports green on PRs where it never ran — state: **fixed** (2026-08-24) — **security, false green**
 
       Found by `lens-operability` during the first `/review-cycle` run, and
       confirmed by measurement on #281.
+
+      **Premise corrected 2026-08-24 by review, after this entry was written
+      and before it was closed.** This said GitHub declines to run a workflow
+      from a pull request that modifies that workflow's own file. GitHub runs
+      it: every step of run 32337224625 on #281 reports success. It is
+      `anthropics/claude-code-action` that refuses to act, logging "Skipping
+      action due to workflow validation" and exiting quietly. The observable
+      effect is identical, which is why the entry stood, but the cause is a
+      THIRD-PARTY ACTION'S self-check pinned to a floating `@v1` tag rather than
+      a platform invariant, so it can change in any release with nothing here
+      noticing. The entry below also ruled out an alternative design on the
+      false premise ("the fix is not to make the workflow run on itself, which
+      is the security property GitHub is deliberately enforcing"); since the
+      workflow does run, that option was in fact available. The shipped fix does
+      not depend on which is true, but the recorded reason should be.
 
       GitHub declines to run a workflow from a pull request that modifies that
       workflow's own file. `claude-review` is a REQUIRED status check. So on
@@ -3120,7 +3135,7 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       change the axis rather than the values.
 
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T58, T59, T60, T61, T62, T63, T64 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
