@@ -178,6 +178,39 @@ Required (i.e. enforced by branch protection on `master`, verified via
 **Runs but does NOT gate:** `security-lint` only — informational by design (see
 below). A PR can merge with it red.
 
+### `claude-review` can pass without running (T63)
+
+GitHub refuses to run a workflow from a pull request that modifies that
+workflow's own file: *"the workflow file must exist and have identical content
+to the version on the repository's default branch."* Since `claude-review` is
+**required**, any PR editing `.github/workflows/claude-review.yml` used to get a
+green `claude-review` check with **no review at all**.
+
+That happened four times out of four — #129, #132, #149 and #281, each with zero
+`claude[bot]` comments — and two of those PRs were themselves fixes to the
+reviewer, so the changes least able to afford going unreviewed were exactly the
+ones that went unreviewed. The reason appears in the job log about 568 lines in.
+
+As of T63 the workflow carries a final `if: always()` step that compares the
+file against the default-branch copy and, when they differ, posts a comment
+saying the review was SKIPPED and must be done by other means before merge.
+Pinned by `tests/unit/test_claude_review_skip_is_visible.py`.
+
+**Two constraints on that step, and both are load-bearing:**
+
+1. **It must not fail the job.** Failing would deadlock every future edit to this
+   workflow, because the only way to repair the file would be a PR the gate now
+   blocks. A skipped review must be *visible*, not *blocking*. The test asserts
+   this, so a later "tighten the gate" change fails the suite rather than
+   quietly bricking the workflow.
+2. **Detection is content equality with the default branch**, not a duration
+   heuristic. A skipped run finishes in 13–17 seconds against roughly four
+   minutes for a real review, which is a tell that rots the first time the
+   reviewer changes speed.
+
+So: on a PR that touches this workflow, a green `claude-review` means nothing.
+Look for the skip comment, and review the change by other means.
+
 `secrets` (gitleaks) **is** enforced as of 2026-07-31: it was added to `master`'s
 required status checks immediately after #214 merged, which is the first moment
 it was safe. Enabling it earlier would have deadlocked every PR branched from

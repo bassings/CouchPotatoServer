@@ -134,3 +134,71 @@ jobs:
 
             A review that blocks on nothing and observes three things is a good
             review, not a lazy one.
+
+      # T63. GitHub refuses to run a workflow from a pull request that edits
+      # that workflow's own file: "the workflow file must exist and have
+      # identical content to the version on the repository's default branch."
+      # `claude-review` is a REQUIRED status check, so on those PRs the check
+      # reported SUCCESS while the reviewer never executed. Four for four:
+      # #129, #132, #149 and #281 each edit this file and each carries zero
+      # claude[bot] comments -- and two of them were themselves fixes to the
+      # reviewer, so the changes least able to afford going unreviewed are
+      # exactly the ones that did. The reason sits in the job log 568 lines in,
+      # where nobody looks.
+      #
+      # This step must NOT fail the job, and that is a hard constraint rather
+      # than a preference: failing deadlocks every future edit to this file,
+      # because the only way to repair it would be a PR this gate now blocks.
+      # A skipped review must be VISIBLE, not blocking.
+      #
+      # Detection is content equality with the default branch, because that is
+      # GitHub's own rule for skipping. The alternative tell -- a skipped run
+      # finishes in 13-17 seconds against about four minutes for a real review
+      # -- is a heuristic that rots the first time the reviewer changes speed.
+      #
+      # Deliberately no nested heredoc in `run:`. An earlier attempt built the
+      # comment body with `<<BODY`, whose lines land at column 0 and silently
+      # terminate the YAML block scalar, corrupting the whole file. printf
+      # keeps every line inside the block.
+      - name: Report when claude-review was skipped by workflow validation
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          SELF: .github/workflows/claude-review.yml
+        run: |
+          set -uo pipefail
+
+          if ! git fetch --quiet --depth=1 origin "$DEFAULT_BRANCH" 2>/dev/null; then
+            echo "::warning::could not fetch origin/$DEFAULT_BRANCH, so whether claude-review was skipped is unknown. Treat this check as unproven."
+            exit 0
+          fi
+
+          if git diff --quiet "origin/$DEFAULT_BRANCH" -- "$SELF"; then
+            echo "$SELF matches origin/$DEFAULT_BRANCH: claude-review was not skipped by workflow validation."
+            exit 0
+          fi
+
+          echo "::warning::claude-review was SKIPPED by GitHub workflow validation because this PR edits $SELF. The green check does NOT mean the review passed."
+
+          body=$(printf '%s\n' \
+            '### :warning: `claude-review` was SKIPPED, not clean' \
+            '' \
+            "This pull request edits \`$SELF\`. GitHub declines to run a workflow from" \
+            "a pull request that modifies that workflow's own file, so the automated" \
+            '**reviewer never executed on this PR**, even though the `claude-review`' \
+            'check reports green.' \
+            '' \
+            'That is a deliberate GitHub security property, not a bug to work around.' \
+            'This notice exists because the check is REQUIRED: without it, a skipped' \
+            'review is indistinguishable from a clean one.' \
+            '' \
+            '**Review this PR by other means before merging.** If the diff changes the' \
+            'review prompt or the permissions the reviewer runs with, that change is' \
+            'unreviewed by definition, and the first pull request it actually runs' \
+            'against will be the next one.')
+
+          if ! gh pr comment "$PR_NUMBER" --body "$body"; then
+            echo "::warning::could not post the skip notice, so the workflow warning above is the only record that claude-review did not run."
+          fi
