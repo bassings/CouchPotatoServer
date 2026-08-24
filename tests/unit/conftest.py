@@ -10,12 +10,13 @@ import os
 import pytest
 
 from couchpotato.core.logger import reset_log_suppression
+from tests.conftest import GIT_IDENTITY_ENV_PREFIXES
 
-# Git sets GIT_DIR (and its siblings below) in the environment of hook
-# subprocesses launched from a `git worktree` checkout -- but not from the
-# main checkout. `pre-push` runs `make verify`, which runs this suite, so a
-# push made from a worktree hands every test process a GIT_DIR naming that
-# worktree's real `.git`.
+# Git sets GIT_DIR (and its siblings) in the environment of hook subprocesses
+# launched from a `git worktree` checkout -- but not from the main checkout.
+# `pre-push` runs `make verify`, which runs this suite, so a push made from a
+# worktree hands every test process a GIT_DIR naming that worktree's real
+# `.git`.
 #
 # Any test that shells out to `git init`/`commit`/`checkout -b` inside a
 # throwaway `tmp_path` MUST strip these first: with GIT_DIR set, `git init`
@@ -25,18 +26,58 @@ from couchpotato.core.logger import reset_log_suppression
 # developer checkout got a fixture branch, two fixture commits, and
 # `core.bare` flipped to true.
 #
+# T57 follow-up: the original fix here was a DENYLIST of six "location"
+# variables -- GIT_DIR and its siblings -- built on the axis "what redirects
+# the repository". That is the wrong axis, and it missed two real escapes:
+#
+#   1. GIT_CONFIG_PARAMETERS. `git -c foo=bar <cmd>` EXPORTS this into the
+#      environment of every subprocess it spawns, so `git -c ... push` run
+#      from a worktree hands the suite arbitrary config, which then rides
+#      into every later git call the suite makes -- same trigger as the
+#      GIT_DIR leak above, one name the six-item list never had.
+#
+#   2. GIT_TEMPLATE_DIR is not a location variable at all -- it names a
+#      directory whose `hooks/` are COPIED into every repo `git init`
+#      creates from that template, and then RUN. No denylist built on "what
+#      redirects the repository" would ever have contained it, because
+#      redirection was never the axis that made it dangerous. Measured, not
+#      reasoned: a template dir with an executable `hooks/pre-commit`, then
+#      `GIT_TEMPLATE_DIR=../tmpl git init -q .` followed by a seed commit,
+#      copied the hook into the new repo AND EXECUTED it during that commit.
+#      Every throwaway repo this suite creates would have run it.
+#
+# The property that actually matters is not "what redirects the repository",
+# and not quite "what git exports" either -- GIT_TEMPLATE_DIR is dangerous
+# and git does not export it, the operator (or an attacker) sets it. The
+# property is what git READS from the environment, which is a superset of
+# both. A denylist on that axis can never be finished: it is wrong again the
+# day git adds a new variable, and nothing announces that a new one shipped.
+# A namespace rule excludes the new one automatically, the day it ships,
+# with no update required here.
+#
+# So `sanitized_git_env()` now strips the WHOLE `GIT_*` namespace and allows
+# back only the commit-identity variables named in
+# GIT_IDENTITY_ENV_PREFIXES, imported above from `tests/conftest.py` rather
+# than redefined here. Those change what a commit RECORDS (author/committer
+# name, email, date), never where an operation LANDS or what git EXECUTES,
+# which is the distinction that makes them safe to let through.
+#
+# Imported, not redefined, because `tests/conftest.py` holds the OTHER
+# application of this same rule -- a process-wide `os.environ` pop that runs
+# before collection -- and T57's own argument is that a rule stated twice
+# goes stale the moment one copy is updated and the other is not. That
+# import is safe: pytest collects the root conftest before this one, and
+# both `tests/` and `tests/unit/` are packages via `__init__.py`, so
+# `import tests.conftest` here resolves to the module pytest already loaded
+# rather than re-running its module-level scrub. See that file's own comment
+# for the process-wide pop this constant also drives.
+#
 # Deliberately a plain function, not a fixture and not autouse: importing it
 # is each caller's explicit choice, so it carries none of the blast radius
 # the autouse fixtures above do across this file's ~150+ dependents. See
-# `tests/unit/test_fixtures_do_not_leak_gitdir.py`.
-GIT_LOCATION_ENV_VARS = (
-    'GIT_DIR',
-    'GIT_WORK_TREE',
-    'GIT_INDEX_FILE',
-    'GIT_OBJECT_DIRECTORY',
-    'GIT_COMMON_DIR',
-    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-)
+# `tests/unit/test_fixtures_do_not_leak_gitdir.py` (the GIT_DIR leak and the
+# call-site audit) and `tests/unit/test_git_env_namespace_scrub.py` (this
+# namespace rule, both layers).
 
 
 def assert_git_dir_is(directory, env=None):
@@ -84,13 +125,22 @@ def assert_git_dir_is(directory, env=None):
 
 
 def sanitized_git_env():
-    """A copy of the current environment with git's location variables
-    removed -- pass as `env=` to any subprocess `git` call (or any script
-    that itself shells out to `git`, e.g. `needs_e2e.sh`) that must operate
-    on an explicit `cwd` rather than wherever the ambient GIT_DIR points."""
+    """A copy of the current environment with git's entire `GIT_*` namespace
+    removed, except the commit-identity variables in
+    GIT_IDENTITY_ENV_PREFIXES -- pass as `env=` to any subprocess `git` call
+    (or any script that itself shells out to `git`, e.g. `needs_e2e.sh`) that
+    must operate on an explicit `cwd` rather than wherever the ambient
+    environment redirects or configures it to.
+
+    A namespace strip, not a denylist of known-dangerous names: see the
+    comment above GIT_IDENTITY_ENV_PREFIXES for why the axis matters and what
+    a fixed list of names misses -- concretely, GIT_CONFIG_PARAMETERS and
+    GIT_TEMPLATE_DIR, neither of which a "what redirects the repository"
+    denylist would ever have named."""
     env = os.environ.copy()
-    for var in GIT_LOCATION_ENV_VARS:
-        env.pop(var, None)
+    for key in list(env):
+        if key.startswith('GIT_') and not key.startswith(GIT_IDENTITY_ENV_PREFIXES):
+            env.pop(key, None)
     return env
 
 

@@ -2,8 +2,9 @@
 import os as _os
 
 # ---------------------------------------------------------------------------
-# Remove git's location variables from the ENTIRE test process, once, before
-# anything is collected.
+# Remove git's entire GIT_* namespace from the ENTIRE test process, once,
+# before anything is collected -- except the commit-identity variables in
+# GIT_IDENTITY_ENV_PREFIXES.
 #
 # This is the layer that actually closes the class, and it exists because
 # per-call sanitisation did not. Git exports GIT_DIR into hook subprocesses
@@ -23,22 +24,68 @@ import os as _os
 # So remove the hazard instead of policing the callers. With these unset in
 # `os.environ`, every subprocess inherits a clean environment by construction,
 # whatever shape the call takes and whether or not its author ever heard of
-# this module. `sanitized_git_env()` and the AST guard remain as defence in
-# depth, not as the primary protection.
+# this module. `sanitized_git_env()` (in `tests/unit/conftest.py`) and the
+# AST guard remain as defence in depth, not as the primary protection.
 #
-# Safe to do unconditionally: nothing in this suite reads GIT_DIR, and git
+# T57 follow-up: this loop originally denied the same six "location"
+# variables `sanitized_git_env()` used to deny, on the same wrong axis --
+# "what redirects the repository". That missed GIT_CONFIG_PARAMETERS
+# (exported by `git -c foo=bar <cmd>` into every subprocess it spawns) and
+# GIT_TEMPLATE_DIR (arbitrary code execution via a hook copied from the
+# template dir and run during the next commit -- not a location variable at
+# all, so no denylist on that axis would ever have named it). See the T57
+# comment in `tests/unit/conftest.py` above GIT_IDENTITY_ENV_PREFIXES for the
+# full argument and the measurement behind it.
+#
+# The rule -- strip the whole GIT_* namespace, keep only commit identity --
+# is defined ONCE, in GIT_IDENTITY_ENV_PREFIXES below, and both this
+# process-wide pop and `sanitized_git_env()`'s per-call copy apply it. The
+# two APPLICATIONS stay separate on purpose: this one mutates `os.environ`
+# directly for the whole process and must run before anything else is
+# imported or collected, while `sanitized_git_env()` returns a fresh copy on
+# each call for an explicit `env=`. Forcing them into one shared function
+# would make one of the two shapes wrong; sharing the tuple is what actually
+# matters, because that is the part that would otherwise drift.
+#
+# Safe to do unconditionally: nothing in this suite reads ANY GIT_* variable
+# -- swept 2026-08-20 across the whole tree with
+# `grep -rn "GIT_" --include='*.py' --include='*.sh' --include='*.yml' \
+#   --include='*.yaml' .`, excluding `.venv`/`.git`, and again with no
+# extension filter at all; every hit outside the conftest/guard files
+# themselves is documentation in `specs/REMEDIATION-2026-08.md` -- and git
 # falls back to discovery from `cwd`, which is what every call already
 # intends. Tests that mean to query the real repo pass `cwd=REPO_ROOT` and
-# keep working.
-for _var in (
-    'GIT_DIR',
-    'GIT_WORK_TREE',
-    'GIT_INDEX_FILE',
-    'GIT_OBJECT_DIRECTORY',
-    'GIT_COMMON_DIR',
-    'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-):
-    _os.environ.pop(_var, None)
+# keep working. Commit identity is kept back because the RULE says it is
+# safe to (it changes what a commit records, not where an operation lands or
+# what runs), not because anything currently measured relies on inheriting
+# it ambiently -- every commit this suite scripts today sets identity
+# explicitly via `git config user.*` or `-c`, so the allowlist is a floor
+# for a future caller, not a fix for an existing dependency.
+#
+# What that carve-out COSTS, recorded because review measured it rather than
+# leaving it implied. `git commit` exports GIT_AUTHOR_NAME/EMAIL/DATE into
+# its own hook environment, and for git, environment beats `git config`. So
+# in that one scenario the allowlist lets an ambient identity OVERRIDE the
+# identity a fixture set explicitly, and an ambient malformed
+# GIT_COMMITTER_DATE fails every scripted commit outright. Neither is live:
+# `.githooks/` holds only `pre-push`, nothing in the tree sets these, and no
+# test asserts on the author, committer or date of a commit made by `git`.
+# `test_updater.py:112` does assert on `author_time`, which looks like a
+# counter-example and is not: that commit is made by dulwich in-process with
+# author and committer passed explicitly, and dulwich was measured ignoring
+# the ambient values outright. The strict alternative --
+# strip GIT_* with no exception at all -- is one rule instead of a rule plus
+# an exception, and closes the last GIT_* class that can alter a fixture
+# commit. It is not taken here because T57 specified the identity carve-out
+# and it is the honest reading of the axis this rule is built on, but the
+# trade is real and belongs in writing rather than in a reviewer's head.
+GIT_IDENTITY_ENV_PREFIXES = (
+    'GIT_AUTHOR_',
+    'GIT_COMMITTER_',
+)
+for _var in list(_os.environ):
+    if _var.startswith('GIT_') and not _var.startswith(GIT_IDENTITY_ENV_PREFIXES):
+        _os.environ.pop(_var, None)
 
 import json
 import os
