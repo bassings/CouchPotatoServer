@@ -45,7 +45,34 @@ const LOCAL_ONLY_TARGETS = ['filesystem'];
 function config() {
   // Loaded, not read as text: a string search would pass on a commented-out
   // line and fail on a value assembled at run time.
+  //
+  // NOTE for anyone mutating this file to check the guard still bites: this
+  // goes through Node's CommonJS cache, NOT vite's module graph. Within one
+  // process the config is read once, so `npm run test:unit:watch` will report
+  // a stale result and will not even re-trigger on a change here. The gate is
+  // unaffected -- `npm run test:unit` is `vitest run`, a fresh process each
+  // time -- but verify mutations that way, or you will conclude the guard
+  // works when it never re-read the file.
   return require(path.join(REPO_ROOT, 'lighthouserc.js'));
+}
+
+function uploadBlockText(): string {
+  const { readFileSync } = require('node:fs');
+  const text: string = readFileSync(path.join(REPO_ROOT, 'lighthouserc.js'), 'utf8');
+  return text.slice(text.indexOf('upload:'));
+}
+
+/** Only the `//` lines of the upload block: what a reader is TOLD, not what the
+ *  code says. Scoping matters -- an assertion over the whole block cannot fail,
+ *  because `target: 'filesystem'` and the `outputDir` key put those very words
+ *  in it. That is how the first version of the comment guard here turned out to
+ *  be `expect(false).toBe(false)`, and splitting it in two reproduced the same
+ *  vacuity in the second half until this scoping was added. */
+function uploadCommentText(): string {
+  return uploadBlockText()
+    .split('\n')
+    .filter(line => line.trim().startsWith('//'))
+    .join('\n');
 }
 
 describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
@@ -54,8 +81,15 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // vacuously against undefined.
     const ci = config()?.ci;
     expect(ci, 'lighthouserc.js has no `ci` block').toBeTruthy();
-    expect(ci.collect?.url, 'lighthouserc.js collects no URLs').toBeTruthy();
-    expect(ci.upload, 'lighthouserc.js has no `upload` block, so lhci uses its own default').toBeTruthy();
+    // `.length`, not the array: `[]` is truthy in JavaScript, so the original
+    // check passed on the one condition its own message named.
+    expect(ci.collect?.url?.length, 'lighthouserc.js collects no URLs').toBeTruthy();
+    // An absent upload block is SAFE, not dangerous: autorun only uploads
+    // `if (ciConfiguration.upload)` (@lhci/cli/src/autorun/autorun.js:143), and
+    // nothing defaults it. This pins the config's SHAPE so the guard below has
+    // something to check -- it is not protection against a missing default,
+    // which was how an earlier version of this comment described it, wrongly.
+    expect(ci.upload, 'lighthouserc.js has no `upload` block to check').toBeTruthy();
   });
 
   it('uploads nowhere but this machine', () => {
@@ -72,7 +106,13 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
 
   it('says where the report goes when it stays local', () => {
     const upload = config().ci.upload;
-    if (upload.target !== 'filesystem') return;
+    // Via the allowlist, not a hardcoded 'filesystem': the moment a second
+    // local-only target is added, hardcoding would silently stop checking
+    // outputDir for it -- and outputDir is load-bearing. lhci resolves
+    // `options.outputDir || ''` against the CWD (upload.js:535), so a missing
+    // one dumps reports into the repository root, where .gitignore's
+    // `.lighthouseci/` entry does not cover them.
+    if (!LOCAL_ONLY_TARGETS.includes(upload.target)) return;
     expect(
       upload.outputDir,
       'upload.target is filesystem but no outputDir is set, so reports land ' +
@@ -80,21 +120,42 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     ).toBeTruthy();
   });
 
-  it('does not leave a comment claiming the opposite of what it does', () => {
+  it('does not claim uploading is off, because it is not', () => {
     // The original config carried "Don't upload to Lighthouse CI server by
     // default" directly above a setting that uploaded to public storage. A
     // comment that contradicts its own code is worse than no comment: it is
     // what a reader checks instead of the value.
-    const { readFileSync } = require('node:fs');
-    const text: string = readFileSync(path.join(REPO_ROOT, 'lighthouserc.js'), 'utf8');
-    const uploadBlock = text.slice(text.indexOf('upload:'));
-    const target = config().ci.upload.target;
-    if (!LOCAL_ONLY_TARGETS.includes(target)) return; // the value test already failed
+    //
+    // The first version of THIS test could not catch that. It required the
+    // block to claim no-upload AND to mention none of local/filesystem/disk --
+    // but the target is written as a literal `'filesystem'` in that same block,
+    // so the second half was always false and the whole assertion reduced to
+    // `expect(false).toBe(false)`. Review proved it by pasting the original
+    // misleading comment back above a correct target and watching it stay
+    // green. Two separate claims, checked separately.
+    const uploadBlock = uploadCommentText();
     expect(
-      /don'?t upload|no upload|never upload/i.test(uploadBlock) &&
-        !/local|filesystem|this machine|disk/i.test(uploadBlock),
-      'the upload block claims uploading is off without saying where reports ' +
-        'actually go. Say what it does, not what it avoids.',
+      /don'?t upload|no upload|never upload|uploading is (off|disabled)/i.test(uploadBlock),
+      'the upload block says uploading does not happen. It does happen -- ' +
+        'reports are WRITTEN, just to this machine. Describe where they go, ' +
+        'not what they avoid; a reader checks the comment instead of the value.',
     ).toBe(false);
+  });
+
+  it('tells the reader where reports actually go', () => {
+    const comment = uploadCommentText();
+    expect(
+      comment.trim(),
+      'the upload block has no explanatory comment at all. The value alone ' +
+        'does not tell the next reader that this used to publish the library, ' +
+        'or why it must not again',
+    ).toBeTruthy();
+    expect(
+      /local|this machine|disk|written to/i.test(comment),
+      'the upload comment never says where reports land, so nobody knows what ' +
+        'to clean up or where to look. Note this checks the COMMENT, not the ' +
+        'block: the code contains the word "filesystem" by construction, so an ' +
+        'assertion over the whole block could not fail',
+    ).toBe(true);
   });
 });

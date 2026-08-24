@@ -76,9 +76,14 @@ module.exports = {
     upload: {
       // Reports are written to disk and go NOWHERE ELSE.
       //
-      // This used to be `temporary-public-storage`, under a comment reading
-      // "Don't upload to Lighthouse CI server by default" -- which was the
-      // opposite of what the value did. That target POSTs the rendered HTML
+      // This used to be `temporary-public-storage`, under a comment asserting
+      // that nothing was sent anywhere by default -- the opposite of what the
+      // value did. That phrasing is deliberately NOT reproduced here, even as
+      // history: a reader skimming the block would see the reassuring claim and
+      // stop, which is the whole failure being fixed. (The guard in
+      // tests/unit/lighthouse_upload_stays_local.test.ts agrees -- it flagged
+      // this comment when the old wording was quoted verbatim.) That target
+      // POSTs the rendered HTML
       // report to a PUBLIC Google endpoint
       // (us-central1-lighthouse-infrastructure.cloudfunctions.net/saveHtmlReport)
       // and prints the returned public URL.
