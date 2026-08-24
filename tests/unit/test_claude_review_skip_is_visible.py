@@ -96,11 +96,29 @@ class TestTheSkipIsDetected:
         branch, so that is what the detection must test. The 13-17s duration
         tell would rot the first time the reviewer got faster or slower."""
         step = _detection_step()
-        blob = yaml.safe_dump(step)
-        assert 'default_branch' in blob, (
-            'the detection step never references the default branch. GitHub '
-            'skips precisely when this file differs from the default-branch '
-            'copy, so comparing against it is the only non-heuristic test'
+        env = step.get('env') or {}
+        assert any('default_branch' in str(v) for v in env.values()), (
+            'the detection step has no env var carrying the default branch'
+        )
+        # Scoped to the RUN body on purpose. Asserting on the whole step passed
+        # with the shell gutted to `true`, because the env declaration alone
+        # satisfied it: an incidentally-passing assertion of exactly the shape
+        # this file's docstring warns about, found by mutating the shell to a
+        # no-op. The env var must be USED, not merely declared.
+        run = str(step.get('run', ''))
+        names = [k for k, v in env.items() if 'default_branch' in str(v)]
+        assert any(('$' + n) in run or ('${' + n) in run for n in names), (
+            'the detection step declares the default branch in env (%s) but '
+            'never uses it in the shell. GitHub skips precisely when this file '
+            'differs from the default-branch copy, so the comparison must '
+            'actually happen -- a declared-but-unused variable proves nothing'
+            % names
+        )
+        assert 'git diff' in run, (
+            'the detection step never diffs anything. The only non-heuristic '
+            'test is content equality with the default-branch copy; the '
+            'alternative tell (13-17s versus about four minutes) rots the '
+            'first time the reviewer changes speed'
         )
 
     def test_the_detection_reports_where_a_human_reads_it(self):
