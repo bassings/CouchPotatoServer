@@ -212,6 +212,13 @@ jobs:
           MARKER="<!-- claude-review-did-not-run -->"
 
           post () {
+            # `::warning::` becomes a CHECK-RUN ANNOTATION on claude-review,
+            # visible in the PR's Checks tab. That matters: it is the only part
+            # of this notice guaranteed to appear. A fork or Dependabot pull
+            # request may get a read-only GITHUB_TOKEN, in which case the
+            # `gh pr comment` below fails with 403 and the annotation is all the
+            # reader gets. The docs point at the annotation first for that
+            # reason; the comment is the convenience, not the guarantee.
             echo "::warning::$1"
             if [ -z "$PR" ]; then
               echo "::warning::no pull request number available, so this log line is the only record."
@@ -221,7 +228,15 @@ jobs:
             # summaries already demonstrate the failure mode this avoids: #277
             # and #279 each accumulated five separate comments. Repeating the
             # one notice that must not be ignored is how it gets ignored.
-            if gh pr view "$PR" --json comments --jq '.comments[].body' 2>/dev/null | grep -qF "$MARKER"; then
+            # Only OUR OWN comments count. The marker is an HTML comment, so it
+            # renders as nothing, and this repo is public: anyone who can comment
+            # could otherwise post the marker once and suppress this notice
+            # permanently and invisibly. The accidental path is likelier than the
+            # malicious one -- quoting this workflow's source in a comment plants
+            # it, and the reviewer itself quotes diffs of this file.
+            if gh pr view "$PR" --json comments \
+                 --jq '.comments[] | select(.author.login == "github-actions") | .body' 2>/dev/null \
+                 | grep -qF "$MARKER"; then
               echo "notice already present on PR $PR; not posting a duplicate."
               return 0
             fi
@@ -245,9 +260,16 @@ jobs:
               '**Review this pull request by other means before merging.**'
           }
 
-          if [ "$OUTCOME" = "skipped" ]; then
-            post "the review step was skipped by its own condition (fork pull request, or Dependabot), so no review ran." \
-                 "$(body 'The review step was skipped by its own condition: this is a fork pull request, or it was opened by Dependabot. Dependabot pull requests that bump `anthropics/claude-code-action` change the reviewer itself, and are the least safe of all to merge unreviewed.')"
+          # `!= success`, not `= skipped`, on purpose. An empty OUTCOME is what
+          # you get when `steps.review.outcome` no longer resolves -- e.g. the
+          # review step's `id:` was renamed -- and `cancelled` and `failure` are
+          # equally "no review happened". Testing for the one happy value fails
+          # SAFE: anything unexpected reports rather than stays quiet. Review
+          # measured the alternative: with `= skipped`, an empty value made the
+          # step affirmatively state the review had run.
+          if [ "$OUTCOME" != "success" ]; then
+            post "the review step did not succeed (outcome: '${OUTCOME:-unresolved}'), so no review ran." \
+                 "$(body "The review step did not run to success (outcome: \`${OUTCOME:-unresolved}\`). Usually that means a fork pull request or one opened by Dependabot, which the review step deliberately excludes. Dependabot pull requests that bump \`anthropics/claude-code-action\` change the reviewer itself, and are the least safe of all to merge unreviewed.")"
             exit 0
           fi
 
