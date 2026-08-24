@@ -27,10 +27,18 @@
  * values that keep the report ON THIS MACHINE. A new publishing target added
  * upstream fails this guard the day it ships, with no edit here.
  *
- * KNOWN LIMIT: this reads the configuration, so it proves what `lhci` is told
- * to do. It does not intercept the network, so it cannot prove `@lhci/cli`
- * honours it. That is a deliberate scope choice -- the alternative is running
- * Lighthouse in the unit suite -- and it is recorded rather than implied.
+ * KNOWN LIMITS, both recorded rather than implied:
+ *
+ * 1. This reads the configuration, so it proves what `lhci` is told to do. It
+ *    does not intercept the network, so it cannot prove `@lhci/cli` honours it.
+ *    Deliberate: the alternative is running Lighthouse in the unit suite.
+ *
+ * 2. Environment variables outrank the rc file entirely. `cli.js` calls
+ *    `.env('LHCI')`, so `LHCI_TARGET=temporary-public-storage npm run
+ *    test:lighthouse` publishes, and no config-reading guard can see that.
+ *    Nothing in this repo or in `.github/` sets any `LHCI_*` variable, and lhci
+ *    does not run in CI at all, so there is no live risk -- but a reader must
+ *    not mistake this guard for one that cannot be overridden.
  */
 import { createRequire } from 'node:module';
 import path from 'node:path';
@@ -54,6 +62,14 @@ function config() {
   // time -- but verify mutations that way, or you will conclude the guard
   // works when it never re-read the file.
   return require(path.join(REPO_ROOT, 'lighthouserc.js'));
+}
+
+/** What `lhci` itself will use, after merging every key shape it accepts. */
+function resolvedTarget(): string | undefined {
+  const { loadAndParseRcFile } = require('@lhci/utils/src/lighthouserc.js');
+  // Absolute path: the loader resolves `extends` relative to the rc file, and
+  // a relative path silently yields an empty config rather than throwing.
+  return loadAndParseRcFile(path.join(REPO_ROOT, 'lighthouserc.js')).target;
 }
 
 function uploadBlockText(): string {
@@ -93,7 +109,16 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
   });
 
   it('uploads nowhere but this machine', () => {
-    const target = config().ci.upload.target;
+    // Resolved through lhci's OWN loader, not by reading `ci.upload.target`.
+    // lhci merges four sibling keys and lets later ones win -- flattenRcToConfig
+    // spreads `ci`, `lhci`, `ci:client` and `ci:server`, shallowly -- so a
+    // sibling `lhci: { upload: { target: 'temporary-public-storage' } }`
+    // replaces the upload block wholesale. Measured: lhci then resolves
+    // `temporary-public-storage` while a guard reading `ci.upload.target`
+    // reports all green. Asking the tool closes that whole class, including
+    // `extends` and any key shape added later, for the same reason the
+    // allowlist below beats a denylist: do not hardcode a model of the tool.
+    const target = resolvedTarget();
     expect(
       LOCAL_ONLY_TARGETS,
       `lighthouserc.js sets upload.target='${target}'. Anything outside ` +
@@ -140,6 +165,34 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
         'reports are WRITTEN, just to this machine. Describe where they go, ' +
         'not what they avoid; a reader checks the comment instead of the value.',
     ).toBe(false);
+  });
+
+  it('cannot reach a docker image either', () => {
+    // The third escape route, and the one this file's own comment denied.
+    // `.gitignore` keeps reports out of the repository and `filesystem` keeps
+    // them off the network -- but `Dockerfile:117` copies the whole build
+    // CONTEXT, which is the filesystem rather than the git index. Review
+    // measured reports inside a locally built image, with `coverage/` correctly
+    // absent as a control, so it discriminates.
+    //
+    // Deliberately a text assertion on .dockerignore, and it is weaker than the
+    // rest of this file: it checks the exclusion is DECLARED, not that docker
+    // honours it, because building an image in the unit suite is out of
+    // proportion. The mechanism that ends this class -- a check that no
+    // gitignored artefact path survives into the build context -- is recorded
+    // as T65, this being the fourth instance fixed by hand.
+    const { readFileSync } = require('node:fs');
+    const patterns = readFileSync(path.join(REPO_ROOT, '.dockerignore'), 'utf8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'));
+    expect(
+      patterns,
+      'the Lighthouse report directory is not excluded from the docker build ' +
+        'context, so a local `docker build` bakes full-page screenshots of the ' +
+        "operator's media library into the image. Add `.lighthouseci/` to " +
+        '.dockerignore',
+    ).toContain('.lighthouseci/');
   });
 
   it('tells the reader where reports actually go', () => {

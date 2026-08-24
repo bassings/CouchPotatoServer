@@ -3135,7 +3135,45 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       change the axis rather than the values.
 
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T65: nothing checks that gitignored artefacts stay out of the docker build context — state: queued (no deps) — **privacy, mechanism**
+
+      Raised by review on T47 and split out rather than fixed there, because
+      the fix for T47 is the FOURTH hand-added line of the same class and §9
+      says a rule that keeps being remembered should be enforced instead.
+
+      `Dockerfile:117` is `COPY --chown=couchpotato:couchpotato . ${APP_DIR}/`,
+      so the build context is the FILESYSTEM, not the git index. Anything
+      gitignored is invisible to git and fully visible to docker. `.dockerignore`
+      already carries that argument in prose, written for `coverage/`:
+
+          "Gitignored, so invisible to git -- but the build context is the
+           filesystem, not the index, and Dockerfile:117 copies the whole
+           context in."
+
+      Four instances have now been fixed one line at a time, each after somebody
+      noticed: `.e2e-*`, `test_data/` and `.claude/`, `coverage/` and
+      `.scannerwork/`, and now `.lighthouseci/` (T47). Review measured the last
+      one inside a real image built from the real context, with `coverage/`
+      correctly absent as a control. The payload was full-page screenshots of
+      the operator's media library.
+
+      There will be a fifth. The deliverable is a check, not another line.
+
+      **Shape, and the trap to avoid.** The obvious version enumerates known
+      artefact directories, which is the denylist mistake T57 spent four review
+      rounds removing and T47's own guard was written to avoid. The check should
+      DERIVE the set: enumerate what git ignores at the repository root, then
+      assert each entry is also excluded from the build context, evaluating
+      `.dockerignore` with docker's own matching rules rather than a
+      hand-rolled approximation (the syntaxes differ, and `.e2e-*` is a glob a
+      naive `==` comparison already fails to see -- confirmed while writing
+      this entry, when a survey using exact matching reported `.e2e-*` missing
+      when it is present at `.dockerignore:17`).
+
+      Prove it by deleting a real exclusion and watching it fail, and by
+      confirming it does NOT fire on something legitimately absent from both.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64, T65 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:

@@ -104,3 +104,16 @@ coverage/
 coverage.xml
 htmlcov/
 .scannerwork/
+
+# Lighthouse reports. Same argument as the block above, and the payload is
+# worse: a Lighthouse HTML report embeds full-page SCREENSHOTS, and
+# lighthouserc.js collects `/`, `/available/`, `/add/` and `/settings/` on port
+# 5050 -- the production port -- so these are pictures of the operator's own
+# media library. T47 stopped `lhci` publishing them to a public Google endpoint
+# and gitignored the directory, and review then measured that a local
+# `docker build` still baked them into the image through Dockerfile:117. Two
+# routes closed and a third left open is not a fix.
+#
+# Note `collect` wrote reports here BEFORE T47 changed anything, so this line
+# closes a pre-existing path, not one T47 created.
+.lighthouseci/
