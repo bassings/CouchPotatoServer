@@ -80,3 +80,6 @@ mutants/
 # artefact ends up committed.
 .scannerwork/
 coverage/
+
+# Lighthouse reports (local only — see lighthouserc.js upload block)
+.lighthouseci/
