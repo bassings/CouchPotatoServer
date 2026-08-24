@@ -3019,46 +3019,108 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       same day: "no trace" and "not looked" must be distinguishable in the
       output, or the instrument reproduces the class it exists to detect.
 
-- [ ] T62: the pre-push hook gates a commit that may not be the one pushed — state: queued (no deps) — **process, undermines hard rule 2**
+- [ ] T62: the pre-push gate validates the working tree, not the commit being pushed — state: queued (no deps) — **process, weakens hard rule 2**
 
-      Observed twice on 2026-08-20, on the same branch, and reproducible.
+      **Reframed 2026-08-24 after review disproved the original mechanism, and
+      the disproof is worth more than the entry was.** This was first recorded
+      as "git sends whatever the ref resolves to at send time", so a commit
+      made during the twenty-minute hook would be pushed ungated. That is
+      false. Measured directly: a bare origin, a `pre-push` that records its
+      stdin and sleeps, a commit made while it slept.
 
-      `git push` reported `ee3ea2af..6dc67488` while the remote ended up at
-      `4a0a405b`. The earlier occurrence was the same shape:
-      `b51d10db...23705812` reported, `810f7c5d` on the remote. Both times the
-      extra commit was made WHILE the hook was still running, which on this
-      repo is a twenty-minute window because the gate includes E2E.
+          commit before the push started : 439fe10c
+          commit made DURING the hook     : d4cdde2d
+          hook stdin saw                  : 439fe10c
+          remote ended at                 : 439fe10c
 
-      **Mechanism, measured rather than guessed.** Git passes each ref being
-      pushed to `pre-push` on stdin as
-      `<local ref> <local sha> <remote ref> <remote sha>`. `.githooks/pre-push`
-      never reads stdin: `grep -n "stdin\|while read"` returns nothing, and its
-      only ref handling is `git rev-parse --show-toplevel`. So it gates the
-      working tree as it stands when the hook runs, and git then sends whatever
-      the ref resolves to at send time. Those are the same commit only if
-      nothing lands in between.
+      Git snapshots the update before invoking `pre-push` and pushes that
+      snapshot. The later commit stayed local. Credit to the codex reviewer on
+      #282, who reproduced the same result independently on git 2.43.0 and
+      said so against a plan entry asserting the opposite.
 
-      **Why this matters more than it looks.** CLAUDE.md rule 2 says the gate
-      must pass locally before every push, and the hook is what makes that
-      enforced rather than remembered. A gate that validates a different commit
-      from the one it lets through is the exact shape this plan keeps
-      recording: it looks like protection, it exits zero, and the thing it
-      exists to stop goes past it. Both observed instances were docs-only and
-      harmless, which is luck, not design. Committing during a twenty-minute
-      hook is a completely ordinary thing to do.
+      **The observed symptom therefore still has no explanation.** Two pushes
+      on 2026-08-20 reported one range and left the remote at a different sha
+      (`ee3ea2af..6dc67488` reported, `4a0a405b` on the remote;
+      `b51d10db...23705812` reported, `810f7c5d` on the remote). Whatever
+      caused that, it is not this. Do not close this task by re-testing the
+      disproved mechanism and finding it absent. Candidate causes worth
+      checking first: a second push racing from another session or worktree
+      (several share this checkout), a `--force-with-lease` retry, or the
+      branch being updated server-side by a squash merge between the report
+      and the observation.
 
-      The fix is to gate what is actually being pushed. Read the sha from
-      stdin, or capture `git rev-parse HEAD` at hook start and refuse the push
-      if HEAD has moved by the time the gate finishes. The second is cruder and
-      may be the better fit here, since the gate runs against the working tree
-      rather than an arbitrary commit, and "HEAD moved under the gate" is a
-      clearer refusal than silently re-running.
+      **What IS wrong, and is the reason this stays open.** `.githooks/pre-push`
+      never reads its stdin (`grep -n "stdin\|while read"` returns nothing;
+      its only ref handling is `git rev-parse --show-toplevel` at line 11). It
+      runs `make verify` against the WORKING TREE as it stands while the hook
+      runs. The commit being pushed is fixed at that moment, but the working
+      tree is not: an edit or a commit during the twenty-minute gate means
+      `verify` tested content that is not what is being sent, and a dirty tree
+      means it never was. The gate passes and reports on something other than
+      the artefact. That is a weaker claim than the original entry made, and
+      unlike the original it is true.
 
-      Prove it by reproducing: start a push, commit during the hook, and assert
-      the push is refused. A guard for this that has not been watched to fail
-      is worth nothing, which is the whole reason this entry exists.
+      The fix is to gate the thing being pushed: read the sha from stdin and
+      verify that, or capture `git rev-parse HEAD` plus a dirty-tree check at
+      hook start and refuse if either moved by the time the gate finishes.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T58, T59, T60, T61, T62, T63 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+      Prove it by reproducing: start a push, modify the tree during the hook,
+      and assert the push is refused. A guard for this that has not been
+      watched to fail is worth nothing.
+
+- [ ] T64: the fixture scrub discards untrusted git config without installing trusted config — state: queued (no deps) — **security, carried over from T57**
+
+      Raised as P1 and P2 by the codex reviewer on #282 and split out rather
+      than fixed there, deliberately, under CLAUDE.md rule 11: T57 had already
+      had three fix rounds, and this is a NEW CLASS rather than another
+      instance of the one being fixed. Rule 11 says that is the signal to
+      re-open the approach, not to spend a fourth round.
+
+      T57 made the fixtures strip git's whole `GIT_*` namespace, keeping only
+      the commit-identity prefixes. The axis for that allowlist was "does this
+      change what a commit RECORDS, or where it LANDS / what it RUNS". That
+      question cannot see a third category: variables that PROTECT.
+
+      `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` are how a
+      caller isolates git from `~/.gitconfig` and `/etc/gitconfig`. Both start
+      with `GIT_`, so the namespace strip deletes them. A suite launched WITH
+      those protections loses them at import, and subsequent fixture commits
+      then read ambient global and system config again -- including a global
+      `core.hooksPath`, which the reviewer reproduced executing after importing
+      the conftest even though the same hook was suppressed before it.
+
+      Note carefully what this is and is not. It does NOT make the suite worse
+      than before T57: nothing in this repo sets those variables today, and the
+      six-name denylist did not preserve them either. It is a gap T57 declined
+      to close, not one it opened. But the whole argument for a namespace rule
+      is that it is right about variables nobody has thought of yet, and this
+      is a class it is wrong about.
+
+      The fix is the reviewer's, and it is one line of principle: after
+      discarding untrusted `GIT_*` values, INSTALL trusted ones. Set
+      `GIT_CONFIG_GLOBAL=/dev/null`, `GIT_CONFIG_NOSYSTEM=1` (and the XDG path)
+      on the way out of the scrub, so the fixtures run in a known configuration
+      rather than merely a known-empty environment.
+
+      **Second instance, same root, in the tests rather than the code.** The
+      positive control in `tests/unit/test_git_env_namespace_scrub.py` carries
+      the ambient `HOME` on purpose, so it can still detect a platform that
+      declines to run hooks. The cost is that a developer or CI account with a
+      global `core.hooksPath` sees the control fail for an environmental reason
+      unrelated to the change. Both reviewers are right and they are answering
+      different questions: the control SHOULD be loud about hooks being
+      disabled, and it should NOT be at the mercy of whoever's account runs it.
+      Installing trusted config resolves both, because the control can then
+      assert on a configuration it set rather than one it inherited. Fix the
+      two together; fixing either alone will look complete and will not be.
+
+      The control's environment has now been rewritten three times on #282
+      (raw ambient, then sanitised, then a literal dict). Whoever takes this
+      should read that history before touching it a fourth time, and should
+      change the axis rather than the values.
+
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T44, T45, T47, T49, T50, T54, T55, T58, T59, T60, T61, T62, T63, T64 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
