@@ -3173,7 +3173,69 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       Prove it by deleting a real exclusion and watching it fail, and by
       confirming it does NOT fire on something legitimately absent from both.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64, T65 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T66: the UI fetches its typeface from Google on every page load — state: queued (no deps) — **privacy, availability, performance**
+
+      Raised by the owner while reading T47's write-up, which said reports were
+      no longer "uploaded to Google" and prompted the fair question of where
+      else this application talks to Google. The answer is: exactly here, and
+      nowhere else.
+
+      Four references, all the same thing, in the two templates a user actually
+      loads:
+
+          couchpotato/ui/templates/base.html:53-54   preconnect + stylesheet
+          couchpotato/templates/login.html:25-26     preconnect + stylesheet
+
+      Both pull `fonts.googleapis.com/css2?family=Inter:wght@300..700`. Every
+      page view therefore sends the viewer's IP address, user agent and referring
+      page to a third party, including on the LOGIN page, before anyone has
+      authenticated. Nothing about the library is sent; this is not the T47
+      class of leak. It is the ordinary web-font one, and it applies to whoever
+      opens the UI rather than to whoever runs the tests.
+
+      **Three reasons to fix it, and privacy is the weakest of them.**
+
+      1. **Availability.** `tailwind.config` sets
+         `fontFamily: { sans: ['Inter', 'sans-serif'] }`, so a failed fetch
+         falls back to a generic face with no error. This software runs on home
+         servers, frequently on a LAN, behind a firewall, or on a box with no
+         outbound internet at all. On every one of those the design system's
+         single pinned typeface silently does not apply TODAY.
+      2. **Performance.** It is a render-blocking stylesheet on a third-party
+         origin, plus two extra connection setups, on the critical path of the
+         first paint. The standards' Core Web Vitals targets (LCP, FCP) make
+         this a real cost rather than a nicety.
+      3. **Privacy**, as above.
+
+      **The decision is already made three times over, which is why this is a
+      small task rather than a debate.** Alpine, htmx and Tailwind are all
+      vendored under `couchpotato/static/scripts/vendor/new-ui/` and served
+      locally. Google Fonts is the only remaining third-party fetch on page
+      load; every other external URL in the templates is a hyperlink to a
+      provider's website, not something the browser retrieves.
+
+      **Do NOT swap to a system font stack.** `docs/design-system/README.md:61`
+      pins Inter as the single family at weights 300/400/500/600/700, and
+      `CONFORMANCE.md:17` carries it as a checklist item. Changing the typeface
+      means changing the design system and re-baselining whatever visual and
+      accessibility tests depend on it. Self-hosting changes where the file
+      comes from and nothing else.
+
+      **The work:** vendor the Inter woff2 files for the five weights beside the
+      other local assets, add an `@font-face` block, delete the two `<link>`
+      pairs, and confirm the rendered pages are unchanged. Prefer a
+      latin-subset variable font if it covers the range at a smaller total size
+      than five static weights, and record the measured sizes rather than
+      estimating them.
+
+      **And mechanise it, because a snippet copied from anywhere brings it
+      back:** a guard that fails if any template regains an external font link.
+      Note that guard is a NARROWER version of the same thing T65 asks for --
+      "no external runtime fetch appears in a template" -- so whoever takes both
+      should write one check, not two. Prove it by adding the link back and
+      watching it fail.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64, T65, T66 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
