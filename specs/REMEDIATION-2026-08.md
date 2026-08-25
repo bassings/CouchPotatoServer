@@ -3170,6 +3170,14 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       this entry, when a survey using exact matching reported `.e2e-*` missing
       when it is present at `.dockerignore:17`).
 
+      **The same blindness bites from the other direction, so the check must
+      handle both.** Docker honours `.lighthouseci` and `.lighthouseci/`
+      identically. T47's interim guard used an exact string and would therefore
+      have failed on the slash-less spelling -- a false alarm rather than a
+      false pass, but the same defect: a string comparison standing in for
+      docker's matcher. That guard now normalises the trailing slash; the real
+      check should not be normalising anything by hand.
+
       Prove it by deleting a real exclusion and watching it fail, and by
       confirming it does NOT fire on something legitimately absent from both.
 

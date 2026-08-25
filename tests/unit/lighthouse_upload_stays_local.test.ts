@@ -64,12 +64,34 @@ function config() {
   return require(path.join(REPO_ROOT, 'lighthouserc.js'));
 }
 
-/** What `lhci` itself will use, after merging every key shape it accepts. */
-function resolvedTarget(): string | undefined {
+/** What `lhci` itself will use, after merging every key shape it accepts.
+ *
+ * THE RULE, because getting it half right is what this file did: assertions
+ * about BEHAVIOUR read this resolver; only the shape check reads the raw
+ * `ci.upload` key. An earlier revision resolved `target` here and left
+ * `outputDir` reading the raw key four lines below, so the same sibling-key
+ * attack simply aimed at the other value -- and that is the worse one.
+ * `target` decides whether reports go on the network; `outputDir` decides
+ * whether they land somewhere .gitignore and .dockerignore cover. Measured: a
+ * sibling `lhci: { upload: { target: 'filesystem' } }` leaves outputDir
+ * undefined, lhci resolves it against the cwd, and reports land in the
+ * REPOSITORY ROOT -- committable and inside the docker build context -- with
+ * all six tests green.
+ *
+ * Returns lhci's FLAT config: convertRcFileToYargsOptions spreads
+ * wizard/assert/collect/upload/server into one object, so it is `.target` and
+ * `.outputDir`, not `.upload.target`.
+ *
+ * Note this imports @lhci/utils, which package.json declares alongside
+ * @lhci/cli. If lhci is ever removed from the project (T41 debated exactly
+ * that), this becomes MODULE_NOT_FOUND rather than a clear failure -- delete
+ * this file in the same change.
+ */
+function resolvedUpload(): {target?: string; outputDir?: string} {
   const { loadAndParseRcFile } = require('@lhci/utils/src/lighthouserc.js');
   // Absolute path: the loader resolves `extends` relative to the rc file, and
   // a relative path silently yields an empty config rather than throwing.
-  return loadAndParseRcFile(path.join(REPO_ROOT, 'lighthouserc.js')).target;
+  return loadAndParseRcFile(path.join(REPO_ROOT, 'lighthouserc.js'));
 }
 
 function uploadBlockText(): string {
@@ -118,7 +140,7 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // reports all green. Asking the tool closes that whole class, including
     // `extends` and any key shape added later, for the same reason the
     // allowlist below beats a denylist: do not hardcode a model of the tool.
-    const target = resolvedTarget();
+    const target = resolvedUpload().target;
     expect(
       LOCAL_ONLY_TARGETS,
       `lighthouserc.js sets upload.target='${target}'. Anything outside ` +
@@ -130,14 +152,16 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
   });
 
   it('says where the report goes when it stays local', () => {
-    const upload = config().ci.upload;
+    // Resolved, not raw: see resolvedUpload(). This assertion is about
+    // behaviour, so it must read what lhci will actually use.
+    const upload = resolvedUpload();
     // Via the allowlist, not a hardcoded 'filesystem': the moment a second
     // local-only target is added, hardcoding would silently stop checking
     // outputDir for it -- and outputDir is load-bearing. lhci resolves
     // `options.outputDir || ''` against the CWD (upload.js:535), so a missing
-    // one dumps reports into the repository root, where .gitignore's
-    // `.lighthouseci/` entry does not cover them.
-    if (!LOCAL_ONLY_TARGETS.includes(upload.target)) return;
+    // one dumps reports into the repository root, where neither .gitignore's
+    // nor .dockerignore's `.lighthouseci/` entry reaches them.
+    if (!LOCAL_ONLY_TARGETS.includes(upload.target as string)) return;
     expect(
       upload.outputDir,
       'upload.target is filesystem but no outputDir is set, so reports land ' +
@@ -186,13 +210,17 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
       .split('\n')
       .map(line => line.trim())
       .filter(line => line && !line.startsWith('#'));
+    // Both spellings, because docker honours both and an exact-string check
+    // would be a false NEGATIVE on the slash-less one. That is the same
+    // exact-match blindness recorded against T65 from the other direction,
+    // where a survey read `.e2e-*` as absent because it is a glob.
     expect(
-      patterns,
+      patterns.filter(pattern => pattern.replace(/\/$/, '') === '.lighthouseci'),
       'the Lighthouse report directory is not excluded from the docker build ' +
         'context, so a local `docker build` bakes full-page screenshots of the ' +
         "operator's media library into the image. Add `.lighthouseci/` to " +
         '.dockerignore',
-    ).toContain('.lighthouseci/');
+    ).not.toHaveLength(0);
   });
 
   it('tells the reader where reports actually go', () => {
