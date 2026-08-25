@@ -27,6 +27,23 @@
  * values that keep the report ON THIS MACHINE. A new publishing target added
  * upstream fails this guard the day it ships, with no edit here.
  *
+ * WHY THERE ARE NO GUARDS ON THE COMMENT PROSE
+ *
+ * Two assertions here used to check that the upload block did not claim
+ * uploading was off, and did say where reports go. Both are gone, and their
+ * history is the argument for not writing them again. The first reduced to
+ * `expect(false).toBe(false)`. Splitting it in two reproduced the vacuity in
+ * the other half. Scoping both to `//` lines fixed that, and review then got
+ * through all three of `/* *\/` block comments, a trailing comment on the
+ * value line, and a comment reading "Verified against http://localhost:5050/"
+ * -- which says nothing about where reports go and passes because `localhost`
+ * contains `local`. Meanwhile an accurate, useful comment tripped the other
+ * guard as a false claim.
+ *
+ * Two regexes cannot pin natural language. A guard that reddens on a correct
+ * comment teaches people to edit the guard, which is how the vacuous versions
+ * came to be written in the first place. Prose belongs to review.
+ *
  * KNOWN LIMITS, both recorded rather than implied:
  *
  * 1. This reads the configuration, so it proves what `lhci` is told to do. It
@@ -94,23 +111,46 @@ function resolvedUpload(): {target?: string; outputDir?: string} {
   return loadAndParseRcFile(path.join(REPO_ROOT, 'lighthouserc.js'));
 }
 
-function uploadBlockText(): string {
+/** Docker's ignore semantics, not a string search: last matching pattern wins,
+ *  and `!` re-includes. Deliberately a SUBSET -- directory entries with `*`,
+ *  `?` and `**` -- because the general check across every ignored artefact is
+ *  T65's job. What it must not do is answer a different question from the one
+ *  it is asked, which is exactly what the string version did, in both
+ *  directions and both proved with real docker builds. */
+function isExcludedFromDockerContext(relPath: string): boolean {
   const { readFileSync } = require('node:fs');
-  const text: string = readFileSync(path.join(REPO_ROOT, 'lighthouserc.js'), 'utf8');
-  return text.slice(text.indexOf('upload:'));
-}
-
-/** Only the `//` lines of the upload block: what a reader is TOLD, not what the
- *  code says. Scoping matters -- an assertion over the whole block cannot fail,
- *  because `target: 'filesystem'` and the `outputDir` key put those very words
- *  in it. That is how the first version of the comment guard here turned out to
- *  be `expect(false).toBe(false)`, and splitting it in two reproduced the same
- *  vacuity in the second half until this scoping was added. */
-function uploadCommentText(): string {
-  return uploadBlockText()
+  const patterns: string[] = readFileSync(path.join(REPO_ROOT, '.dockerignore'), 'utf8')
     .split('\n')
-    .filter(line => line.trim().startsWith('//'))
-    .join('\n');
+    .map((line: string) => line.trim())
+    .filter((line: string) => line && !line.startsWith('#'));
+
+  const escape = (segment: string) =>
+    segment
+      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '[^/]*')
+      .replace(/\?/g, '[^/]');
+
+  const matches = (pattern: string) => {
+    const segments = pattern.replace(/\/+$/, '').split('/');
+    let source = '^';
+    segments.forEach((segment, i) => {
+      if (segment === '**') {
+        source += '(?:.*/)?';
+        return;
+      }
+      source += escape(segment);
+      if (i < segments.length - 1) source += '/';
+    });
+    // A directory entry also excludes everything beneath it.
+    return new RegExp(source + '(?:/.*)?$').test(relPath);
+  };
+
+  let excluded = false;
+  for (const raw of patterns) {
+    const negated = raw.startsWith('!');
+    if (matches(negated ? raw.slice(1) : raw)) excluded = !negated;
+  }
+  return excluded;
 }
 
 describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
@@ -169,74 +209,29 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     ).toBeTruthy();
   });
 
-  it('does not claim uploading is off, because it is not', () => {
-    // The original config carried "Don't upload to Lighthouse CI server by
-    // default" directly above a setting that uploaded to public storage. A
-    // comment that contradicts its own code is worse than no comment: it is
-    // what a reader checks instead of the value.
-    //
-    // The first version of THIS test could not catch that. It required the
-    // block to claim no-upload AND to mention none of local/filesystem/disk --
-    // but the target is written as a literal `'filesystem'` in that same block,
-    // so the second half was always false and the whole assertion reduced to
-    // `expect(false).toBe(false)`. Review proved it by pasting the original
-    // misleading comment back above a correct target and watching it stay
-    // green. Two separate claims, checked separately.
-    const uploadBlock = uploadCommentText();
-    expect(
-      /don'?t upload|no upload|never upload|uploading is (off|disabled)/i.test(uploadBlock),
-      'the upload block says uploading does not happen. It does happen -- ' +
-        'reports are WRITTEN, just to this machine. Describe where they go, ' +
-        'not what they avoid; a reader checks the comment instead of the value.',
-    ).toBe(false);
-  });
-
   it('cannot reach a docker image either', () => {
-    // The third escape route, and the one this file's own comment denied.
+    // The third escape route, and one an earlier comment in this file denied.
     // `.gitignore` keeps reports out of the repository and `filesystem` keeps
     // them off the network -- but `Dockerfile:117` copies the whole build
     // CONTEXT, which is the filesystem rather than the git index. Review
-    // measured reports inside a locally built image, with `coverage/` correctly
-    // absent as a control, so it discriminates.
+    // measured reports inside a locally built image, with `coverage/`
+    // correctly absent as a control, so the measurement discriminates.
     //
-    // Deliberately a text assertion on .dockerignore, and it is weaker than the
-    // rest of this file: it checks the exclusion is DECLARED, not that docker
-    // honours it, because building an image in the unit suite is out of
-    // proportion. The mechanism that ends this class -- a check that no
-    // gitignored artefact path survives into the build context -- is recorded
-    // as T65, this being the fourth instance fixed by hand.
-    const { readFileSync } = require('node:fs');
-    const patterns = readFileSync(path.join(REPO_ROOT, '.dockerignore'), 'utf8')
-      .split('\n')
-      .map(line => line.trim())
-      .filter(line => line && !line.startsWith('#'));
-    // Both spellings, because docker honours both and an exact-string check
-    // would be a false NEGATIVE on the slash-less one. That is the same
-    // exact-match blindness recorded against T65 from the other direction,
-    // where a survey read `.e2e-*` as absent because it is a glob.
+    // This EVALUATES .dockerignore rather than searching it for a string. The
+    // string version was wrong in BOTH directions, each proved with a real
+    // docker build: a later `!.lighthouseci/` negation left the reports in the
+    // image while the guard passed, and the equally valid spellings
+    // `.lighthouseci` and `**/.lighthouseci` failed the guard while docker
+    // excluded them correctly. The false red matters as much as the false
+    // green -- a guard that reddens on a working config teaches people to edit
+    // the guard, which is how the vacuous assertions this file has already
+    // shed came to be written.
     expect(
-      patterns.filter(pattern => pattern.replace(/\/$/, '') === '.lighthouseci'),
-      'the Lighthouse report directory is not excluded from the docker build ' +
-        'context, so a local `docker build` bakes full-page screenshots of the ' +
-        "operator's media library into the image. Add `.lighthouseci/` to " +
-        '.dockerignore',
-    ).not.toHaveLength(0);
-  });
-
-  it('tells the reader where reports actually go', () => {
-    const comment = uploadCommentText();
-    expect(
-      comment.trim(),
-      'the upload block has no explanatory comment at all. The value alone ' +
-        'does not tell the next reader that this used to publish the library, ' +
-        'or why it must not again',
-    ).toBeTruthy();
-    expect(
-      /local|this machine|disk|written to/i.test(comment),
-      'the upload comment never says where reports land, so nobody knows what ' +
-        'to clean up or where to look. Note this checks the COMMENT, not the ' +
-        'block: the code contains the word "filesystem" by construction, so an ' +
-        'assertion over the whole block could not fail',
+      isExcludedFromDockerContext('.lighthouseci/report.html'),
+      'a Lighthouse report is NOT excluded from the docker build context, so ' +
+        'a local `docker build` bakes full-page screenshots of the media ' +
+        'library into the image. Check .dockerignore for a missing ' +
+        '`.lighthouseci/` entry, or a later `!` negation that re-includes it',
     ).toBe(true);
   });
 });
