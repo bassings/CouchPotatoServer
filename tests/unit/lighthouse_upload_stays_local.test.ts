@@ -111,10 +111,12 @@ function findConfigFile(): string {
   // `@lhci/utils` release from renaming or moving this file. If that happens
   // it reddens `npm run test:unit` (a `require` failure, MODULE_NOT_FOUND)
   // rather than the optional `npm run test:lighthouse` script, which is the
-  // point: pinned exactly in package.json alongside `@lhci/cli` (see F7 in
-  // specs/REMEDIATION-2026-08.md) so both packages read the same build of
-  // this loader, but the import path itself is still unofficial and worth a
-  // reader knowing that before "fixing" a failure here by guessing a new path.
+  // point. Both @lhci packages are pinned exactly in package.json so this
+  // file and lhci load the same build of the loader, and the shape test above
+  // ASSERTS the resolved graph delivered that rather than trusting the pin --
+  // a caret on the cli alone would let a bump nest a second copy silently.
+  // The import path itself is still unofficial, worth a reader knowing before
+  // "fixing" a failure here by guessing a new path.
   const { findRcFile } = require('@lhci/utils/src/lighthouserc.js');
   const rcFile = findRcFile(REPO_ROOT);
   expect(
@@ -175,6 +177,30 @@ function resolvedUpload(): {target?: string; outputDir?: string} {
   return loadAndParseRcFile(findConfigFile());
 }
 
+/** Asserts git ignores `absDir`, using git as the oracle rather than modelling
+ *  .gitignore semantics by hand -- KNOWN LIMIT 3 above is what modelling an
+ *  ignore file costs, three revisions in a row.
+ *
+ *  The trailing slash is load-bearing and was measured: `.gitignore`'s entry is
+ *  a directory-only pattern, and `git check-ignore` can only apply one to a
+ *  path that either exists on disk as a directory or is spelled with a
+ *  trailing slash. A run before any report has been produced would otherwise
+ *  fail against a genuinely correct .gitignore -- a false red, which this
+ *  file's docstring spends two paragraphs explaining teaches people to edit
+ *  the guard. */
+function expectGitIgnores(absDir: string, which: string): void {
+  const withSlash = absDir.replace(/\/*$/, '/');
+  const result = spawnSync('git', ['check-ignore', '-q', withSlash], {cwd: REPO_ROOT});
+  expect(
+    result.status,
+    `git does not ignore '${withSlash}' (${which}). A routine 'git add -A' ` +
+      `after a local Lighthouse run would commit full-page screenshots of the ` +
+      `operator's media library into a PUBLIC repository, where history, forks ` +
+      `and caches keep them beyond any later deletion. Check .gitignore for a ` +
+      `missing '.lighthouseci/' entry.`,
+  ).toBe(0);
+}
+
 describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
   it('is still the config we think it is', () => {
     // Guards the guard: if the shape changes, every assertion below could pass
@@ -193,6 +219,26 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // against a missing default, which was how an earlier version of this
     // comment described it, wrongly.
     expect(ci.upload, 'lighthouserc.js has no `upload` block to check').toBeTruthy();
+
+    // AND that this file reads the SAME BUILD of lhci that lhci runs. The
+    // whole premise here is "ask the tool rather than model it", which fails
+    // silently the moment there are two copies of the tool. @lhci/cli depends
+    // on an EXACT @lhci/utils, so a caret on the cli alone would let a routine
+    // dependabot bump resolve cli@0.15.2 with utils@0.15.2 nested beneath it
+    // while this file kept require()-ing the hoisted 0.15.1 -- asking a
+    // different copy, with nothing to announce it. Both are pinned exactly in
+    // package.json; this asserts the graph actually delivered that, because a
+    // pin is a request and the resolved tree is the answer.
+    const installedUtils = require('@lhci/utils/package.json').version;
+    const utilsTheCliWants = require('@lhci/cli/package.json').dependencies['@lhci/utils'];
+    expect(
+      installedUtils,
+      `the @lhci/utils this guard loads is ${installedUtils}, but @lhci/cli ` +
+        `depends on ${utilsTheCliWants}. This file would then be reading a ` +
+        `DIFFERENT build of findRcFile/flattenRcToConfig than lhci itself ` +
+        `uses, so every assertion below could pass against a config lhci never ` +
+        `resolves. Pin both packages to the same version in package.json.`,
+    ).toBe(utilsTheCliWants);
   });
 
   it('uploads nowhere but this machine', () => {
@@ -213,18 +259,34 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // published, which is false and reads as a reason to edit the guard
     // rather than restore the block it anchors on. Say what actually
     // happened instead.
+    //
+    // NAME THE FILE, do not assume it. This message used to say
+    // "lighthouserc.js sets upload.target=..." unconditionally. Measured: with
+    // a shadowing `.lighthouserc.js` at the repo root -- the very scenario
+    // findConfigFile() exists to catch -- the guard correctly went red and
+    // then told the reader to look in lighthouserc.js, which still says
+    // 'filesystem'. They open it, see nothing wrong, and conclude the guard is
+    // broken. A red with the wrong diagnosis is the failure this file's
+    // docstring spends two paragraphs on.
+    const rcFile = path.relative(REPO_ROOT, findConfigFile());
+    const shadowHint =
+      rcFile === 'lighthouserc.js'
+        ? ''
+        : ` NOTE: lhci resolves '${rcFile}', NOT lighthouserc.js -- a ` +
+          `higher-ranked filename is shadowing it (see RC_FILE_NAMES). Fix or ` +
+          `delete '${rcFile}'; editing lighthouserc.js will change nothing.`;
     const message =
       target === undefined
-        ? `lighthouserc.js has no upload.target because the upload block is ` +
+        ? `${rcFile} has no upload.target because the upload block is ` +
           `absent entirely -- that is SAFE (autorun does not upload without ` +
           `one), but this guard needs the block present as an anchor for the ` +
           `assertions above and below it. Restore the upload block rather ` +
-          `than editing this guard.`
-        : `lighthouserc.js sets upload.target='${target}'. Anything outside ` +
+          `than editing this guard.${shadowHint}`
+        : `${rcFile} sets upload.target='${target}'. Anything outside ` +
           `${JSON.stringify(LOCAL_ONLY_TARGETS)} sends a report containing full-page ` +
           `screenshots of the user's media library off this machine. ` +
           `'temporary-public-storage' publishes it to a PUBLIC Google endpoint and ` +
-          `prints the URL, and autorun does it even when assertions fail.`;
+          `prints the URL, and autorun does it even when assertions fail.${shadowHint}`;
     expect(LOCAL_ONLY_TARGETS, message).toContain(target);
   });
 
@@ -285,25 +347,76 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // Restoring the timestamp reads like a harmless "keep the history"
     // convenience, which is exactly why a comment asking people not to is the
     // weaker half of a rule that can be executed instead.
+    // AN ALLOWLIST, for the same reason the target check above is one, and
+    // this assertion was a denylist of a single token until review broke it
+    // twice. `%%DATE%%` is a first-class lhci token (upload.js expands any
+    // /%%([a-z]+)%%/gi and builds a `date` from the fetch time), so
+    // `report-%%PATHNAME%%-%%DATE%%.%%EXTENSION%%` writes a fresh set every
+    // calendar day and passed a `not.toContain('%%DATETIME%%')` check
+    // untouched. Someone restoring "a bit of history" reaches for %%DATE%%
+    // FIRST, precisely because the comment above argues against %%DATETIME%%.
+    //
+    // Both directions, per CLAUDE.md rule 11: a guard encoding an accepted
+    // exception must fail when the exception is violated AND when it becomes
+    // obsolete. Upward, a token that varies per run means reports accumulate
+    // forever in a gitignored directory with no clean target. Downward,
+    // dropping the per-URL discriminator collapses all four collected pages
+    // onto one filename -- runFilesystemTarget sorts representative runs last
+    // so duplicates overwrite -- and the Lighthouse evidence for three of the
+    // four pages silently disappears.
+    const pattern = upload.reportFilenamePattern ?? '%%HOSTNAME%%-%%PATHNAME%%-%%DATETIME%%.report.%%EXTENSION%%';
+    const RUN_INVARIANT_TOKENS = ['%%HOSTNAME%%', '%%PATHNAME%%', '%%HASH%%', '%%EXTENSION%%'];
+    const varying = (pattern.match(/%%[a-z]+%%/gi) ?? []).filter(
+      (t: string) => !RUN_INVARIANT_TOKENS.includes(t.toUpperCase()),
+    );
     expect(
-      upload.reportFilenamePattern ?? '%%DATETIME%%',
-      'upload.reportFilenamePattern includes %%DATETIME%% (or is unset, which ' +
-        'means lhci uses its datetime-stamped default). Every run then writes ' +
-        'NEW files instead of overwriting, nothing ever deletes them, and the ' +
-        'directory is gitignored so nobody sees it grow. Drop %%DATETIME%%, or ' +
-        'add a cleanup mechanism and change this guard deliberately.',
-    ).not.toContain('%%DATETIME%%');
+      varying,
+      `upload.reportFilenamePattern is '${pattern}' (unset means lhci's ` +
+        `datetime-stamped default), which contains ${JSON.stringify(varying)}. ` +
+        `Those vary between runs, so every run writes NEW files instead of ` +
+        `overwriting. collect's own cleanup only unlinks lhr-<digits>.json/.html, ` +
+        `names the upload step never writes, there is no clean target in the ` +
+        `Makefile, and the directory is gitignored so nobody watches it grow. ` +
+        `Use only ${JSON.stringify(RUN_INVARIANT_TOKENS)}, or add a cleanup ` +
+        `mechanism and change this guard deliberately.`,
+    ).toEqual([]);
+    expect(
+      pattern.toUpperCase(),
+      `upload.reportFilenamePattern is '${pattern}', which has no per-URL ` +
+        `discriminator. lighthouserc.js collects several URLs and ` +
+        `runFilesystemTarget lets duplicate filenames overwrite, so every page ` +
+        `would collapse onto one report and the evidence for all but the last ` +
+        `would vanish silently.`,
+    ).toContain('%%PATHNAME%%');
 
-    const resolvedOutputDir = path.resolve(REPO_ROOT, upload.outputDir as string) + '/';
-    const result = spawnSync('git', ['check-ignore', '-q', resolvedOutputDir], {
-      cwd: REPO_ROOT,
-    });
-    expect(
-      result.status,
-      `git does not ignore '${resolvedOutputDir}' (upload.outputDir=` +
-        `'${upload.outputDir}'). A routine 'git add -A' after a local ` +
-        `Lighthouse run would commit full-page screenshots of the operator's ` +
-        `media library. Check .gitignore for a missing '.lighthouseci/' entry.`,
-    ).toBe(0);
+    expectGitIgnores(
+      path.resolve(REPO_ROOT, upload.outputDir as string),
+      `upload.outputDir='${upload.outputDir}'`,
+    );
+  });
+
+  it('ignores the directory collect writes to, which outputDir cannot move', () => {
+    // THE DEFECT THIS CLOSES, and it is the fourth time this file has pinned a
+    // movable proxy instead of the thing itself. The assertion above resolves
+    // `upload.outputDir` and checks THAT is gitignored. But `outputDir` only
+    // governs the UPLOAD step. `collect` writes its own copy first, and it
+    // writes it to a path no configuration can move: @lhci/utils'
+    // saved-reports.js opens with `const LHCI_DIR = path.join(process.cwd(),
+    // '.lighthouseci')`, its `saveLHR(lhr, baseDir = LHCI_DIR)` writes both
+    // `lhr-<ts>.json` and `lhr-<ts>.html` -- the .html through
+    // getHTMLReportForLHR, which is the screenshot-bearing one -- and
+    // @lhci/cli's collect.js calls it as a bare `await saveLHR(lhr)` with no
+    // baseDir on every collected run.
+    //
+    // So pointing outputDir at some other already-gitignored directory and
+    // deleting `.lighthouseci/` from .gitignore left the whole suite green
+    // while `git check-ignore .lighthouseci/` returned 1. Measured, in review,
+    // twice independently. This assertion takes no argument from the config
+    // for exactly that reason: the path is a constant in the tool, so it is a
+    // constant here.
+    expectGitIgnores(
+      path.join(REPO_ROOT, '.lighthouseci'),
+      "@lhci/utils' hardcoded LHCI_DIR, which collect always writes to",
+    );
   });
 });

@@ -72,8 +72,18 @@ paths = [
   '''^\.e2e-[^/]*/''',
   '''^test_data/''',
 
-  # Lighthouse reports (T47/T65). Root-anchored like test_data/ above: this
-  # only ever exists at the repo root. NOT genuine secrets by pattern -- an
+  # Lighthouse reports (T47/T65). NOT root-anchored, deliberately, unlike
+  # test_data/ above: lhci resolves outputDir against the working directory,
+  # so `npm run test:lighthouse` from a subdirectory writes
+  # couchpotato/.lighthouseci/. That is the same reasoning that widened
+  # .dockerignore to **/.lighthouseci in the same round, and .gitignore's
+  # slash-less entry already matches at any depth -- this list was the odd one
+  # out. Measured with real gitleaks: a nested copy was REPORTED under the
+  # root-anchored form and skipped under this one, with a control finding
+  # present throughout so the probe discriminates. The ANCHORING note at the
+  # top of this file warns against (^|/) for generic names like reports/ that
+  # could shadow an application directory; nothing in this tree is called
+  # .lighthouseci, so the anchor bought nothing here. NOT genuine secrets by pattern -- an
   # HTML report embeds full-page screenshots, so gitleaks would never catch a
   # leak here regardless -- but it is personal data (the operator's media
   # library) and it is gitignored, so it belongs on this list for the same
@@ -81,7 +91,7 @@ paths = [
   # ignored but not allowlisted makes `make check-secrets` noisy exactly where
   # a developer is most likely to stop reading it. Confirm with
   # `git check-ignore -v .lighthouseci`.
-  '''^\.lighthouseci/''',
+  '''(^|/)\.lighthouseci/''',
 
   # Multi-lens harness run ledger (see .gitignore). Its JSON carries
   # high-entropy run and round identifiers that generic-api-key matches on

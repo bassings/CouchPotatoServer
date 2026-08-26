@@ -2270,6 +2270,57 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       before being fixed. The docker build context route does not, and is not
       claimed to.
 
+      **ROUND THREE, 2026-08-26: 3 Medium, 4 Low, no Critical or High, and
+      four of the seven were the same class again.** Every one is fixed, and
+      the class is worth naming because it is this repository's own recorded
+      recurring defect, `guards-that-check-a-stand-in`, appearing for the
+      fourth, fifth and sixth time in one file:
+
+      - **`collect` writes to a path no configuration can move, and the guard
+        only checked the configurable one.** `@lhci/utils`' saved-reports.js
+        hardcodes `LHCI_DIR = path.join(process.cwd(), '.lighthouseci')` and
+        `@lhci/cli`'s collect.js calls `saveLHR(lhr)` with no baseDir on every
+        run, writing the screenshot-bearing HTML there. `outputDir` governs
+        only the later upload copy. Measured: pointing `outputDir` at another
+        already-gitignored directory AND deleting `.lighthouseci/` from
+        .gitignore left the suite green. There is now a second, unconditional
+        assertion on the hardcoded path, which takes no argument from the
+        config precisely because the tool takes none either.
+      - **The retention guard was a denylist of one token**, twelve lines
+        after this file argues the allowlist case for `target`. `%%DATE%%` is
+        a first-class lhci token and passed a `not.toContain('%%DATETIME%%')`
+        check untouched, writing a fresh report set every calendar day. It is
+        now an allowlist of run-invariant tokens plus a requirement that a
+        per-URL discriminator survives, so it fails when the exception is
+        violated and when it becomes obsolete.
+      - **The gitleaks premise test checked half its own name.**
+        `test_allowlisted_runtime_paths_are_actually_gitignored_and_untracked`
+        asserted untracked and never asserted gitignored, and its corpus was a
+        hardcoded tuple that neither new allowlist entry was added to. Both
+        halves fixed. Recorded honestly: the first attempt to prove this by
+        mutation was NOT hostile, because `.git/info/exclude` still ignored
+        the probe file, so the test passed and looked correct. Removing both
+        ignore sources produced the red. That is CLAUDE.md rule 10's second
+        half in one incident.
+      - **`.gitleaks.toml`'s entry was root-anchored** on the premise the same
+        commit's `.dockerignore` change was written to refute, so a nested
+        report was reported by real gitleaks while the root one was skipped.
+      - **The exact pin on `@lhci/utils` did not deliver the lockstep its own
+        comment claimed**, because `@lhci/cli` was still caret-ranged and
+        depends on an exact utils, so a routine bump would nest a second copy
+        and this guard would read a different build of the loader than lhci
+        runs. Both pinned exactly, and the shape test now asserts the resolved
+        graph delivered it rather than trusting the pin.
+      - **The target failure message named the wrong file** in the one
+        scenario the round-two `findRcFile` fix exists to catch: it said
+        `lighthouserc.js` while the offender was a shadowing `.lighthouserc.js`,
+        sending the reader to a file that reads correctly. It now names the
+        resolved file and says shadowing is the likely cause.
+
+      Only one Low was accepted rather than fixed: the `.dockerignore` line
+      remains correct and unguarded, which is the deliberate outcome of
+      removing the matcher, is disclosed in three places, and is T65's.
+
       **SPEC BUG, same shape as M15 further down this file, and not fixed
       here.** T47 was planned, built, guarded and ticked without a single
       acceptance criterion from any lens. All ten review findings from this

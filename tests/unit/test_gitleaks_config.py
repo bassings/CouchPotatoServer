@@ -59,6 +59,9 @@ EXCLUDED_PATHS = [
     "reports/mutation/stryker.html",
     "coverage/index.html",
     ".claude/worktrees/agent-abc/couchpotato/api.py",
+    ".lighthouseci/report.html",
+    "couchpotato/.lighthouseci/report.html",
+    ".claude/harness-ledger.jsonl",
 ]
 
 
@@ -158,7 +161,19 @@ def test_allowlisted_runtime_paths_are_actually_gitignored_and_untracked():
     """
     import subprocess
 
-    for path in (".config", "data/config", ".e2e-data", "test_data"):
+    for path in (
+        ".config",
+        "data/config",
+        ".e2e-data",
+        "test_data",
+        # Added after review found both of these allowlisted with nothing
+        # asserting the premise. Deleting `.claude/harness-ledger.jsonl` from
+        # .gitignore left every suite green while .gitleaks.toml still told the
+        # scanner to skip it -- the gate silently stops gating, which is the
+        # one failure this whole test exists to make impossible.
+        ".lighthouseci",
+        ".claude/harness-ledger.jsonl",
+    ):
         target = REPO_ROOT / path
         if not target.exists():
             continue
@@ -168,8 +183,23 @@ def test_allowlisted_runtime_paths_are_actually_gitignored_and_untracked():
             capture_output=True,
             text=True, env=sanitized_git_env())
         assert result.returncode != 0, (
-            f"{path} is TRACKED by git but allowlisted from secret scanning — "
+            f"{path} is TRACKED by git but allowlisted from secret scanning -- "
             f"that combination hides real secrets. Untrack it or drop the allowlist entry."
+        )
+        # The other half of this test's own name, which it did not check until
+        # review pointed at it: untracked-today is not the premise, ignored-so-
+        # it-cannot-become-tracked is. A path that is merely untracked is one
+        # `git add -A` away from being allowlisted AND committed.
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", f"{path}/" if target.is_dir() else path],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True, env=sanitized_git_env())
+        assert ignored.returncode == 0, (
+            f"{path} is allowlisted from secret scanning but NOT gitignored, so "
+            f"a routine `git add -A` commits it and the scan stays silent about "
+            f"the file it just committed. Add it to .gitignore or drop the "
+            f"allowlist entry."
         )
 
 
