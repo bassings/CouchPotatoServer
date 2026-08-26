@@ -81,5 +81,11 @@ mutants/
 .scannerwork/
 coverage/
 
-# Lighthouse reports (local only — see lighthouserc.js upload block)
+# Lighthouse reports (local only -- see lighthouserc.js upload block)
 .lighthouseci/
+
+# Multi-lens harness run ledger. Telemetry for /optimise-cycle, written by
+# every plan-cycle / review-cycle / tdd-task run. Local-only by design; it was
+# ignored via .git/info/exclude, which is per-machine and travels with nobody,
+# so a fresh clone that runs the harness could commit it.
+.claude/harness-ledger.jsonl

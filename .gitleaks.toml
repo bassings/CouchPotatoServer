@@ -71,4 +71,24 @@ paths = [
   # is most likely to stop reading it.
   '''^\.e2e-[^/]*/''',
   '''^test_data/''',
+
+  # Lighthouse reports (T47/T65). Root-anchored like test_data/ above: this
+  # only ever exists at the repo root. NOT genuine secrets by pattern -- an
+  # HTML report embeds full-page screenshots, so gitleaks would never catch a
+  # leak here regardless -- but it is personal data (the operator's media
+  # library) and it is gitignored, so it belongs on this list for the same
+  # reason the block above states its own invariant: a directory that is
+  # ignored but not allowlisted makes `make check-secrets` noisy exactly where
+  # a developer is most likely to stop reading it. Confirm with
+  # `git check-ignore -v .lighthouseci`.
+  '''^\.lighthouseci/''',
+
+  # Multi-lens harness run ledger (see .gitignore). Its JSON carries
+  # high-entropy run and round identifiers that generic-api-key matches on
+  # sight -- measured: one finding on a three-line file, enough to turn
+  # `make check-secrets` red for anyone who has run the harness once. Same
+  # invariant as the block above: ignored but not allowlisted is how the scan
+  # becomes noise exactly where someone stops reading it. Confirm with
+  # `git check-ignore -v .claude/harness-ledger.jsonl`.
+  '''^\.claude/harness-ledger\.jsonl$''',
 ]
