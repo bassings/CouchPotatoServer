@@ -11,4 +11,4 @@ mutmut>=3.7.0
 # Used by scripts/check_test_traps.py to parse GitHub workflows with a real
 # parser instead of a hand-rolled one (two rounds of review found edge cases in
 # the hand-rolled version: `- ` inside a block scalar, comments in a shell: value).
-pyyaml>=6.0
+pyyaml>=6.0.3
