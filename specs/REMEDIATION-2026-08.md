@@ -2211,6 +2211,78 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       path `lhci autorun` never takes. The tick argued at length about the
       second and did not notice the first.
 
+      **UPDATE 2026-08-26, second review round: 1 High, 4 Medium, 5 Low, and
+      a real regression review measured.** Recorded honestly rather than as a
+      second "fixed":
+
+      - **The interim docker-context guard, `isExcludedFromDockerContext` in
+        `tests/unit/lighthouse_upload_stays_local.test.ts`, was REMOVED, not
+        revised a third time.** It had been wrong against a real `docker
+        build` three separate times (an unmodelled leading `/`, an unmodelled
+        `**`, and a `./`-prefixed negation the cleanup regex let through
+        silently). Per CLAUDE.md rule 11, three failed fixes in one area is
+        the shape being wrong, not the next patch being closer. The
+        `.dockerignore` entry it was trying to pin is correct and stays; only
+        the test claiming to guard it is gone. **The docker build context
+        route is therefore closed today but unguarded by any test.** T65
+        below now owns it outright.
+      - **The git route -- deleting `.lighthouseci/` from `.gitignore` --
+        was UNTESTED until this round.** The third assertion in the same
+        test file checked `upload.outputDir` with `toBeTruthy()`, which any
+        non-empty string satisfies, including one pointing somewhere git does
+        not ignore. It now resolves `outputDir` the way `lhci` resolves it
+        and asks `git check-ignore -q` directly, so a `git add -A` after a
+        local run staging screenshots into a PUBLIC repository's history now
+        fails the suite. This is the only one of the three routes whose
+        disclosure cannot be retracted once pushed.
+      - **The config-file resolution was hardcoded and wrong.** Both
+        `config()` and `resolvedUpload()` did `path.join(REPO_ROOT,
+        'lighthouserc.js')`, but `@lhci/utils`'s own `RC_FILE_NAMES` ranks
+        `.lighthouserc.cjs`, `lighthouserc.cjs` and `.lighthouserc.js` above
+        it, so a stray higher-ranked file at the repo root silently shadows
+        the real config while every assertion in this file stays green.
+        Measured with exactly that probe (target: 'temporary-public-storage'
+        in a root `.lighthouserc.js`). Both functions now resolve the config
+        via `@lhci/utils`'s own `findRcFile`, asking the tool rather than
+        modelling it -- the same principle the allowlist above already
+        applies to `target`.
+      - **Retention: `reportFilenamePattern` now excludes `%%DATETIME%%`.**
+        The default pattern gives every `lhci autorun` its own filename, and
+        `collect`'s own cleanup only unlinks `lhr-<digits>.*`, which
+        datetime-stamped upload output never matches -- so reports
+        accumulated unboundedly across invocations, unnoticed once this same
+        round gitignored the directory. Each run now overwrites the last
+        report per URL instead. Owner's decision: overwrite, not a `make
+        clean` target or a retention window, because there is no existing
+        cleanup mechanism to hook one into.
+      - `.dockerignore`'s entry is now `**/.lighthouseci`, not the
+        root-anchored `.lighthouseci/` this round's fix originally wrote.
+        Docker anchors a slash-less pattern at the context root while
+        `outputDir` resolves against wherever `lhci` was invoked from, so a
+        nested `couchpotato/.lighthouseci/` was reachable and untested.
+        Verified with a real `docker build` over a synthetic context: the
+        root-anchored form missed the nested copy while a control file stayed
+        present throughout, confirming the measurement could discriminate.
+
+      **Do not overstate what is now guarded.** The upload target, the
+      config-file identity, and the git-ignore route all have a real
+      assertion behind them, each verified to fail for the right reason
+      before being fixed. The docker build context route does not, and is not
+      claimed to.
+
+      **SPEC BUG, same shape as M15 further down this file, and not fixed
+      here.** T47 was planned, built, guarded and ticked without a single
+      acceptance criterion from any lens. All ten review findings from this
+      second round (F1 through F10) sit outside any AC, because there was
+      none to sit inside. T65 and T66, the two tasks this branch adds below,
+      are written the same AC-free way. M15 already named the fix
+      ("every PR from here runs `/plan-cycle` FIRST") and it was not applied
+      to this task. This is recorded as an observation on the convention, not
+      fixed: retrofitting `AC-<LENS>-<n>` IDs across the existing task list is
+      a separate decision the owner has not made, and doing it unasked here
+      would be exactly the kind of scope creep `lens-simplicity` exists to
+      veto at planning time.
+
 - [x] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: **merged #275** (`b1ef797a`, 2026-08-19) — **security, pre-existing**. **Ticked late, 2026-08-20:** the merge commit never ticked its own entry, so the box stayed open for a day while the work was on master — found by review of T52, not by me. Exactly the staleness T18's parenthesis predicts about itself, and the reason the needs-list is now a test rather than a promise
 
       Found by the security lens while reviewing T47, and it is the larger half
@@ -3180,6 +3252,31 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
 
       Prove it by deleting a real exclusion and watching it fail, and by
       confirming it does NOT fire on something legitimately absent from both.
+
+      **UPDATE 2026-08-26.** The paragraphs above describe `T47's interim
+      guard` in the present tense; it no longer exists. `isExcludedFromDockerContext`
+      failed a real `docker build` a third time (this time on a `./`-prefixed
+      negation the cleanup regex let through unmatched), and per CLAUDE.md
+      rule 11 it was removed rather than revised again -- see T47's own
+      UPDATE entry above for the measurement. **T65 now owns the docker build
+      context guard outright, not as a replacement for an interim one.** The
+      `.dockerignore` line itself is correct today (`**/.lighthouseci`,
+      root-anchoring fixed and verified against a real `docker build` in the
+      same round), but nothing in the repo asserts that it stays correct.
+      **The route is currently protected but unguarded**, and stays that way
+      until this task lands.
+
+      **Widen the scope by one list.** `.gitleaks.toml`'s allowlist carries
+      its own copy of "gitignored local-runtime directories," stated as an
+      invariant in its own header comment: a directory that is ignored but
+      not allowlisted makes `make check-secrets` noisy exactly where a
+      developer is most likely to stop reading it. `.lighthouseci` was added
+      there in the same round that added `.dockerignore`'s entry, by hand,
+      which is the fourth-time-by-hand pattern this task already exists to
+      stop -- it just hadn't been noticed missing from this second list yet.
+      The derived check this task builds should assert that each root-level
+      gitignored artefact directory appears in BOTH `.dockerignore` and the
+      `.gitleaks.toml` allowlist, not just the former.
 
 - [ ] T66: the UI fetches its typeface from Google on every page load — state: queued (no deps) — **privacy, availability, performance**
 
