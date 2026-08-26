@@ -104,6 +104,19 @@ module.exports = {
       // nothing announces that.
       target: 'filesystem',
       outputDir: './.lighthouseci',
+
+      // No %%DATETIME%% on purpose. The default pattern
+      // (%%HOSTNAME%%-%%PATHNAME%%-%%DATETIME%%.report.%%EXTENSION%%) gives
+      // every run its own filename, and `collect`'s own cleanup only unlinks
+      // `lhr-<digits>.json`/`.html` -- names this pattern never produces --
+      // so datetime-stamped reports accumulate forever across every
+      // `npm run test:lighthouse` invocation, unnoticed once T47 gitignored
+      // this directory. Dropping %%DATETIME%% makes each run overwrite the
+      // last report per URL instead, which caps the directory at roughly the
+      // 4 collected URLs x 2 files (html + json) plus manifest.json. Do not
+      // restore the timestamp as a "nice to keep history" convenience --
+      // there is no cleanup mechanism for it, per the audit that found this.
+      reportFilenamePattern: 'report-%%PATHNAME%%.%%EXTENSION%%',
     },
   },
 };

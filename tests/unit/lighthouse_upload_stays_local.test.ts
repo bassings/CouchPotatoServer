@@ -56,7 +56,31 @@
  *    Nothing in this repo or in `.github/` sets any `LHCI_*` variable, and lhci
  *    does not run in CI at all, so there is no live risk -- but a reader must
  *    not mistake this guard for one that cannot be overridden.
+ *
+ * 3. THE DOCKER BUILD CONTEXT ROUTE IS NOT GUARDED BY ANY TEST. `Dockerfile`'s
+ *    `COPY --chown=couchpotato:couchpotato . ${APP_DIR}/` copies the whole
+ *    build context, which is the filesystem, not the git index -- so a report
+ *    written to `.lighthouseci/` is invisible to git and fully visible to
+ *    docker unless `.dockerignore` excludes it. That exclusion exists today,
+ *    `.lighthouseci/` in `.dockerignore`, and it is correct today, verified
+ *    against a real `docker build`. It used to be pinned here by a hand-rolled
+ *    matcher, `isExcludedFromDockerContext`, which read and evaluated
+ *    `.dockerignore` itself rather than asking docker. That matcher was wrong
+ *    against a real `docker build` three separate times: first for not
+ *    modelling a leading `/`, then for not modelling `**`, and a third time
+ *    when `!./.lighthouseci/` -- a `./`-prefixed negation -- passed the
+ *    cleanup regex unmatched and left `excluded` at its previous value, a
+ *    false green in exactly the case its own failure message promised to
+ *    catch. Per CLAUDE.md rule 11, three failed fixes in one area means the
+ *    shape is wrong rather than the next patch being closer, so the matcher
+ *    and its test were removed rather than revised a fourth time. **A reader
+ *    must not conclude the docker route is tested: it is closed, but
+ *    unguarded.** T65 (`specs/REMEDIATION-2026-08.md`) owns writing the real
+ *    guard, which asks docker's own matching rules rather than modelling them
+ *    by hand -- the same lesson the git-ignore assertion below already
+ *    applies, via `git check-ignore`, to the git route.
  */
+import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -66,6 +90,43 @@ const require = createRequire(import.meta.url);
 
 /** Targets that write the report to this machine and send nothing anywhere. */
 const LOCAL_ONLY_TARGETS = ['filesystem'];
+
+/** The rc file this repo relies on, found the way `lhci` itself finds it.
+ *
+ * THE DEFECT THIS REPLACES: both this function and `resolvedUpload()` used to
+ * hardcode `path.join(REPO_ROOT, 'lighthouserc.js')`. `@lhci/utils`'s own
+ * `RC_FILE_NAMES` ranks `.lighthouserc.cjs`, `lighthouserc.cjs` and
+ * `.lighthouserc.js` ABOVE plain `lighthouserc.js`, and `findRcFile` returns
+ * the first of those that exists -- so a stray `.lighthouserc.js` at the repo
+ * root shadows the real config entirely. Measured: creating one at the root
+ * with `target: 'temporary-public-storage'` left every assertion in this file
+ * green, because the hardcoded path kept reading the config that was never
+ * going to run. That is the exact class this file exists to close -- ask the
+ * tool which file wins, do not hardcode an assumption about it.
+ */
+function findConfigFile(): string {
+  // `@lhci/utils/src/lighthouserc.js`: NOTE the `src/` path. That package's
+  // own package.json declares no `exports`, `files` or `main` field, so
+  // `src/` is not a published API surface -- nothing stops a future
+  // `@lhci/utils` release from renaming or moving this file. If that happens
+  // it reddens `npm run test:unit` (a `require` failure, MODULE_NOT_FOUND)
+  // rather than the optional `npm run test:lighthouse` script, which is the
+  // point: pinned exactly in package.json alongside `@lhci/cli` (see F7 in
+  // specs/REMEDIATION-2026-08.md) so both packages read the same build of
+  // this loader, but the import path itself is still unofficial and worth a
+  // reader knowing that before "fixing" a failure here by guessing a new path.
+  const { findRcFile } = require('@lhci/utils/src/lighthouserc.js');
+  const rcFile = findRcFile(REPO_ROOT);
+  expect(
+    rcFile,
+    `@lhci/utils' own resolver (findRcFile) found no lighthouserc file under ` +
+      `${REPO_ROOT}. Either lighthouserc.js was renamed/removed, or a ` +
+      `higher-ranked name (.lighthouserc.cjs, lighthouserc.cjs, ` +
+      `.lighthouserc.js -- see RC_FILE_NAMES) is shadowing it, which is the ` +
+      `exact failure this resolver exists to catch rather than hide.`,
+  ).toBeDefined();
+  return rcFile as string;
+}
 
 function config() {
   // Loaded, not read as text: a string search would pass on a commented-out
@@ -78,7 +139,7 @@ function config() {
   // unaffected -- `npm run test:unit` is `vitest run`, a fresh process each
   // time -- but verify mutations that way, or you will conclude the guard
   // works when it never re-read the file.
-  return require(path.join(REPO_ROOT, 'lighthouserc.js'));
+  return require(findConfigFile());
 }
 
 /** What `lhci` itself will use, after merging every key shape it accepts.
@@ -102,80 +163,16 @@ function config() {
  * Note this imports @lhci/utils, which package.json declares alongside
  * @lhci/cli. If lhci is ever removed from the project (T41 debated exactly
  * that), this becomes MODULE_NOT_FOUND rather than a clear failure -- delete
- * this file in the same change.
+ * this file in the same change. On the `src/` import path itself, see the
+ * comment in findConfigFile() above.
  */
 function resolvedUpload(): {target?: string; outputDir?: string} {
   const { loadAndParseRcFile } = require('@lhci/utils/src/lighthouserc.js');
-  // Absolute path: the loader resolves `extends` relative to the rc file, and
-  // a relative path silently yields an empty config rather than throwing.
-  return loadAndParseRcFile(path.join(REPO_ROOT, 'lighthouserc.js'));
-}
-
-/** Docker's ignore semantics, not a string search: last matching pattern wins,
- *  and `!` re-includes.
- *
- *  This is a SUBSET of docker's matcher, and the important property is that it
- *  KNOWS where the subset ends. An earlier version claimed to be a subset while
- *  answering confidently outside it, which is worse than either being complete
- *  or refusing. Review measured six disagreements with a real `docker build`,
- *  from one root cause -- an unmodelled leading `/` and an unmodelled `**` --
- *  and the direction that matters is the negation one: a pattern this could not
- *  parse simply failed to match, leaving `excluded` at its previous value, so
- *  an unrecognised `!` re-include read as "nothing re-included". A FALSE GREEN,
- *  in precisely the case the guard's own failure message promises to catch.
- *  `!/.lighthouseci/` is not exotic; it is how someone would re-include reports
- *  for a perf job.
- *
- *  So: leading `/` is handled, `**` is handled in every position, and anything
- *  still outside the subset THROWS rather than guessing. Extend it or use T65,
- *  but do not let it answer quietly. */
-function isExcludedFromDockerContext(relPath: string): boolean {
-  const { readFileSync } = require('node:fs');
-  const patterns: string[] = readFileSync(path.join(REPO_ROOT, '.dockerignore'), 'utf8')
-    .split('\n')
-    .map((line: string) => line.trim())
-    .filter((line: string) => line && !line.startsWith('#'));
-
-  const escape = (segment: string) =>
-    segment
-      .replace(/[.+^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '[^/]*')
-      .replace(/\?/g, '[^/]');
-
-  const STAR2 = '@@DOUBLESTAR@@';
-
-  const matches = (pattern: string) => {
-    if (pattern.includes('[')) {
-      throw new Error(
-        '.dockerignore pattern ' + JSON.stringify(pattern) + ' uses a ' +
-          'character class, which this matcher does not model. Extend it, or ' +
-          'move this check to the general mechanism recorded as T65 -- do not ' +
-          'let it answer outside its subset.',
-      );
-    }
-    // A leading `/` anchors to the context root, which this regex already is.
-    const cleaned = pattern.replace(/^\/+/, '').replace(/\/+$/, '');
-    if (cleaned === '') return true;
-
-    const source = cleaned
-      .split('/')
-      .map(segment => (segment === '**' ? STAR2 : escape(segment)))
-      .join('/')
-      // `**/x` -> optional leading dirs; `x/**` -> everything beneath; bare `**`
-      .split(STAR2 + '/').join('(?:.*/)?')
-      .split('/' + STAR2).join('(?:/.*)?')
-      .split(STAR2).join('.*');
-
-    // A directory entry also excludes everything beneath it.
-    return new RegExp('^' + source + '(?:/.*)?$').test(relPath);
-  };
-
-  let excluded = false;
-  for (const raw of patterns) {
-    const negated = raw.startsWith('!');
-    if (matches(negated ? raw.slice(1) : raw)) excluded = !negated;
-  }
-  return excluded;
+  // Absolute path via findConfigFile(): the loader resolves `extends` relative
+  // to the rc file, and a relative path silently yields an empty config
+  // rather than throwing. findRcFile() already returns an absolute path when
+  // given one (REPO_ROOT), so this stays absolute without hardcoding it.
+  return loadAndParseRcFile(findConfigFile());
 }
 
 describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
@@ -188,10 +185,13 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // check passed on the one condition its own message named.
     expect(ci.collect?.url?.length, 'lighthouserc.js collects no URLs').toBeTruthy();
     // An absent upload block is SAFE, not dangerous: autorun only uploads
-    // `if (ciConfiguration.upload)` (@lhci/cli/src/autorun/autorun.js:143), and
-    // nothing defaults it. This pins the config's SHAPE so the guard below has
-    // something to check -- it is not protection against a missing default,
-    // which was how an earlier version of this comment described it, wrongly.
+    // guarded by its `if (ciConfiguration.upload)` check in
+    // `@lhci/cli/src/autorun/autorun.js` (greppable, not a line number -- see
+    // .gitleaks.toml's own rule against citations that go stale on a
+    // dependency bump), and nothing defaults it. This pins the config's SHAPE
+    // so the guard below has something to check -- it is not protection
+    // against a missing default, which was how an earlier version of this
+    // comment described it, wrongly.
     expect(ci.upload, 'lighthouserc.js has no `upload` block to check').toBeTruthy();
   });
 
@@ -206,14 +206,26 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // `extends` and any key shape added later, for the same reason the
     // allowlist below beats a denylist: do not hardcode a model of the tool.
     const target = resolvedUpload().target;
-    expect(
-      LOCAL_ONLY_TARGETS,
-      `lighthouserc.js sets upload.target='${target}'. Anything outside ` +
-        `${JSON.stringify(LOCAL_ONLY_TARGETS)} sends a report containing full-page ` +
-        `screenshots of the user's media library off this machine. ` +
-        `'temporary-public-storage' publishes it to a PUBLIC Google endpoint and ` +
-        `prints the URL, and autorun does it even when assertions fail.`,
-    ).toContain(target);
+    // An undefined target means there is no `upload` block at all, which is
+    // SAFE (see the shape test above) -- autorun only uploads
+    // `if (ciConfiguration.upload)`. Without this special case the generic
+    // message below told whoever deleted that block their library was being
+    // published, which is false and reads as a reason to edit the guard
+    // rather than restore the block it anchors on. Say what actually
+    // happened instead.
+    const message =
+      target === undefined
+        ? `lighthouserc.js has no upload.target because the upload block is ` +
+          `absent entirely -- that is SAFE (autorun does not upload without ` +
+          `one), but this guard needs the block present as an anchor for the ` +
+          `assertions above and below it. Restore the upload block rather ` +
+          `than editing this guard.`
+        : `lighthouserc.js sets upload.target='${target}'. Anything outside ` +
+          `${JSON.stringify(LOCAL_ONLY_TARGETS)} sends a report containing full-page ` +
+          `screenshots of the user's media library off this machine. ` +
+          `'temporary-public-storage' publishes it to a PUBLIC Google endpoint and ` +
+          `prints the URL, and autorun does it even when assertions fail.`;
+    expect(LOCAL_ONLY_TARGETS, message).toContain(target);
   });
 
   it('says where the report goes when it stays local', () => {
@@ -222,41 +234,76 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     const upload = resolvedUpload();
     // Via the allowlist, not a hardcoded 'filesystem': the moment a second
     // local-only target is added, hardcoding would silently stop checking
-    // outputDir for it -- and outputDir is load-bearing. lhci resolves
-    // `options.outputDir || ''` against the CWD (upload.js:535), so a missing
-    // one dumps reports into the repository root, where neither .gitignore's
-    // nor .dockerignore's `.lighthouseci/` entry reaches them.
+    // outputDir for it -- and outputDir is load-bearing. lhci resolves a
+    // missing one against the CWD via `path.resolve(process.cwd(),
+    // options.outputDir || '')` in `@lhci/cli/src/upload/upload.js` (greppable
+    // symbol, not a line number that moves on the next `@lhci/cli` bump), so a
+    // missing one dumps reports into the repository root, where neither
+    // .gitignore's nor .dockerignore's `.lighthouseci/` entry reaches them.
     if (!LOCAL_ONLY_TARGETS.includes(upload.target as string)) return;
     expect(
       upload.outputDir,
       'upload.target is filesystem but no outputDir is set, so reports land ' +
         'wherever lhci defaults to and nobody knows to clean them up',
     ).toBeTruthy();
-  });
 
-  it('cannot reach a docker image either', () => {
-    // The third escape route, and one an earlier comment in this file denied.
-    // `.gitignore` keeps reports out of the repository and `filesystem` keeps
-    // them off the network -- but `Dockerfile:117` copies the whole build
-    // CONTEXT, which is the filesystem rather than the git index. Review
-    // measured reports inside a locally built image, with `coverage/`
-    // correctly absent as a control, so the measurement discriminates.
+    // THE GIT ROUTE. Until this assertion existed, deleting `.lighthouseci/`
+    // from .gitignore left the whole suite green: `outputDir` being truthy
+    // says nothing about whether git ignores where it points. Of the three
+    // escape routes this file guards, this is the only one whose disclosure
+    // cannot be retracted -- the repository is public, so a routine
+    // `git add -A` after a local Lighthouse run stages full-page screenshots
+    // of the operator's media library into history, forks and caches, none of
+    // which a later commit can undo. gitleaks will not catch it either,
+    // because screenshots are not secrets by pattern.
     //
-    // This EVALUATES .dockerignore rather than searching it for a string. The
-    // string version was wrong in BOTH directions, each proved with a real
-    // docker build: a later `!.lighthouseci/` negation left the reports in the
-    // image while the guard passed, and the equally valid spellings
-    // `.lighthouseci` and `**/.lighthouseci` failed the guard while docker
-    // excluded them correctly. The false red matters as much as the false
-    // green -- a guard that reddens on a working config teaches people to edit
-    // the guard, which is how the vacuous assertions this file has already
-    // shed came to be written.
+    // Resolved to an absolute path against REPO_ROOT the way lhci resolves it
+    // (see the comment above), and checked with git itself via
+    // `git check-ignore -q` rather than modelled by hand -- KNOWN LIMIT 3 at
+    // the top of this file is what a hand-rolled ignore matcher costs, three
+    // times over, against a real `docker build`. Asking git the same way asks
+    // the only oracle that cannot disagree with itself.
+    //
+    // MEASURED, and load-bearing: `.gitignore`'s `.lighthouseci/` entry is a
+    // directory-only pattern, and `git check-ignore` can only tell a
+    // directory-only pattern applies to a path that either exists on disk as
+    // a directory, or is spelled with a trailing slash in the argument. The
+    // first run of this suite has never produced a report yet, so the
+    // directory does not exist -- passing the bare path made this assertion
+    // fail against a genuinely-correct .gitignore (a false red), which is the
+    // exact failure mode this file's docstring warns teaches people to edit
+    // the guard. A trailing slash makes the check correct regardless of
+    // whether `.lighthouseci/` has been created by a prior run.
+    // RETENTION, and the reason this is an assertion rather than the comment
+    // it started as. `reportFilenamePattern` decides whether a run overwrites
+    // the last one or writes beside it. The lhci DEFAULT includes
+    // `%%DATETIME%%`, and `collect`'s own cleanup only unlinks
+    // `lhr-<digits>.json`/`.html`, names the upload step never writes -- so
+    // the default accumulates every report of every run forever, in a
+    // directory this same change gitignored out of `git status`, on a home
+    // server, with no `clean` target anywhere in the Makefile to empty it.
+    // Restoring the timestamp reads like a harmless "keep the history"
+    // convenience, which is exactly why a comment asking people not to is the
+    // weaker half of a rule that can be executed instead.
     expect(
-      isExcludedFromDockerContext('.lighthouseci/report.html'),
-      'a Lighthouse report is NOT excluded from the docker build context, so ' +
-        'a local `docker build` bakes full-page screenshots of the media ' +
-        'library into the image. Check .dockerignore for a missing ' +
-        '`.lighthouseci/` entry, or a later `!` negation that re-includes it',
-    ).toBe(true);
+      upload.reportFilenamePattern ?? '%%DATETIME%%',
+      'upload.reportFilenamePattern includes %%DATETIME%% (or is unset, which ' +
+        'means lhci uses its datetime-stamped default). Every run then writes ' +
+        'NEW files instead of overwriting, nothing ever deletes them, and the ' +
+        'directory is gitignored so nobody sees it grow. Drop %%DATETIME%%, or ' +
+        'add a cleanup mechanism and change this guard deliberately.',
+    ).not.toContain('%%DATETIME%%');
+
+    const resolvedOutputDir = path.resolve(REPO_ROOT, upload.outputDir as string) + '/';
+    const result = spawnSync('git', ['check-ignore', '-q', resolvedOutputDir], {
+      cwd: REPO_ROOT,
+    });
+    expect(
+      result.status,
+      `git does not ignore '${resolvedOutputDir}' (upload.outputDir=` +
+        `'${upload.outputDir}'). A routine 'git add -A' after a local ` +
+        `Lighthouse run would commit full-page screenshots of the operator's ` +
+        `media library. Check .gitignore for a missing '.lighthouseci/' entry.`,
+    ).toBe(0);
   });
 });
