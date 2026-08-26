@@ -17,7 +17,7 @@ dulwich==1.2.12
 # Network
 requests==2.34.2
 certifi==2026.7.22
-chardet==7.4.3
+chardet==7.6.0
 
 # Parsing
 beautifulsoup4==4.15.0
