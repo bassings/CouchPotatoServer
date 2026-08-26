@@ -13,7 +13,9 @@ docker-compose.yml
 # T1.7/AC-SEC-10: per-worker E2E data dirs (.e2e-w<N>-data/) hold a live
 # config.ini with a real api_key, same as .config/ above. Without this,
 # `docker build` (the normal docker-compose.dev.yml path) bakes it into a
-# layer -- Dockerfile:117 (COPY . ${APP_DIR}) copies the whole context.
+# layer -- the Dockerfile's `COPY --chown=couchpotato:couchpotato .
+# ${APP_DIR}/` line (greppable symbol, not a line number that moves on every
+# Dockerfile edit) copies the whole context.
 .e2e-*
 .openclaw/
 .design-sync/
@@ -97,8 +99,11 @@ test_data/
 test_*.py
 
 # Scan and coverage outputs. Gitignored, so invisible to git -- but the build
-# context is the filesystem, not the index, and Dockerfile:117 copies the whole
-# context in. Without these, anyone who runs the documented Sonar workflow
+# context is the filesystem, not the index, and the Dockerfile's `COPY
+# --chown=couchpotato:couchpotato . ${APP_DIR}/` line copies the whole context
+# in (greppable symbol, not a line number -- this comment said Dockerfile:117
+# while a sibling block said Dockerfile:72, and one of the two was stale).
+# Without these, anyone who runs the documented Sonar workflow
 # bakes their coverage reports and scanner metadata into the runtime image.
 coverage/
 coverage.xml
@@ -111,9 +116,28 @@ htmlcov/
 # 5050 -- the production port -- so these are pictures of the operator's own
 # media library. T47 stopped `lhci` publishing them to a public Google endpoint
 # and gitignored the directory, and review then measured that a local
-# `docker build` still baked them into the image through Dockerfile:117. Two
-# routes closed and a third left open is not a fix.
+# `docker build` still baked them into the image through the `COPY
+# --chown=couchpotato:couchpotato . ${APP_DIR}/` line in the Dockerfile
+# (greppable symbol, not a line number -- see .gitleaks.toml's own rule
+# against citations that go stale). Two routes closed and a third left open is
+# not a fix.
 #
 # Note `collect` wrote reports here BEFORE T47 changed anything, so this line
 # closes a pre-existing path, not one T47 created.
-.lighthouseci/
+#
+# `**/.lighthouseci`, NOT the root-anchored `.lighthouseci/` this line used to
+# be. lhci resolves `outputDir` against the CWD, and the CWD depends on where
+# `npm run test:lighthouse` is invoked from, so a nested
+# `couchpotato/.lighthouseci/` is just as reachable as a root one. Measured
+# with a real `docker build` over a synthetic context: the root-anchored form
+# excluded a root-level `.lighthouseci/report.html` but left a nested
+# `couchpotato/.lighthouseci/report.html` in the image (a control file present
+# throughout confirmed the measurement discriminates); `**/.lighthouseci`
+# excluded both.
+#
+# NOT PINNED BY ANY TEST. A hand-rolled matcher tried to check this line from
+# tests/unit/lighthouse_upload_stays_local.test.ts and was removed after being
+# measured wrong against a real docker build three times -- see that file's
+# KNOWN LIMITS. T65 (specs/REMEDIATION-2026-08.md) owns writing the real
+# guard; until it lands, changing or deleting this line breaks nothing red.
+**/.lighthouseci
