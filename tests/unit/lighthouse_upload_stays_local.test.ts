@@ -112,11 +112,23 @@ function resolvedUpload(): {target?: string; outputDir?: string} {
 }
 
 /** Docker's ignore semantics, not a string search: last matching pattern wins,
- *  and `!` re-includes. Deliberately a SUBSET -- directory entries with `*`,
- *  `?` and `**` -- because the general check across every ignored artefact is
- *  T65's job. What it must not do is answer a different question from the one
- *  it is asked, which is exactly what the string version did, in both
- *  directions and both proved with real docker builds. */
+ *  and `!` re-includes.
+ *
+ *  This is a SUBSET of docker's matcher, and the important property is that it
+ *  KNOWS where the subset ends. An earlier version claimed to be a subset while
+ *  answering confidently outside it, which is worse than either being complete
+ *  or refusing. Review measured six disagreements with a real `docker build`,
+ *  from one root cause -- an unmodelled leading `/` and an unmodelled `**` --
+ *  and the direction that matters is the negation one: a pattern this could not
+ *  parse simply failed to match, leaving `excluded` at its previous value, so
+ *  an unrecognised `!` re-include read as "nothing re-included". A FALSE GREEN,
+ *  in precisely the case the guard's own failure message promises to catch.
+ *  `!/.lighthouseci/` is not exotic; it is how someone would re-include reports
+ *  for a perf job.
+ *
+ *  So: leading `/` is handled, `**` is handled in every position, and anything
+ *  still outside the subset THROWS rather than guessing. Extend it or use T65,
+ *  but do not let it answer quietly. */
 function isExcludedFromDockerContext(relPath: string): boolean {
   const { readFileSync } = require('node:fs');
   const patterns: string[] = readFileSync(path.join(REPO_ROOT, '.dockerignore'), 'utf8')
@@ -130,19 +142,32 @@ function isExcludedFromDockerContext(relPath: string): boolean {
       .replace(/\*/g, '[^/]*')
       .replace(/\?/g, '[^/]');
 
+  const STAR2 = '@@DOUBLESTAR@@';
+
   const matches = (pattern: string) => {
-    const segments = pattern.replace(/\/+$/, '').split('/');
-    let source = '^';
-    segments.forEach((segment, i) => {
-      if (segment === '**') {
-        source += '(?:.*/)?';
-        return;
-      }
-      source += escape(segment);
-      if (i < segments.length - 1) source += '/';
-    });
+    if (pattern.includes('[')) {
+      throw new Error(
+        '.dockerignore pattern ' + JSON.stringify(pattern) + ' uses a ' +
+          'character class, which this matcher does not model. Extend it, or ' +
+          'move this check to the general mechanism recorded as T65 -- do not ' +
+          'let it answer outside its subset.',
+      );
+    }
+    // A leading `/` anchors to the context root, which this regex already is.
+    const cleaned = pattern.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (cleaned === '') return true;
+
+    const source = cleaned
+      .split('/')
+      .map(segment => (segment === '**' ? STAR2 : escape(segment)))
+      .join('/')
+      // `**/x` -> optional leading dirs; `x/**` -> everything beneath; bare `**`
+      .split(STAR2 + '/').join('(?:.*/)?')
+      .split('/' + STAR2).join('(?:/.*)?')
+      .split(STAR2).join('.*');
+
     // A directory entry also excludes everything beneath it.
-    return new RegExp(source + '(?:/.*)?$').test(relPath);
+    return new RegExp('^' + source + '(?:/.*)?$').test(relPath);
   };
 
   let excluded = false;
