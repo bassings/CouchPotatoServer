@@ -35,7 +35,9 @@ automatic beta runs unattended.
 - [x] T3: FEAT-011a, the operator replace decision and destination resolution — state: built (ba1b652a)
 - [x] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: built (fd396423)
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: partial (700cb61e: trigger button only)
-- [ ] T5b: FEAT-011c, the replacement modal and candidate listing — state: building (needs: T5)
+- [ ] T5b: FEAT-011c, the replacement modal — state: partial (2a405d67: dialog shell and wording, no data)
+- [ ] T5d: FEAT-011c, the server-side candidate listing route — state: building
+- [ ] T5e: FEAT-011c, wire the modal to the listing and the submit — state: queued (needs: T5d)
 - [ ] T5c: FEAT-011c, progress, second-activation refusal, a11y and mobile specs — state: queued (needs: T5b)
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
@@ -246,3 +248,23 @@ changes for the operator. **Then stop and hand it over.**
   accessibility). T5b launched.
   Not counted as a rework round: nothing built was wrong. Rework rounds: T5 0,
   T5b 0, T5c 0. Armed: T5b's workflow plus the heartbeat.
+- **Tick 11, 2026-08-31.** T5b reported DONE; PARTIAL again, and this time the
+  cause is diagnosable rather than just "too big".
+  Commit `2a405d67` delivers a real design-system dialog: teleported, focus
+  trapped, focus returned to the trigger on close, and it names what will be
+  DESTROYED ("current library copy and put the file you..."). That half is
+  genuinely good and was the highest-risk wording in the feature.
+  What is absent: candidate loading, the submit, and the server listing route.
+  `operatorReplaceModal()` has `isOpen`, `open`, `close` and `trapFocus`, and
+  nothing else. The dialog opens onto no data and cannot submit.
+  **ROOT CAUSE, and it is mine: I pointed the task at
+  `test_operator_replace_trigger_ui_template.py`, a Jinja RENDER-level pattern.
+  A render test cannot exercise a fetch, a route, or a confinement rule.** The
+  agent built precisely what its tests could verify, which was markup, and
+  passed a full gate doing it. Splitting the task at tick 10 was the right
+  move for the wrong reason: the size was not the problem, the TEST TIER was.
+  Correction applied to the remaining work: every task now names its test tier
+  explicitly, and T5d's prompt says in terms why a render test would let a
+  route that returns nothing ship green.
+  Third partial, still not a rework round: nothing built is wrong.
+  Rework rounds: T5b 0, T5d 0, T5e 0.
