@@ -416,16 +416,68 @@
                   </button>
                 </div>
 
-                <!-- Body: the destructive confirmation. The candidate
-                     picker this text will sit above lands in a later
-                     step -- see the comment on the wrapping x-data
-                     component above. -->
+                <!-- Body: the destructive confirmation, plus the
+                     candidate picker (FEAT-011 step two). Candidates are
+                     offered as role="radio" BUTTONS, never as a text
+                     entry field: test_operator_replace_modal_ui_template
+                     .py's TestOperatorReplaceModalOffersNoFreeTextPathEntry
+                     already pins zero form-input elements anywhere inside
+                     this modal, and a button carrying role="radio" plus
+                     aria-checked satisfies getByRole('radio', ...) with
+                     no free-text entry surface at all (AC-SEC-1). -->
                 <div class="px-4 py-4 text-sm text-cp-text">
                   <p>
                     Replacing <strong>{{ title }}</strong> will permanently
                     delete its current library copy and put the file you
                     choose in its place. This cannot be undone.
                   </p>
+
+                  <!-- Loading: mirrors the spinner grammar at modals.html:95-101. -->
+                  <template x-if="loading">
+                    <div class="flex items-center gap-2 text-xs text-cp-muted py-4">
+                      <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                      </svg>
+                      <span>Looking for files to replace with…</span>
+                    </div>
+                  </template>
+
+                  <!-- Error: the listing REQUEST itself failed -- distinct
+                       from a listing that succeeded with nothing in it. -->
+                  <template x-if="!loading && loadError">
+                    <p data-testid="operator-replace-error" class="text-xs text-cp-danger py-4">
+                      Could not check the download folder for files to
+                      replace with. Try again in a moment.
+                    </p>
+                  </template>
+
+                  <!-- Empty: the listing succeeded and found nothing. -->
+                  <template x-if="!loading && !loadError && candidates.length === 0">
+                    <p data-testid="operator-replace-empty" class="text-xs text-cp-muted py-4">
+                      No files were found in the download folder to
+                      replace this with.
+                    </p>
+                  </template>
+
+                  <!-- Populated: one radio-role button per candidate,
+                       named after the file verbatim so the value sent
+                       back on confirm is exactly what the server offered. -->
+                  <template x-if="!loading && !loadError && candidates.length > 0">
+                    <div role="radiogroup" aria-label="Choose a replacement file" class="mt-3 max-h-[400px] overflow-y-auto space-y-1">
+                      <template x-for="candidate in candidates" :key="candidate">
+                        <button type="button"
+                                role="radio"
+                                :aria-checked="selected === candidate ? 'true' : 'false'"
+                                @click="selected = candidate"
+                                :title="candidate"
+                                :class="selected === candidate ? 'bg-cp-accent/10 border-cp-accent/30' : 'border-white/[0.05] hover:bg-white/[0.03]'"
+                                class="w-full text-left px-2 py-1.5 rounded-md border text-xs truncate">
+                          <span x-text="candidate"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
                 </div>
 
                 <!-- Footer -->
@@ -434,6 +486,25 @@
                           class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">
                     Cancel
                   </button>
+                  <!-- aria-disabled, not `disabled`, for the in-flight
+                       state (same fix as confirmRestore() above): the
+                       browser blurs a focused element the moment it
+                       becomes disabled, and replacing() runs while this
+                       control is focused. `:disabled="!selected"` still
+                       uses the real attribute -- nothing is focused to
+                       lose before a candidate is chosen. -->
+                  <template x-if="!loading && !loadError && candidates.length > 0">
+                    <button data-testid="operator-replace-confirm"
+                            @click="confirmReplace()"
+                            :class="replacing ? 'opacity-50 cursor-wait' : ''"
+                            :aria-busy="replacing ? 'true' : 'false'"
+                            :aria-disabled="replacing ? 'true' : 'false'"
+                            :disabled="!selected"
+                            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 disabled:opacity-50">
+                      <span x-show="!replacing">Replace file</span>
+                      <span x-show="replacing">Replacing…</span>
+                    </button>
+                  </template>
                 </div>
               </div>
             </div>
@@ -554,27 +625,117 @@ function cpSwap(url, target, swap) {
 // convention as movieInfoModal() (partials/movie_info_modal.html), and
 // trapFocus() is copied from the same source rather than re-derived, since
 // both dialogs share the same header/body/footer shape
-// (docs/design-system/CONFORMANCE.md:38). The candidate list and the
-// submission call into the existing operatorReplaceView entry point are
-// follow-up steps against this shell -- see the comment on the trigger's
-// wrapping x-data in the markup above.
+// (docs/design-system/CONFORMANCE.md:38).
+//
+// The candidate list and the submit call, added here, wire to the existing
+// renamer.operator_candidates / renamer.operator_replace entry points
+// (couchpotato/core/plugins/renamer/main.py) -- client-side data flow only,
+// per the task this shipped against. Progress polling beyond the single
+// re-fetch on success, and every accessibility assertion, are separate
+// tasks against this same shell.
 function operatorReplaceModal() {
   return {
     isOpen: false,
     triggerEl: null,
+    loading: false,
+    loadError: false,
+    candidates: [],
+    selected: '',
+    replacing: false,
 
     open() {
       this.triggerEl = this.$refs.replaceTriggerBtn;
       this.isOpen = true;
+      this.selected = '';
+      this.candidates = [];
+      this.loadError = false;
+      this.replacing = false;
       this.$nextTick(() => {
         document.getElementById('operator-replace-modal-close')?.focus();
       });
+      this.loadCandidates();
     },
 
     close() {
       this.isOpen = false;
       if (this.triggerEl) {
         this.triggerEl.focus();
+      }
+    },
+
+    notify(message, type) {
+      window.dispatchEvent(new CustomEvent('cp-toast', { detail: { message, type } }));
+    },
+
+    // Point 1: fetch the candidate list, offered only as a choice from
+    // this server-produced set (the picker's role="radio" buttons above)
+    // -- never a free-text path the operator could type or edit.
+    async loadCandidates() {
+      this.loading = true;
+      this.loadError = false;
+      try {
+        const res = await fetch(CP.apiBase + '/renamer.operator_candidates/');
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Could not list candidates');
+        }
+        this.candidates = data.candidates || [];
+      } catch (e) {
+        console.error('Failed to load replacement candidates:', e);
+        this.loadError = true;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // Point 2 + point 6: sends exactly media_id and the chosen name back
+    // verbatim -- nothing else, and never a client-constructed path. The
+    // re-entry guard (`this.replacing`) means a second activation while
+    // one is in flight is refused outright rather than queued, matching
+    // the per-route lock the server side already refuses on
+    // (OPERATOR_REFUSED_ALREADY_RUNNING).
+    async confirmReplace() {
+      if (this.replacing || !this.selected) {
+        return;
+      }
+      this.replacing = true;
+      try {
+        const url = CP.apiBase + '/renamer.operator_replace/?media_id={{ movie_id }}&source=' + encodeURIComponent(this.selected);
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.success) {
+          this.notify('Replacement started', 'info');
+          // Point 5: re-fetch the detail body rather than
+          // location.reload(), which would tear down base.html's live
+          // region announcers before the outcome could be spoken.
+          // Same cpSwap()/heading-focus pattern as confirmRestore()
+          // above; if the swap succeeds this whole component (this
+          // modal included) is replaced and `replacing` never matters
+          // again.
+          try {
+            await cpSwap('{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, '#movie-detail-container', 'innerHTML');
+            this.$nextTick(() => {
+              const heading = document.querySelector('#movie-detail-container h1');
+              if (heading) {
+                heading.setAttribute('tabindex', '-1');
+                heading.focus();
+              }
+            });
+          } catch (swapError) {
+            console.error('Failed to refresh after replacement:', swapError);
+            this.replacing = false;
+            this.notify('Replacement started, but the page could not refresh — reload to see it', 'error');
+          }
+        } else {
+          this.replacing = false;
+          this.notify(data.error || 'Could not start the replacement', 'error');
+        }
+      } catch (e) {
+        this.replacing = false;
+        this.notify('Could not start the replacement', 'error');
       }
     },
 

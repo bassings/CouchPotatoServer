@@ -286,6 +286,19 @@ REVIEW_DESTRUCTIVE_IMDB_ID = 'tt9999908'
 #: One landed release each. The Mark Done / Mark Failed buttons act on a
 #: specific release, so a review-gate movie with none is not a real fixture
 #: for this gate.
+#:
+#: FEAT-011: both releases also carry `files.movie` now. `movie_detail.html`'s
+#: "Replace with this file" trigger renders only when a completed release
+#: records a movie file (`r.get('files', {}).get('movie')`), and the E2E tier
+#: for that feature (tests/e2e/operator-replace-modal.spec.ts) needs the trigger
+#: on a real seeded page, not a hand-built Jinja fixture -- the whole point of
+#: writing that tier as Playwright rather than a render test. The path is never
+#: read from disk by anything these two movies' tests exercise: every test that
+#: submits against `renamer.operator_replace` intercepts that route rather than
+#: letting it reach the real backend (same reasoning filters.spec.ts already
+#: documents for reusing REVIEW_MOVIE_ID despite it "looking" destructive), so
+#: the path does not need to exist on disk and no other seeded fixture's
+#: 'files': {} changes.
 REVIEW_RELEASE = {
     'suffix': '1',
     'protocol': 'torrent',
@@ -296,6 +309,7 @@ REVIEW_RELEASE = {
     'score': 88.0,
     'age': 3,
     'name': 'E2E.Review.Gate.Movie.2024.1080p.BluRay-GRP7',
+    'files': {'movie': ['/e2e-fixture-library/E2E Review Gate Movie (2024)/E2E Review Gate Movie (2024).mkv']},
 }
 
 REVIEW_DESTRUCTIVE_RELEASE = {
@@ -308,6 +322,7 @@ REVIEW_DESTRUCTIVE_RELEASE = {
     'score': 89.0,
     'age': 4,
     'name': 'E2E.Review.Gate.Destructive.Movie.2024.1080p.BluRay-GRP8',
+    'files': {'movie': ['/e2e-fixture-library/E2E Review Gate Destructive Movie (2024)/E2E Review Gate Destructive Movie (2024).mkv']},
 }
 
 
@@ -641,7 +656,12 @@ def seed(data_dir, password=None):
                   'quality': r['quality'],
                   'is_3d': False,
                   'last_edit': now,
-                  'files': {},
+                  # r.get('files', {}), not a bare {}: only REVIEW_RELEASE and
+                  # REVIEW_DESTRUCTIVE_RELEASE set this key (see their own
+                  # comment above) -- every other release dict in this module
+                  # still has none, so this stays {} for them exactly as
+                  # before.
+                  'files': r.get('files', {}),
                   'info': info,
               })
               created['releases'].append((release_id, inserted))
