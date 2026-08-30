@@ -91,6 +91,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             'return': {'type': 'object: {"success": true}'},
         })
 
+        addApiView('renamer.operator_candidates', self.operatorCandidatesView, docs={
+            'desc': 'List the file names available under the configured '
+                    'download folder for an operator to choose from as a '
+                    'replacement source. Names only, never paths.',
+            'return': {'type': 'object: {"success": true, "candidates": [...]}'},
+        })
+
         addEvent('renamer.scan', self.scan)
         addEvent('renamer.check_snatched', self.checkSnatched)
 
@@ -1162,6 +1169,18 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: path derived.
     OPERATOR_IDENTITY_SOURCE = 'operator_placed'
 
+    def operatorCandidatesView(self, **kwargs):
+        """API-facing entry point for the candidate listing.
+
+        Reads nothing from `kwargs` (AC-SIMP-8): the candidate list is
+        derived server-side from `conf('from')` alone, never from a
+        client-supplied directory.
+        """
+        return {
+            'success': True,
+            'candidates': self._listOperatorCandidates(),
+        }
+
     def operatorReplaceView(self, **kwargs):
         """API-facing entry point for an operator's replacement.
 
@@ -1346,6 +1365,49 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         if resolved != root and not resolved.startswith(root + os.path.sep):
             return None
         return lexical
+
+    def _listOperatorCandidates(self):
+        """List the file names under `conf('from')` an operator may pick
+        as a replacement source.
+
+        Reuses `_resolveOperatorSource` (AC-SEC-2) as the SOLE confinement
+        check -- an entry is offered only when that method does not
+        refuse it, so a symlink whose target resolves outside the watch
+        folder is excluded exactly as the execution path already refuses
+        it, with no second copy of the confinement rule to drift out of
+        step with the first.
+
+        Returns bare names only, never a path (AC-SIMP-8): the caller
+        hands one of these names straight back as `source`, and a path
+        would both leak the watch folder's location and give the client
+        something to tamper with.
+
+        An entry that cannot be inspected (a permission error, a race
+        with something else touching the folder) is excluded rather than
+        aborting the whole listing -- a production watch folder holds
+        files the operator does not fully control.
+        """
+        watch = self.conf('from')
+        if not watch:
+            return []
+
+        try:
+            entries = os.listdir(sp(watch))
+        except OSError:
+            return []
+
+        candidates = []
+        for name in entries:
+            try:
+                if not os.path.isfile(os.path.join(watch, name)):
+                    continue
+            except OSError:
+                continue
+            if self._resolveOperatorSource(name) is None:
+                continue
+            candidates.append(name)
+
+        return candidates
 
     def _disposeOfOperatorSource(self, source, media_id=None):
         """Owner decision 3: the operator's source is ALWAYS removed after
