@@ -123,3 +123,10 @@ changes for the operator. **Then stop and hand it over.**
   T2 (FEAT-012) launched. Rework rounds: T1 0, T2 0.
   Armed: T2's workflow notification plus a fallback heartbeat. Next wake
   expects T2 committed, or T2 aborted on a limit as T1's earlier sibling was.
+- **Tick 3, 2026-08-30.** Quiet hold. T2 mid-flight: its RED test
+  (`tests/unit/test_renamer_decision_memory.py`) is written and untracked, so
+  the implement phase has not landed. Nothing acted on. T3 stays queued and
+  the serial choice is now measured rather than cautious: T3 edits
+  `renamer/main.py`, the same file T2 is changing, so parallel would conflict
+  outright rather than merely risk contention. Rework rounds: T2 0.
+  Armed: T2's workflow notification plus the heartbeat.
