@@ -38,8 +38,8 @@ automatic beta runs unattended.
 - [ ] T5b: FEAT-011c, the replacement modal — state: partial (2a405d67: dialog shell and wording, no data)
 - [x] T5d: FEAT-011c, the server-side candidate listing route — state: built (a6b0592d)
 - [x] T5e: FEAT-011c, wire the modal to the listing and the submit — state: built (4051c2c1)
-- [ ] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: building
-- [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
+- [x] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: built (ccdf6229)
+- [ ] T6: whole-branch multi-lens review cycle — state: running (adversarial)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
 - [ ] T9: CI green, resolve threads, merge to master — state: queued (needs: T8)
@@ -323,3 +323,21 @@ changes for the operator. **Then stop and hand it over.**
   (`*.a11y.spec.ts`, `*.mobile.spec.ts`), which is the thing that determines
   whether these assertions run at all.
   Rework rounds: T5c 0. Armed: T5c's workflow plus the heartbeat.
+- **Tick 16, 2026-08-31. ALL BUILD TASKS COMPLETE.** T5c committed
+  (`ccdf6229`) and it earned its keep: the accessibility pass found REAL
+  defects in code that had already passed every other gate.
+  - The confirm control, the one that DESTROYS a file, rendered at 32px,
+    under the target floor.
+  - Its danger-token contrast composited to 4.46:1 against a 4.5:1 floor, the
+    same 8% tint bug already fixed once on the review-queue card control.
+  - The candidate radios had NO arrow-key handling at all, so they were radios
+    in appearance and not in behaviour.
+  - And it found that identical contrast bug PRE-EXISTING on the release
+    table's own "Mark failed" control, which nothing on this branch had
+    touched. That is the third time on this branch that measuring a rendered
+    value has contradicted correct-looking classes.
+  T6 launched: the whole-branch review cycle, ADVERSARIAL, against master.
+  Deliberately BEFORE `make verify` rather than after: the review is the thing
+  most likely to demand changes, and a verify run spent on a tree that is about
+  to change is a verify run wasted.
+  Rework rounds: all tasks 0. Armed: the review workflow plus the heartbeat.
