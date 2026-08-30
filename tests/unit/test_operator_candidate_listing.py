@@ -328,3 +328,150 @@ class TestTheRouteRequiresAuthentication:
         data = resp.json()
         assert data.get('success') is True
         assert 'candidate.mkv' in data.get('candidates', [])
+
+
+class TestOnlyMovieExtensionsAreOffered:
+    """H10 (branch review 2026-08-31). `_listOperatorCandidates` currently
+    offers every regular file `_resolveOperatorSource` does not refuse, with
+    no extension filter at all -- so an operator's fat-fingered click on a
+    stray `.srt`, `.nfo`, `.txt` or `.part` file sitting in the same watch
+    folder destroys the library copy and installs junk in its place. The
+    fix filters to `FileDetectorMixin.extensions['movie']`, the same list
+    the scanner already uses to recognise a film.
+    """
+
+    def test_non_movie_extensions_are_excluded_movie_extensions_are_kept(
+        self, plugin_with_watch,
+    ):
+        plugin, watch = plugin_with_watch
+        (watch / 'Minions.and.Monsters.mkv').write_bytes(b'x' * 10)
+        (watch / 'Minions.and.Monsters.en.srt').write_bytes(b'subs' * 10)
+        (watch / 'Minions.and.Monsters.nfo').write_bytes(b'info' * 10)
+        (watch / 'Minions.and.Monsters.mkv.part').write_bytes(b'partial' * 10)
+        (watch / 'readme.txt').write_bytes(b'notes' * 10)
+
+        candidates = plugin._listOperatorCandidates()
+
+        assert candidates == ['Minions.and.Monsters.mkv'], (
+            'the listing offered a non-video file as a replacement '
+            'candidate -- got %r' % candidates
+        )
+
+
+class TestTheListingIsCappedWithATotalReported:
+    """H10. An unbounded listing has no stated limit, and nothing tells the
+    caller whether the response is the whole folder or a truncated slice of
+    it. The fix applies a stated cap to the returned names while separately
+    reporting the true total found, so nothing is dropped silently.
+    """
+
+    def test_more_candidates_than_the_cap_are_truncated_with_the_true_total_reported(
+        self, plugin_with_watch, monkeypatch,
+    ):
+        plugin, watch = plugin_with_watch
+        monkeypatch.setattr(Renamer, 'OPERATOR_CANDIDATE_LIST_CAP', 3, raising=False)
+
+        for i in range(7):
+            (watch / ('movie-%d.mkv' % i)).write_bytes(b'x' * 10)
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('success') is True
+        assert len(response.get('candidates', [])) == 3, (
+            'the candidate listing was not capped at the stated limit -- '
+            'got %r' % response.get('candidates')
+        )
+        assert response.get('total_found') == 7, (
+            'the response did not report the TRUE total of 7 matching '
+            'files found before the cap was applied -- got %r'
+            % response.get('total_found')
+        )
+
+
+class TestTheEmptyResultCarriesANamedReason:
+    """H10. `_listOperatorCandidates` currently returns a bare `[]` for
+    four completely different situations: not configured, the folder is
+    missing, the folder cannot be read, and the folder is genuinely empty.
+    The modal has separate states for these, per AC-DESIGN-3, but the
+    server currently throws the distinction away at `except OSError: return
+    []`. The fix returns a NAMED reason so the caller can tell "nothing
+    here" apart from "I could not look".
+    """
+
+    def test_an_unconfigured_folder_reports_not_configured(self, tmp_path, monkeypatch):
+        plugin = Renamer.__new__(Renamer)
+        monkeypatch.setattr(
+            type(plugin), 'conf',
+            lambda _self, key, default=None, **kw: {'from': ''}.get(key, default),
+            raising=False,
+        )
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('candidates') == []
+        assert response.get('reason') == 'not_configured', (
+            'an unconfigured watch folder did not report the '
+            '"not_configured" reason -- got %r' % response.get('reason')
+        )
+
+    def test_a_missing_folder_reports_folder_missing(self, tmp_path, monkeypatch):
+        missing = tmp_path / 'this-folder-does-not-exist'
+        plugin = Renamer.__new__(Renamer)
+        monkeypatch.setattr(
+            type(plugin), 'conf',
+            lambda _self, key, default=None, **kw: {'from': str(missing)}.get(key, default),
+            raising=False,
+        )
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('candidates') == []
+        assert response.get('reason') == 'folder_missing', (
+            'a configured but non-existent watch folder did not report '
+            'the "folder_missing" reason -- got %r' % response.get('reason')
+        )
+
+    def test_an_unreadable_folder_reports_folder_unreadable_not_empty(
+        self, plugin_with_watch, monkeypatch,
+    ):
+        plugin, watch = plugin_with_watch
+        (watch / 'a-real-file.mkv').write_bytes(b'x' * 10)
+
+        def _flaky_listdir(path):
+            raise PermissionError('permission denied: %s' % path)
+
+        monkeypatch.setattr(os, 'listdir', _flaky_listdir)
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('candidates') == []
+        assert response.get('reason') == 'folder_unreadable', (
+            'a watch folder that raised PermissionError on listdir was not '
+            'distinguished from an ordinary empty folder -- got %r'
+            % response.get('reason')
+        )
+
+    def test_a_genuinely_empty_folder_reports_empty_not_unreadable(
+        self, plugin_with_watch,
+    ):
+        plugin, _watch = plugin_with_watch
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('candidates') == []
+        assert response.get('reason') == 'empty', (
+            'a real, readable, genuinely empty watch folder was not '
+            'reported as "empty" -- got %r' % response.get('reason')
+        )
+
+    def test_a_populated_folder_reports_the_ok_reason(self, plugin_with_watch):
+        plugin, watch = plugin_with_watch
+        (watch / 'a-real-file.mkv').write_bytes(b'x' * 10)
+
+        response = plugin.operatorCandidatesView()
+
+        assert response.get('candidates') == ['a-real-file.mkv']
+        assert response.get('reason') == 'ok', (
+            'a populated, successful listing did not report the "ok" '
+            'reason -- got %r' % response.get('reason')
+        )

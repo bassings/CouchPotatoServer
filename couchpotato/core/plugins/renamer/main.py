@@ -20,6 +20,7 @@ from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_UNVERIFIED_IDENTITY,
     OPERATOR_DECLINED_AMBIGUOUS_FILE,
     OPERATOR_REFUSED_ALREADY_RUNNING,
+    OPERATOR_REFUSED_ERROR,
     OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
     OPERATOR_REPLACE,
     REPLACE,
@@ -37,6 +38,7 @@ from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
 from couchpotato.core.plugins.renamer.mover import MoverMixin
 from couchpotato.core.plugins.renamer.namer import NamerMixin
 from couchpotato.core.plugins.renamer.scanner import ScannerMixin
+from couchpotato.core.plugins.scanner.file_detector import FileDetectorMixin
 
 log = CPLog(__name__)
 
@@ -70,6 +72,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         DECLINED_SIZE_CONTRADICTS_QUALITY,
     })
 
+    #: H10 (branch review 2026-08-31). The extensions the scanner already
+    #: recognises as a movie file (`FileDetectorMixin.extensions['movie']`),
+    #: reused here rather than a second list -- so a stray `.srt`, `.nfo`,
+    #: `.txt` or `.part` sitting beside a real download in the watch folder
+    #: is never offered as a candidate an operator could fat-finger over the
+    #: top of the library copy.
+    OPERATOR_CANDIDATE_EXTENSIONS = frozenset(FileDetectorMixin.extensions['movie'])
+
+    #: H10. Stated cap on how many candidate names one listing response
+    #: returns. `total_found` in the response always carries the TRUE count
+    #: found before this cap is applied, so a folder holding more than this
+    #: never drops entries silently -- the caller is told, not merely handed
+    #: a shorter list.
+    OPERATOR_CANDIDATE_LIST_CAP = 200
+
     def __init__(self):
 
         addApiView('renamer.scan', self.scanView, docs={
@@ -98,6 +115,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                     'replacement source. Names only, never paths.',
             'return': {'type': 'object: {"success": true, "candidates": [...]}'},
         })
+
+        addApiView(
+            'renamer.operator_replacement_preview',
+            self.operatorReplacementPreviewView,
+            docs={
+                'desc': 'Read-only preview of an operator replacement: the '
+                        'basename, quality label and byte size of the '
+                        'library file that would be destroyed, plus the '
+                        'basename and byte size of each candidate that '
+                        'could replace it. Never a path.',
+                'params': {
+                    'media_id': {'desc': 'The media whose replacement is being previewed'},
+                },
+                'return': {'type': 'object: {"success": true, "destination": ..., "candidates": [...]}'},
+            },
+        )
 
         addEvent('renamer.scan', self.scan)
         addEvent('renamer.check_snatched', self.checkSnatched)
@@ -1176,10 +1209,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         Reads nothing from `kwargs` (AC-SIMP-8): the candidate list is
         derived server-side from `conf('from')` alone, never from a
         client-supplied directory.
+
+        H10: capped at `OPERATOR_CANDIDATE_LIST_CAP`, with `total_found`
+        carrying the TRUE count so nothing is dropped silently, and `reason`
+        naming which of five situations produced the result -- 'ok',
+        'empty', 'not_configured', 'folder_missing' or 'folder_unreadable'
+        -- so the picker can tell "nothing here" apart from "I could not
+        look", which the design's five states require (AC-DESIGN-3).
         """
+        candidates, reason, total_found = self._listOperatorCandidatesWithReason()
+        cap = self.OPERATOR_CANDIDATE_LIST_CAP
         return {
             'success': True,
-            'candidates': self._listOperatorCandidates(),
+            'candidates': candidates[:cap],
+            'total_found': total_found,
+            'reason': reason,
         }
 
     def operatorReplaceView(self, **kwargs):
@@ -1212,6 +1256,73 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
         return {'success': True}
 
+    def operatorReplacementPreviewView(self, **kwargs):
+        """API-facing entry point for the confirmation preview (H9).
+
+        Reads only `media_id` out of `kwargs`. Read-only: safe to call on
+        every render of the picker, never reaches `replace_atomically`.
+        """
+        media_id = kwargs.get('media_id')
+        preview = self._operatorReplacementPreview(media_id)
+        return {
+            'success': True,
+            'destination': preview['destination'],
+            'candidates': preview['candidates'],
+        }
+
+    def _operatorReplacementPreview(self, media_id):
+        """Read-only lookup for the confirmation an operator sees before an
+        irreversible replacement (H9, AC-DESIGN-7, AC-QA-12, AC-PROD-3).
+
+        The confirmation this feeds names neither the file it will destroy
+        nor the one it will install today -- an operator approves destroying
+        an irreplaceable file with nothing identifying it. This resolves the
+        destination the SAME way `_runOperatorReplacement` does (through
+        `decide_operator_replacement` over `release.for_media`), but touches
+        no file beyond `os.path.getsize` and never reaches
+        `replace_atomically`, so it is safe to call on every render.
+
+        `destination` is `None` whenever there is no single completed
+        release to replace -- no releases at all, more than one, or one
+        recording more than one movie file (AC-QA-5's ambiguous-file guard,
+        H3) -- because the picker has nothing safe to confirm against in
+        that case, exactly as the destructive path itself refuses it.
+
+        Basenames only, never a path (CLAUDE.md's security floor): the
+        watch folder and the library folder never appear anywhere in the
+        result.
+        """
+        releases = fireEvent(
+            'release.for_media', media_id, require_complete=True, single=True,
+        ) or []
+        outcome, existing_release = decide_operator_replacement(releases)
+
+        destination = None
+        if outcome == OPERATOR_REPLACE:
+            movie_files = (existing_release.get('files') or {}).get('movie') or []
+            if len(movie_files) == 1:
+                dest_path = sp(movie_files[0])
+                try:
+                    size = os.path.getsize(dest_path)
+                except OSError:
+                    size = None
+                if size is not None:
+                    destination = {
+                        'name': os.path.basename(dest_path),
+                        'quality': existing_release.get('quality'),
+                        'size': size,
+                    }
+
+        candidate_names = self._listOperatorCandidates()
+        sizes = getattr(self, '_operator_candidate_sizes', None) or {}
+        candidates = [
+            {'name': name, 'size': sizes[name]}
+            for name in candidate_names
+            if name in sizes
+        ]
+
+        return {'destination': destination, 'candidates': candidates}
+
     def _executeOperatorReplacement(self, media_id, source_name):
         """Act on an operator's decision to replace a film's library copy.
 
@@ -1230,21 +1341,67 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         with media_lock('renamer-scan'):
             if self.renaming_started:
-                log.info('Renamer is already running, refusing the operator replacement')
+                self._logOperatorOutcome(OPERATOR_REFUSED_ALREADY_RUNNING, media_id)
                 return OPERATOR_REFUSED_ALREADY_RUNNING, None
             self.renaming_started = True
 
         try:
             return self._runOperatorReplacement(media_id, source_name)
+        except Exception:
+            # H8 (branch review 2026-08-31): with no guard here an
+            # exception raised anywhere below propagates out of the bare
+            # `threading.Thread` target that runs this in production, and
+            # threading's default excepthook prints it to stderr only --
+            # never through CPLog, never through PrivacyFilter, never
+            # reaching the rotating log file the operator actually reads.
+            # Caught, logged with the full traceback (matching the
+            # existing pattern at `scan()`'s own outer handler), and
+            # turned into a named outcome rather than left to raise.
+            log.error(
+                'Operator replacement for media %s failed: %s',
+                media_id, traceback.format_exc(),
+            )
+            return OPERATOR_REFUSED_ERROR, None
         finally:
             with media_lock('renamer-scan'):
                 self.renaming_started = False
+
+    @staticmethod
+    def _logOperatorOutcome(outcome, media_id, release_id=None):
+        """H1 (branch review 2026-08-31): the ONLY way an operator or an
+        administrator can ever learn how a replacement went is the log --
+        `operatorReplaceView` answers success before any work starts and
+        the worker's return value is read by nothing else. One record at
+        INFO or above per terminal outcome, always naming the outcome
+        constant EXACTLY (not a paraphrase, so a later rename of the
+        constant without updating a log string is caught by
+        `TestEveryTerminalOutcomeIsLoggedAtInfoOrAbove` rather than
+        shipping silent again) and the media id, plus the release id when
+        one is already known.
+
+        D8 / AC-SEC-11: media and release ids only, never a filesystem
+        path -- matching the convention `main.py:296-311` already
+        establishes for the automatic path.
+        """
+        if release_id:
+            log.info(
+                'Operator replacement outcome %s for media %s (release %s)',
+                outcome, media_id, release_id,
+            )
+        else:
+            log.info(
+                'Operator replacement outcome %s for media %s',
+                outcome, media_id,
+            )
 
     def _runOperatorReplacement(self, media_id, source_name):
         """The actual work, unguarded -- always called through
         `_executeOperatorReplacement`, never directly."""
         source = self._resolveOperatorSource(source_name)
         if source is None:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, media_id,
+            )
             return OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, None
 
         releases = fireEvent(
@@ -1252,6 +1409,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         ) or []
         outcome, existing_release = decide_operator_replacement(releases)
         if outcome != OPERATOR_REPLACE:
+            self._logOperatorOutcome(outcome, media_id)
             return outcome, None
 
         # The destination is the release's OWN recorded file, exactly as
@@ -1261,6 +1419,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # of several risks destroying a file the operator did not choose.
         movie_files = (existing_release.get('files') or {}).get('movie') or []
         if len(movie_files) != 1:
+            self._logOperatorOutcome(
+                OPERATOR_DECLINED_AMBIGUOUS_FILE, media_id,
+                release_id=existing_release.get('_id'),
+            )
             return OPERATOR_DECLINED_AMBIGUOUS_FILE, None
         destination = sp(movie_files[0])
 
@@ -1268,6 +1430,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # the automatic path uses -- no request-supplied folder is ever
         # consulted.
         if not self._destinationIsInsideTheLibrary(destination):
+            self._logOperatorOutcome(
+                DECLINED_OUTSIDE_LIBRARY, media_id,
+                release_id=existing_release.get('_id'),
+            )
             return DECLINED_OUTSIDE_LIBRARY, None
 
         # C2: refuse against the size recorded when the operator's
@@ -1287,11 +1453,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         try:
             expected_source_size = os.path.getsize(source)
         except OSError:
+            self._logOperatorOutcome(
+                REFUSED_NO_SOURCE, media_id,
+                release_id=existing_release.get('_id'),
+            )
             return REFUSED_NO_SOURCE, None
 
         recorded_size = getattr(self, '_operator_candidate_sizes', None) or {}
         decision_time_size = recorded_size.get(source_name)
         if decision_time_size is not None and decision_time_size != expected_source_size:
+            self._logOperatorOutcome(
+                REFUSED_SOURCE_CHANGED, media_id,
+                release_id=existing_release.get('_id'),
+            )
             return REFUSED_SOURCE_CHANGED, None
 
         incoming_quality = fireEvent(
@@ -1324,6 +1498,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             ),
         )
         if not ok:
+            self._logOperatorOutcome(
+                reason, media_id, release_id=existing_release.get('_id'),
+            )
             return reason, None
 
         # Bookkeeping BEFORE disposal, and the order is not free -- the
@@ -1345,6 +1522,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # verified, never before.
         self._disposeOfOperatorSource(source, media_id)
 
+        self._logOperatorOutcome(
+            OPERATOR_REPLACE, media_id, release_id=existing_release.get('_id'),
+        )
         return OPERATOR_REPLACE, destination
 
     def _resolveOperatorSource(self, source_name):
@@ -1387,6 +1567,37 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """List the file names under `conf('from')` an operator may pick
         as a replacement source.
 
+        Thin wrapper over `_listOperatorCandidatesWithReason` for the
+        callers that only want the names -- `_operatorReplacementPreview`
+        and the plugin-level tests that assert directly on the returned
+        list. See that method for the full contract.
+        """
+        candidates, _reason, _total_found = self._listOperatorCandidatesWithReason()
+        return candidates
+
+    def _listOperatorCandidatesWithReason(self):
+        """As `_listOperatorCandidates`, but also reports WHY an empty
+        result is empty (H10, AC-QA-14, AC-DESIGN-3).
+
+        The bare list threw that distinction away: 'not configured', 'the
+        folder is missing', 'the folder cannot be read' and 'the folder is
+        genuinely empty' all produced the identical `[]`, and the picker
+        has a separate rendered state for each with a different remedy --
+        the operator needs to know whether to check settings, check the
+        mount, or simply that there is nothing to pick from.
+
+        Returns `(candidates, reason, total_found)`, where `reason` is one
+        of `'ok'`, `'empty'`, `'not_configured'`, `'folder_missing'` or
+        `'folder_unreadable'`, and `total_found` is the TRUE count of
+        matching candidates before any cap the caller applies -- so a
+        truncated response can still say how many were really there.
+
+        Filters to `OPERATOR_CANDIDATE_EXTENSIONS` (H10): the same movie
+        extensions the scanner already recognises, so a stray `.srt`,
+        `.nfo`, `.txt` or `.part` sitting beside a real download is never
+        offered as something the operator could fat-finger over the
+        library copy.
+
         Reuses `_resolveOperatorSource` (AC-SEC-2) as the SOLE confinement
         check -- an entry is offered only when that method does not
         refuse it, so a symlink whose target resolves outside the watch
@@ -1402,7 +1613,10 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         An entry that cannot be inspected (a permission error, a race
         with something else touching the folder) is excluded rather than
         aborting the whole listing -- a production watch folder holds
-        files the operator does not fully control.
+        files the operator does not fully control. Only a raised
+        `os.listdir` on the folder ITSELF is 'folder_unreadable'; one bad
+        entry inside a folder that could be listed is silently dropped, as
+        before.
 
         Also the operator's decision moment for C2: each offered entry's
         size is recorded on `self._operator_candidate_sizes`, keyed by the
@@ -1412,12 +1626,20 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         watch = self.conf('from')
         if not watch:
-            return []
+            return [], 'not_configured', 0
+
+        watch = sp(watch)
+        if not os.path.isdir(watch):
+            return [], 'folder_missing', 0
 
         try:
-            entries = os.listdir(sp(watch))
-        except OSError:
-            return []
+            entries = os.listdir(watch)
+        except OSError as error:
+            log.warning(
+                'Could not read the configured download folder for the '
+                'operator replacement picker: %s', self._withoutPaths(error),
+            )
+            return [], 'folder_unreadable', 0
 
         candidates = []
         sizes = {}
@@ -1426,6 +1648,9 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if not os.path.isfile(os.path.join(watch, name)):
                     continue
             except OSError:
+                continue
+            extension = os.path.splitext(name)[1].lstrip('.').lower()
+            if extension not in self.OPERATOR_CANDIDATE_EXTENSIONS:
                 continue
             resolved = self._resolveOperatorSource(name)
             if resolved is None:
@@ -1438,7 +1663,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             sizes[name] = size
 
         self._operator_candidate_sizes = sizes
-        return candidates
+
+        if not candidates:
+            return [], 'empty', 0
+
+        return candidates, 'ok', len(candidates)
 
     def _disposeOfOperatorSource(self, source, media_id=None):
         """Owner decision 3: the operator's source is ALWAYS removed after

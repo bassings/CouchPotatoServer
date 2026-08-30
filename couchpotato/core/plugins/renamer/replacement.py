@@ -219,6 +219,15 @@ OPERATOR_REFUSED_ALREADY_RUNNING = 'operator_refused_already_running'
 # `softchroot.chroot2abs` is proven (`couchpotato/core/softchroot.py:167-205`).
 OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER = 'operator_refused_source_outside_watch_folder'
 
+# H8 (branch review 2026-08-31). An unhandled exception anywhere inside the
+# operator's worker -- `release.for_media` raising, a database hiccup, an
+# unexpected shape in a release document -- is caught rather than left to
+# propagate to the bare `threading.Thread` target that runs it, which would
+# otherwise land the traceback on stderr only, invisible to CPLog and the
+# PrivacyFilter. Never means the library was touched: it is returned only
+# from a caught exception, always paired with a `None` destination.
+OPERATOR_REFUSED_ERROR = 'operator_refused_error'
+
 # Only a release that actually landed in the library has a file on disk to be
 # a replacement target. A snatched or ignored release recorded a path it
 # expects to reach, not one that exists yet.

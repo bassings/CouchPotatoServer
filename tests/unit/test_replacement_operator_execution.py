@@ -57,6 +57,7 @@ already do for their layers -- a return value can be right for the wrong
 reason, a file on disk cannot.
 """
 import hashlib
+import logging
 import os
 import threading
 import time
@@ -67,10 +68,14 @@ from couchpotato.core.plugins.renamer.main import Renamer
 from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
 from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_OUTSIDE_LIBRARY,
+    OPERATOR_DECLINED_AMBIGUOUS_FILE,
+    OPERATOR_DECLINED_NO_FILE_TO_REPLACE,
+    OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
     OPERATOR_REPLACE,
 )
 from couchpotato.core.plugins.renamer.swap import (
     REFUSED_DESTINATION_IS_SYMLINK,
+    REFUSED_NO_SOURCE,
     REFUSED_SOURCE_IS_SYMLINK,
 )
 
@@ -694,4 +699,295 @@ class TestBookkeepingHappensBeforeDisposal:
         assert order.index(bookkeeping_calls[0]) < order.index('disposal:remove_source'), (
             'the source was disposed of before the superseded release was '
             'accounted for: order was %r' % order
+        )
+
+
+class TestAMultiFileReleaseIsNeverGuessedAt:
+    """H3 (branch review 2026-08-31). `_runOperatorReplacement` refuses when
+    the target release's `files['movie']` holds more than one entry --
+    replacing `movie_files[0]` and destroying it would be guessing which
+    half of the release the operator meant, exactly the "do not guess" rule
+    `DECLINED_MULTI_FILE_GROUP` already enforces on the automatic path. The
+    review found this guard existed in the source with NO test at all: a
+    reviewer deleted the two-line check and the entire unit suite, run in
+    full, stayed green. This is that missing test, driven through the real
+    entry point against a release carrying two recorded movie files.
+    """
+
+    def test_a_two_file_release_is_declined_and_both_files_survive_untouched(
+        self, world,
+    ):
+        second_dst = world['lib'] / 'The Thing - CD2.mkv'
+        second_dst.write_bytes(OLD)
+        second_sha = _sha(second_dst)
+
+        world['state']['releases']['media-1'][0]['files']['movie'] = [
+            world['dst'], str(second_dst),
+        ]
+
+        before = _tree_shas(world['lib'])
+
+        outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+            'media-1', 'incoming.mkv',
+        )
+
+        assert outcome == OPERATOR_DECLINED_AMBIGUOUS_FILE, (
+            'a release recording TWO movie files was not declined as '
+            'ambiguous -- the operator path would have guessed which one '
+            'to destroy'
+        )
+        assert resulting_dst is None
+        assert _tree_shas(world['lib']) == before, (
+            'the library folder changed even though the release was '
+            'ambiguous and nothing should have been written or deleted'
+        )
+        assert _sha(world['dst']) == world['old_dst_sha']
+        assert _sha(second_dst) == second_sha
+        assert open(world['src'], 'rb').read() == NEW, (
+            'the download must survive a refusal'
+        )
+
+
+class TestEveryTerminalOutcomeIsLoggedAtInfoOrAbove:
+    """H1 (branch review 2026-08-31). `operatorReplaceView` answers success
+    before any work starts and the background worker's `(outcome,
+    destination)` result is read by nothing except tests -- so the ONLY way
+    an outcome can ever reach anything an operator or an administrator can
+    read is the log. The review measured four refusal branches producing
+    ZERO records at INFO or above, out of fourteen reachable outcomes.
+
+    Each case below drives a distinct outcome through the real entry point
+    and requires at least one record at INFO or above that names both the
+    outcome constant (exactly, not a paraphrase) and the media id -- so a
+    later change that renames a constant without updating the log string is
+    caught here rather than shipping silent again. Every case also asserts
+    that neither the watch folder nor the library folder's filesystem path
+    appears in ANY captured record, at any level, continuing the convention
+    `main.py:296-311` already establishes for the automatic path (AC-SEC-11
+    pairs directly with this criterion).
+    """
+
+    def _assert_no_paths_leaked(self, caplog, *roots):
+        for record in caplog.records:
+            message = record.getMessage()
+            for root in roots:
+                assert str(root) not in message, (
+                    'log record %r names a filesystem path (%s), which '
+                    'AC-SEC-11 forbids at INFO and above' % (message, root)
+                )
+
+    def test_a_successful_replacement_names_the_outcome_and_the_media_id(
+        self, world, caplog,
+    ):
+        with caplog.at_level(logging.INFO):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', 'incoming.mkv',
+            )
+
+        assert outcome == OPERATOR_REPLACE
+        assert resulting_dst == world['dst']
+
+        info_or_above = [r for r in caplog.records if r.levelno >= logging.INFO]
+        matching = [
+            r for r in info_or_above
+            if OPERATOR_REPLACE in r.getMessage() and 'media-1' in r.getMessage()
+        ]
+        assert matching, (
+            'a successful operator replacement produced no INFO-or-above '
+            'record naming both the outcome constant %r and the media id '
+            '-- captured records: %r'
+            % (OPERATOR_REPLACE, [r.getMessage() for r in info_or_above])
+        )
+        assert any('r-old' in r.getMessage() for r in info_or_above), (
+            'a successful operator replacement produced no INFO-or-above '
+            'record naming the superseded release id -- captured records: '
+            '%r' % [r.getMessage() for r in info_or_above]
+        )
+        self._assert_no_paths_leaked(caplog, world['watch'], world['lib'])
+
+    def test_no_completed_release_at_all_is_logged_naming_outcome_and_media_id(
+        self, world, caplog,
+    ):
+        world['state']['releases']['media-1'] = []
+
+        with caplog.at_level(logging.INFO):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', 'incoming.mkv',
+            )
+
+        assert outcome == OPERATOR_DECLINED_NO_FILE_TO_REPLACE
+        assert resulting_dst is None
+
+        info_or_above = [r for r in caplog.records if r.levelno >= logging.INFO]
+        matching = [
+            r for r in info_or_above
+            if OPERATOR_DECLINED_NO_FILE_TO_REPLACE in r.getMessage()
+            and 'media-1' in r.getMessage()
+        ]
+        assert matching, (
+            '"no completed release" produced no INFO-or-above record '
+            'naming both the outcome constant and the media id -- '
+            'captured records: %r' % [r.getMessage() for r in info_or_above]
+        )
+        self._assert_no_paths_leaked(caplog, world['watch'], world['lib'])
+
+    def test_an_ambiguous_multi_file_release_is_logged_naming_outcome_and_release_id(
+        self, world, caplog,
+    ):
+        second_dst = world['lib'] / 'The Thing - CD2.mkv'
+        second_dst.write_bytes(OLD)
+        world['state']['releases']['media-1'][0]['files']['movie'] = [
+            world['dst'], str(second_dst),
+        ]
+
+        with caplog.at_level(logging.INFO):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', 'incoming.mkv',
+            )
+
+        assert outcome == OPERATOR_DECLINED_AMBIGUOUS_FILE
+        assert resulting_dst is None
+
+        info_or_above = [r for r in caplog.records if r.levelno >= logging.INFO]
+        matching = [
+            r for r in info_or_above
+            if OPERATOR_DECLINED_AMBIGUOUS_FILE in r.getMessage()
+            and 'media-1' in r.getMessage()
+            and 'r-old' in r.getMessage()
+        ]
+        assert matching, (
+            'an ambiguous multi-file release produced no INFO-or-above '
+            'record naming the outcome, the media id AND the release id '
+            '-- captured records: %r' % [r.getMessage() for r in info_or_above]
+        )
+        self._assert_no_paths_leaked(caplog, world['watch'], world['lib'])
+
+    def test_a_source_that_resolves_outside_the_watch_folder_is_logged(
+        self, world, caplog,
+    ):
+        with caplog.at_level(logging.INFO):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', '../../etc/passwd',
+            )
+
+        assert outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER
+        assert resulting_dst is None
+
+        info_or_above = [r for r in caplog.records if r.levelno >= logging.INFO]
+        matching = [
+            r for r in info_or_above
+            if OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER in r.getMessage()
+            and 'media-1' in r.getMessage()
+        ]
+        assert matching, (
+            'a source resolving outside the watch folder produced no '
+            'INFO-or-above record naming the outcome and the media id -- '
+            'captured records: %r' % [r.getMessage() for r in info_or_above]
+        )
+        self._assert_no_paths_leaked(caplog, world['watch'], world['lib'])
+
+    def test_a_source_that_no_longer_exists_is_logged(self, world, caplog):
+        os.remove(world['src'])
+
+        with caplog.at_level(logging.INFO):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', 'incoming.mkv',
+            )
+
+        assert outcome == REFUSED_NO_SOURCE
+        assert resulting_dst is None
+
+        info_or_above = [r for r in caplog.records if r.levelno >= logging.INFO]
+        matching = [
+            r for r in info_or_above
+            if REFUSED_NO_SOURCE in r.getMessage() and 'media-1' in r.getMessage()
+        ]
+        assert matching, (
+            'a vanished source produced no INFO-or-above record naming the '
+            'outcome and the media id -- captured records: %r'
+            % [r.getMessage() for r in info_or_above]
+        )
+        self._assert_no_paths_leaked(caplog, world['watch'], world['lib'])
+
+
+class TestAnUnhandledExceptionIsCaughtAndLoggedNotLostToStderr:
+    """H8 (branch review 2026-08-31). `_executeOperatorReplacement` has no
+    try/except around the call to `_runOperatorReplacement`: only the
+    `renaming_started` flag is guaranteed to be cleared (via `finally`), the
+    exception itself propagates to whatever called it. On the real
+    (production) code path that caller is a bare `threading.Thread` target,
+    so the traceback lands on stderr through threading's default excepthook
+    and NEVER reaches CPLog, the PrivacyFilter, or the rotating log file the
+    operator actually reads.
+
+    This test calls `_executeOperatorReplacement` directly (not through a
+    thread) so a currently-uncaught exception surfaces as a normal pytest
+    failure naming the propagated exception, rather than merely printing to
+    stderr where a test runner would not notice it either. The fix is to
+    catch the exception inside `_executeOperatorReplacement` and log it via
+    `log.error(...)`, so this call must return an outcome tuple rather than
+    raise, and CPLog (captured by caplog) must carry the record.
+    """
+
+    def test_a_raised_exception_is_caught_and_logged_at_error_naming_the_media_id(
+        self, world, monkeypatch, caplog,
+    ):
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        def _boom(event, *args, **kwargs):
+            if event == 'release.for_media':
+                raise RuntimeError('synthetic failure injected by the test')
+            return None
+
+        monkeypatch.setattr(renamer_main, 'fireEvent', _boom)
+
+        with caplog.at_level(logging.ERROR):
+            outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
+                'media-1', 'incoming.mkv',
+            )
+
+        assert resulting_dst is None, (
+            'an unhandled exception must never report a destination as '
+            'having been replaced'
+        )
+        assert outcome != OPERATOR_REPLACE
+
+        error_records = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert error_records, (
+            'an exception raised inside the operator replacement worker '
+            'produced no ERROR-or-above record at all -- it is only '
+            'visible on stderr via the thread\'s default excepthook, which '
+            'the operator never reads'
+        )
+        assert any('media-1' in r.getMessage() for r in error_records), (
+            'the logged failure does not name the media id it happened for'
+        )
+
+        # The old library file and the operator's source must both survive
+        # a failure that happened before any bytes were touched.
+        assert _sha(world['dst']) == world['old_dst_sha']
+        assert open(world['src'], 'rb').read() == NEW
+
+    def test_the_reentrancy_flag_is_still_cleared_after_a_caught_exception(
+        self, world, monkeypatch,
+    ):
+        """A caught-and-logged exception must not leave `renaming_started`
+        stuck True -- that would refuse every subsequent operator
+        replacement and every scheduled scan until the process restarts,
+        turning one bad exception into a permanent outage.
+        """
+        import couchpotato.core.plugins.renamer.main as renamer_main
+
+        def _boom(event, *args, **kwargs):
+            if event == 'release.for_media':
+                raise RuntimeError('synthetic failure injected by the test')
+            return None
+
+        monkeypatch.setattr(renamer_main, 'fireEvent', _boom)
+
+        world['plugin']._executeOperatorReplacement('media-1', 'incoming.mkv')
+
+        assert world['plugin'].renaming_started is False, (
+            'renaming_started was left True after a caught exception -- '
+            'every later scan and operator replacement would be refused'
         )
