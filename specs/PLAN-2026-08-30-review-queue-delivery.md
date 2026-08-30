@@ -41,8 +41,8 @@ automatic beta runs unattended.
 - [x] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: built (ccdf6229)
 - [x] T6: whole-branch multi-lens review cycle — state: done (2 Critical, 12 High, 24 Medium, 11 Low)
 - [x] T7a: fix C1 and C2, the two criticals — state: done (500b2dc6), both mutation-proven
-- [ ] T7b1: H1, H3, H8, H9, H10, the operator path — state: building
-- [ ] T7b2: H4, H5, H6, H7, the decision memory — state: queued (needs: T7b1)
+- [x] T7b1: H1, H3, H8, H9, H10, the operator path — state: done (0cdb47c3)
+- [ ] T7b2: H4, H5, H6, H7, the decision memory — state: building
 - [ ] T7b3: H2, H11, H12, the UI and its incidentally-passing tests — state: queued (needs: T7b2)
 - [ ] T7c: triage Medium and Low, fix or record with evidence — state: queued (needs: T7b)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
@@ -426,3 +426,27 @@ changes for the operator. **Then stop and hand it over.**
   goes green because an assertion was removed looks identical to one that goes
   green because the code was fixed.
   Rework rounds: T7b1 0. Armed: T7b1's workflow plus the heartbeat.
+- **Tick 22, 2026-08-31.** T7b1 done (`0cdb47c3`), five Highs fixed.
+  **The concern I flagged at tick 21 was unfounded, and I checked rather than
+  assumed:** zero assertions removed from either pre-existing test file, 59
+  added. Extended, not weakened.
+  **H3 mutation-proven, and it is the headline.** The guard stopping a
+  replacement destroying the wrong half of a multi-file release WORKED all
+  along; nothing tested it, so the reviewer deleted it and the whole suite
+  stayed green. Deleting it now fails two tests, one asserting BOTH FILES
+  SURVIVE UNTOUCHED. `main.py` restored to a matching checksum.
+  H9 is the one that matters to a human and it is now done: the confirmation
+  names what it will destroy AND what it will install, with sizes on both
+  sides. It was asking the owner to approve deleting an irreplaceable file
+  without identifying it.
+  T7b2 launched on the decision memory. **H6 is an operability defect worth
+  naming: the feature's documented kill switch does not work.** A
+  `renamer.scan` is answered FROM the memory and does nothing, so the one
+  action an operator takes to force a re-decide is silently a no-op.
+  H7 is the sharper irony: the skip record is emitted once per scan with no
+  bound, so log volume still grows one-for-one with scan count. That is the
+  exact defect FEAT-012 exists to fix, reintroduced inside its own fix.
+  H4 is the eighth stand-in of this branch: the set deciding which refusals
+  are remembered can be widened to include REPLACE itself with the suite green.
+  Rework rounds: T7b1 1, T7b2 1. No fix has yet introduced a defect a later
+  round had to repair, so the circuit-breaker has not tripped.
