@@ -48,6 +48,45 @@ describe('matchesFilter', () => {
     expect(matchesFilter({}, {})).toBe(true);
     expect(matchesFilter({}, { query: 'x' })).toBe(false);
   });
+
+  // FEAT-010 AC-DESIGN-3: a film awaiting review (status 'downloaded') is
+  // claimed by the Review chip alone. Available and Wanted both key on
+  // hasReleases today with no exclusion for a downloaded film, which is
+  // itself always a has-a-release case -- so without this exclusion a
+  // downloaded card would appear under Available (and, given no release
+  // yet recorded, could appear under Wanted too), doubly counted and
+  // filed under a chip that no longer describes it.
+  describe('the Review chip excludes a downloaded card from Available and Wanted', () => {
+    it('Available excludes a downloaded card even though it has a release', () => {
+      const downloadedCard = { title: 'Landed Film', status: 'downloaded', hasReleases: true };
+      expect(matchesFilter(downloadedCard, { filterStatus: 'available' })).toBe(false);
+    });
+
+    it('Wanted excludes a downloaded card even without a release recorded yet', () => {
+      const downloadedCard = { title: 'Landed Film', status: 'downloaded', hasReleases: false };
+      expect(matchesFilter(downloadedCard, { filterStatus: 'wanted' })).toBe(false);
+    });
+
+    it('the Review chip itself matches a downloaded card', () => {
+      const downloadedCard = { title: 'Landed Film', status: 'downloaded', hasReleases: true };
+      expect(matchesFilter(downloadedCard, { filterStatus: 'downloaded' })).toBe(true);
+    });
+
+    it('Available still matches a non-downloaded card with a release', () => {
+      const activeWithRelease = { title: 'Still Wanted', status: 'active', hasReleases: true };
+      expect(matchesFilter(activeWithRelease, { filterStatus: 'available' })).toBe(true);
+    });
+
+    it('Wanted still matches a non-downloaded card without a release', () => {
+      const activeWithoutRelease = { title: 'Still Wanted', status: 'active', hasReleases: false };
+      expect(matchesFilter(activeWithoutRelease, { filterStatus: 'wanted' })).toBe(true);
+    });
+
+    it('the Review chip still requires the search query to match the title', () => {
+      const downloadedCard = { title: "Ocean's Eleven", status: 'downloaded', hasReleases: true };
+      expect(matchesFilter(downloadedCard, { query: 'inception', filterStatus: 'downloaded' })).toBe(false);
+    });
+  });
 });
 
 describe('formatCount', () => {

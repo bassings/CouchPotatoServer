@@ -520,6 +520,43 @@ class TestTemplateRendering:
             'Available chip has no movies to reveal'
         )
 
+    def test_partial_movies_active_downloaded_makes_exactly_one_unconstrained_call(self, client):
+        """FEAT-010 AC-QA-2: a single request for the widened Wanted status set must
+        reach `media.list` exactly once, with status='active,downloaded' verbatim and
+        no `has_releases` key -- the same "one unconstrained fetch, chips filter
+        client-side" contract test_partial_movies_without_with_releases_does_not_filter_at_all
+        pins for the old status=active call.
+
+        Call COUNT is asserted (== 1), not just the kwargs of the last call, so a
+        two-fetch implementation (one per status, merged server-side) is caught even
+        though it would produce the same final kwargs dict on its last call.
+        """
+        call_count = 0
+        captured_kwargs = {}
+
+        def capture_handler(**kwargs):
+            nonlocal call_count
+            call_count += 1
+            captured_kwargs.update(kwargs)
+            return {'movies': []}
+
+        old_handler = api.get('media.list')
+        api['media.list'] = capture_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=active,downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert call_count == 1
+        assert captured_kwargs.get('status') == 'active,downloaded'
+        assert 'has_releases' not in captured_kwargs
+
     def test_partial_movies_with_releases_false_still_filters_to_wanted(self, client):
         """The explicit false case must keep working: only movies with no release.
 
@@ -560,12 +597,66 @@ class TestTemplateRendering:
         assert "setFilter('available')" in resp.text
         assert "setFilter('done')" not in resp.text
 
-    def test_wanted_grid_always_loads_active_movies(self, client):
-        """Wanted movie grid should always use status=active (no current_page available branch)."""
+    def test_wanted_grid_loads_active_and_downloaded_movies_library_stays_done(self, client):
+        """Wanted asks for active,downloaded (FEAT-010 AC-QA-1); Library still asks for
+        exactly done. Both directions are pinned in the one test so neither page can
+        inherit the other's status set.
+
+        This retargets the old `test_wanted_grid_always_loads_active_movies`, which
+        asserted the pre-FEAT-010 literal `status=active` and passed before this
+        change. A `downloaded` film (the review-gate state) never reached that
+        status set, so it was never listed anywhere -- the bug this feature fixes.
+        """
+        wanted_resp = client.get('/wanted')
+        assert wanted_resp.status_code == 200
+        assert wanted_resp.text.count('hx-get="/partial/movies?status=active,downloaded"') == 1
+        assert 'hx-get="/partial/movies?status=active"' not in wanted_resp.text
+        assert 'with_releases=true' not in wanted_resp.text
+
+        library_resp = client.get('/library')
+        assert library_resp.status_code == 200
+        assert library_resp.text.count('hx-get="/partial/movies?status=done"') == 1
+        assert 'hx-get="/partial/movies?status=active' not in library_resp.text
+
+    def test_wanted_page_shows_four_chips_in_order_with_review_last(self, client):
+        """FEAT-010 AC-DESIGN-1: the Wanted page renders exactly four filter chips,
+        in order All, Wanted, Available, Review. The Review chip must reuse the
+        existing chip markup verbatim (same class string, same selected/unselected
+        binding pattern) rather than introduce a new component or colour token, and
+        it renders even with zero films awaiting review so its position never moves.
+        """
         resp = client.get('/wanted')
         assert resp.status_code == 200
-        assert 'hx-get="/partial/movies?status=active"' in resp.text
-        assert 'with_releases=true' not in resp.text
+        html = resp.text
+
+        assert "setFilter('')" in html
+        assert "setFilter('wanted')" in html
+        assert "setFilter('available')" in html
+        assert "setFilter('downloaded')" in html, (
+            "the Review chip must call setFilter('downloaded'), the status the "
+            "review-gate movies actually carry"
+        )
+
+        # Order: All, then Wanted, then Available, then Review.
+        pos_all = html.index("setFilter('')")
+        pos_wanted = html.index("setFilter('wanted')")
+        pos_available = html.index("setFilter('available')")
+        pos_review = html.index("setFilter('downloaded')")
+        assert pos_all < pos_wanted < pos_available < pos_review
+
+        # The Review chip reuses the existing chip markup verbatim: same
+        # filterStatus === '<value>' selected-state binding pattern as the
+        # other three chips, not a new component or colour token.
+        assert (
+            ':class="filterStatus === \'downloaded\' ? \'bg-cp-accent/10 text-cp-accent\' '
+            ': \'bg-white/[0.03] text-cp-muted hover:text-cp-text\'"'
+        ) in html, "the Review chip's selected-state binding must match the other chips' pattern exactly"
+
+        # Same shared chip class string on all four -- no new class pattern.
+        assert html.count('px-2.5 py-1 rounded-md transition-colors') >= 4, (
+            "the Review chip must reuse the shared chip class string, not a new one"
+        )
+        assert '>Review<' in html
 
     def test_sidebar_does_not_link_available_page(self, client):
         """Sidebar nav should no longer contain Available as a top-level item."""

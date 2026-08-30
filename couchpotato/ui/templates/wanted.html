@@ -63,6 +63,9 @@
                 class="px-2.5 py-1 rounded-md transition-colors">
           Available
         </button>
+        <button @click="setFilter('downloaded')"
+                :class="filterStatus === 'downloaded' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
+                class="px-2.5 py-1 rounded-md transition-colors">Review</button>
       </div>
       {% endif %}
 
@@ -116,7 +119,7 @@
   <!-- Movie grid (loaded via htmx) (A11Y-004) -->
   <!-- wanted: all active movies, library: done movies -->
   <div id="movie-grid"
-       hx-get="{{ new_base }}partial/movies?{% if current_page == 'library' %}status=done{% else %}status=active{% endif %}"
+       hx-get="{{ new_base }}partial/movies?{% if current_page == 'library' %}status=done{% else %}status=active,downloaded{% endif %}"
        hx-trigger="load"
        hx-indicator="#loading"
        aria-live="polite"
