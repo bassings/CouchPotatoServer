@@ -229,16 +229,32 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // different copy, with nothing to announce it. Both are pinned exactly in
     // package.json; this asserts the graph actually delivered that, because a
     // pin is a request and the resolved tree is the answer.
-    const installedUtils = require('@lhci/utils/package.json').version;
-    const utilsTheCliWants = require('@lhci/cli/package.json').dependencies['@lhci/utils'];
+    // Compare RESOLVED PATHS, not version strings. Comparing
+    // `require('@lhci/utils').version` against the range in @lhci/cli's
+    // manifest asks neither of the questions that matter: npm never rewrites
+    // an installed package's manifest, so a nested copy leaves the declared
+    // string untouched and the assertion compares "0.15.1" to "0.15.1" while
+    // the two copies genuinely differ. Measured with one legal `overrides`
+    // entry -- a shape package.json ALREADY uses for lhci's transitive deps,
+    // and one `npm audit fix --force` can add unattended -- which resolved
+    // cli's own utils to 0.15.0 beneath the hoisted 0.15.1 with all four
+    // tests green.
+    //
+    // The path comparison cannot be fooled that way: it asks Node the same
+    // question lhci's own `require` asks, from lhci's own directory.
+    const utilsThisGuardLoads = require.resolve('@lhci/utils/package.json');
+    const utilsTheCliLoads = require.resolve('@lhci/utils/package.json', {
+      paths: [require.resolve('@lhci/cli/package.json')],
+    });
     expect(
-      installedUtils,
-      `the @lhci/utils this guard loads is ${installedUtils}, but @lhci/cli ` +
-        `depends on ${utilsTheCliWants}. This file would then be reading a ` +
+      utilsThisGuardLoads,
+      `this guard loads @lhci/utils from ${utilsThisGuardLoads}, but @lhci/cli ` +
+        `resolves ${utilsTheCliLoads}. This file would then be reading a ` +
         `DIFFERENT build of findRcFile/flattenRcToConfig than lhci itself ` +
         `uses, so every assertion below could pass against a config lhci never ` +
-        `resolves. Pin both packages to the same version in package.json.`,
-    ).toBe(utilsTheCliWants);
+        `resolves. Check package.json for an 'overrides' entry or a version ` +
+        `drift that nests a second copy under @lhci/cli.`,
+    ).toBe(utilsTheCliLoads);
   });
 
   it('uploads nowhere but this machine', () => {
@@ -365,6 +381,34 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
     // so duplicates overwrite -- and the Lighthouse evidence for three of the
     // four pages silently disappears.
     const pattern = upload.reportFilenamePattern ?? '%%HOSTNAME%%-%%PATHNAME%%-%%DATETIME%%.report.%%EXTENSION%%';
+
+    // The pattern is a FILENAME, and every check below it assumes so. lhci
+    // joins it onto outputDir and sanitises only the token VALUES
+    // (`value.replace(/[^a-z0-9]+/gi, '_')`, upload.js), never the literal
+    // text around them, and `path.join` then resolves any `../` in it. So a
+    // one-character edit to lighthouserc.js -- '../report-%%PATHNAME%%…' --
+    // lands the screenshot-bearing HTML report in the REPOSITORY ROOT, where
+    // `git add -A` stages it and the Dockerfile's `COPY . ${APP_DIR}/` bakes
+    // it into a published image. Measured: a real `lhci upload` wrote a
+    // 187 KB report to the repo root and every test in this file stayed
+    // green, because outputDir was still './.lighthouseci' and still ignored.
+    //
+    // That route is strictly WORSE than the temporary-public-storage default
+    // this file exists to forbid: it reaches the public git history AND the
+    // public ghcr.io image, and it walks past `.dockerignore`'s
+    // `**/.lighthouseci` precisely because it never writes into that
+    // directory. Assert the shape of the pattern, not just its tokens.
+    expect(
+      pattern,
+      `upload.reportFilenamePattern is '${pattern}', which contains a path ` +
+        `separator. lhci joins the pattern onto outputDir and sanitises only ` +
+        `token values, so a separator escapes the gitignored directory that ` +
+        `every other check in this file is guarding -- a '../' prefix writes ` +
+        `full-page screenshots of the operator's media library into the repo ` +
+        `root, which 'git add -A' stages and the Docker build copies into a ` +
+        `PUBLIC image. The pattern must be a bare filename.`,
+    ).not.toMatch(/[\\/]/);
+
     const RUN_INVARIANT_TOKENS = ['%%HOSTNAME%%', '%%PATHNAME%%', '%%HASH%%', '%%EXTENSION%%'];
     const varying = (pattern.match(/%%[a-z]+%%/gi) ?? []).filter(
       (t: string) => !RUN_INVARIANT_TOKENS.includes(t.toUpperCase()),
@@ -388,6 +432,19 @@ describe('lighthouserc.js keeps Lighthouse reports off the internet', () => {
         `would collapse onto one report and the evidence for all but the last ` +
         `would vanish silently.`,
     ).toContain('%%PATHNAME%%');
+    // Same class as the discriminator above, different axis. lhci writes the
+    // HTML report and then the JSON one; without %%EXTENSION%% both resolve to
+    // the SAME path and the JSON write clobbers the HTML. Measured against a
+    // real `lhci upload` with 'report-%%PATHNAME%%': one file survived, and
+    // `file` reported JSON -- the 187 KB screenshot-bearing HTML report was
+    // destroyed. Silent, and the run still exits 0.
+    expect(
+      pattern.toUpperCase(),
+      `upload.reportFilenamePattern is '${pattern}', which has no extension ` +
+        `token. lhci writes the HTML report then the JSON one; with no ` +
+        `%%EXTENSION%% they share a filename and the JSON silently overwrites ` +
+        `the HTML report that carries the actual evidence.`,
+    ).toContain('%%EXTENSION%%');
 
     expectGitIgnores(
       path.resolve(REPO_ROOT, upload.outputDir as string),

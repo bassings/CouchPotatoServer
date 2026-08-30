@@ -2334,6 +2334,102 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       would be exactly the kind of scope creep `lens-simplicity` exists to
       veto at planning time.
 
+      **ROUND FOUR, 2026-08-30: one CONFIRMED HIGH bypass that round three
+      itself opened, and the point at which CLAUDE.md rule 11 was invoked.**
+
+      Two reviewers ran on the round-three diff: one on correctness and guard
+      integrity, one adversarial with no plan context. They agreed on the
+      structural finding and disagreed on severity, and the adversarial one
+      found a bypass the first missed entirely. Worth recording, because the
+      cheaper single-reviewer version of this round would have shipped it.
+
+      - **`reportFilenamePattern` escaped `outputDir` entirely, and the whole
+        guard stayed green.** lhci joins the pattern onto `outputDir` and
+        sanitises only the token VALUES, never the literal text, so
+        `path.join` resolves a `../` in the pattern. One character in
+        `lighthouserc.js` put the screenshot-bearing HTML report in the
+        REPOSITORY ROOT, where `git add -A` stages it and the Dockerfile's
+        `COPY . ${APP_DIR}/` bakes it into a published image. Measured by the
+        reviewer with a real `lhci upload` (187 KB report in the repo root,
+        `git add -A --dry-run` staging it, and the file present inside a built
+        image), and independently here: the report resolves outside
+        `outputDir`, lands in the repo root, and `git check-ignore` says it
+        would be staged.
+        **This route is strictly worse than the `temporary-public-storage`
+        default T47 exists to forbid**, because it reaches the public git
+        history AND the public ghcr.io image, and it walks past
+        `.dockerignore`'s `**/.lighthouseci` precisely because it never writes
+        into that directory.
+        **The key did not exist before round three. The fix for the retention
+        finding opened it**, and the guard written in the same commit could
+        not see it. Fixed: the pattern is asserted to be a bare filename with
+        no path separator.
+      - **The version lockstep compared a version to a DECLARED RANGE STRING**,
+        which is a stand-in for the question that matters. npm never rewrites
+        an installed package's manifest, so a nested copy leaves the declared
+        string untouched. Measured: with one legal `overrides` entry, a shape
+        `package.json` already uses for lhci's transitive deps, the cli
+        resolved 0.15.0 beneath the hoisted 0.15.1 and all four tests passed.
+        Confirmed here on a hand-built nested tree that the OLD assertion
+        returned `true` while the two copies genuinely differed. Replaced with
+        a `require.resolve` path comparison, which asks Node the same question
+        lhci's own `require` asks, from lhci's own directory.
+      - **Dropping `%%EXTENSION%%` silently destroyed the HTML report.** lhci
+        writes HTML then JSON; with no extension token both resolve to one
+        path and the JSON clobbers the screenshot-bearing HTML. The
+        "both directions" contract covered per-URL collapse and not this.
+      - **The gitleaks premise test was inert on every machine that matters.**
+        `if not target.exists(): continue` skipped the entire corpus, and none
+        of these paths exist in a fresh clone or on a CI runner. So the entry
+        added in round three, in the commit whose own comment said the failure
+        it guards "is the one failure this whole test exists to make
+        impossible", never executed once outside a dev box that had already
+        run the harness. Both reviewers found this independently. The
+        existence check is gone: neither `git check-ignore` nor
+        `git ls-files --error-unmatch` needs the file, and a path tracked in
+        the index but absent from the working tree is a case worth failing on
+        rather than skipping. Directory entries now carry their trailing slash
+        in the corpus, which is what lets the check run against an absent path.
+
+      **DEFERRED TO T65 UNDER RULE 11, NOT FIXED HERE.** Two findings remain,
+      and they are one defect: the guards ask a question (`is this path ignored
+      right now, on this machine, at the repo root`) that is both broader and
+      shallower than the one that matters (`does the COMMITTED .gitignore
+      ignore this directory wherever lhci can write it`).
+
+      - `LHCI_DIR` is `path.join(process.cwd(), '.lighthouseci')`, so running
+        lhci from a subdirectory writes `couchpotato/.lighthouseci/`. Both
+        guards pin only the root. Narrowing `.gitignore` to `/.lighthouseci/`
+        leaves every test green. The same commit widened `.dockerignore` and
+        `.gitleaks.toml` for exactly this reason and left the test, whose job
+        is to stop those two drifting, as the only root-anchored one.
+      - `git check-ignore` is satisfied by `.git/info/exclude` or a global
+        `core.excludesFile`, neither of which reaches a fresh clone. Proven by
+        a reviewer, and it is the same trap that produced a false green here in
+        round three. The Python half of this branch already learned it and
+        passes `sanitized_git_env()`; the TypeScript half does not.
+
+      **Why deferred rather than patched.** This is round four on one file,
+      and it surfaced a NEW class rather than more instances of a known one,
+      which `~/.claude/CLAUDE.md` §2 names as the signal to re-open the
+      approach instead of spending another round. Four files must now agree
+      about `.lighthouseci` (`.gitignore`, `.gitleaks.toml`, `.dockerignore`,
+      the test) and three of the four were corrected by hand in round three
+      alone. A fifth hand-written agreement is the failing move. Both
+      reviewers reached this independently and one refused to recommend the
+      patch. T65 already owns the docker half; it is widened below to own all
+      four at both depths, with a machine-independent oracle, and to delete
+      the hand-written assertions it replaces.
+
+      What WAS fixed in this round is the complement of that: three defects
+      round three introduced, plus one it half-delivered. Those are this
+      branch's own debt, not the structural problem.
+
+      **Also outstanding, per `~/.claude/CLAUDE.md` §3a:** `npm audit` reports
+      6 high-severity findings on the committed package pair. Unrelated to this
+      diff, but §3a requires a recorded decision per finding before the PR, and
+      that has not been done.
+
 - [x] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: **merged #275** (`b1ef797a`, 2026-08-19) — **security, pre-existing**. **Ticked late, 2026-08-20:** the merge commit never ticked its own entry, so the box stayed open for a day while the work was on master — found by review of T52, not by me. Exactly the staleness T18's parenthesis predicts about itself, and the reason the needs-list is now a test rather than a promise
 
       Found by the security lens while reviewing T47, and it is the larger half
@@ -3328,6 +3424,37 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       The derived check this task builds should assert that each root-level
       gitignored artefact directory appears in BOTH `.dockerignore` and the
       `.gitleaks.toml` allowlist, not just the former.
+
+      **UPDATE 2026-08-30, round four of T47. Widen the scope again, and this
+      is now the whole reason the task exists.** Two reviewers independently
+      told T47 to stop hand-patching and hand the problem here, per CLAUDE.md
+      rule 11. Four files must agree about `.lighthouseci`: `.gitignore`,
+      `.gitleaks.toml`, `.dockerignore`, and
+      `tests/unit/lighthouse_upload_stays_local.test.ts`. Three of the four
+      were corrected by hand in a single round, and the fourth is still wrong
+      in two ways that a hand-written fifth agreement would not fix:
+
+      - **Depth.** `LHCI_DIR` is `path.join(process.cwd(), '.lighthouseci')`,
+        so lhci run from a subdirectory writes `couchpotato/.lighthouseci/`.
+        Both current guards pin only the root, so narrowing `.gitignore` to
+        `/.lighthouseci/` leaves the whole suite green while a nested report
+        becomes committable. `.dockerignore` and `.gitleaks.toml` were both
+        widened for exactly this reason; the test was not.
+      - **Oracle.** `git check-ignore` answers from `.git/info/exclude` and the
+        global `core.excludesFile` as well as the committed `.gitignore`, so
+        the local gate can be green on a repository that no longer ignores the
+        directory. Use `check-ignore -v` and assert the reported source is
+        `.gitignore`, and pass a sanitised git environment: the Python half of
+        this branch already does the latter, for the recorded
+        `gitdir-leak-from-worktree-push` incident, and the TypeScript half
+        does not.
+
+      So the derived check should assert, for each gitignored artefact
+      directory, that it is excluded in all four places, at BOTH root and
+      nested depth, with the ignore answer attributed to the committed file.
+      **It should then delete the hand-written assertions it replaces**, which
+      is the half that stops this recurring: leaving them in place means five
+      things to keep in agreement rather than four.
 
 - [ ] T66: the UI fetches its typeface from Google on every page load — state: queued (no deps) — **privacy, availability, performance**
 
