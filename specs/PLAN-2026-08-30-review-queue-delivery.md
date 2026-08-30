@@ -623,3 +623,39 @@ changes for the operator. **Then stop and hand it over.**
   step 4), so this is the first genuinely full run of the branch.
   Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, still not
   re-tripped; this one is my own sweep, not a fix repairing a fix.
+- **Tick 31, 2026-08-31.** **T8's gate is GREEN, all seven steps, and this is
+  the first run that reached the browser tests** (the red pass aborted at
+  4/7, so the E2E suite had not actually run against this branch's tip since
+  the remediation began).
+  | Step | Result |
+  |---|---|
+  | ruff, test-trap guard, UI conformance | pass |
+  | Python unit | 3763 passed, 2 skipped, 3 xfailed |
+  | Python integration, vitest | pass, 214 passed |
+  | E2E chromium / accessibility / mobile | 166 + 83 + 10 + 2 = 261 passed |
+  Verified by reading the step banners, not the trailing "safe to open a PR"
+  line: a tail can show a green footer under a suite that never ran, which
+  this session has already been caught by once.
+  **T8 does not push yet, because the remediation delta has never itself
+  been reviewed.** CLAUDE.md rule 3 and the standing local-review rule apply
+  to fix commits, not just to feature commits, and there are eight of them
+  since the review report landed at `27ed3304` (the two criticals, three
+  batches of highs, the mediums, the lows, and my own repoint). Reviewing
+  the branch once and then remediating it unreviewed would defeat the gate.
+  Two independent `code-reviewer` agents launched in parallel over
+  `27ed3304..HEAD`, deliberately given non-overlapping lenses:
+  - **Destructive path**: does C2's size capture actually close the
+    both-copies-lost window, does M6 stop a replayed second swap, are M2's
+    0700/0600 applied AT CREATION rather than after a world-readable window,
+    and does anything still leak a path or key to a log, notifier or cache.
+  - **Guard quality**: a deletion audit across the range, and an adversarial
+    hunt for tests that cannot fail. It is told explicitly to judge MY OWN
+    removal of the no-reload marker in `aa012a1a` and to try to construct a
+    mutation the marker would have caught that the three surviving
+    assertions do not. If it finds one, I removed a working assertion and
+    that is a real finding against me.
+  Both are read-only, both are barred from `make verify` and from touching
+  the shared `.venv`, and both are told plainly that CLEAN is a legitimate
+  outcome so neither invents findings to look thorough.
+  Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, not
+  re-tripped.
