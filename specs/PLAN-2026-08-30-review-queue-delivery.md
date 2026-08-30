@@ -341,3 +341,10 @@ changes for the operator. **Then stop and hand it over.**
   most likely to demand changes, and a verify run spent on a tree that is about
   to change is a verify run wasted.
   Rework rounds: all tasks 0. Armed: the review workflow plus the heartbeat.
+- **Tick 17, 2026-08-31.** Quiet hold, T6 converging: 11 lens results recorded
+  and the worktree count has fallen from 8 to 3 as lenses finish and remove
+  their own checkouts. That self-cleanup is worth noting because leftover
+  worktrees were a recorded problem earlier in this session, and five had to be
+  removed by hand after PR #291.
+  No action. Rework rounds: all 0. Armed: the review workflow plus the
+  heartbeat.
