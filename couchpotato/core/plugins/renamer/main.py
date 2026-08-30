@@ -64,13 +64,35 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: flip on a transient read failure or a release document being edited,
     #: with neither the source file nor a setting moving at all -- and a
     #: memory that outlives its cause is worse than the loop it replaces.
+    #:
+    #: H5 (branch review 2026-08-31). `declined_size_contradicts_quality` is
+    #: absent for the same reason: its cause is a quality document's
+    #: `size_min`/`size_max`, read through `fireEvent('quality.single', ...)`
+    #: at decision time, not a `config.ini` key -- so `DECISION_MEMORY_SETTINGS`
+    #: cannot see it change. Two fixes were on the table: fold the quality
+    #: band into the recorded signature, or stop remembering the outcome.
+    #: Folding it in would still miss `DECLINED_UNVERIFIED_IDENTITY`, which
+    #: has the identical shape against `identity_source` (see the same
+    #: finding's "Recurrence" note), so widening the signature buys nothing
+    #: durable without auditing every database-backed outcome. Dropping the
+    #: one member that is proven affected is the smaller, safer fix: the
+    #: worst case is this refusal is re-decided every scan, which is exactly
+    #: what happened before this feature existed and is merely the DEFAULT
+    #: behaviour reasserting itself for one outcome, not a new failure mode.
     REMEMBER_ELIGIBLE_OUTCOMES = frozenset({
         DECLINED_SETTING_OFF,
         DECLINED_UNVERIFIED_IDENTITY,
         DECLINED_MULTI_FILE_GROUP,
         DECLINED_OUTSIDE_LIBRARY,
-        DECLINED_SIZE_CONTRADICTS_QUALITY,
     })
+
+    #: H7 (branch review 2026-08-31) / AC-OPS-3. The "already decided and
+    #: unchanged" skip record is emitted by every scan that hits the
+    #: memory, so left unbounded it grows one for one with scan count --
+    #: exactly the flood this feature exists to stop, reintroduced by the
+    #: fix itself. Bounded through `log_suppressed`, the same mechanism
+    #: already used for the collision WARNING a few hundred lines below.
+    DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS = 3600
 
     #: H10 (branch review 2026-08-31). The extensions the scanner already
     #: recognises as a movie file (`FileDetectorMixin.extensions['movie']`),
@@ -148,12 +170,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                   hours=force_every)
 
     def scanView(self, **kwargs):
-        """API handler for renamer.scan."""
+        """API handler for renamer.scan.
+
+        H6 (branch review 2026-08-31) / AC-QA-10, AC-DATA-12, AC-OPS-10.
+        This is the ONLY entry point an operator has to ask the renamer to
+        look again -- a scheduled scan reaches `scan()` directly, through
+        `checkSnatched` or the `renamer.force_scan` cron, never through this
+        view. So every call through here is, by construction, the operator
+        asking again, and must always re-decide: `operator_forced=True` is
+        passed through unconditionally, not only when `media_folder` is set.
+        """
         base_folder = kwargs.get('base_folder')
         media_folder = kwargs.get('media_folder')
 
         fireEvent('renamer.scan', base_folder=base_folder,
-                  media_folder=media_folder, async_call=True)
+                  media_folder=media_folder, operator_forced=True,
+                  async_call=True)
 
         return {
             'success': True
@@ -263,7 +295,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             data={'media_id': media_id, 'outcome': outcome},
         )
 
-    def scan(self, base_folder=None, media_folder=None, release_download=None, async_call=False):
+    def scan(self, base_folder=None, media_folder=None, release_download=None,
+             async_call=False, operator_forced=False):
         """Scan the from-folder and rename/move completed downloads.
 
         Args:
@@ -271,6 +304,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             media_folder: Specific media subfolder to process
             release_download: Specific release download dict to process
             async_call: Whether this was called asynchronously
+            operator_forced: H6 (branch review 2026-08-31) / AC-QA-10. Set
+                by `scanView()` for every operator-triggered call. Bypasses
+                the memory check for this scan AND pops any remembered
+                entry for `scan_folder`, so the one API call an operator has
+                always re-decides, and the NEXT scheduled scan does too
+                rather than answering from an entry the operator's forced
+                scan bypassed but left standing.
         """
         # Check-and-set must be atomic, or two threads can both pass the
         # check before either sets the flag. The lock is only held for this
@@ -323,10 +363,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # decision (AC-OPS-12).
                 targeted = media_folder is not None or release_download is not None
 
+                if operator_forced:
+                    # H6 (branch review 2026-08-31) / AC-QA-10, AC-DATA-12.
+                    # Popped here, unconditionally, rather than merely
+                    # bypassed below: a targeted forced call already
+                    # reached `_processGroup` again before this fix, but
+                    # left the entry standing, so the very next SCHEDULED
+                    # scan (no operator_forced, not targeted) was answered
+                    # from the same stale memory the operator thought
+                    # they had just cleared. Popping here closes that,
+                    # whether this call is targeted or not.
+                    self._decision_memory.pop(scan_folder, None)
+
                 current_signature = self._folderSignature(scan_folder)
                 current_settings = self._settingsSignature()
 
-                if not targeted:
+                if not targeted and not operator_forced:
                     remembered = self._decision_memory.get(scan_folder)
                     if (
                         remembered is not None
@@ -348,10 +400,18 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         # D8: no path at INFO, matching every other record in
                         # this file -- the count and the fact that nothing
                         # changed is all an operator needs here.
-                        log.info(
+                        #
+                        # H7: bounded by `log_suppressed`, keyed per scan
+                        # folder, or this record grows one for one with
+                        # scan count -- the exact flood AC-OPS-3 exists to
+                        # stop, reintroduced by this record on its own.
+                        log_suppressed(
+                            log.info,
+                            'renamer_memory_skip:%s' % scan_folder,
                             'Renamer: %d group(s) already decided and '
                             'unchanged; skipping the scan',
                             remembered['group_count'],
+                            window=self.DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS,
                         )
                         log.debug('The unchanged scan folder was: %s', scan_folder)
                         return

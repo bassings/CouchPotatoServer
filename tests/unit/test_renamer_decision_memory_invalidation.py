@@ -25,6 +25,7 @@ import os
 import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
+from couchpotato.core.plugins.renamer.replacement import DECLINED_SIZE_CONTRADICTS_QUALITY
 
 
 @pytest.fixture(autouse=True)
@@ -259,4 +260,68 @@ class TestSettingsChangesInvalidateTheMemory:
             'Renamer.DECISION_MEMORY_SETTINGS is %r but this file only '
             'parameterises %r -- add a case above for the difference'
             % (Renamer.DECISION_MEMORY_SETTINGS, covered)
+        )
+
+
+class TestSizeContradictsQualityIsNeverRemembered:
+    """H5 (branch review 2026-08-31) / AC-DATA-6, AC-QA-7.
+
+    `DECISION_MEMORY_SETTINGS` only reads `config.ini` keys, but
+    `declined_size_contradicts_quality`'s cause is a QUALITY DOCUMENT read
+    through `fireEvent('quality.single', ...)` -- database state the
+    invalidation surface cannot see at all. The review measured this
+    directly: parking a group at this outcome, then widening the quality
+    band's `size_min` from 4000 to 1 (the exact edit an operator makes to
+    unblock a refused replacement), left `_settingsSignature()` identical
+    before and after, and the group stayed parked with no remedy short of
+    a restart (compounded by H6, the kill switch that should have cleared
+    it on demand).
+
+    Two fixes were on the table: fold the quality band into the recorded
+    signature, or stop remembering this outcome at all, since its cause
+    can change with neither a file nor a `config.ini` key moving --
+    exactly the property `REMEMBER_ELIGIBLE_OUTCOMES` is documented to
+    require. The smaller, safer one is taken (see the comment on that
+    frozenset in `main.py`), so the regression this test pins is not "does
+    a settings change expire the park" -- there is no park left to expire.
+    It is the stronger property that fix actually delivers:
+    `declined_size_contradicts_quality` is re-decided on EVERY scan, with
+    nothing mutated between them at all.
+
+    `_processGroup` is stubbed to hand back this one outcome directly, the
+    same deliberate seam `TestOnlyEligibleOutcomesAreRemembered` in the
+    frozen sibling file uses and explains: this isolates the memory's
+    SET-membership gate from `decide_replacement`'s own correctness in
+    producing the outcome, which is proven elsewhere.
+    """
+
+    def test_declined_size_contradicts_quality_is_redecided_every_scan(
+        self, world, monkeypatch,
+    ):
+        dst = str(world['dst'])
+        monkeypatch.setattr(
+            type(world['plugin']), '_processGroup',
+            lambda _self, group, media_folder=None, release_download=None: [
+                (DECLINED_SIZE_CONTRADICTS_QUALITY, dst),
+            ],
+            raising=False,
+        )
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must produce '
+            'declined_size_contradicts_quality before this test can prove '
+            'anything about it never being remembered'
+        )
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            'declined_size_contradicts_quality was answered from memory '
+            'on a completely UNCHANGED second scan -- nothing on disk and '
+            'nothing in config.ini moved. Its real cause is a quality '
+            'document read through fireEvent("quality.single", ...), '
+            'which DECISION_MEMORY_SETTINGS cannot see, so a settings '
+            'change that widens the band would never have expired this '
+            'park either (H5). The fix is to stop remembering this '
+            'outcome, not to widen the invalidation signature.'
         )

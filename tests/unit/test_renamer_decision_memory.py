@@ -32,6 +32,20 @@ import subprocess
 import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
+from couchpotato.core.plugins.renamer.owner import DECLINED_NO_OWNER
+from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_ERROR,
+    DECLINED_INCOMPLETE_EVIDENCE,
+    DECLINED_MULTI_FILE_GROUP,
+    DECLINED_NOT_BETTER,
+    DECLINED_OUTSIDE_LIBRARY,
+    DECLINED_SETTING_OFF,
+    DECLINED_SIZE_CONTRADICTS_QUALITY,
+    DECLINED_SOURCE_CHANGED,
+    DECLINED_UNKNOWN_QUALITY,
+    DECLINED_UNVERIFIED_IDENTITY,
+    REPLACE,
+)
 from tests.unit.conftest import sanitized_git_env
 
 # env=sanitized_git_env() on every git call here, enforced by
@@ -447,4 +461,180 @@ class TestRestartRedecides:
             'memory is somehow surviving across instances, a stuck '
             'refusal would outlive the one remedy an operator expects a '
             'restart to provide'
+        )
+
+
+class TestOnlyEligibleOutcomesAreRemembered:
+    """H4 (branch review 2026-08-31) / AC-QA-9, AC-DATA-4, AC-QA-14.
+
+    `REMEMBER_ELIGIBLE_OUTCOMES` is the one thing standing between "this
+    refusal cannot change without a file or a setting moving" and "this
+    refusal is transient and must be re-decided every scan" -- and nothing
+    in the repo enumerated its members before this test. The branch review
+    widened the frozenset to include every transient outcome, and `replace`
+    itself, and the entire unit suite stayed green.
+
+    `_processGroup` is stubbed here to hand back exactly the
+    `(outcome, dst)` pair `scan()` consumes. `decide_replacement`'s own
+    correctness in PRODUCING each of these outcomes from real inputs is a
+    different contract, proven elsewhere against the real function; what
+    this test isolates, by driving the real `scan()` around a stubbed
+    result, is the SET-membership gate itself -- exactly what H4 found
+    unguarded, and the only thing a widened or shrunk frozenset can break.
+
+    `DECLINED_SIZE_CONTRADICTS_QUALITY` is asserted below as INELIGIBLE.
+    That is the target shape from H5 (see the comment on
+    `REMEMBER_ELIGIBLE_OUTCOMES` in `main.py`), not what ships today:
+    today's frozenset still contains it, so that one parametrised case is
+    RED even before H4's guard is considered on its own, and it stays RED
+    until H5 lands alongside H4.
+    """
+
+    ELIGIBLE_OUTCOMES = (
+        DECLINED_SETTING_OFF,
+        DECLINED_UNVERIFIED_IDENTITY,
+        DECLINED_MULTI_FILE_GROUP,
+        DECLINED_OUTSIDE_LIBRARY,
+    )
+
+    INELIGIBLE_OUTCOMES = (
+        DECLINED_UNKNOWN_QUALITY,
+        DECLINED_INCOMPLETE_EVIDENCE,
+        DECLINED_ERROR,
+        DECLINED_SOURCE_CHANGED,
+        DECLINED_NOT_BETTER,
+        DECLINED_NO_OWNER,
+        REPLACE,
+        DECLINED_SIZE_CONTRADICTS_QUALITY,
+    )
+
+    @staticmethod
+    def _stub_process_group(monkeypatch, plugin, outcome, dst):
+        monkeypatch.setattr(
+            type(plugin), '_processGroup',
+            lambda _self, group, media_folder=None, release_download=None: [
+                (outcome, dst),
+            ],
+            raising=False,
+        )
+
+    @pytest.mark.parametrize('outcome', ELIGIBLE_OUTCOMES)
+    def test_eligible_outcome_is_remembered_and_skips_the_next_scan(
+        self, world, monkeypatch, outcome,
+    ):
+        self._stub_process_group(monkeypatch, world['plugin'], outcome, world['dst'])
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must record %r before this test can '
+            'prove anything about remembering it' % (outcome,)
+        )
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            '%r is in REMEMBER_ELIGIBLE_OUTCOMES, and its cause cannot '
+            'change without a file or a setting moving -- a second, '
+            'completely unchanged scan must be answered from memory, not '
+            're-asked from the scanner' % (outcome,)
+        )
+
+    @pytest.mark.parametrize('outcome', INELIGIBLE_OUTCOMES)
+    def test_ineligible_outcome_is_never_remembered_and_redecides_every_scan(
+        self, world, monkeypatch, outcome,
+    ):
+        self._stub_process_group(monkeypatch, world['plugin'], outcome, world['dst'])
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must produce %r before this test can '
+            'prove anything about it never being remembered' % (outcome,)
+        )
+
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            '%r must never be remembered: its cause can change with '
+            'neither a file nor a setting moving, so treating it as '
+            'settled would let a remembered refusal outlive the thing '
+            'that produced it (AC-QA-9/AC-QA-14). A completely unchanged '
+            'second scan was answered from memory instead of being '
+            're-decided.' % (outcome,)
+        )
+
+    def test_every_outcome_the_automatic_path_can_produce_is_covered_above(self):
+        """Guards the parametrisation itself, the same way the settings
+        coverage test in the sibling invalidation file does: if a new
+        outcome constant is ever added to `decide_replacement`'s
+        vocabulary without a case here, this fails loudly rather than the
+        new outcome silently going untested for memory eligibility."""
+        covered = set(self.ELIGIBLE_OUTCOMES) | set(self.INELIGIBLE_OUTCOMES)
+        known = {
+            REPLACE,
+            DECLINED_SETTING_OFF,
+            DECLINED_MULTI_FILE_GROUP,
+            DECLINED_UNKNOWN_QUALITY,
+            DECLINED_INCOMPLETE_EVIDENCE,
+            DECLINED_ERROR,
+            DECLINED_OUTSIDE_LIBRARY,
+            DECLINED_SOURCE_CHANGED,
+            DECLINED_UNVERIFIED_IDENTITY,
+            DECLINED_SIZE_CONTRADICTS_QUALITY,
+            DECLINED_NOT_BETTER,
+            DECLINED_NO_OWNER,
+        }
+        assert covered == known, (
+            'the outcome constants this test parametrises over (%r) do '
+            'not match the known automatic-path vocabulary (%r) -- add a '
+            'case above for the difference' % (covered, known)
+        )
+
+
+class TestSkipRecordDoesNotGrowLinearlyWithScanCount:
+    """H7 (branch review 2026-08-31) / AC-OPS-3. The "already decided and
+    unchanged; skipping the scan" record inside `scan()` is a plain
+    `log.info` with no bound at all -- unlike the collision WARNING a few
+    hundred lines below it (`main.py:634`), which IS wrapped in
+    `log_suppressed`. Measured on the review: 100 scans of one unchanged
+    parked group produced 100 records at INFO or above, and 500 scans
+    produced 500 -- exactly the one-for-one growth FEAT-012 exists to
+    stop, reintroduced by the fix itself.
+
+    `TestBoundedLogHoldsIndependentlyOfMemory` above proves a DIFFERENT
+    bound: the collision refusal inside `_moveRenamedFiles`, reached only
+    by calling it directly so the memory is bypassed entirely. This class
+    drives `scan()` itself, so it exercises the memory-HIT path that test
+    deliberately never reaches, and it is left untouched.
+    """
+
+    def test_a_hundred_unchanged_scans_do_not_grow_the_skip_record_linearly(
+        self, world, caplog,
+    ):
+        with caplog.at_level(logging.INFO):
+            for _ in range(100):
+                world['plugin'].scan(base_folder=world['downloads'])
+
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the group must have been parked by the first scan and '
+            'then answered from memory for the other 99, or this run '
+            'proves nothing about the skip record -- the scanner was '
+            're-asked instead'
+        )
+
+        skip_records = [
+            r for r in caplog.records
+            if r.levelno >= logging.INFO
+            and 'already decided and unchanged' in r.getMessage()
+        ]
+        assert skip_records, (
+            'the skip record never fired at all across 100 scans of one '
+            'unchanged, parked group -- this run proves nothing about a '
+            'bound because the record under test was never reached'
+        )
+        assert len(skip_records) <= 4, (
+            '100 identical scans of one unchanged parked group produced '
+            '%d "already decided and unchanged" records at INFO or '
+            'above. AC-OPS-3 requires this record to be bounded the same '
+            'way the collision WARNING already is (log_suppressed): a '
+            'plain log.info here means the feature that exists to stop '
+            'the log being churned still churns it, one record per scan, '
+            'forever.' % len(skip_records)
         )
