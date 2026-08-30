@@ -11,6 +11,8 @@ API mirrors the subset of diskcache.Cache used by CouchPotato:
   cache.close()
 """
 
+import base64
+import binascii
 import json
 import logging
 import os
@@ -19,6 +21,11 @@ import threading
 import time
 
 log = logging.getLogger(__name__)
+
+# Marker key for a bytes value wrapped for JSON storage. Deliberately long and
+# namespaced so it cannot collide with a real application dict that happens to
+# be the value being cached -- see SQLiteCache.set / SQLiteCache.get below.
+_BYTES_MARKER = '__couchpotato_cache_bytes_b64__'
 
 _CREATE_TABLE = """
 CREATE TABLE IF NOT EXISTS cache (
@@ -80,20 +87,48 @@ class SQLiteCache:
             return default
 
         try:
-            return json.loads(value_json)
+            loaded = json.loads(value_json)
         except (json.JSONDecodeError, TypeError):
             log.warning('Cache: corrupt entry for key %s, removing', key)
             self.delete(key)
             return default
 
+        if isinstance(loaded, dict) and set(loaded.keys()) == {_BYTES_MARKER}:
+            try:
+                return base64.b64decode(loaded[_BYTES_MARKER], validate=True)
+            except (TypeError, ValueError, binascii.Error):
+                log.warning('Cache: corrupt bytes entry for key %s, removing', key)
+                self.delete(key)
+                return default
+
+        return loaded
+
     def set(self, key, value, expire=None):
-        """Store a value. *expire* is TTL in seconds (None = no expiry)."""
+        """Store a value. *expire* is TTL in seconds (None = no expiry).
+
+        Values are stored as JSON (never pickle) to avoid CVE-2025-69872 --
+        see the module docstring. HTTP response bodies (what HTTPClient.request
+        and therefore getJsonData/getRSSData actually hand this cache) come in
+        as *bytes*, which json.dumps cannot represent, and are not guaranteed
+        to be UTF-8 text -- decoding them to str would silently corrupt any
+        body that is not valid UTF-8. So a bytes value is base64-encoded and
+        wrapped in a small marker dict before being JSON-encoded, and unwrapped
+        again in get(). This keeps the stored form plain, inspectable JSON
+        text (no arbitrary object deserialisation) while round-tripping the
+        exact bytes.
+        """
         expiry = (time.time() + expire) if expire else None
-        try:
-            value_json = json.dumps(value)
-        except (TypeError, ValueError):
-            log.debug('Cache: cannot serialise value for key %s, skipping', key)
-            return
+        if isinstance(value, bytes):
+            value_json = json.dumps({_BYTES_MARKER: base64.b64encode(value).decode('ascii')})
+        else:
+            try:
+                value_json = json.dumps(value)
+            except (TypeError, ValueError):
+                log.warning(
+                    'Cache: cannot serialise value of type %s for key %r, not caching it',
+                    type(value).__name__, key,
+                )
+                return
         conn = self._conn()
         conn.execute(
             'INSERT OR REPLACE INTO cache (key, value, expiry) VALUES (?, ?, ?)',

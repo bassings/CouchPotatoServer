@@ -140,3 +140,90 @@ class TestSQLiteCacheEdgeCases:
         big = 'x' * 100_000
         cache.set('big', big)
         assert cache.get('big') == big
+
+
+class TestSQLiteCacheBytes:
+    """T67: HTTPClient.request returns bytes (its own docstring says so),
+    and getJsonData / getRSSData hand that response body to the cache
+    unchanged. A bytes value must round trip, because a value stored as
+    bytes and read back as anything else silently corrupts every cached
+    HTTP response body.
+    """
+
+    def test_set_and_get_bytes(self, cache):
+        raw = b'{"ok": true}'
+        cache.set('http-body', raw)
+        assert cache.get('http-body') == raw
+
+    def test_bytes_round_trip_preserves_type(self, cache):
+        cache.set('key', b'hello world')
+        result = cache.get('key')
+        assert isinstance(result, bytes), (
+            'cache.get returned %r, not bytes -- a caller that expects the '
+            'exact type urlopen returned will misbehave' % type(result)
+        )
+
+    def test_non_utf8_bytes_round_trip_exactly(self, cache):
+        # HTTP response bodies are not guaranteed to be UTF-8 text. A lossy
+        # decode-to-store would silently corrupt a cached response, which is
+        # worse than not caching it at all -- 0xff 0xfe is not valid UTF-8,
+        # so this fails loudly if the fix assumes utf-8 rather than
+        # preserving the exact bytes.
+        raw = b'\xff\xfe\x00\x01binary\x02\xfd\x80garbage'
+        cache.set('http-body-binary', raw)
+        assert cache.get('http-body-binary') == raw
+
+    def test_empty_bytes_round_trip(self, cache):
+        cache.set('empty-body', b'')
+        assert cache.get('empty-body') == b''
+
+
+class TestSQLiteCacheReportsUnstorableValues:
+    """T67 part two: the silent skip is the real defect and outlives
+    whatever encoding fix bytes gets. A value the cache genuinely cannot
+    store (no JSON representation, and not bytes) must be reported at a
+    level somebody actually sees, not log.debug -- otherwise the next
+    unserialisable type repeats this exact incident.
+    """
+
+    def test_unstorable_object_is_reported_above_debug(self, cache, caplog):
+        class Unrepresentable:
+            """No JSON representation, and not bytes."""
+
+        with caplog.at_level('WARNING'):
+            cache.set('bad-key', Unrepresentable())
+
+        # still not stored -- the guard is about visibility, not persistence
+        assert cache.get('bad-key') is None
+
+        reported = [r for r in caplog.records if r.name == 'couchpotato.core.cache']
+        assert reported, (
+            'cache.set silently dropped a value it could not store -- '
+            'nothing was logged at WARNING or above'
+        )
+        assert 'bad-key' in caplog.text, (
+            'the report does not name the key, so nobody can act on it'
+        )
+
+    def test_unstorable_set_value_is_reported_above_debug(self, cache, caplog):
+        # a python set has no JSON representation
+        with caplog.at_level('WARNING'):
+            cache.set('bad-set', {1, 2, 3})
+
+        assert cache.get('bad-set') is None
+
+        reported = [r for r in caplog.records if r.name == 'couchpotato.core.cache']
+        assert reported, (
+            'cache.set silently dropped a set value -- nothing was logged '
+            'at WARNING or above'
+        )
+
+    def test_unstorable_value_does_not_raise(self, cache):
+        # The cache must not turn a caching failure into a request failure --
+        # setCache is called from inside a fetch that already has the data
+        # in hand; raising here would discard a successful fetch just
+        # because that fetch's result could not be cached.
+        class Unrepresentable:
+            pass
+
+        cache.set('bad-key-2', Unrepresentable())  # must not raise
