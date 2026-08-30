@@ -416,3 +416,13 @@ changes for the operator. **Then stop and hand it over.**
   replacement destroying the wrong half of a multi-file release has no test,
   and the reviewer removed the guard with the entire suite still passing.
   Rework rounds: T7a 1 (round 1 of the fix loop, no regressions introduced).
+- **Tick 21, 2026-08-31.** Quiet hold, T7b1 mid-flight with tests running.
+  **Flagged for verification at commit:** it is modifying two EXISTING test
+  files (`test_operator_candidate_listing.py`,
+  `test_replacement_operator_execution.py`). Adding cases is expected, since
+  H3 requires a new multi-file guard case and H10 changes the listing
+  contract. Weakening is not, and the prompt forbade it. Check the diff for
+  DELETED assertions rather than only counting that tests pass: a suite that
+  goes green because an assertion was removed looks identical to one that goes
+  green because the code was fixed.
+  Rework rounds: T7b1 0. Armed: T7b1's workflow plus the heartbeat.
