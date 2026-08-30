@@ -203,3 +203,11 @@ changes for the operator. **Then stop and hand it over.**
   never caller-supplied, proven by handing it a decoy victim file and hashing
   that file before and after.
   Rework rounds: T3 0, T4 0. Armed: T4's workflow plus the heartbeat.
+- **Tick 8, 2026-08-31.** Quiet hold, T4 mid-flight with a new
+  `test_replacement_operator_execution.py` and edits to `renamer/main.py`.
+  Checked the one thing worth checking mid-flight: `replacement.py` shows 18
+  insertions and ZERO deletions, so T4 is adding beside T3's decision rather
+  than rewriting it, which is what the task required and what the isolation
+  argument depends on. Journal last written 11 minutes before this tick, which
+  is within normal for an agent mid-implementation, so no liveness action.
+  Rework rounds: T4 0. Armed: T4's workflow plus the heartbeat.
