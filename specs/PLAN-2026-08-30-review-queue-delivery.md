@@ -348,3 +348,18 @@ changes for the operator. **Then stop and hand it over.**
   removed by hand after PR #291.
   No action. Rework rounds: all 0. Armed: the review workflow plus the
   heartbeat.
+- **Tick 18, 2026-08-31.** Quiet hold, but checked properly rather than waited
+  out: the review journal had not moved in 30 minutes, results stuck at 11 and
+  worktrees at 3, which is the shape of a stall.
+  Evidence says otherwise. Three lens worktrees are still checked out
+  (`-3`, `-4`, `-10`), 15 agent processes are live, load is 2.9, and the last
+  journal entry is `started` rather than a result. A lens mid-analysis writes
+  nothing, and this branch diff is far larger than the ones whose lenses took
+  18 to 35 minutes earlier in the session. Alive, not hung.
+  **Decision rule set so this is not waited out indefinitely:** if the NEXT
+  tick shows the journal still at 11 results with no new worktree activity, the
+  run is treated as hung. The correct response then is NOT to kill it blind: it
+  is to read the per-lens results already in the journal, which are durable, and
+  re-run only the lenses that never reported. Forty-five minutes of completed
+  lens work should not be thrown away to restart a fan-out.
+  Rework rounds: all 0. Armed: the review workflow plus the heartbeat.
