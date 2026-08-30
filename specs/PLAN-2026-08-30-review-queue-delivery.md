@@ -29,45 +29,23 @@ automatic beta runs unattended.
 
 ## Tasks
 
-**status: blocked-on-human (T8 to T10 only):** two questions put to the owner
-2026-08-31, neither blocking T7b2, T7b3 or the medium/low triage, which
-continue.
+**Both owner questions ANSWERED 2026-08-31; no longer blocked.**
 
-1. **Release scope.** The owner chose "all three features, one release" BEFORE
-   the review. FEAT-011 has since returned two Criticals: a destructive route
-   answering a cross-origin request, and a size guard comparing a value with
-   itself such that a still-copying file would install truncated over the
-   complete library copy and the partial then be deleted. Both are fixed and
-   mutation-proven, but that is two Criticals from ONE feature, on a code path
-   that has destroyed irreplaceable files twice before, and the review states
-   the class will recur "wherever this entry point is extended". FEAT-010,
-   FEAT-012 and T67 produced ZERO Criticals between them. Should manual
-   replace still ride along with the fix for the problem the owner actually
-   reported, or ship separately after its own clean review?
-2. **Medium and Low triage.** Fix all 35, or fix what matters and reject the
-   rest with evidence? CLAUDE.md's own exit condition says a marginal nit on a
-   low-risk change is rejected with evidence and stopped, not silenced.
-
-
-- [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
-- [x] T2: FEAT-012, the renamer remembers it already decided — state: built (b314601a)
-- [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
-- [x] T3: FEAT-011a, the operator replace decision and destination resolution — state: built (ba1b652a)
-- [x] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: built (fd396423)
-- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: partial (700cb61e: trigger button only)
-- [ ] T5b: FEAT-011c, the replacement modal — state: partial (2a405d67: dialog shell and wording, no data)
-- [x] T5d: FEAT-011c, the server-side candidate listing route — state: built (a6b0592d)
-- [x] T5e: FEAT-011c, wire the modal to the listing and the submit — state: built (4051c2c1)
-- [x] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: built (ccdf6229)
-- [x] T6: whole-branch multi-lens review cycle — state: done (2 Critical, 12 High, 24 Medium, 11 Low)
-- [x] T7a: fix C1 and C2, the two criticals — state: done (500b2dc6), both mutation-proven
-- [x] T7b1: H1, H3, H8, H9, H10, the operator path — state: done (0cdb47c3)
-- [ ] T7b2: H4, H5, H6, H7, the decision memory — state: building
-- [ ] T7b3: H2, H11, H12, the UI and its incidentally-passing tests — state: queued (needs: T7b2)
-- [ ] T7c: triage Medium and Low, fix or record with evidence — state: queued (needs: T7b)
-- [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
-- [ ] T9: CI green, resolve threads, merge to master — state: queued (needs: T8)
-- [ ] T10: backup prod, name the beta, STAGE the promotion and STOP — state: queued (needs: T9)
+1. **Release scope: ALL THREE SHIP TOGETHER, as originally chosen.** The owner
+   was given the case for splitting, in terms: FEAT-011 produced BOTH
+   Criticals, on a path that has destroyed irreplaceable files twice, and the
+   review states the class recurs wherever that entry point is extended, while
+   FEAT-010, FEAT-012 and T67 produced zero Criticals between them. The owner
+   reaffirmed the single release having heard it. **That is their decision and
+   it is not to be re-raised.** What it obliges instead: FEAT-011 carries the
+   release's risk, so its second review round is the one that must come back
+   genuinely clean, not merely quieter.
+2. **Medium and Low: fix what matters, reject the rest WITH EVIDENCE.** Every
+   one of the 35 gets exactly one of two outcomes, and neither is silence: a
+   fix with a mutation proving it, or a recorded rejection naming why it does
+   not warrant one. Fixing all 35 to reach zero is the pressure CLAUDE.md warns
+   about, where the number becomes the goal rather than the code; dropping them
+   unrecorded is how the same finding is raised again next cycle.
 
 ## Task detail
 
