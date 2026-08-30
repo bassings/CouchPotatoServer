@@ -227,3 +227,40 @@ class TestSQLiteCacheReportsUnstorableValues:
             pass
 
         cache.set('bad-key-2', Unrepresentable())  # must not raise
+
+
+class TestSQLiteCacheFilePermissions:
+    """M2 (branch review 2026-08-31): fixing T67's dead cache turned it into
+    a LIVE on-disk store. What actually reaches `cache.set` is HTTP response
+    bodies -- Torznab/Jackett responses routinely embed the indexer's own
+    API key in a `<link>` element -- and the review measured the created
+    file at mode 0644, world-readable, on a box that runs unattended.
+
+    Nothing here asserts about retention or eviction timing (the review's
+    other two suggested changes) -- only the part that is unambiguously
+    wrong regardless of what the cache is allowed to hold: a file that can
+    contain another service's credentials must not be readable by every
+    other account on the machine.
+    """
+
+    def test_the_cache_directory_is_created_private(self, cache_dir, cache):
+        mode = os.stat(cache_dir).st_mode & 0o777
+        assert mode == 0o700, (
+            'the cache directory %r was created with mode %o -- it must be '
+            '0700 (owner-only) because cache.db can hold indexer API keys '
+            'embedded in cached provider response bodies (M2, branch '
+            'review 2026-08-31)' % (cache_dir, mode)
+        )
+
+    def test_the_cache_db_file_is_created_private(self, cache_dir, cache):
+        db_path = os.path.join(cache_dir, 'cache.db')
+        cache.set('k1', b'<rss><link>http://indexer/dl?apikey=SECRET</link></rss>')
+
+        mode = os.stat(db_path).st_mode & 0o777
+        assert mode == 0o600, (
+            'cache.db was created with mode %o (world-readable at 0644 is '
+            'what the review measured) -- it must be 0600 (owner read/write '
+            'only), because a Torznab/Jackett response body cached here '
+            'routinely embeds the indexer\'s own API key (M2, branch '
+            'review 2026-08-31)' % mode
+        )

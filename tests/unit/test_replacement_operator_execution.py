@@ -298,7 +298,14 @@ class TestTheOperatorSourceIsConfinedToTheWatchFolder:
         plugin, root, _watch, dst, decoy, _outside = self._nested_world(tmp_path, monkeypatch)
         before = _tree_shas(root)
         outcome, resulting_dst = plugin._executeOperatorReplacement('media-1', '../../etc/hosts')
-        assert outcome != OPERATOR_REPLACE
+        assert outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, (
+            # M9 (branch review 2026-08-31): `!= OPERATOR_REPLACE` is a
+            # stand-in that a hostile input refused for the WRONG reason
+            # (an unrelated exception, a different named refusal) would
+            # also satisfy. Named-constant proxy for a real destructive
+            # replacement is the property AC-SEC-2 and AC-QA-5 require.
+            'outcome was %r' % outcome
+        )
         assert resulting_dst is None
         assert _tree_shas(root) == before, 'a traversal outside the watch folder wrote or deleted something'
 
@@ -306,7 +313,9 @@ class TestTheOperatorSourceIsConfinedToTheWatchFolder:
         plugin, root, _watch, dst, _decoy, outside = self._nested_world(tmp_path, monkeypatch)
         before = _tree_shas(root)
         outcome, resulting_dst = plugin._executeOperatorReplacement('media-1', str(outside))
-        assert outcome != OPERATOR_REPLACE
+        assert outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, (
+            'outcome was %r' % outcome  # M9, branch review 2026-08-31
+        )
         assert resulting_dst is None
         assert _tree_shas(root) == before, 'an absolute path outside the watch folder wrote or deleted something'
 
@@ -314,7 +323,9 @@ class TestTheOperatorSourceIsConfinedToTheWatchFolder:
         plugin, root, _watch, dst, _decoy, _outside = self._nested_world(tmp_path, monkeypatch)
         before = _tree_shas(root)
         outcome, resulting_dst = plugin._executeOperatorReplacement('media-1', 'evil\x00.mkv')
-        assert outcome != OPERATOR_REPLACE
+        assert outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, (
+            'outcome was %r' % outcome  # M9, branch review 2026-08-31
+        )
         assert resulting_dst is None
         assert _tree_shas(root) == before
 
@@ -324,7 +335,9 @@ class TestTheOperatorSourceIsConfinedToTheWatchFolder:
         os.symlink(str(outside), str(link))
         before = _tree_shas(root)
         outcome, resulting_dst = plugin._executeOperatorReplacement('media-1', 'looks_local.mkv')
-        assert outcome != OPERATOR_REPLACE
+        assert outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, (
+            'outcome was %r' % outcome  # M9, branch review 2026-08-31
+        )
         assert resulting_dst is None
         assert _tree_shas(root) == before, (
             'a symlink resolving outside the watch folder wrote, deleted, or '
@@ -699,6 +712,23 @@ class TestBookkeepingHappensBeforeDisposal:
         assert order.index(bookkeeping_calls[0]) < order.index('disposal:remove_source'), (
             'the source was disposed of before the superseded release was '
             'accounted for: order was %r' % order
+        )
+
+        # M7 (branch review 2026-08-31): the fixture already collects these
+        # two lists; nothing previously read them. AC-QA-1 requires the
+        # superseded release to be set 'ignored' with the DESTINATION it no
+        # longer owns detached -- a wrong status or a detach against the
+        # wrong path would previously have passed this test unnoticed and
+        # left a release document still claiming a file that has been
+        # overwritten (the stale-claimant condition AC-QA-9 exists to
+        # prevent).
+        assert world['state']['status_updates'] == [('r-old', 'ignored')], (
+            'the superseded release was not set to "ignored": %r'
+            % world['state']['status_updates']
+        )
+        assert world['state']['detached'] == [('r-old', world['dst'])], (
+            'the wrong release, or the wrong path, was detached: %r'
+            % world['state']['detached']
         )
 
 

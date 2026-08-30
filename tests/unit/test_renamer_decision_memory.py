@@ -638,3 +638,71 @@ class TestSkipRecordDoesNotGrowLinearlyWithScanCount:
             'the log being churned still churns it, one record per scan, '
             'forever.' % len(skip_records)
         )
+
+
+class TestDecisionMemoryStoresAreBounded:
+    """M12 (branch review 2026-08-31) / AC-OPS-12, AC-DATA-11. Neither
+    in-memory store this feature adds has a cap or an eviction order, and
+    `_decision_memory` is keyed on `base_folder`, which `scanView` passes
+    straight through from request kwargs with no validation and no
+    connection to whether the scan was `targeted` (`main.py:scanView`,
+    `:scan`'s `targeted = media_folder is not None or release_download is
+    not None` -- `base_folder` alone does not set it). A container designed
+    to run for months, fed a caller-supplied key with no cap, grows without
+    bound.
+
+    Each iteration below uses its own EMPTY directory as `base_folder`:
+    `_folderSignature` only needs the directory to be walkable, and the
+    fixture's own `scanner.scan` stub ignores the `folder` argument
+    entirely, so this measures the memory's own bound rather than doing
+    300x the filesystem work the fixture's single group scenario would
+    otherwise cost.
+    """
+
+    def test_decision_memory_does_not_grow_one_for_one_with_distinct_base_folders(
+        self, world, tmp_path,
+    ):
+        plugin = world['plugin']
+
+        scan_count = 300
+        for i in range(scan_count):
+            folder = tmp_path / ('scan-folder-%d' % i)
+            folder.mkdir()
+            plugin.scan(base_folder=str(folder))
+
+        memory_size = len(getattr(plugin, '_decision_memory', {}) or {})
+        assert memory_size < scan_count, (
+            '%d scans against %d distinct base_folder values left '
+            '_decision_memory holding %d entries -- it grew one-for-one '
+            'with an input the API accepts from the caller, with no '
+            'stated cap or eviction order (AC-OPS-12)' % (
+                scan_count, scan_count, memory_size,
+            )
+        )
+
+    def test_notified_parked_does_not_grow_one_for_one_with_distinct_media_ids(
+        self, world, tmp_path, monkeypatch,
+    ):
+        plugin = world['plugin']
+
+        park_count = 300
+        for i in range(park_count):
+            plugin._notifyParked(
+                {
+                    'media': {
+                        '_id': 'media-%d' % i,
+                        'info': {'titles': ['Film %d' % i], 'year': 2020},
+                    },
+                },
+                'declined_unverified_identity',
+            )
+
+        notified_size = len(getattr(plugin, '_notified_parked', set()) or set())
+        assert notified_size < park_count, (
+            '%d distinct (media, outcome) parks left _notified_parked '
+            'holding %d entries -- it grows one-for-one with the number '
+            'of distinct films parked over the container\'s lifetime, '
+            'with no stated cap or eviction order (AC-OPS-12)' % (
+                park_count, notified_size,
+            )
+        )

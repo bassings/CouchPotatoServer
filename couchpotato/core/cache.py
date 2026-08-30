@@ -45,6 +45,18 @@ class SQLiteCache:
 
     def __init__(self, directory, eviction_interval=300):
         os.makedirs(directory, exist_ok=True)
+        # M2 (branch review 2026-08-31): what actually reaches cache.set is
+        # HTTP response bodies, and Torznab/Jackett responses routinely
+        # embed the indexer's own API key in a <link> element. The cache
+        # directory and cache.db were created at whatever mode the process
+        # umask left them (0644/0755, world-readable), which turned a fix
+        # for a dead store into a new, world-readable, on-disk credential
+        # surface. chmod is explicit here rather than relying on umask,
+        # which is process-wide and not this cache's to assume.
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
         self._db_path = os.path.join(directory, 'cache.db')
         self._local = threading.local()
         self._eviction_interval = eviction_interval
@@ -57,6 +69,10 @@ class SQLiteCache:
         conn.execute(_CREATE_INDEX)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.commit()
+        try:
+            os.chmod(self._db_path, 0o600)
+        except OSError:
+            pass
 
     def _conn(self):
         """Return a per-thread SQLite connection."""

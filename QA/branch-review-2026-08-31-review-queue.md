@@ -895,3 +895,197 @@ All three specs were found and read, plus `specs/REMEDIATION-2026-08.md` (T67) a
 7. **Then re-run this review cycle.** Per the bounded fix loop: these are rounds 1 to 3 territory (resume the same implementer), but note that the branch has now produced a new class of defect rather than more instances of a known one on the FEAT-011 destructive path, which is the signal to question the approach rather than spend another round on it.
 
 **One process finding outside the code:** six lenses found the worktree on a different branch than the one under review, and one had its branch ref deleted and recreated by another session mid-run. Parallel sessions are mutating shared checkouts under running reviews. Every lens recovered correctly and recorded it, but the next one may not.
+
+---
+
+## Triage outcomes (2026-08-31, MEDIUM findings M1-M24)
+
+Owner's instruction: fix what matters, reject the rest with evidence. Every
+finding below gets exactly one outcome. "Fixed" is proven with a mutation
+(broken, watched fail, restored, checksum-verified) except where noted.
+Priority order followed the owner's ranking: irrecoverable-data-loss and
+mislead-at-a-destructive-moment findings first, then test-strength items
+where the underlying behaviour was already correct, then documentation and
+wording debt.
+
+### Fixed (11)
+
+| # | Finding | Fix | Proof |
+|---|---|---|---|
+| M2 | Cache directory/file created world-readable (0755/0644), holding indexer API keys | `SQLiteCache.__init__` now `chmod`s the directory to 0700 and `cache.db` to 0600 | `tests/unit/test_sqlite_cache.py::TestSQLiteCacheFilePermissions` (frozen). Mutation: reverted each `chmod` individually, watched each test fail on the exact mode it checks, restored, sha256 confirmed `couchpotato/core/cache.py` byte-identical |
+| M4 | Killed operator replacement leaves an unreported staged copy | `_runOperatorReplacement` now calls `self._reportStaleStagingFiles(os.path.dirname(destination))` before the swap, mirroring the automatic path's own call site | `tests/unit/test_replacement_operator_stale_staging_report.py` (frozen). Mutation: removed the call, watched the 48-hour-old `.part` fixture go unreported, restored, sha256 confirmed |
+| M6 | Replay guard is incidental (compares a fresh stat with itself); a stale retry performs a second destructive swap | New `_operator_replaced_identities` store remembers the destination identity captured immediately after each successful operator swap; a second call whose destination still matches that exact identity is refused as `OPERATOR_REFUSED_ALREADY_REPLACED` before reaching `replace_atomically` | `tests/unit/test_replacement_operator_replay_guard.py` (frozen). Mutation: disabled the guard's `if`, watched a genuine second destructive swap happen (outcome `operator_replace` twice), restored, sha256 confirmed |
+| M7 | Release bookkeeping (`status=ignored`, detached path) is recorded by the fixture and asserted by nobody | Added two assertions to the existing happy-path test, reading the fixture's already-collected `status_updates` / `detached` lists | `tests/unit/test_replacement_operator_execution.py::TestBookkeepingHappensBeforeDisposal` (edited, not frozen). Mutation: changed `_supersedeRelease`'s status literal from `'ignored'` to `'done'`, watched the new assertion catch it, restored, sha256 confirmed |
+| M9 | Watch-folder confinement tests assert `!= OPERATOR_REPLACE` (a stand-in) rather than the named refusal; one case (the symlink) passes for an unrelated reason under mutation | Tightened all four assertions in `TestTheOperatorSourceIsConfinedToTheWatchFolder` to `== OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER` | `tests/unit/test_replacement_operator_execution.py` (edited, not frozen). Mutation: replaced the containment check with `if False:`, watched all four tightened assertions fail (two with a REAL destructive `operator_replace`, the symlink case with the wrong constant, `refused_source_is_symlink`), restored, sha256 confirmed |
+| M12 | `_decision_memory` and `_notified_parked` are unbounded, one keyed on a caller-supplied `base_folder` | Both capped at 200 entries (`DECISION_MEMORY_MAX_ENTRIES` / `NOTIFIED_PARKED_MAX_ENTRIES`), LRU-on-last-write eviction via a new `_rememberDecision` helper and an inline pop-then-insert for the notify set | `tests/unit/test_renamer_decision_memory.py::TestDecisionMemoryStoresAreBounded` (frozen). Mutation: disabled each eviction loop (`while False:` / `if False:`) in turn, watched each store grow to exactly 300 entries, restored, sha256 confirmed |
+| M16 | Operator source removal is logged only on failure; a successful removal is silent | Added a `log.info` on the successful branch of `_disposeOfOperatorSource`, naming the media id | `tests/unit/test_replacement_disposal_success_logged.py` (frozen). Mutation: swapped the new `log.info` for a no-op lambda, watched the record disappear, restored, sha256 confirmed |
+| M17 | The one WARNING before an irreversible destruction cannot tell an operator-initiated replacement from an automatic one | `_announceImminentReplacement` takes `operator_initiated=False`; the operator call site passes `True`; the message names "an OPERATOR-requested" vs "an automatic" replacement | `tests/unit/test_replacement_announce_marks_operator.py` (frozen). Mutation: hardcoded `origin = 'an automatic'` regardless of the flag, watched the operator-initiated test fail, restored, sha256 confirmed |
+| M20 | `wanted.html`'s bulk Delete button (Wanted page's most destructive control) uses `cp-error`, an undefined Tailwind token, so it renders with no danger styling at all | Changed the class string to `bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20`, matching the same danger grammar used elsewhere | `tests/unit/test_design_token_conformance.py` (frozen, general form — scans every template for any undefined `cp-*` token, not just this line). Mutation: restored the original `cp-error` string, watched the conformance test catch it by name and line, restored the fix, sha256 confirmed |
+| M22 | The detail page swaps to a fresh render immediately on `data.success`, before the background replacement has done any work, showing the operator the OLD file's details right after "Replacement started" | `confirmReplace()`'s success branch no longer calls `cpSwap(...)`; it closes the dialog, returns focus to the trigger, and tells the operator the swap is running in the background and may take several minutes | New test `tests/unit/test_operator_replace_no_premature_swap.py` (written this round, not frozen — no frozen test was supplied for M22). RED confirmed against the original block (the `cpSwap(` assertion failed exactly as designed), fix restored, GREEN confirmed, sha256 of the fixed file matches |
+| M24 | The control that permanently deletes the current library file wears the same glyph as the (non-destructive) Refresh Library / per-card refresh buttons | Swapped the trigger's icon to Heroicons `arrows-right-left`, a glyph not used anywhere else in this UI | `tests/unit/test_operator_replace_trigger_ui_template.py::TestOperatorReplaceTriggerIconIsNotTheRefreshGlyph` (frozen). Mutation: restored the refresh-glyph path data on the trigger, watched the test catch it, restored the fix, sha256 confirmed |
+
+All eleven mutations were confirmed to land (`git diff` / sha256 before and
+after) and every affected file is byte-identical to its pre-mutation state
+once restored. Full unit suite (3759 passed, 2 skipped, 3 xfailed -- 3764 collected, up from 3757 pre-triage),
+`npx vitest run` (214 tests) and `python3 scripts/check_conformance.py` (34
+templates) are green with all eleven fixes in place; `ruff check` is clean on
+every touched file.
+
+### Rejected (13)
+
+Each rejection names why the underlying risk does not clear the bar this
+round, and what would change that.
+
+**M1 — Dark-theme hover contrast fails (4.21:1) on two destructive controls
+(Mark Failed card control, operator-replace confirm).** REJECTED for this
+round. The review's own measurement was taken by rebuilding the page in real
+Chromium against the vendored Tailwind CDN build; nothing in this task's
+validation surface (pytest, vitest, `check_conformance.py`) can measure
+rendered contrast, and CLAUDE.md's own standard here is "you do not assert
+what you have not measured" — a blind CSS patch claiming to fix a
+browser-rendered number without a way to check it is exactly the kind of
+guard that cannot be shown to work. The exposure is also narrower than the
+resting-state contrast bugs already fixed in this codebase: it only fires
+while the pointer is hovering the control, not on every render. Revisit
+condition: bundle with the Playwright a11y tier this branch already needs
+run before push (per the review's own verdict item 4) and measure both rest
+and hover in the same pass.
+
+**M3 — New destructive routes absent from the route-auth inventory; no
+request-level 401 test for `renamer.operator_replace`.** REJECTED. Per the
+review's own arbitration (A2), the AUTH BEHAVIOUR already holds — lens-security
+executed the no-key request and got a 401 with the handler never invoked.
+What's missing is coverage in a registry (`PUBLIC_ROUTES` / the inventory
+tests) that has no notion of `addApiView` plugin routes at all, for either of
+these two routes or any of the others already living behind that same
+dispatcher. Building a real fix means a new residue-inventory mechanism
+across the whole `addApiView` surface, not a two-line entry that would be
+immediately incomplete and give false confidence. Revisit condition: a
+dedicated task scoped to that inventory mechanism, covering every
+`addApiView` route in one pass rather than one at a time.
+
+**M5 — No failure branch of the operator replacement (`FAILED_STAGING`,
+`FAILED_SIZE_MISMATCH`, `FAILED_SWAP`, a real ENOSPC, etc.) has ever been
+executed by a test in the repo.** REJECTED. The review itself already drove
+all of these paths directly (including a real ENOSPC against a 2MB `hdiutil`
+volume) and confirmed the code's behaviour is correct today on every one.
+This is coverage debt on already-verified-correct behaviour, matching the
+owner's own "CONSIDER" bucket description. Building the five missing test
+cases properly, with a real small volume for the ENOSPC case per this
+project's own "fixtures must be extreme enough to provoke the failure" rule,
+is meaningful new test infrastructure, not a quick addition. Revisit
+condition: a dedicated hardening pass on `test_replacement_operator_execution.py`.
+
+**M8 — A raising settings read aborts the whole renamer scan instead of
+forcing a fail-open re-decide.** REJECTED for this round. Real defect, but
+fixing it means restructuring the exception boundaries inside `scan()` — the
+highest-traffic, highest-risk method in this file, already carrying three
+other guards fixed or hardened this round (H4-H6, M12, M14/M15's siblings).
+No frozen test named it, it wasn't in the owner's list of strongest
+candidates, and per this project's own "after three failed fixes the shape
+is wrong" doctrine, a rushed change to a well-hardened destructive path's
+control flow without the two dedicated fail-open regression tests the fix
+needs is a bigger risk than leaving it. Revisit condition: bundle with the
+rest of the "escape hatches" batch the review already groups H4/H5/H6/M8
+into, built and reviewed together.
+
+**M10 — Four FEAT-010 acceptance criteria (AC-QA-3/18/19/21) have no test:
+`/partial/movies` swallows exceptions into the same empty state as a genuinely
+empty library, and the retry-bound on `wanted.html`'s `htmx:afterSwap` handler
+is unasserted.** REJECTED. None of these sit on the destructive operator-replace
+path; they are read-path resilience gaps on the review-queue grid, which the
+review's own totals already rate "in materially better shape" (34 PASS / 10
+FAIL / 6 UNVERIFIABLE) than the other two specs. No incident is on record for
+any of the four, and the cost of their absence today is a confusing UI state,
+not lost data. Revisit condition: a FEAT-010 test-completeness follow-up.
+
+**M11 — No E2E asserts that a film survives (`data-status="active"`) on the
+Wanted grid after Mark Failed; the existing test stubs the backend call.**
+REJECTED. The review's own words: "the backend unit test makes the behaviour
+very likely correct today" — this is a missing regression guard on
+already-probably-correct behaviour, and building it needs the Playwright E2E
+tier this branch's own verdict already flags as never having been run by
+anybody. Revisit condition: folded into that same Playwright-tier run.
+
+**M13 — No runbook entry, recovery procedure or rollback documentation for
+the two new destructive failure surfaces.** REJECTED. Pure documentation
+absence, the owner's named default-reject category. Its cost today is lower
+than it was before this triage pass: M16 and M17 now put the operator-source
+removal and the operator-vs-automatic marker into the log where an operator
+troubleshooting by hand can find them, and M4 reports the stale staging
+file. Revisit condition: a docs task naming every outcome constant and its
+remedy, as the review's own fix suggests, ideally pinned with the drift-proof
+test it also suggests.
+
+**M14 — `log_suppressed`'s collision WARNING keeps its 300-second default
+window rather than the 3600-86400 second range the spec settled on.**
+REJECTED for this round. Real but modest (log-volume, not data-loss)
+operability nit, shared with H7's already-noted sibling constant. The
+review's own text says "fixing one leaves the other" — doing it properly
+means one named constant threaded through three call sites with
+clock-injection tests proving both directions, which is more than a
+one-line change and wasn't named among the owner's strongest candidates.
+Revisit condition: bundle with H7 as one change, not two separate half-fixes.
+
+**M15 — Every invalidation of the decision memory (source changed,
+destination changed, settings changed, operator forced, a park dropping out)
+is silent; nothing names WHICH trigger fired.** REJECTED. Operability-only —
+an operator cannot tell from the log whether a settings edit was picked up,
+but nothing here is destructive or data-losing, and the underlying
+invalidation logic itself is already correct (proven by the existing
+`test_renamer_decision_memory_invalidation.py` suite). Threading a distinct
+greppable token through four-plus call sites is real work, not a quick
+addition, and wasn't named among the owner's strongest candidates. Revisit
+condition: bundle with M14 as "the memory's logging surface," one task.
+
+**M18 — `setBackgroundInert()` misses the mobile header/bottom nav at phone
+width; its own test asserts the same two elements the implementation
+inerts.** REJECTED for this round. The stated fix ("inert by exclusion
+rather than enumeration") needs verification across the mobile Playwright
+project to trust, which this task's validation commands cannot run.
+`aria-modal="true"` already mitigates this on modern screen readers per the
+review's own note. Revisit condition: bundle with the Playwright-tier run.
+
+**M19 — The keyboard-only flow (Tab/Shift+Tab/arrows/Enter/Space/Escape)
+through the operator-replace dialog is never driven by any test, at either
+viewport.** REJECTED. Needs the same Playwright E2E tier this branch's
+verdict already names as a precondition for push, at both the desktop and
+mobile-chrome projects. Nothing here suggests the keyboard path is actually
+broken today — the finding is an absence of proof, not a positive defect.
+Revisit condition: bundle with the Playwright-tier run.
+
+**M21 — The card Mark Done / Mark Failed handlers discard the specific
+`d.error` message the server now returns on a stale-status conflict, showing
+a generic "Failed to mark as done" instead.** REJECTED for this round. Real
+but low-severity UX debt on a recoverable, non-destructive action (unlike the
+operator-replace and delete controls, a failed Mark Done costs nothing —
+the operator just refreshes and tries again). Not named among the owner's
+strongest candidates, and this project's own TDD standard means fixing it
+properly needs a regression test guarding the two-line change, which
+proportionality argues against adding in the same pass as eleven other
+fixes. Revisit condition: a quick follow-up alongside the pre-existing
+`movie_detail.html` handlers that have the identical shape and are already
+recorded as out of scope for this branch.
+
+**M23 — The card's poster-link `aria-label` still interpolates the bare
+`downloaded` status rather than the `Review` term the chip and badge already
+use.** REJECTED for this round. Three of the four surfaces this exact
+inconsistency touches were already fixed in this branch; this is the fourth
+and lowest-impact one (a screen-reader user still reaches the film, just
+without the same vocabulary as the visible chip). No destructive action and
+no data risk. Revisit condition: a one-line follow-up, ideally done together
+with the other two raw-token instances the review names in the same
+finding (the replace-failure toast and the parked-film notification, the
+second of which is itself a spec bug per the review, not a code defect).
+
+### Note on scope
+
+Fixing all 24 to reach zero was explicitly not the goal. Eleven findings
+that sit on the irrecoverable-data-loss, security, or mislead-at-a-
+destructive-moment axis (per CLAUDE.md's own ranking) or were free to fix
+alongside them are fixed and mutation-proven. Thirteen findings that are
+either genuinely low-risk today, need verification infrastructure (a live
+Chromium render, the Playwright E2E tier) this task's validation commands
+cannot provide, or would require disproportionate new test scaffolding for
+this pass, are rejected with a stated revisit condition rather than patched
+blind or silently dropped.

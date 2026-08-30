@@ -19,6 +19,7 @@ from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_SOURCE_CHANGED,
     DECLINED_UNVERIFIED_IDENTITY,
     OPERATOR_DECLINED_AMBIGUOUS_FILE,
+    OPERATOR_REFUSED_ALREADY_REPLACED,
     OPERATOR_REFUSED_ALREADY_RUNNING,
     OPERATOR_REFUSED_ERROR,
     OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
@@ -108,6 +109,30 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: never drops entries silently -- the caller is told, not merely handed
     #: a shorter list.
     OPERATOR_CANDIDATE_LIST_CAP = 200
+
+    #: M12 (branch review 2026-08-31). `_decision_memory` is keyed on
+    #: `scan_folder`, which `scanView` passes straight through from a
+    #: caller-supplied `base_folder` with no validation and no connection to
+    #: whether the scan was targeted -- so an unbounded store grows one
+    #: entry per distinct value an API caller chooses to send, in a
+    #: container designed to run for months. Eviction order is LRU on
+    #: last-write (see `_rememberDecision`): the entry written longest ago
+    #: is the one dropped when the cap is exceeded.
+    DECISION_MEMORY_MAX_ENTRIES = 200
+
+    #: M12. `_notified_parked` is keyed on (media_id, outcome) and, before
+    #: this cap, was never pruned even after the group was gone from the
+    #: folder -- so a stale entry permanently suppressed the notify signal
+    #: for that pair. Same eviction order as the decision memory.
+    NOTIFIED_PARKED_MAX_ENTRIES = 200
+
+    #: M6 (branch review 2026-08-31). `_operator_replaced_identities`
+    #: remembers the destination identity captured immediately after each
+    #: successful operator replacement, so a stale replay can be told apart
+    #: from a genuine new one. Same unbounded-growth shape as the two
+    #: stores above if left uncapped, so it gets the same cap and eviction
+    #: order (oldest write dropped first).
+    OPERATOR_REPLAY_GUARD_MAX_ENTRIES = 200
 
     def __init__(self):
 
@@ -276,11 +301,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         media_id = (group.get('media') or {}).get('_id')
         key = (media_id, outcome)
 
+        # M12 (branch review 2026-08-31): a plain dict rather than a set,
+        # because bounding this store needs an INSERTION ORDER to evict by
+        # -- a `set` gives none. Membership (`key in ...`) and dedup work
+        # identically either way; only eviction needed the change.
         if getattr(self, '_notified_parked', None) is None:
-            self._notified_parked = set()
+            self._notified_parked = {}
         if key in self._notified_parked:
             return
-        self._notified_parked.add(key)
+        self._notified_parked[key] = True
+        if len(self._notified_parked) > self.NOTIFIED_PARKED_MAX_ENTRIES:
+            self._notified_parked.pop(next(iter(self._notified_parked)))
 
         from couchpotato.core.helpers.variable import getTitle
         library = (group.get('media') or {}).get('info', {})
@@ -294,6 +325,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             message='"%s" is parked and needs a look: %s' % (media_title, outcome),
             data={'media_id': media_id, 'outcome': outcome},
         )
+
+    def _rememberDecision(self, scan_folder, entry):
+        """Write `scan_folder`'s decision-memory entry, bounded to
+        `DECISION_MEMORY_MAX_ENTRIES` (M12, branch review 2026-08-31 /
+        AC-OPS-12).
+
+        Eviction order is LRU on last-write: popping the key before
+        re-inserting it moves an existing entry to the end of the
+        (insertion-order-preserving) dict, so the entry evicted when the
+        cap is exceeded is always the one written longest ago, never a
+        folder that was just re-decided.
+        """
+        self._decision_memory.pop(scan_folder, None)
+        self._decision_memory[scan_folder] = entry
+        while len(self._decision_memory) > self.DECISION_MEMORY_MAX_ENTRIES:
+            self._decision_memory.pop(next(iter(self._decision_memory)))
 
     def scan(self, base_folder=None, media_folder=None, release_download=None,
              async_call=False, operator_forced=False):
@@ -474,13 +521,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 if not targeted:
                     if all_remember_eligible and current_signature is not None:
                         destination_paths = tuple(sorted(set(destination_paths)))
-                        self._decision_memory[scan_folder] = {
+                        self._rememberDecision(scan_folder, {
                             'source_signature': current_signature,
                             'settings_signature': current_settings,
                             'destination_paths': destination_paths,
                             'destination_signature': self._destinationSignature(destination_paths),
                             'group_count': len(groups),
-                        }
+                        })
                     else:
                         # Something this scan was not safely parkable, or
                         # the folder could not be fingerprinted -- forget any
@@ -1029,7 +1076,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return None
         return actual
 
-    def _announceImminentReplacement(self, source, destination, superseded, group):
+    def _announceImminentReplacement(self, source, destination, superseded,
+                                      group, operator_initiated=False):
         """AC-OPS-2: one WARNING in the last moment before the file is gone.
 
         A crash immediately after `os.replace` leaves the old copy destroyed
@@ -1040,11 +1088,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         D8: media and rungs, never paths. Sizes are numbers, which say a great
         deal about whether the swap was sane and nothing about the operator's
         filesystem.
+
+        M17 (branch review 2026-08-31): `operator_initiated` distinguishes a
+        human-requested replacement from the automatic upgrade path. Both
+        call sites shared this one record with no marker, so the only
+        thing that can explain a destroyed library file afterwards could
+        not say whether a person asked for it or the upgrade logic decided
+        on its own -- the first question anyone diagnosing it asks.
         """
         incoming = (group.get('meta_data') or {}).get('quality') or {}
+        origin = 'an OPERATOR-requested' if operator_initiated else 'an automatic'
         log.warning(
-            'About to replace a library copy: media %s, %s (%s bytes) -> '
-            '%s (%s bytes), superseding release %s. This destroys the old file.',
+            'About to replace a library copy (%s replacement): media %s, '
+            '%s (%s bytes) -> %s (%s bytes), superseding release %s. This '
+            'destroys the old file.',
+            origin,
             (group.get('media') or {}).get('_id'),
             (superseded or {}).get('quality'),
             self._sizeOrNone(destination),
@@ -1527,6 +1585,26 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return OPERATOR_DECLINED_AMBIGUOUS_FILE, None
         destination = sp(movie_files[0])
 
+        # M6 (branch review 2026-08-31): refuse a REPLAY against a
+        # destination this same plugin instance already replaced, before
+        # anything below it does. `replace_atomically`'s own
+        # `destination_identity` check cannot catch this -- both the value
+        # captured just above and the value re-checked inside it are taken
+        # AFTER an earlier successful call already finished, so on a second
+        # call they agree with each other regardless of what happened
+        # before. Refused only when the destination still looks EXACTLY as
+        # it did the instant our own prior replacement finished; anything a
+        # third party has touched since is a different situation, and this
+        # check has nothing to say about it.
+        replayed = getattr(self, '_operator_replaced_identities', None) or {}
+        previous_identity = replayed.get(destination)
+        if previous_identity is not None and identity_of(destination) == previous_identity:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_ALREADY_REPLACED, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return OPERATOR_REFUSED_ALREADY_REPLACED, None
+
         # AC-SEC-3: checked against `conf('to')` alone, via the SAME method
         # the automatic path uses -- no request-supplied folder is ever
         # consulted.
@@ -1583,6 +1661,16 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             'identity_source': self.OPERATOR_IDENTITY_SOURCE,
         }
 
+        # M4 (branch review 2026-08-31): the automatic path's own destination
+        # collision branch reports an abandoned `.cp-upgrade-*.part` before
+        # doing filesystem work (`:572` above); the operator path reached
+        # the same destructive step without ever calling it. A process
+        # killed between staging and the atomic swap on an OPERATOR
+        # replacement left a full-size staged copy with nothing to say it
+        # was there -- on the prompting 20.3 GB case, a silently consumed
+        # 20 GB under a hidden name the scanner ignores.
+        self._reportStaleStagingFiles(os.path.dirname(destination))
+
         # AC-SEC-4: the ONLY route to the destructive step, with a
         # measured, non-None `expected_source_size` and a
         # `destination_identity` from `swap.identity_of` -- so
@@ -1596,6 +1684,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             destination_identity=identity_of(destination),
             about_to_replace=lambda: self._announceImminentReplacement(
                 source, destination, existing_release, group,
+                operator_initiated=True,
             ),
         )
         if not ok:
@@ -1603,6 +1692,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 reason, media_id, release_id=existing_release.get('_id'),
             )
             return reason, None
+
+        # M6: record the destination's identity now, right after the swap
+        # that has just verified it, so a LATER stale replay against this
+        # same destination is refused by the check above instead of
+        # performing a second destructive swap. Recorded here rather than
+        # only after bookkeeping/disposal below, because both of those are
+        # best-effort and the library file is already the thing a replay
+        # must not be allowed to touch again regardless of what happens to
+        # either.
+        if getattr(self, '_operator_replaced_identities', None) is None:
+            self._operator_replaced_identities = {}
+        self._operator_replaced_identities.pop(destination, None)
+        self._operator_replaced_identities[destination] = identity_of(destination)
+        while len(self._operator_replaced_identities) > self.OPERATOR_REPLAY_GUARD_MAX_ENTRIES:
+            self._operator_replaced_identities.pop(
+                next(iter(self._operator_replaced_identities)),
+            )
 
         # Bookkeeping BEFORE disposal, and the order is not free -- the
         # same reasoning `_moveRenamedFiles` documents above for the
@@ -1794,6 +1900,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'Replaced the library copy for media %s, but could not '
                 'remove the operator-placed source from the watch folder '
                 'afterwards: %s', media_id, self._withoutPaths(error),
+            )
+        else:
+            # M16 (branch review 2026-08-31): the only log call in this
+            # method used to be in the except branch, so the ordinary case
+            # -- a successful removal -- was completely silent. A file the
+            # operator placed by hand disappears from their download
+            # folder, unconditionally overriding default_file_action, and
+            # nothing said this feature was what removed it.
+            log.info(
+                'Replaced the library copy for media %s and removed the '
+                'operator-placed source from the watch folder.', media_id,
             )
 
     def _warnAboutTheDeadSetting(self):

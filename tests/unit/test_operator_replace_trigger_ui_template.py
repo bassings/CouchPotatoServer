@@ -171,3 +171,72 @@ class TestOperatorReplaceTriggerGating:
 
         assert TRIGGER_LABEL in html
         assert TRIGGER_LABEL.lower() not in ('delete', 'mark failed & re-search')
+
+
+# M24 (branch review 2026-08-31). The Heroicon `arrow-path` glyph -- this
+# exact SVG path data -- is what `docs/design-system/README.md`'s legacy
+# glyph table maps to `icon-refresh`, and it is what the Wanted page's own
+# "Refresh Library" button (`wanted.html`) and the per-card refresh button
+# (`movie_cards.html`) both render. The trigger under test is the one
+# control in the action row that PERMANENTLY DELETES the film's current
+# library file; wearing the same glyph as two genuinely non-destructive
+# refresh actions elsewhere in this same UI tells a distracted operator the
+# opposite of what the button does.
+REFRESH_ICON_PATH_D = (
+    'M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 '
+    '3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 '
+    '13.803-3.7l3.181 3.182m0-4.991v4.99'
+)
+
+
+def _trigger_html(html):
+    """The trigger's full rendered markup, opening tag through `</button>`,
+    so the assertion below can inspect the icon actually nested inside it
+    rather than the page as a whole -- the refresh glyph is legitimately
+    present elsewhere on this same page (the per-card refresh button)."""
+    match = re.search(
+        r'<button[^>]*data-testid="' + re.escape(TRIGGER_TESTID)
+        + r'"[^>]*>.*?</button>',
+        html, re.DOTALL,
+    )
+    return match.group(0) if match else None
+
+
+class TestOperatorReplaceTriggerIconIsNotTheRefreshGlyph:
+    def test_the_refresh_glyph_really_is_used_elsewhere_in_this_ui(self):
+        """Sanity check on the constant itself, independent of the trigger:
+        if this ever stopped matching a real refresh control the assertion
+        below would be meaningless -- comparing against a string nothing
+        else uses either."""
+        from pathlib import Path
+
+        templates_root = Path(__file__).resolve().parent.parent.parent / (
+            'couchpotato/ui/templates'
+        )
+        wanted_html = (templates_root / 'wanted.html').read_text(encoding='utf-8')
+        cards_html = (templates_root / 'partials/movie_cards.html').read_text(
+            encoding='utf-8',
+        )
+        assert REFRESH_ICON_PATH_D in wanted_html, (
+            "the Wanted page's Refresh Library button no longer uses this "
+            'path -- update the constant, this is not the finding under test'
+        )
+        assert REFRESH_ICON_PATH_D in cards_html, (
+            "the per-card refresh button no longer uses this path -- update "
+            'the constant, this is not the finding under test'
+        )
+
+    def test_the_delete_triggers_icon_is_not_the_refresh_glyph(self):
+        movie = _movie('done', releases=[
+            _release('done', files={'movie': ['/library/Fixture Movie (2021)/Fixture Movie.mkv']}),
+        ])
+        html = _render(movie)
+        trigger_html = _trigger_html(html)
+
+        assert trigger_html is not None, 'the trigger button must render for this fixture'
+        assert REFRESH_ICON_PATH_D not in trigger_html, (
+            'the control that PERMANENTLY DELETES the current library file '
+            'wears the same glyph as the Refresh Library and per-card '
+            'refresh buttons elsewhere in this UI (M24, branch review '
+            '2026-08-31). Rendered trigger markup was: ' + trigger_html
+        )

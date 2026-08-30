@@ -228,6 +228,18 @@ OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER = 'operator_refused_source_outside_
 # from a caught exception, always paired with a `None` destination.
 OPERATOR_REFUSED_ERROR = 'operator_refused_error'
 
+# M6 (branch review 2026-08-31). A stale retry against a destination this
+# SAME plugin instance already replaced -- a network resend, a doubled
+# click, or a retry issued because the operator never saw a response (H1).
+# `replace_atomically`'s own `destination_identity` check cannot catch this:
+# both the value captured before the call and the value re-checked inside it
+# are taken AFTER the first call already finished, so within the second call
+# they always agree with each other, whatever they disagree with from
+# before. Refused only when the destination still looks EXACTLY as it did
+# immediately after the earlier replacement; a destination a THIRD party has
+# since touched is a different situation and is not refused by this check.
+OPERATOR_REFUSED_ALREADY_REPLACED = 'operator_refused_already_replaced'
+
 # Only a release that actually landed in the library has a file on disk to be
 # a replacement target. A snatched or ignored release recorded a path it
 # expects to reach, not one that exists yet.
