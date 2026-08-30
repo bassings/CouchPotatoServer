@@ -39,8 +39,10 @@ automatic beta runs unattended.
 - [x] T5d: FEAT-011c, the server-side candidate listing route — state: built (a6b0592d)
 - [x] T5e: FEAT-011c, wire the modal to the listing and the submit — state: built (4051c2c1)
 - [x] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: built (ccdf6229)
-- [ ] T6: whole-branch multi-lens review cycle — state: running (adversarial)
-- [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
+- [x] T6: whole-branch multi-lens review cycle — state: done (2 Critical, 12 High, 24 Medium, 11 Low)
+- [ ] T7a: fix C1 and C2, the two criticals — state: building
+- [ ] T7b: fix the 12 High findings — state: queued (needs: T7a)
+- [ ] T7c: triage Medium and Low, fix or record with evidence — state: queued (needs: T7b)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
 - [ ] T9: CI green, resolve threads, merge to master — state: queued (needs: T8)
 - [ ] T10: backup prod, name the beta, STAGE the promotion and STOP — state: queued (needs: T9)
@@ -363,3 +365,32 @@ changes for the operator. **Then stop and hand it over.**
   re-run only the lenses that never reported. Forty-five minutes of completed
   lens work should not be thrown away to restart a fan-out.
   Rework rounds: all 0. Armed: the review workflow plus the heartbeat.
+- **Tick 19, 2026-08-31. REVIEW COMPLETE: 2 Critical, 12 High, 24 Medium, 11
+  Low across 8 lenses.** Full report saved to
+  `QA/branch-review-2026-08-31-review-queue.md`.
+  **C1: the destructive replacement is reachable CROSS-ORIGIN.** Two lenses
+  independently EXECUTED it: a GET carrying `Origin: https://evil.example`
+  returned 200, the library file's sha256 changed, and the operator's source
+  was deleted. Any page a logged-in operator visits could destroy a film.
+  **C2: the source-size guard compares a fresh stat with ITSELF**, so it can
+  never disagree. Measured: append 75,000 bytes after the operator sees the
+  candidate list, and a 112,000-byte library file becomes 102,000 bytes, then
+  the partial source is deleted. BOTH COPIES OF THE FILM ARE GONE.
+  **C2 is a miss in MY OWN verification and it is the seventh stand-in of this
+  session.** At tick 9 I mutation-proved that `expected_source_size` was
+  PRESENT and not None. The review proved it is MEANINGLESS. The existing test
+  asserts `expected_source_size is not None`, and rewriting the argument to a
+  literal `os.path.getsize(source)` leaves all 36 operator tests green. I
+  proved an argument was passed; I never proved it carried information.
+  The review names the class, and it is architectural rather than two bugs:
+  the operator path has NO SERVER-SIDE DECISION STEP, so every "compare against
+  the value captured at decision time" guard degenerates into comparing a value
+  with itself. M6 is the same defect on `destination_identity`.
+  T7 split by severity. T7a launched to fix the class, not the instances, and
+  to reuse the origin helper that already exists at `couchpotato/__init__.py:778`
+  rather than invent a second security mechanism.
+  Also recorded from the review and NOT yet actioned: six of seven lenses hit
+  CHECKOUT DRIFT, finding the worktree on the wrong branch, and one recorded
+  that the local branch ref was deleted and recreated beneath it by another
+  session. That is a process defect independent of the code.
+  Rework rounds: T7a is round 1 of the fix loop.
