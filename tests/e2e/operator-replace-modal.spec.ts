@@ -263,7 +263,7 @@ test.describe('Operator replace modal: candidate data and submit (FEAT-011)', ()
     ).not.toBe(emptyText.toLowerCase());
   });
 
-  test('a successful replacement re-fetches the movie detail rather than calling location.reload() (point 5)', async ({
+  test('a successful start closes the dialog and announces the background swap, without reloading the page (point 5)', async ({
     page,
   }) => {
     await page.route(CANDIDATE_ROUTE, (route) => route.fulfill(candidatesResponse(CANDIDATES)));
@@ -273,26 +273,45 @@ test.describe('Operator replace modal: candidate data and submit (FEAT-011)', ()
     const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
     await modal.getByRole('radio', { name: CANDIDATES[0], exact: true }).click();
 
-    // location.reload() destroys base.html's live-region announcers before
-    // the outcome can be spoken -- this marker is destroyed by a real
-    // navigation too, and survives a fetch-based re-render. Same technique
-    // filters.spec.ts's AC-QA-13 test already uses for the same reason.
-    await page.evaluate(() => {
-      (window as any).__operatorReplaceNoReloadMarker = true;
-    });
-
-    const refetch = page.waitForRequest(/\/partial\/movie\//, { timeout: 10000 });
+    // Rewritten 2026-08-31 (branch review): this test used to wait for a
+    // /partial/movie/ re-fetch. The MEDIUM round's M22 fix deliberately
+    // removed that swap, because `success` here only means the server has
+    // ACCEPTED the request and started a background thread, so re-rendering
+    // showed the operator the OLD file's details on the very page whose job
+    // is telling them what is about to be destroyed. The re-fetch is gone on
+    // purpose and this test now pins the behaviour that replaced it.
+    //
+    // What must NOT change is the reason the original test existed at all:
+    // the success path must never call location.reload(), because that
+    // destroys base.html's live-region announcers before the outcome can be
+    // spoken. That requirement is carried by the polite-announcer assertion
+    // below, not by a separate no-reload marker: a reload wipes the live
+    // region, so the announcer assertion fails on exactly the defect the
+    // marker was meant to catch. Proven 2026-08-31 by mutation -- adding a
+    // synchronous location.reload() to the success branch fails this test on
+    // the announcer, with the received text empty. A marker read immediately
+    // after the assertions was also tried and could not be made to fail by
+    // any realistic mutation, so it was removed rather than kept as a line
+    // that always passes.
 
     const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
     await expect(confirmBtn).toBeEnabled({ timeout: 5000 });
     await confirmBtn.click();
 
-    await refetch;
+    // Positive effect 1: the dialog closes, so the operator is returned to
+    // the page rather than left staring at a modal that did nothing.
+    await expect(page.locator('[data-testid="operator-replace-modal"]')).toBeHidden({
+      timeout: 5000,
+    });
 
-    expect(
-      await page.evaluate(() => (window as any).__operatorReplaceNoReloadMarker),
-      'a full location.reload() would have wiped this marker -- the page must be re-fetched, not reloaded',
-    ).toBe(true);
+    // Positive effect 2: the operator is told, in the polite live region,
+    // that the work is still running. 'info' toasts route to the polite
+    // announcer (base.html), which is what a screen reader will speak.
+    await expect(page.locator('[data-testid="toast-announcer-polite"]')).toContainText(
+      /running in the background/i,
+      { timeout: 5000 },
+    );
+
   });
 
   test('two rapid activations of confirm produce exactly one request to renamer.operator_replace (point 6)', async ({

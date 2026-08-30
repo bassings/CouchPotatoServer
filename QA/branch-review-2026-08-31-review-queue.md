@@ -829,7 +829,7 @@ lens-design resolved this itself, correctly: the badge moved from the documented
 
 lens-data found that with two completed releases at different qualities the operator path **refuses** (`operator_declined_ambiguous_file`) rather than selecting the named release, so the AC's literal wording ("the destination the confirmation names is the one actually replaced") cannot be satisfied as written. The refusal is documented at `replacement.py:187-192` as the AC-PROD-4 owner decision. **Resolution: the code follows the later decision; the AC text is stale.** No wrong file can be destroyed in this state. Recorded as a spec-text drift, not a defect.
 
-### A5. ESCALATE — whether FEAT-011 (operator replace) ships on this branch at all
+### A5. ESCALATE -- whether FEAT-011 (operator replace) ships on this branch at all
 
 This is a tie **above the accessibility line** and is not the lenses' to resolve.
 
@@ -920,8 +920,8 @@ wording debt.
 | M12 | `_decision_memory` and `_notified_parked` are unbounded, one keyed on a caller-supplied `base_folder` | Both capped at 200 entries (`DECISION_MEMORY_MAX_ENTRIES` / `NOTIFIED_PARKED_MAX_ENTRIES`), LRU-on-last-write eviction via a new `_rememberDecision` helper and an inline pop-then-insert for the notify set | `tests/unit/test_renamer_decision_memory.py::TestDecisionMemoryStoresAreBounded` (frozen). Mutation: disabled each eviction loop (`while False:` / `if False:`) in turn, watched each store grow to exactly 300 entries, restored, sha256 confirmed |
 | M16 | Operator source removal is logged only on failure; a successful removal is silent | Added a `log.info` on the successful branch of `_disposeOfOperatorSource`, naming the media id | `tests/unit/test_replacement_disposal_success_logged.py` (frozen). Mutation: swapped the new `log.info` for a no-op lambda, watched the record disappear, restored, sha256 confirmed |
 | M17 | The one WARNING before an irreversible destruction cannot tell an operator-initiated replacement from an automatic one | `_announceImminentReplacement` takes `operator_initiated=False`; the operator call site passes `True`; the message names "an OPERATOR-requested" vs "an automatic" replacement | `tests/unit/test_replacement_announce_marks_operator.py` (frozen). Mutation: hardcoded `origin = 'an automatic'` regardless of the flag, watched the operator-initiated test fail, restored, sha256 confirmed |
-| M20 | `wanted.html`'s bulk Delete button (Wanted page's most destructive control) uses `cp-error`, an undefined Tailwind token, so it renders with no danger styling at all | Changed the class string to `bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20`, matching the same danger grammar used elsewhere | `tests/unit/test_design_token_conformance.py` (frozen, general form — scans every template for any undefined `cp-*` token, not just this line). Mutation: restored the original `cp-error` string, watched the conformance test catch it by name and line, restored the fix, sha256 confirmed |
-| M22 | The detail page swaps to a fresh render immediately on `data.success`, before the background replacement has done any work, showing the operator the OLD file's details right after "Replacement started" | `confirmReplace()`'s success branch no longer calls `cpSwap(...)`; it closes the dialog, returns focus to the trigger, and tells the operator the swap is running in the background and may take several minutes | New test `tests/unit/test_operator_replace_no_premature_swap.py` (written this round, not frozen — no frozen test was supplied for M22). RED confirmed against the original block (the `cpSwap(` assertion failed exactly as designed), fix restored, GREEN confirmed, sha256 of the fixed file matches |
+| M20 | `wanted.html`'s bulk Delete button (Wanted page's most destructive control) uses `cp-error`, an undefined Tailwind token, so it renders with no danger styling at all | Changed the class string to `bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20`, matching the same danger grammar used elsewhere | `tests/unit/test_design_token_conformance.py` (frozen, general form -- scans every template for any undefined `cp-*` token, not just this line). Mutation: restored the original `cp-error` string, watched the conformance test catch it by name and line, restored the fix, sha256 confirmed |
+| M22 | The detail page swaps to a fresh render immediately on `data.success`, before the background replacement has done any work, showing the operator the OLD file's details right after "Replacement started" | `confirmReplace()`'s success branch no longer calls `cpSwap(...)`; it closes the dialog, returns focus to the trigger, and tells the operator the swap is running in the background and may take several minutes | New test `tests/unit/test_operator_replace_no_premature_swap.py` (written this round, not frozen -- no frozen test was supplied for M22). RED confirmed against the original block (the `cpSwap(` assertion failed exactly as designed), fix restored, GREEN confirmed, sha256 of the fixed file matches |
 | M24 | The control that permanently deletes the current library file wears the same glyph as the (non-destructive) Refresh Library / per-card refresh buttons | Swapped the trigger's icon to Heroicons `arrows-right-left`, a glyph not used anywhere else in this UI | `tests/unit/test_operator_replace_trigger_ui_template.py::TestOperatorReplaceTriggerIconIsNotTheRefreshGlyph` (frozen). Mutation: restored the refresh-glyph path data on the trigger, watched the test catch it, restored the fix, sha256 confirmed |
 
 All eleven mutations were confirmed to land (`git diff` / sha256 before and
@@ -936,13 +936,13 @@ every touched file.
 Each rejection names why the underlying risk does not clear the bar this
 round, and what would change that.
 
-**M1 — Dark-theme hover contrast fails (4.21:1) on two destructive controls
+**M1 -- Dark-theme hover contrast fails (4.21:1) on two destructive controls
 (Mark Failed card control, operator-replace confirm).** REJECTED for this
 round. The review's own measurement was taken by rebuilding the page in real
 Chromium against the vendored Tailwind CDN build; nothing in this task's
 validation surface (pytest, vitest, `check_conformance.py`) can measure
 rendered contrast, and CLAUDE.md's own standard here is "you do not assert
-what you have not measured" — a blind CSS patch claiming to fix a
+what you have not measured" -- a blind CSS patch claiming to fix a
 browser-rendered number without a way to check it is exactly the kind of
 guard that cannot be shown to work. The exposure is also narrower than the
 resting-state contrast bugs already fixed in this codebase: it only fires
@@ -951,9 +951,9 @@ condition: bundle with the Playwright a11y tier this branch already needs
 run before push (per the review's own verdict item 4) and measure both rest
 and hover in the same pass.
 
-**M3 — New destructive routes absent from the route-auth inventory; no
+**M3 -- New destructive routes absent from the route-auth inventory; no
 request-level 401 test for `renamer.operator_replace`.** REJECTED. Per the
-review's own arbitration (A2), the AUTH BEHAVIOUR already holds — lens-security
+review's own arbitration (A2), the AUTH BEHAVIOUR already holds -- lens-security
 executed the no-key request and got a 401 with the handler never invoked.
 What's missing is coverage in a registry (`PUBLIC_ROUTES` / the inventory
 tests) that has no notion of `addApiView` plugin routes at all, for either of
@@ -964,7 +964,7 @@ immediately incomplete and give false confidence. Revisit condition: a
 dedicated task scoped to that inventory mechanism, covering every
 `addApiView` route in one pass rather than one at a time.
 
-**M5 — No failure branch of the operator replacement (`FAILED_STAGING`,
+**M5 -- No failure branch of the operator replacement (`FAILED_STAGING`,
 `FAILED_SIZE_MISMATCH`, `FAILED_SWAP`, a real ENOSPC, etc.) has ever been
 executed by a test in the repo.** REJECTED. The review itself already drove
 all of these paths directly (including a real ENOSPC against a 2MB `hdiutil`
@@ -976,9 +976,9 @@ project's own "fixtures must be extreme enough to provoke the failure" rule,
 is meaningful new test infrastructure, not a quick addition. Revisit
 condition: a dedicated hardening pass on `test_replacement_operator_execution.py`.
 
-**M8 — A raising settings read aborts the whole renamer scan instead of
+**M8 -- A raising settings read aborts the whole renamer scan instead of
 forcing a fail-open re-decide.** REJECTED for this round. Real defect, but
-fixing it means restructuring the exception boundaries inside `scan()` — the
+fixing it means restructuring the exception boundaries inside `scan()` -- the
 highest-traffic, highest-risk method in this file, already carrying three
 other guards fixed or hardened this round (H4-H6, M12, M14/M15's siblings).
 No frozen test named it, it wasn't in the owner's list of strongest
@@ -989,7 +989,7 @@ needs is a bigger risk than leaving it. Revisit condition: bundle with the
 rest of the "escape hatches" batch the review already groups H4/H5/H6/M8
 into, built and reviewed together.
 
-**M10 — Four FEAT-010 acceptance criteria (AC-QA-3/18/19/21) have no test:
+**M10 -- Four FEAT-010 acceptance criteria (AC-QA-3/18/19/21) have no test:
 `/partial/movies` swallows exceptions into the same empty state as a genuinely
 empty library, and the retry-bound on `wanted.html`'s `htmx:afterSwap` handler
 is unasserted.** REJECTED. None of these sit on the destructive operator-replace
@@ -999,15 +999,15 @@ FAIL / 6 UNVERIFIABLE) than the other two specs. No incident is on record for
 any of the four, and the cost of their absence today is a confusing UI state,
 not lost data. Revisit condition: a FEAT-010 test-completeness follow-up.
 
-**M11 — No E2E asserts that a film survives (`data-status="active"`) on the
+**M11 -- No E2E asserts that a film survives (`data-status="active"`) on the
 Wanted grid after Mark Failed; the existing test stubs the backend call.**
 REJECTED. The review's own words: "the backend unit test makes the behaviour
-very likely correct today" — this is a missing regression guard on
+very likely correct today" -- this is a missing regression guard on
 already-probably-correct behaviour, and building it needs the Playwright E2E
 tier this branch's own verdict already flags as never having been run by
 anybody. Revisit condition: folded into that same Playwright-tier run.
 
-**M13 — No runbook entry, recovery procedure or rollback documentation for
+**M13 -- No runbook entry, recovery procedure or rollback documentation for
 the two new destructive failure surfaces.** REJECTED. Pure documentation
 absence, the owner's named default-reject category. Its cost today is lower
 than it was before this triage pass: M16 and M17 now put the operator-source
@@ -1017,19 +1017,19 @@ file. Revisit condition: a docs task naming every outcome constant and its
 remedy, as the review's own fix suggests, ideally pinned with the drift-proof
 test it also suggests.
 
-**M14 — `log_suppressed`'s collision WARNING keeps its 300-second default
+**M14 -- `log_suppressed`'s collision WARNING keeps its 300-second default
 window rather than the 3600-86400 second range the spec settled on.**
 REJECTED for this round. Real but modest (log-volume, not data-loss)
 operability nit, shared with H7's already-noted sibling constant. The
-review's own text says "fixing one leaves the other" — doing it properly
+review's own text says "fixing one leaves the other" -- doing it properly
 means one named constant threaded through three call sites with
 clock-injection tests proving both directions, which is more than a
 one-line change and wasn't named among the owner's strongest candidates.
 Revisit condition: bundle with H7 as one change, not two separate half-fixes.
 
-**M15 — Every invalidation of the decision memory (source changed,
+**M15 -- Every invalidation of the decision memory (source changed,
 destination changed, settings changed, operator forced, a park dropping out)
-is silent; nothing names WHICH trigger fired.** REJECTED. Operability-only —
+is silent; nothing names WHICH trigger fired.** REJECTED. Operability-only --
 an operator cannot tell from the log whether a settings edit was picked up,
 but nothing here is destructive or data-losing, and the underlying
 invalidation logic itself is already correct (proven by the existing
@@ -1038,7 +1038,7 @@ greppable token through four-plus call sites is real work, not a quick
 addition, and wasn't named among the owner's strongest candidates. Revisit
 condition: bundle with M14 as "the memory's logging surface," one task.
 
-**M18 — `setBackgroundInert()` misses the mobile header/bottom nav at phone
+**M18 -- `setBackgroundInert()` misses the mobile header/bottom nav at phone
 width; its own test asserts the same two elements the implementation
 inerts.** REJECTED for this round. The stated fix ("inert by exclusion
 rather than enumeration") needs verification across the mobile Playwright
@@ -1046,19 +1046,19 @@ project to trust, which this task's validation commands cannot run.
 `aria-modal="true"` already mitigates this on modern screen readers per the
 review's own note. Revisit condition: bundle with the Playwright-tier run.
 
-**M19 — The keyboard-only flow (Tab/Shift+Tab/arrows/Enter/Space/Escape)
+**M19 -- The keyboard-only flow (Tab/Shift+Tab/arrows/Enter/Space/Escape)
 through the operator-replace dialog is never driven by any test, at either
 viewport.** REJECTED. Needs the same Playwright E2E tier this branch's
 verdict already names as a precondition for push, at both the desktop and
 mobile-chrome projects. Nothing here suggests the keyboard path is actually
-broken today — the finding is an absence of proof, not a positive defect.
+broken today -- the finding is an absence of proof, not a positive defect.
 Revisit condition: bundle with the Playwright-tier run.
 
-**M21 — The card Mark Done / Mark Failed handlers discard the specific
+**M21 -- The card Mark Done / Mark Failed handlers discard the specific
 `d.error` message the server now returns on a stale-status conflict, showing
 a generic "Failed to mark as done" instead.** REJECTED for this round. Real
 but low-severity UX debt on a recoverable, non-destructive action (unlike the
-operator-replace and delete controls, a failed Mark Done costs nothing —
+operator-replace and delete controls, a failed Mark Done costs nothing --
 the operator just refreshes and tries again). Not named among the owner's
 strongest candidates, and this project's own TDD standard means fixing it
 properly needs a regression test guarding the two-line change, which
@@ -1067,7 +1067,7 @@ fixes. Revisit condition: a quick follow-up alongside the pre-existing
 `movie_detail.html` handlers that have the identical shape and are already
 recorded as out of scope for this branch.
 
-**M23 — The card's poster-link `aria-label` still interpolates the bare
+**M23 -- The card's poster-link `aria-label` still interpolates the bare
 `downloaded` status rather than the `Review` term the chip and badge already
 use.** REJECTED for this round. Three of the four surfaces this exact
 inconsistency touches were already fixed in this branch; this is the fourth
