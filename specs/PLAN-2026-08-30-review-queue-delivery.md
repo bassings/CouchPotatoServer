@@ -601,3 +601,25 @@ changes for the operator. **Then stop and hand it over.**
   T8 launched: full `make verify` detached, sentinel-watched.
   Rework rounds: T7c2 1, plus this one repoint. Circuit-breaker: TRIPPED
   ONCE, proceeding with the reason stated above rather than silently.
+- **Tick 30, 2026-08-31.** T8's first full `make verify` came back **red at
+  step 4/7**, and the cause was my own tick-29 style sweep, not the feature
+  work: `tests/unit/test_plan_needs_list.py` parses T18's dependency clause
+  with a regex whose delimiters ARE em dashes
+  (`test_plan_needs_list.py:59`), so rewriting them blinded the check that
+  keeps that needs list honest. 2 failed, 3761 passed.
+  The line I edited predicts this failure in its own text: "anyone
+  reformatting a task line must change the test in the same commit or
+  silently blind it." It was right, and the sweep did it anyway. Worth
+  recording as a lesson with a shape: **a mechanical style sweep is a code
+  change, and a delimiter is not prose.** The rule governs prose this branch
+  authored; that line is pre-existing content touched only to add T67.
+  Restored that single line (`36f83a71`), guard back to 6 passed. The
+  design-system README fix stays, because it is new prose written this round.
+  Also worth noting what worked: the failure was caught by the local gate
+  before any push, which is the entire point of running it in full, and
+  nothing else in 3763 tests moved, which bounded the blast radius to one
+  line without needing to reason about it.
+  T8 relaunched from clean. E2E never ran in the red pass (it aborts at
+  step 4), so this is the first genuinely full run of the branch.
+  Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, still not
+  re-tripped; this one is my own sweep, not a fix repairing a fix.
