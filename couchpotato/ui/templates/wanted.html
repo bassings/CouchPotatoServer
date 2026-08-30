@@ -392,14 +392,31 @@ function movieList() {
 
     async bulkDelete() {
       if (this.selectedIds.size === 0) return;
-      const count = this.selectedIds.size;
-      if (!confirm(`Delete ${count} movie${count > 1 ? 's' : ''}? This cannot be undone.`)) return;
-
-      this.bulkProcessing = true;
       const ids = [...this.selectedIds];
 
+      // A movie with a completed download awaiting review is refused by
+      // the server (MediaPlugin.delete, main.py:567) and must never even
+      // be asked for. Derived from the selection itself, right now, not a
+      // cached count and not the whole grid, so the confirmation says
+      // exactly what is about to happen.
+      const reviewGatedIds = ids.filter(id => {
+        const card = document.querySelector(`#movie-grid .poster-card[data-movie-id="${id}"]`);
+        return !!card && card.dataset.status === 'downloaded';
+      });
+      const deletableIds = ids.filter(id => !reviewGatedIds.includes(id));
+
+      const deleteCount = deletableIds.length;
+      let message = `Delete ${deleteCount} movie${deleteCount === 1 ? '' : 's'}? This cannot be undone.`;
+      if (reviewGatedIds.length > 0) {
+        const skipCount = reviewGatedIds.length;
+        message += ` ${skipCount} of the selected movie${skipCount === 1 ? '' : 's'} ${skipCount === 1 ? 'has' : 'have'} a completed download awaiting review and will be skipped.`;
+      }
+      if (!confirm(message)) return;
+
+      this.bulkProcessing = true;
+
       try {
-        await Promise.all(ids.map(id =>
+        await Promise.all(deletableIds.map(id =>
           fetch(`${CP.apiBase}/movie.delete/?id=${id}&delete_from=wanted`)
         ));
         this.clearSelection();
