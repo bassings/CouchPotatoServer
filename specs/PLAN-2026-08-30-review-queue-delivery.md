@@ -34,7 +34,9 @@ automatic beta runs unattended.
 - [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
 - [x] T3: FEAT-011a, the operator replace decision and destination resolution — state: built (ba1b652a)
 - [x] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: built (fd396423)
-- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: building
+- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: partial (700cb61e: trigger button only)
+- [ ] T5b: FEAT-011c, the replacement modal and candidate listing — state: building (needs: T5)
+- [ ] T5c: FEAT-011c, progress, second-activation refusal, a11y and mobile specs — state: queued (needs: T5b)
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
@@ -227,3 +229,20 @@ changes for the operator. **Then stop and hand it over.**
   are not a proxy for rendered values: a chip at 23px against a 24px floor and
   a badge at 1.92:1 against 4.5:1, both with correct-looking Tailwind tokens.
   Rework rounds: T4 0, T5 0. Armed: T5's workflow plus the heartbeat.
+- **Tick 10, 2026-08-31.** T5 reported DONE; the repo says PARTIAL and
+  substantially so. Commit `700cb61e` is 27 template lines and a trigger
+  button that opens nothing. No modal, no candidate listing, no progress, no
+  second-activation refusal, and NO `*.a11y.spec.ts` or `*.mobile.spec.ts`
+  files at all, which were named explicitly in the prompt as the only place
+  those assertions can run.
+  **This is the second task to report DONE while delivering the first slice
+  (T2 was the first), and the fault is mine rather than the agent's.** The T5
+  prompt asked for three substantial deliverables plus accessibility across two
+  Playwright projects in a single task. That is three tasks' worth, and an
+  agent facing it builds the first thing and reports success. The lesson is a
+  scoping one and it applies to the tasks still queued: one deliverable per
+  task, and if the prompt needs the word "plus", split it.
+  Split accordingly into T5b (modal and listing) and T5c (progress, refusal,
+  accessibility). T5b launched.
+  Not counted as a rework round: nothing built was wrong. Rework rounds: T5 0,
+  T5b 0, T5c 0. Armed: T5b's workflow plus the heartbeat.
