@@ -36,8 +36,8 @@ automatic beta runs unattended.
 - [x] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: built (fd396423)
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: partial (700cb61e: trigger button only)
 - [ ] T5b: FEAT-011c, the replacement modal — state: partial (2a405d67: dialog shell and wording, no data)
-- [ ] T5d: FEAT-011c, the server-side candidate listing route — state: building
-- [ ] T5e: FEAT-011c, wire the modal to the listing and the submit — state: queued (needs: T5d)
+- [x] T5d: FEAT-011c, the server-side candidate listing route — state: built (a6b0592d)
+- [ ] T5e: FEAT-011c, wire the modal to the listing and the submit — state: building
 - [ ] T5c: FEAT-011c, progress, second-activation refusal, a11y and mobile specs — state: queued (needs: T5b)
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
@@ -268,3 +268,20 @@ changes for the operator. **Then stop and hand it over.**
   route that returns nothing ship green.
   Third partial, still not a rework round: nothing built is wrong.
   Rework rounds: T5b 0, T5d 0, T5e 0.
+- **Tick 12, 2026-08-31.** T5d COMPLETE, not partial, and the difference is
+  the correction from tick 11: the prompt named the test tier and said why a
+  render test would let a route that returns nothing ship green. Seven
+  route-and-plugin-level tests, both methods, a REAL symlink rather than a
+  mocked one.
+  The property that matters is proven: it reuses `_resolveOperatorSource`, the
+  already mutation-proven confinement, as the SOLE gate rather than writing a
+  second copy of a security rule. Neutering that gate (`if False:`) fails two
+  tests including the escaping-symlink case. `main.py` restored to a matching
+  checksum.
+  Returns bare names only, never paths, which is both the privacy rule and
+  what stops the client sending a path back.
+  T5e launched, again naming its tier: PLAYWRIGHT E2E, because a fetch, a click
+  and a request count cannot be tested any other way. It must assert the submit
+  carries EXACTLY media_id and source by intercepting the request, so an extra
+  parameter cannot creep in later unnoticed.
+  Rework rounds: T5d 0, T5e 0. Armed: T5e's workflow plus the heartbeat.
