@@ -434,6 +434,193 @@ class TestWantedOnlyMovieHasNoReleases:
         )
 
 
+class TestReviewGateMovies:
+    """AC-QA-9 / AC-QA-10 (FEAT-010).
+
+    The review queue (Wanted page 'Review' chip, Mark Done / Mark Failed
+    actions) needs at least one movie already sitting in the manual-review
+    gate ('downloaded' status, a landed release, a profile carrying
+    manual_confirmation) to exercise against -- and AC-A11Y-5's uniqueness
+    assertion plus AC-QA-13's "no other card changed" assertion both need a
+    SECOND one, because a single seeded film cannot make either non-vacuous.
+
+    Two dedicated movies, mirroring the existing MOVIE_ID /
+    DESTRUCTIVE_MOVIE_ID split (read-only assertions vs the spec that
+    actually mutates the fixture):
+
+    - REVIEW_MOVIE_ID: read-only assertions (the chip, the badge, the
+      accessible names).
+    - REVIEW_DESTRUCTIVE_MOVIE_ID: the state-changing Mark Done spec, which
+      confirms the movie out of the review gate and must not be able to
+      touch the read-only movie's fixture.
+
+    These constants, and the seeding behaviour itself, do not exist yet --
+    every test below is expected to fail RED until scripts/seed_e2e_data.py
+    grows them.
+    """
+
+    def _seed_and_open(self, tmp_path):
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+        return seed_e2e_data._open_adapter(data_dir)
+
+    def _releases_for(self, db, media_id):
+        return [
+            row['doc'] for row in db.all('id', with_doc=True)
+            if row['doc'].get('_t') == 'release' and row['doc'].get('media_id') == media_id
+        ]
+
+    def test_two_review_movies_are_seeded_and_distinct(self, tmp_path):
+        """AC-QA-9: TWO are required, not one, so AC-A11Y-5's later
+        uniqueness assertion is non-vacuous."""
+        assert seed_e2e_data.REVIEW_MOVIE_ID != seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID
+
+    def test_review_movies_are_not_referenced_by_any_other_seeded_constant(self, tmp_path):
+        """AC-QA-9: 'neither id is referenced by any other seeded constant' --
+        genuinely two more movies, not aliases for existing ones."""
+        other_movie_ids = (
+            seed_e2e_data.MOVIE_ID,
+            seed_e2e_data.DESTRUCTIVE_MOVIE_ID,
+            seed_e2e_data.DONE_RELEASE_MOVIE_ID,
+        ) + tuple(mid for mid, _imdb, _title in seed_e2e_data.WANTED_MOVIE_IDS)
+        assert seed_e2e_data.REVIEW_MOVIE_ID not in other_movie_ids
+        assert seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID not in other_movie_ids
+
+        other_imdb_ids = (
+            seed_e2e_data.IMDB_ID,
+            seed_e2e_data.DESTRUCTIVE_IMDB_ID,
+            seed_e2e_data.DONE_RELEASE_IMDB_ID,
+        ) + tuple(imdb for _mid, imdb, _title in seed_e2e_data.WANTED_MOVIE_IDS)
+        assert seed_e2e_data.REVIEW_IMDB_ID not in other_imdb_ids
+        assert seed_e2e_data.REVIEW_DESTRUCTIVE_IMDB_ID not in other_imdb_ids
+
+    def test_review_movie_is_downloaded_with_a_landed_release_and_manual_confirmation_profile(self, tmp_path):
+        """AC-QA-9: media status 'downloaded', a landed release, and a
+        profile carrying manual_confirmation -- the three things the review
+        gate itself actually reads (searcher.py:185, main.py:791-799,
+        movie_detail.html:269-284)."""
+        db = self._seed_and_open(tmp_path)
+        try:
+            movie = db.get('id', seed_e2e_data.REVIEW_MOVIE_ID)
+            assert movie['status'] == 'downloaded'
+
+            profile = db.get('id', movie['profile_id'])
+            assert profile.get('manual_confirmation') is True, (
+                "the review movie's profile must carry manual_confirmation, "
+                "or nothing in the app ever routed it into the review gate "
+                "in the first place"
+            )
+
+            releases = self._releases_for(db, seed_e2e_data.REVIEW_MOVIE_ID)
+            landed = [r for r in releases if r.get('status') == 'downloaded']
+            assert landed, (
+                'REVIEW_MOVIE_ID must carry a landed (status=downloaded) '
+                'release -- a movie with no release for the Mark Done / Mark '
+                'Failed buttons to act on is not a real fixture for this gate'
+            )
+        finally:
+            db.close()
+
+    def test_destructive_review_movie_is_downloaded_with_a_landed_release_and_manual_confirmation_profile(self, tmp_path):
+        db = self._seed_and_open(tmp_path)
+        try:
+            movie = db.get('id', seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID)
+            assert movie['status'] == 'downloaded'
+
+            profile = db.get('id', movie['profile_id'])
+            assert profile.get('manual_confirmation') is True
+
+            releases = self._releases_for(db, seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID)
+            landed = [r for r in releases if r.get('status') == 'downloaded']
+            assert landed, (
+                'REVIEW_DESTRUCTIVE_MOVIE_ID must carry a landed release too '
+                '-- the Mark Done spec confirms a release out of the gate, '
+                'and there must be one there to confirm'
+            )
+        finally:
+            db.close()
+
+    def test_verify_checks_the_review_movie_is_downloaded(self, tmp_path):
+        """AC-QA-10, following the existing pattern (mutate the seeded doc,
+        assert verify() returns a problem mentioning that id)."""
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+
+        db = seed_e2e_data._open_adapter(data_dir)
+        try:
+            db.update({**db.get('id', seed_e2e_data.REVIEW_MOVIE_ID), 'status': 'active'})
+        finally:
+            db.close()
+
+        problems = seed_e2e_data.verify(data_dir)
+        assert any(seed_e2e_data.REVIEW_MOVIE_ID in p for p in problems), (
+            'verify() did not notice REVIEW_MOVIE_ID was left in the wrong '
+            'status: %r' % (problems,)
+        )
+
+    def test_verify_checks_the_destructive_review_movie_is_downloaded(self, tmp_path):
+        """AC-QA-10, second movie: verify() must check both, not just one --
+        a verify() that only covered REVIEW_MOVIE_ID would let the Mark Done
+        spec's fixture go missing without saying so."""
+        data_dir = str(tmp_path / "seed-fixture-data")
+        seed_e2e_data.seed(data_dir)
+
+        db = seed_e2e_data._open_adapter(data_dir)
+        try:
+            db.update({**db.get('id', seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID), 'status': 'done'})
+        finally:
+            db.close()
+
+        problems = seed_e2e_data.verify(data_dir)
+        assert any(seed_e2e_data.REVIEW_DESTRUCTIVE_MOVIE_ID in p for p in problems), (
+            'verify() did not notice REVIEW_DESTRUCTIVE_MOVIE_ID was left in '
+            'the wrong status: %r' % (problems,)
+        )
+
+    def test_no_seeded_movie_title_is_a_substring_of_another(self, tmp_path):
+        """AC-QA-10: tests/e2e/filters.spec.ts:68 filters the grid on a full
+        title and asserts toHaveCount(1); a new review-gate title that is a
+        substring of an existing seeded title (or vice versa) would make
+        that filter match two cards and break the spec silently rather than
+        loudly.
+
+        Checked against every seeded movie's ACTUAL title, read back from
+        the database, rather than a hardcoded list copied from seed() --
+        a hardcoded copy could drift from what seed() really writes and
+        pass while the real fixture is broken.
+        """
+        db = self._seed_and_open(tmp_path)
+        try:
+            titles = [
+                row['doc']['title']
+                for row in db.all('id', with_doc=True)
+                if row['doc'].get('_t') == 'media'
+            ]
+        finally:
+            db.close()
+
+        # 3 pre-existing dedicated movies (MOVIE_ID, DESTRUCTIVE_MOVIE_ID,
+        # DONE_RELEASE_MOVIE_ID) + 3 no-release movies (WANTED_MOVIE_IDS) +
+        # the 2 new review-gate movies. A wrong count here means this test
+        # would otherwise silently check fewer titles than the fixture
+        # actually seeds, which is exactly the kind of vacuous pass rule 11
+        # warns about.
+        assert len(titles) == 8, (
+            'expected 8 seeded movie titles (6 pre-existing + 2 review-gate), '
+            'got %d: %r' % (len(titles), titles)
+        )
+
+        for i, a in enumerate(titles):
+            for j, b in enumerate(titles):
+                if i == j:
+                    continue
+                assert a not in b, (
+                    '%r is a substring of %r -- filters.spec.ts:68 filters on '
+                    'a full title and asserts exactly one visible card, which '
+                    'this would silently break' % (a, b)
+                )
+
+
 class TestEnablingAuthenticationRefusesARealDataDirectory:
     """`_enable_authentication` writes a PASSWORD, so its guard matters more.
 
