@@ -1306,6 +1306,26 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         media_id = kwargs.get('media_id')
         source = kwargs.get('source')
 
+        # H12 (branch review 2026-08-31): a refusal that can be decided
+        # before a single byte is touched is answered synchronously,
+        # here, rather than only inside the fire-and-forget thread below.
+        # `_resolveOperatorSource` does no destructive I/O (realpath
+        # calls only), so this costs nothing, and without it the operator
+        # is told "Replacement started" even on a request that could
+        # never have started -- the exact silent-success shape H1 closed
+        # for the log; this closes it for the response the browser
+        # actually reads.
+        if self._resolveOperatorSource(source) is None:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, media_id,
+            )
+            return {
+                'success': False,
+                'error': self._operatorOutcomeMessage(
+                    OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
+                ),
+            }
+
         thread = threading.Thread(
             target=self._executeOperatorReplacement,
             args=(media_id, source),
@@ -1453,6 +1473,27 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'Operator replacement outcome %s for media %s',
                 outcome, media_id,
             )
+
+    @staticmethod
+    def _operatorOutcomeMessage(outcome):
+        """A sentence an operator can read, never the raw outcome constant
+        (AC-DESIGN-10, H12 branch review 2026-08-31): a bare token like
+        `operator_refused_source_outside_watch_folder` means nothing to
+        someone who did not write this file.
+
+        Scoped today to the one outcome `operatorReplaceView`'s own
+        synchronous pre-check can return. The full outcome-to-sentence
+        table covering every constant the backgrounded path can return
+        (`replacement.py`, `swap.py`) is the rest of AC-DESIGN-10 and is
+        tracked separately; this is not a substitute for it.
+        """
+        if outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER:
+            return (
+                'No download folder is configured, or the chosen file '
+                'could not be found there. Check the renamer settings and '
+                'try again.'
+            )
+        return 'The replacement could not be started.'
 
     def _runOperatorReplacement(self, media_id, source_name):
         """The actual work, unguarded -- always called through

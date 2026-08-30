@@ -131,7 +131,7 @@
             :class="markingDone ? 'opacity-50 cursor-wait' : ''"
             :aria-busy="markingDone ? 'true' : 'false'"
             :aria-disabled="markingDone ? 'true' : 'false'"
-            aria-label="Mark {{ title }} as done"
+            aria-label="Mark Done: {{ title }}"
             @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { toast('Marked as done and moved to the Library', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as done', 'error'); } }).catch(() => { markingDone = false; toast('Failed to mark as done', 'error'); }); }">
       <span x-show="!markingDone">Mark Done</span>
       <span x-show="markingDone">Marking…</span>
@@ -147,7 +147,7 @@
             :class="markingFailed ? 'opacity-50 cursor-wait' : ''"
             :aria-busy="markingFailed ? 'true' : 'false'"
             :aria-disabled="markingFailed ? 'true' : 'false'"
-            aria-label="Mark {{ title }} as failed"
+            aria-label="Mark Failed: {{ title }}"
             @click="if(!markingFailed && confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { markingFailed = false; if(d.success) { toast('Marked failed, searching for another copy', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as failed', 'error'); } }).catch(() => { markingFailed = false; toast('Failed to mark as failed', 'error'); }); }">
       <span x-show="!markingFailed">Mark Failed</span>
       <span x-show="markingFailed">Marking…</span>
@@ -160,7 +160,8 @@
           class="absolute bottom-12 right-2 p-1.5 rounded-md bg-black/60 text-white/90 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
           :class="refreshing ? 'opacity-100' : ''"
           :disabled="refreshing"
-          :aria-label="refreshing ? 'Refreshing metadata for {{ title }}' : 'Refresh metadata for {{ title }}'">
+          data-title-label="{{ title }}"
+          :aria-label="refreshing ? 'Refreshing metadata for ' + $el.dataset.titleLabel : 'Refresh metadata for ' + $el.dataset.titleLabel">
     <svg x-show="!refreshing" aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
     </svg>

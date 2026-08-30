@@ -8,6 +8,9 @@ import re
 import sys
 import json
 import pytest
+# Aliased: test methods below assign a local `html = resp.text`, which
+# would shadow a bare `import html` for the rest of that method.
+import html as html_entities
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
 
@@ -989,6 +992,136 @@ class TestTemplateRendering:
             assert match.start() > condition_end, (
                 'mark_failed must sit in the BODY of the confirm-guarded if, '
                 'not in its condition'
+            )
+
+    def test_movie_card_refresh_aria_label_does_not_break_out_of_its_js_string_for_a_hostile_title(self, client):
+        """FEAT-010 AC-SEC-1 (H2, branch review 2026-08-31): no film title
+        reaches an Alpine or JS expression by string interpolation.
+        Rendering the real partials/movie_cards.html partial (via
+        /partial/movies, the same route the grid actually hits) for a movie
+        titled "Ocean's Eleven'+(window.pwn=1)+'", every attribute whose
+        name begins with @, : or x- must, after HTML-entity decoding, not
+        contain the injection fragment "+(window.pwn=1)+". The refresh
+        button's `:aria-label="refreshing ? 'Refreshing metadata for
+        {{ title }}' : ...'"` interpolates the raw title straight into a
+        quoted JS string literal, so the apostrophe in the fixture title
+        closes that literal early and the rest of the payload runs as Alpine
+        expression syntax.
+
+        This is a security AND an accessibility defect together: even an
+        ordinary title with an apostrophe ("Ocean's Eleven", "Schindler's
+        List") breaks the same expression and leaves the icon-only refresh
+        control with no accessible name at all (WCAG 4.1.2), with no
+        attacker involved.
+        """
+        hostile_title = "Ocean's Eleven'+(window.pwn=1)+'"
+        injection_fragment = '+(window.pwn=1)+'
+
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'active', 'info': {'titles': [hostile_title]}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=active')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        rendered = resp.text
+
+        # Sanity: the hostile title actually reached the render, otherwise
+        # every assertion below would pass vacuously.
+        assert 'Ocean' in rendered, 'the hostile title fixture did not reach the template'
+
+        # Same methodology the branch review used: scan every attribute
+        # whose name begins with @, : or x- (Alpine directives and bound
+        # attributes), HTML-entity-decode its value the way a real browser
+        # does before Alpine ever evaluates it, and look for the payload.
+        attr_pattern = re.compile(r'\s((?:@|:|x-)[\w:.\-]*)="([^"]*)"')
+        offending = [
+            (name, html_entities.unescape(raw_value))
+            for name, raw_value in attr_pattern.findall(rendered)
+            if injection_fragment in html_entities.unescape(raw_value)
+        ]
+
+        assert offending == [], (
+            'a film title must never be able to break out of a quoted JS/Alpine '
+            'string literal; offending attributes (decoded): {!r}. Fix: stop '
+            'interpolating the title into the expression -- emit it as a plain '
+            'autoescaped data-* attribute (or via the |tojson filter) and read '
+            'it back at runtime instead.'.format(offending)
+        )
+
+    def test_movie_card_review_controls_accessible_name_has_visible_text_as_a_prefix(self, client):
+        """WCAG 2.2 SC 2.5.3 Label in Name (H11, branch review 2026-08-31):
+        for a control with visible text, the accessible name must have that
+        visible text as a PREFIX, not merely contain it somewhere -- a
+        speech-input user (Voice Control, Dragon) activates a control by
+        speaking its visible label, which the accessibility tree must be
+        able to match at the start of the name. Both card review controls
+        currently render `aria-label="Mark {{ title }} as done"` /
+        "...as failed", so "Mark Done" is not a contiguous prefix of "Mark
+        The Thing as done" once a real title sits between the two words.
+
+        The axe-core rule that would catch this
+        (label-content-name-mismatch) is EXPERIMENTAL and excluded from
+        this project's tag set (wcag2a/2aa/21a/21aa/22aa), so this
+        assertion is the only guard in the repo for this specific SC on
+        these two controls -- axe returning zero violations here is not
+        evidence the page conforms.
+        """
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ["Schindler's List"]}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        rendered = resp.text
+
+        for testid, visible_text in (
+            ('review-mark-done', 'Mark Done'),
+            ('review-mark-failed', 'Mark Failed'),
+        ):
+            testid_pos = rendered.index('data-testid="{}"'.format(testid))
+            tag_start = rendered.rindex('<button', 0, testid_pos)
+            tag_end = rendered.index('>', testid_pos)
+            tag = rendered[tag_start:tag_end]
+
+            match = re.search(r'aria-label="([^"]*)"', tag)
+            assert match, '{} must carry an aria-label'.format(testid)
+            accessible_name = html_entities.unescape(match.group(1))
+
+            assert accessible_name.startswith(visible_text), (
+                'WCAG 2.5.3 Label in Name: the accessible name for {!r} must '
+                'start with its own visible text {!r} so a Voice Control/Dragon '
+                'user can activate it by speaking what they see -- got accessible '
+                'name {!r}, which does not have it as a prefix. Fix: reorder to '
+                '"{}: {{{{ title }}}}" so the visible text stays a literal '
+                'prefix.'.format(testid, visible_text, accessible_name, visible_text)
             )
 
     def test_movie_detail_labels_downloaded_status_as_review_gate(self, client):

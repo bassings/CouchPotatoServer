@@ -328,7 +328,13 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     await gotoWantedWithReviewCards(page);
     await expect(page.locator(`.poster-card[data-movie-id="${REVIEW_DESTRUCTIVE_MOVIE_ID}"]`)).toBeVisible();
 
-    const controls = page.getByRole('button', { name: /mark .* as done/i });
+    // H11 (branch review 2026-08-31): the accessible name is now "Mark
+    // Done: {{ title }}" (visible text as a literal PREFIX, WCAG 2.5.3 --
+    // see the assertion below), not the old "Mark {{ title }} as done"
+    // where the title interrupted the visible words. Matched by prefix
+    // rather than by the old `mark .* as done` shape, which this rename
+    // makes obsolete.
+    const controls = page.getByRole('button', { name: /^Mark Done:/i });
     const count = await controls.count();
     expect(count, 'expected one Mark Done control per review-gated card').toBe(2);
 
@@ -336,6 +342,19 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     expect(new Set(names).size, `accessible names must be unique across cards, got: ${JSON.stringify(names)}`).toBe(names.length);
     expect(names.some((n) => n?.includes(REVIEW_MOVIE_TITLE))).toBe(true);
     expect(names.some((n) => n?.includes(REVIEW_DESTRUCTIVE_MOVIE_TITLE))).toBe(true);
+
+    // WCAG 2.5.3 Label in Name, the generic check axe cannot perform: its
+    // `label-content-name-mismatch` rule is experimental and excluded
+    // from this project's tag set (AC-A11Y-13's own scan reports zero
+    // violations on this exact markup), so nothing else in the repo
+    // would catch a control whose visible text sits somewhere in the
+    // middle of its accessible name rather than at the start of it. A
+    // Voice Control/Dragon user activates a control by speaking the text
+    // they see, which only works if that text is a literal prefix.
+    expect(
+      names.every((n) => (n || '').startsWith('Mark Done')),
+      `every Mark Done control's accessible name must start with its own visible text "Mark Done", got: ${JSON.stringify(names)}`,
+    ).toBe(true);
   });
 
   // ---------------------------------------------------------------------

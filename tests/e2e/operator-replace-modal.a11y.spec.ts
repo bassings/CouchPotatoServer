@@ -555,11 +555,26 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
       .toMatch(/replac/i);
   });
 
-  test('a declined replacement is announced through the persistent assertive announcer, naming the reason (point 6)', async ({ page }) => {
-    const refusalReason = 'declined_not_better';
-    await page.route(REPLACE_ROUTE, (route) =>
-      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: false, error: refusalReason }) }));
-
+  test('a genuine refusal from the real server is announced in a sentence a human can read, not a raw token (point 6, H12)', async ({ page }) => {
+    // H12 (branch review 2026-08-31): the test this replaces stubbed
+    // renamer.operator_replace with {success: false, error: 'declined_not_better'}
+    // -- a response shape operatorReplaceView has NO code path to produce,
+    // it answers {'success': True} on every outcome -- and then asserted
+    // the raw internal token, which AC-DESIGN-10 explicitly forbids
+    // surfacing to an operator. Deleting the server's entire outcome path
+    // would not have made that test fail.
+    //
+    // This drives the REAL server instead. REPLACE_ROUTE is deliberately
+    // NOT routed here. scripts/seed_e2e_data.py never writes a
+    // renamer.from setting, so conf('from') is genuinely unset for every
+    // worker's data dir, and `_resolveOperatorSource` refuses EVERY
+    // operator replacement with OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER
+    // before any release, file or database row is touched -- a real,
+    // deterministic refusal produced by the application, not a fabricated
+    // one. (The candidate LIST is still stubbed via openReplaceModal, same
+    // as every other test in this file: this test is not about whether
+    // that listing is real, only about what the operator is told once a
+    // genuine refusal happens.)
     const modal = await openReplaceModal(page, REVIEW_DESTRUCTIVE_MOVIE_ID);
     await modal.getByRole('radio', { name: CANDIDATES[0], exact: true }).click();
 
@@ -568,9 +583,49 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
     await confirmBtn.click();
 
     const assertiveAnnouncer = page.locator('[data-testid="toast-announcer-assertive"]');
+    const politeAnnouncer = page.locator('[data-testid="toast-announcer-polite"]');
+
+    // The operator must be told, in words, that the request was refused --
+    // never left to read nothing at all.
     await expect
       .poll(async () => (await assertiveAnnouncer.textContent()) || '', { timeout: 5000 })
-      .toContain(refusalReason);
+      .not.toBe('');
+
+    const assertiveText = (await assertiveAnnouncer.textContent()) || '';
+
+    // "In a sentence a human can read" -- not a bare machine token. A
+    // constant like the outcome name has no space in it; a sentence does.
+    expect(
+      assertiveText,
+      'the announced refusal must read as a sentence, not a bare constant',
+    ).toMatch(/\s/);
+
+    // AC-DESIGN-10: none of the internal outcome constants this path can
+    // return may ever reach the rendered text.
+    for (const rawToken of [
+      'operator_refused_source_outside_watch_folder',
+      'operator_refused_error',
+      'operator_declined_ambiguous_file',
+      'declined_',
+      'refused_',
+      'failed_',
+      'replace_atomically',
+      'identity_source',
+    ]) {
+      expect(
+        assertiveText,
+        `the announced sentence must not surface the raw internal token "${rawToken}" (AC-DESIGN-10)`,
+      ).not.toContain(rawToken);
+    }
+
+    // And the operator must never be told the replacement started when the
+    // server refused it before any work began -- that is the false
+    // positive that let H1 and H10 ship unnoticed.
+    const politeText = (await politeAnnouncer.textContent()) || '';
+    expect(
+      politeText,
+      'a refused replacement must not be announced as having started',
+    ).not.toContain('Replacement started');
   });
 
   // -------------------------------------------------------------------
