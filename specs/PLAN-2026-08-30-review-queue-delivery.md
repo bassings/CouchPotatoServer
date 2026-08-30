@@ -544,3 +544,17 @@ changes for the operator. **Then stop and hand it over.**
   place.
   Rework rounds: T7c1 1, T7c2 1. Circuit-breaker still not tripped: no fix has
   introduced a defect a later round had to repair.
+- **Tick 28, 2026-08-31.** Quiet hold, T7c2 mid-flight in its Test phase.
+  Measured rather than assumed: the ledger carries T7c2's `started` line with
+  no terminal line yet, and the working tree moved between two reads a few
+  seconds apart, so the agent is live. 422 insertions so far across
+  `renamer/main.py`, `wanted.html`, two new a11y specs
+  (`review-queue.a11y.spec.ts`, `operator-replace-modal.a11y.spec.ts`) and
+  `test_renamer_decision_memory.py`. That spread fits the Lows flagged as the
+  likeliest fixes rather than a scattergun, and `movie_detail.html` appeared
+  modified in one read and clean in the next, which is the agent backing out a
+  change rather than accumulating one.
+  Nothing useful can run alongside it: T8 is a full `make verify`, and running
+  it against a tree an agent is editing would measure a state that will not
+  exist by the time it finishes. So this tick genuinely acts by waiting.
+  Rework rounds: T7c2 1. Circuit-breaker still not tripped.
