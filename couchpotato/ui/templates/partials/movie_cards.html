@@ -17,7 +17,7 @@
 {% set movie_id = movie.get('_id', '') %}
 
 <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
-     x-data="{ refreshing: false, selected: false }"
+     x-data="{ refreshing: false, selected: false, markingDone: false, markingFailed: false }"
      data-title="{{ title }}"
      data-status="{{ status }}"
      data-has-releases="{{ 'true' if releases|length > 0 else 'false' }}"
@@ -99,6 +99,51 @@
       <p class="text-cp-muted text-[10px] mt-0.5">{{ year }}</p>
     </div>
   </a>
+
+  {% if status == 'downloaded' %}
+  <!-- Card-level review actions (FEAT-010 AC-QA-4). Siblings of the poster
+       <a>, not nested inside it (AC-A11Y-6), and never hidden behind
+       hover/focus opacity (AC-A11Y-7) -- unlike the refresh button below,
+       which is deliberately not the pattern reused here. Mark Done is first
+       in DOM order so the destructive Mark Failed control is never the
+       first thing reached by Tab (AC-DESIGN-8). Both controls use
+       aria-disabled with a re-entry guard rather than the disabled
+       attribute, matching confirmRestore() in partials/movie_detail.html,
+       so a focused control does not lose focus to <body> mid-request. On
+       success each re-fetches the grid via htmx (synthesis decision 4)
+       rather than location.reload(), which would destroy base.html's
+       persistent live-region announcers before the outcome could be
+       spoken. -->
+  <div class="flex items-center gap-2 px-2.5 pb-2.5">
+    <button type="button"
+            class="flex-1 px-2 py-1 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1"
+            data-testid="review-mark-done"
+            :class="markingDone ? 'opacity-50 cursor-wait' : ''"
+            :aria-busy="markingDone ? 'true' : 'false'"
+            :aria-disabled="markingDone ? 'true' : 'false'"
+            aria-label="Mark {{ title }} as done"
+            @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { toast('Marked done', 'success'); htmx.trigger('#movie-grid', 'load'); } else { toast('Failed to mark as done', 'error'); } }).catch(() => { markingDone = false; toast('Failed to mark as done', 'error'); }); }">
+      <span x-show="!markingDone">Mark Done</span>
+      <span x-show="markingDone">Marking…</span>
+    </button>
+    {# Destructive: discards the landed copy and re-searches immediately, so
+       confirm() first with the SAME wording the detail page uses
+       (movie_detail.html:283) -- AC-QA-12, AC-SIMP-4. The mark_failed call
+       is lexically inside this confirm( branch: there is no path that
+       reaches the request without the dialogue. #}
+    <button type="button"
+            class="flex-1 px-2 py-1 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1"
+            data-testid="review-mark-failed"
+            :class="markingFailed ? 'opacity-50 cursor-wait' : ''"
+            :aria-busy="markingFailed ? 'true' : 'false'"
+            :aria-disabled="markingFailed ? 'true' : 'false'"
+            aria-label="Mark {{ title }} as failed"
+            @click="if(!markingFailed && confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { markingFailed = false; if(d.success) { toast('Marked failed, searching for another copy', 'success'); htmx.trigger('#movie-grid', 'load'); } else { toast('Failed to mark as failed', 'error'); } }).catch(() => { markingFailed = false; toast('Failed to mark as failed', 'error'); }); }">
+      <span x-show="!markingFailed">Mark Failed</span>
+      <span x-show="markingFailed">Marking…</span>
+    </button>
+  </div>
+  {% endif %}
 
   <!-- Refresh button (DEF-006) - shows on hover/focus (A11Y-002) -->
   <button @click.prevent.stop="if(!refreshing) { refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; htmx.trigger('#movie-grid', 'load'); }).catch(() => { refreshing = false; }); }"

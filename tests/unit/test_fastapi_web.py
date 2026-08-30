@@ -718,6 +718,216 @@ class TestTemplateRendering:
         assert 'downloaded / review' in resp.text
         assert 'data-status="downloaded"' in resp.text
 
+    def test_movie_card_shows_both_review_controls_when_downloaded(self, client):
+        """FEAT-010 AC-QA-4: a card for a movie whose status is 'downloaded'
+        carries data-status="downloaded", the existing 'downloaded / review'
+        badge, and BOTH the Mark Done and Mark Failed controls, each
+        addressable by a stable data-testid rather than by visible text (a
+        text-based assertion can't tell the review "Mark Done" apart from the
+        generic "Mark as Done" button, and can be satisfied by markup that
+        looks right but wires up nothing)."""
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ['Awaiting Review']}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        assert resp.status_code == 200
+        assert 'data-status="downloaded"' in resp.text
+        assert 'downloaded / review' in resp.text
+        assert 'data-testid="review-mark-done"' in resp.text, (
+            'the card Mark Done control must carry a stable data-testid'
+        )
+        assert 'data-testid="review-mark-failed"' in resp.text, (
+            'the card Mark Failed control must carry a stable data-testid'
+        )
+
+    def test_movie_card_hides_review_controls_for_non_downloaded_statuses(self, client):
+        """FEAT-010 AC-QA-5: the gate is proven in both directions. Neither
+        card-level review control renders for a movie whose status is
+        'active', 'done', 'snatched', or an unrecognised value ('suspended').
+        A mutation that renders the controls unconditionally (e.g. dropping
+        the {% if status == 'downloaded' %} guard) must fail at least one of
+        these four cases; a single-status check could pass by accident."""
+        for status in ('active', 'done', 'snatched', 'suspended'):
+            def media_list_handler(**kwargs):
+                return {
+                    'movies': [
+                        {'_id': 'm1', 'status': status, 'info': {'titles': ['Some Movie']}, 'releases': []},
+                    ]
+                }
+
+            old_handler = api.get('media.list')
+            api['media.list'] = media_list_handler
+            api_locks['media.list'] = __import__('threading').Lock()
+
+            try:
+                resp = client.get('/partial/movies?status={}'.format(status))
+            finally:
+                if old_handler:
+                    api['media.list'] = old_handler
+                else:
+                    api.pop('media.list', None)
+
+            assert resp.status_code == 200
+            assert 'data-testid="review-mark-done"' not in resp.text, (
+                'status={!r} must not render the card Mark Done control'.format(status)
+            )
+            assert 'data-testid="review-mark-failed"' not in resp.text, (
+                'status={!r} must not render the card Mark Failed control'.format(status)
+            )
+
+    def test_movie_card_review_controls_use_correct_tokens_gap_and_order(self, client):
+        """FEAT-010 AC-DESIGN-8: the two card controls cannot be confused for
+        one another, and the destructive one is not the easy target. Mark
+        Failed uses the danger token already used for the same action on the
+        detail page (bg-cp-danger/10 text-cp-danger, movie_detail.html:283)
+        and Mark Done the success token; they sit in a row using the same
+        gap-2 spacing the detail page's own action row uses
+        (movie_detail.html:140); and Mark Done is first in DOM order, so the
+        destructive control is never the first thing reached by Tab."""
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ['Awaiting Review']}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        html = resp.text
+        assert 'data-testid="review-mark-done"' in html
+        assert 'data-testid="review-mark-failed"' in html
+
+        pos_done = html.index('data-testid="review-mark-done"')
+        pos_failed = html.index('data-testid="review-mark-failed"')
+        assert pos_done < pos_failed, (
+            'Mark Done must be first in DOM order so the destructive Mark '
+            'Failed control is never the first thing reached by Tab'
+        )
+
+        # Look at a small window around each testid for its containing
+        # <button ...> tag's class attribute, rather than the whole document,
+        # so a coincidental substring match elsewhere in the page can't pass
+        # this by accident.
+        done_window = html[max(0, pos_done - 400):pos_done + 100]
+        failed_window = html[max(0, pos_failed - 400):pos_failed + 100]
+
+        assert 'bg-cp-success/10' in done_window and 'text-cp-success' in done_window, (
+            'Mark Done must use the success token'
+        )
+        assert 'bg-cp-danger/10' in failed_window and 'text-cp-danger' in failed_window, (
+            'Mark Failed must use the danger token, matching movie_detail.html:283'
+        )
+        assert 'bg-cp-danger' not in done_window, (
+            'Mark Done must not also carry the danger token'
+        )
+        assert 'bg-cp-success' not in failed_window, (
+            'Mark Failed must not also carry the success token'
+        )
+
+        # The two controls are separated by at least the standard control
+        # gap: the row containing both reuses the gap-2 spacing the detail
+        # page's own action row uses (movie_detail.html:140), rather than a
+        # bespoke or absent gap.
+        between = html[pos_done:pos_failed]
+        assert 'gap-2' in between or 'gap-2' in done_window, (
+            'the two controls must sit in a row using the standard gap-2 '
+            'control spacing, not a bespoke or absent gap'
+        )
+
+    def test_movie_card_mark_failed_is_guarded_by_the_same_confirm_as_detail_page(self, client):
+        """FEAT-010 AC-QA-12 (text half) and AC-SIMP-4: the card's Mark
+        Failed control opens a confirmation whose text is character-identical
+        to the one the detail page already uses
+        (movie_detail.html:283, 'Mark this download as failed and search for
+        another copy? This discards the current copy.'), the diff of
+        movie_cards.html contains no reference to media.delete, and the
+        mark_failed call is lexically inside that confirm( branch -- so
+        there is no code path that reaches the request without the dialogue.
+        AC-SIMP-4 itself is proven load-bearing at review by deleting the
+        confirm( wrapper and watching this card's AC-QA-12 e2e coverage
+        (tests/e2e/filters.spec.ts) go red."""
+        detail_confirm_text = (
+            'Mark this download as failed and search for another copy? '
+            'This discards the current copy.'
+        )
+        assert detail_confirm_text in Path(
+            'couchpotato/ui/templates/partials/movie_detail.html'
+        ).read_text(encoding='utf-8'), (
+            'fixture text has drifted from movie_detail.html -- update the '
+            'literal above to match, do not weaken this test'
+        )
+
+        def media_list_handler(**kwargs):
+            return {
+                'movies': [
+                    {'_id': 'm1', 'status': 'downloaded', 'info': {'titles': ['Awaiting Review']}, 'releases': []},
+                ]
+            }
+
+        old_handler = api.get('media.list')
+        api['media.list'] = media_list_handler
+        api_locks['media.list'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movies?status=downloaded')
+        finally:
+            if old_handler:
+                api['media.list'] = old_handler
+            else:
+                api.pop('media.list', None)
+
+        html = resp.text
+        assert 'media.delete' not in html, (
+            'movie_cards.html must not gain a reference to media.delete'
+        )
+
+        confirm_call = "confirm('{}')".format(detail_confirm_text)
+        assert confirm_call in html, (
+            'the card Mark Failed confirmation text must be character-identical '
+            'to the detail page\'s'
+        )
+
+        # Lexically inside a confirm( branch: the confirm( call must appear
+        # BEFORE every occurrence of mark_failed in the document, and there
+        # must be at least one mark_failed occurrence to guard.
+        assert 'mark_failed' in html
+        pos_confirm = html.index('confirm(')
+        idx = html.find('mark_failed')
+        found_any = False
+        while idx != -1:
+            found_any = True
+            assert idx > pos_confirm, (
+                'every occurrence of mark_failed must be lexically inside a '
+                'confirm( branch'
+            )
+            idx = html.find('mark_failed', idx + 1)
+        assert found_any
+
     def test_movie_detail_labels_downloaded_status_as_review_gate(self, client):
         """Same review-gate label on the movie detail partial."""
         def media_get_handler(**kwargs):

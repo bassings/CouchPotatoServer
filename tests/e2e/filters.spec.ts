@@ -387,3 +387,244 @@ test.describe('Filtered-to-empty state', () => {
     expect(results.violations.length, `empty-state panel violations:\n${detail}`).toBe(0);
   });
 });
+
+test.describe('Review card actions (FEAT-010)', () => {
+  /*
+   * scripts/seed_e2e_data.py's two dedicated review-gate movies (AC-QA-9),
+   * already seeded status='downloaded' with a landed release -- real
+   * fixtures, not stubMovieGrid(), because these tests exercise the real
+   * movie_cards.html Mark Done / Mark Failed controls and their wiring, not
+   * client-side filter logic.
+   *
+   * REVIEW_MOVIE_ID is reserved for read-only assertions and
+   * REVIEW_DESTRUCTIVE_MOVIE_ID for the state-changing spec (the seed
+   * script's own comment). Every test below intercepts the destructive route
+   * itself rather than letting it reach the real backend, so REVIEW_MOVIE_ID
+   * stays genuinely read-only for whichever spec runs after this one in the
+   * same worker.
+   */
+  const REVIEW_MOVIE_ID = 'e2e-seed-movie-007';
+  const REVIEW_DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-008';
+  const MARK_FAILED_CONFIRM_TEXT =
+    'Mark this download as failed and search for another copy? This discards the current copy.';
+
+  async function gotoWantedWithReviewCards(page: Page) {
+    await page.goto('/wanted');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await waitForGridLoaded(page);
+    const readOnlyCard = page.locator(`.poster-card[data-movie-id="${REVIEW_MOVIE_ID}"]`);
+    const destructiveCard = page.locator(`.poster-card[data-movie-id="${REVIEW_DESTRUCTIVE_MOVIE_ID}"]`);
+    await expect(
+      readOnlyCard,
+      'REVIEW_MOVIE_ID must be seeded and visible on Wanted -- did scripts/seed_e2e_data.py run?',
+    ).toHaveCount(1, { timeout: 10000 });
+    await expect(
+      destructiveCard,
+      'REVIEW_DESTRUCTIVE_MOVIE_ID must be seeded and visible on Wanted -- did scripts/seed_e2e_data.py run?',
+    ).toHaveCount(1, { timeout: 10000 });
+    return { readOnlyCard, destructiveCard };
+  }
+
+  test('dismissing the card Mark Failed confirmation issues zero requests (AC-QA-12)', async ({ page }) => {
+    let markFailedRequests = 0;
+    await page.route(/movie\.searcher\.mark_failed/, (route) => {
+      markFailedRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { readOnlyCard } = await gotoWantedWithReviewCards(page);
+
+    let dialogMessage: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await readOnlyCard.locator('[data-testid="review-mark-failed"]').click();
+    await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
+
+    // Same wording as the detail page (movie_detail.html:283) -- AC-QA-12.
+    expect(dialogMessage).toBe(MARK_FAILED_CONFIRM_TEXT);
+
+    // A moment for a wrongly-unconditional fetch to have fired, so this
+    // cannot pass by polling before the bug would have shown up.
+    await page.waitForTimeout(500);
+    expect(
+      markFailedRequests,
+      'dismissing the confirmation must issue zero requests to movie.searcher.mark_failed',
+    ).toBe(0);
+
+    // The card is still present during an in-flight request too, so the
+    // request-count assertion above -- not card presence -- is what proves
+    // dismissal did nothing (AC-QA-12).
+    await expect(readOnlyCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(readOnlyCard.locator('[data-testid="review-mark-failed"]')).toBeEnabled();
+  });
+
+  test("confirming Mark Failed issues exactly one request for that card's own id, no media.done request, and leaves every other card's status untouched (AC-QA-13)", async ({
+    page,
+  }) => {
+    const failedRequestIds: string[] = [];
+    let doneRequests = 0;
+    await page.route(/movie\.searcher\.mark_failed/, (route) => {
+      const url = new URL(route.request().url());
+      failedRequestIds.push(url.searchParams.get('media_id') || '');
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { readOnlyCard, destructiveCard } = await gotoWantedWithReviewCards(page);
+
+    // Synthesis decision 4: a card action re-fetches the grid, it does not
+    // call location.reload() -- a reload would destroy this marker.
+    await page.evaluate(() => {
+      (window as any).__feat010NoReloadMarker = true;
+    });
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await readOnlyCard.locator('[data-testid="review-mark-failed"]').click();
+
+    await expect.poll(() => failedRequestIds.length, { timeout: 5000 }).toBe(1);
+    expect(failedRequestIds, "the request must carry that card's own media id, no other").toEqual([
+      REVIEW_MOVIE_ID,
+    ]);
+    expect(doneRequests, 'confirming Mark Failed must not also call media.done').toBe(0);
+
+    expect(
+      await page.evaluate(() => (window as any).__feat010NoReloadMarker),
+      'a full location.reload() would have wiped this marker -- the grid must be re-fetched instead',
+    ).toBe(true);
+
+    // The mocked response never reached the real backend, so the other
+    // seeded review card's status is proof no other card was touched.
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+  });
+
+  test('a rejected Mark Done ({success:false}) leaves the card unchanged, re-enables the control, and surfaces an error (AC-QA-15a)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    const idleLabel = ((await markDoneBtn.textContent()) || '').trim();
+    expect(idleLabel.length).toBeGreaterThan(0);
+
+    await markDoneBtn.click();
+    await expect.poll(() => doneRequests, { timeout: 5000 }).toBe(1);
+
+    // Neither stuck on a pending "Marking…" label nor silently claiming
+    // success.
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(markDoneBtn).toBeEnabled();
+    await expect(markDoneBtn).toHaveAttribute('aria-disabled', 'false');
+    expect(((await markDoneBtn.textContent()) || '').trim()).toBe(idleLabel);
+
+    const errorAnnouncer = page.locator('[data-testid="toast-announcer-assertive"]');
+    await expect(errorAnnouncer).not.toHaveText('', { timeout: 5000 });
+  });
+
+  test('an aborted Mark Done request leaves the card unchanged and re-enables the control (AC-QA-15b)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.abort('failed');
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    const idleLabel = ((await markDoneBtn.textContent()) || '').trim();
+    expect(idleLabel.length).toBeGreaterThan(0);
+
+    await markDoneBtn.click();
+    await expect.poll(() => doneRequests, { timeout: 5000 }).toBe(1);
+
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(markDoneBtn).toBeEnabled();
+    expect(((await markDoneBtn.textContent()) || '').trim()).toBe(idleLabel);
+  });
+
+  test('two rapid clicks on Mark Done produce exactly one media.done request (AC-QA-16, pointer)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, async (route) => {
+      doneRequests++;
+      // Held open so a second activation during the in-flight window is a
+      // genuine race against the guard, not a race the guard wins only
+      // because the first request already finished.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+
+    // force:true: the control uses aria-disabled (not the disabled
+    // attribute, per the project's a11y rule for a control that may hold
+    // focus), so a plain second .click() could be stalled by Playwright's
+    // own actionability retries rather than exercising the guard. Both
+    // clicks are issued back to back with no artificial wait between them.
+    await Promise.all([
+      markDoneBtn.click({ force: true }),
+      markDoneBtn.click({ force: true }),
+    ]);
+    await page.waitForTimeout(700);
+
+    expect(doneRequests).toBe(1);
+  });
+
+  test('two rapid Enter presses on a focused Mark Done produce exactly one media.done request (AC-QA-16, keyboard)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, async (route) => {
+      doneRequests++;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    await markDoneBtn.focus();
+    await expect(markDoneBtn).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(700);
+
+    expect(doneRequests).toBe(1);
+  });
+});
