@@ -485,3 +485,25 @@ changes for the operator. **Then stop and hand it over.**
   defect, and closing it properly required admitting the server had no way to
   say no.
   Rework rounds: T7b3 1. Armed: T7b3's workflow plus the heartbeat.
+- **Tick 25, 2026-08-31. ALL 2 CRITICALS AND ALL 12 HIGHS FIXED**, every one
+  mutation-proven. Suite 3744, up from 3603 at the start of the branch.
+  H2 proven by reverting the title to interpolation and watching a film called
+  `Ocean's Eleven'+(window.pwn=1)+'` close the string literal and execute.
+  **My first probe of that fix DID NOT LAND** (pattern mismatch) and reported
+  green. Checked whether the mutation had applied before believing it, which is
+  the third non-hostile probe caught this session by that same check.
+  **One assertion WAS deleted, and it should have been.** The old H12 test
+  stubbed `{success: false, error: 'declined_not_better'}`, a shape the server
+  could not produce, and asserted that raw internal token appeared in what a
+  screen reader announces. Replaced with a real-server test asserting a human
+  sentence. Verified the replacement rather than accepting "expected deletion"
+  as sufficient.
+  T7c1 launched on the 24 Medium, under the owner's instruction: fix what
+  matters, REJECT THE REST WITH EVIDENCE, and record every outcome. Fixing all
+  24 to reach zero is explicitly not wanted.
+  **Noticed and not mine: an untracked `.claude/optimise-cycle.tmp-run.js`
+  appeared in the working tree**, from another session sharing this checkout.
+  Harmless and gitignored-adjacent, but recorded because six review lenses hit
+  checkout drift from the same cause.
+  Rework rounds: T7b3 1, T7c1 1. No fix has yet introduced a defect a later
+  round had to repair, so the circuit-breaker still has not tripped.
