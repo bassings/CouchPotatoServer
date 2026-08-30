@@ -692,12 +692,26 @@ test.describe('Review card actions (FEAT-010)', () => {
     await page.getByRole('button', { name: 'Delete', exact: true }).click();
     await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
 
+    // The count is tied to the skip CLAUSE, not merely present somewhere in
+    // the string. A bare `\b2\b` is satisfied by any "2" anywhere, including
+    // a hardcoded one or the unrelated delete total, which is this repo's
+    // recurring `guards-that-check-a-stand-in` shape. Requiring the number to
+    // sit in the same sentence as the reason makes a hardcoded digit fail.
     expect(
       dialogMessage,
-      `confirmation must state the review-gated count (${reviewGatedVisibleCount}) before acting, not stay silent about it`,
-    ).toMatch(new RegExp(`\\b${reviewGatedVisibleCount}\\b`));
-    expect(dialogMessage!.toLowerCase(), 'confirmation must name what is being skipped and why').toMatch(/review/);
-    expect(dialogMessage!.toLowerCase(), 'confirmation must say these are being skipped').toMatch(/skip/);
+      `the review-gated count (${reviewGatedVisibleCount}) must be stated AS the skip reason, not merely appear somewhere in the message`,
+    ).toMatch(
+      new RegExp(`\\b${reviewGatedVisibleCount}\\b[^.]*awaiting review[^.]*skipped`, 'i'),
+    );
+
+    // And the delete total must be the DELETABLE count, not the selection
+    // size. Without this the message could truthfully name the skipped films
+    // and still promise to delete them.
+    const selectedTotal = await page.locator('#movie-grid .poster-card').count();
+    expect(
+      dialogMessage,
+      `Delete must offer ${selectedTotal - reviewGatedVisibleCount} (selection minus review-gated), not the full selection of ${selectedTotal}`,
+    ).toMatch(new RegExp(`Delete ${selectedTotal - reviewGatedVisibleCount} movies?\\?`));
 
     // A moment for a wrongly-unconditional fetch to have fired, so this
     // cannot pass by polling before the bug would have shown up.
