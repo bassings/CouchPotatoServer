@@ -507,3 +507,17 @@ changes for the operator. **Then stop and hand it over.**
   checkout drift from the same cause.
   Rework rounds: T7b3 1, T7c1 1. No fix has yet introduced a defect a later
   round had to repair, so the circuit-breaker still has not tripped.
+- **Tick 26, 2026-08-31.** Quiet hold, T7c1 mid-flight. Files touched match
+  the named fix candidates rather than a scattergun: `core/cache.py` (M2, the
+  cache fix turned a dead store into a live ON-DISK one now holding provider
+  response bodies including indexer download links), `renamer/main.py` and
+  `replacement.py` (M4, M6, M12, M16, M17), `movie_detail.html` (M22, M24) and
+  `wanted.html` (M20, the destructive bulk Delete rendering with no danger
+  styling because its colour token does not exist).
+  That M2 pairing is worth noting on its own: T67 was a correct fix, and its
+  consequence is that response bodies which were previously dropped now persist
+  to disk. A fix creating a new privacy surface is exactly the kind of thing
+  only a whole-branch review catches, because neither change is wrong alone.
+  Journal 12 minutes old with tests idle, which has been normal for a
+  decision-heavy task; no liveness action.
+  Rework rounds: T7c1 1. Armed: T7c1's workflow plus the heartbeat.
