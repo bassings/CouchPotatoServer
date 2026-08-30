@@ -4,6 +4,7 @@ Tests API endpoints, authentication, static files, SSE/long-poll,
 and template rendering via FastAPI's TestClient.
 """
 import os
+import re
 import sys
 import json
 import pytest
@@ -912,21 +913,83 @@ class TestTemplateRendering:
             'to the detail page\'s'
         )
 
-        # Lexically inside a confirm( branch: the confirm( call must appear
-        # BEFORE every occurrence of mark_failed in the document, and there
-        # must be at least one mark_failed occurrence to guard.
+        # Lexically inside a confirm( branch, checked STRUCTURALLY.
+        #
+        # This replaced a positional check that compared the index of the
+        # FIRST confirm( in the document against the index of each
+        # mark_failed, which is a stand-in rather than the property: it
+        # proves ordering in a string, not nesting in an expression.
+        # Demonstrated, not theorised -- moving a decoy confirm( onto the
+        # Mark Done control (earlier in the DOM) and stripping the real one
+        # from Mark Failed left the old assertion GREEN while the card fired
+        # mark_failed with no dialogue at all. That is exactly this repo's
+        # recurring `guards-that-check-a-stand-in` defect.
+        #
+        # What is asserted now: mark_failed appears ONLY inside the Mark
+        # Failed control's own @click, and inside that expression it sits in
+        # the BODY of the `if (...)` whose condition contains the confirm(
+        # call, not merely somewhere after the word "confirm".
         assert 'mark_failed' in html
-        pos_confirm = html.index('confirm(')
-        idx = html.find('mark_failed')
-        found_any = False
-        while idx != -1:
-            found_any = True
-            assert idx > pos_confirm, (
-                'every occurrence of mark_failed must be lexically inside a '
-                'confirm( branch'
+
+        # Find the control's tag by scanning with quote awareness rather than
+        # to the first '>', because the handler contains arrow functions and
+        # a naive `(.*?)>` truncates the attribute it is trying to read.
+        testid = html.index('data-testid="review-mark-failed"')
+        tag_start = html.rindex('<button', 0, testid)
+        quote, tag_end = None, None
+        for i in range(tag_start, len(html)):
+            char = html[i]
+            if quote:
+                if char == quote:
+                    quote = None
+            elif char in '"\'':
+                quote = char
+            elif char == '>':
+                tag_end = i
+                break
+        assert tag_end is not None, 'unterminated Mark Failed control tag'
+        tag = html[tag_start:tag_end]
+
+        click = re.search(r'@click="(.*?)"', tag, re.S)
+        assert click, 'the Mark Failed control must carry an @click handler'
+        expression = click.group(1)
+
+        # Nothing anywhere else in the card markup may reach the route.
+        start = html.index(expression)
+        for match in re.finditer('mark_failed', html):
+            assert start <= match.start() < start + len(expression), (
+                'mark_failed appears outside the Mark Failed control\'s own '
+                '@click, so some other path can reach the route unguarded'
             )
-            idx = html.find('mark_failed', idx + 1)
-        assert found_any
+
+        # Walk the `if (` condition to its matching close paren, so the
+        # boundary is the real end of the condition rather than the first
+        # `)` encountered, which confirm('...') itself would supply.
+        assert expression.lstrip().startswith('if'), (
+            'the handler must open with the if( guard'
+        )
+        opened = expression.index('(')
+        depth, condition_end = 0, None
+        for i in range(opened, len(expression)):
+            if expression[i] == '(':
+                depth += 1
+            elif expression[i] == ')':
+                depth -= 1
+                if depth == 0:
+                    condition_end = i
+                    break
+        assert condition_end is not None, 'unbalanced parens in the @click guard'
+
+        condition = expression[opened:condition_end]
+        assert confirm_call in condition, (
+            'the confirm( call must be part of the if CONDITION, so dismissing '
+            'it short-circuits before the request'
+        )
+        for match in re.finditer('mark_failed', expression):
+            assert match.start() > condition_end, (
+                'mark_failed must sit in the BODY of the confirm-guarded if, '
+                'not in its condition'
+            )
 
     def test_movie_detail_labels_downloaded_status_as_review_gate(self, client):
         """Same review-gate label on the movie detail partial."""
