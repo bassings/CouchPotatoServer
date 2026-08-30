@@ -201,6 +201,24 @@ OPERATOR_DECLINED_NO_FILE_TO_REPLACE = 'operator_declined_no_file_to_replace'
 # (AC-PROD-4). Refuse rather than choose, and refuse regardless of list order.
 OPERATOR_DECLINED_AMBIGUOUS_FILE = 'operator_declined_ambiguous_file'
 
+# A second operator activation while one is already running. A per-route
+# lock would QUEUE the retry behind the first instead of refusing it -- the
+# exact trap the spec calls out: the operator sees no progress on a 20.3 GB
+# cross-mount copy, clicks again, and the retry silently waits its turn
+# rather than being told plainly that one is already in flight. This reuses
+# the same re-entrancy guard the automatic scan already holds, never a
+# second lock.
+OPERATOR_REFUSED_ALREADY_RUNNING = 'operator_refused_already_running'
+
+# The operator's chosen source name does not resolve, once symlinks are
+# followed, to somewhere inside the configured watch folder. A relative
+# traversal, an absolute path elsewhere on disk, a name containing a NUL
+# byte and a symlink whose target escapes the folder all return this SAME
+# value, deliberately: refuse, never clamp, and never let the refusal tell
+# an attacker which hostile shape they tried, exactly as
+# `softchroot.chroot2abs` is proven (`couchpotato/core/softchroot.py:167-205`).
+OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER = 'operator_refused_source_outside_watch_folder'
+
 # Only a release that actually landed in the library has a file on disk to be
 # a replacement target. A snatched or ignored release recorded a path it
 # expects to reach, not one that exists yet.

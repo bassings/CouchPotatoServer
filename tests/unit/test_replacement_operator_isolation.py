@@ -25,7 +25,6 @@ automatic path AFTER this change, on bytes.
 import hashlib
 import inspect
 
-import couchpotato.core.plugins.renamer.main as renamer_main
 from couchpotato.core.plugins.renamer.main import Renamer
 from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
 from couchpotato.core.plugins.renamer.replacement import (
@@ -49,20 +48,41 @@ class TestTheOperatorFunctionIsUnreachableFromTheAutomaticScan:
     inferred: a stray import or a call added later to `_moveRenamedFiles` or
     `_processGroup` would fail this even if every other test stayed green,
     because none of those tests would ever exercise the new branch.
+
+    The first two cases here originally asserted that `main.py` did not name
+    `decide_operator_replacement` or its outcomes AT ALL -- true only for the
+    interval between the decision layer (this commit) and the execution
+    layer that acts on it (the next planned step, which wires the operator's
+    OWN entry point into `main.py`). Once that entry point exists the whole
+    module legitimately names both, so the assertion is narrowed to what it
+    was always actually protecting: the four AUTOMATIC-path methods, which
+    is exactly what the third case below already checks per-method rather
+    than for the module as a whole.
     """
 
-    def test_the_renamer_module_source_never_names_the_operator_function(self):
-        source = inspect.getsource(renamer_main)
-        assert 'decide_operator_replacement' not in source
-
-    def test_the_renamer_module_source_never_names_an_operator_outcome(self):
-        source = inspect.getsource(renamer_main)
-        for outcome in (
-            OPERATOR_REPLACE,
-            OPERATOR_DECLINED_NO_FILE_TO_REPLACE,
-            OPERATOR_DECLINED_AMBIGUOUS_FILE,
+    def test_the_automatic_decision_path_never_names_the_operator_function(self):
+        for method in (
+            Renamer._moveRenamedFiles,
+            Renamer._processGroup,
+            Renamer.scan,
+            Renamer.scanView,
         ):
-            assert outcome not in source, outcome
+            assert 'decide_operator_replacement' not in inspect.getsource(method)
+
+    def test_the_automatic_decision_path_never_names_an_operator_outcome(self):
+        for method in (
+            Renamer._moveRenamedFiles,
+            Renamer._processGroup,
+            Renamer.scan,
+            Renamer.scanView,
+        ):
+            source = inspect.getsource(method)
+            for outcome in (
+                OPERATOR_REPLACE,
+                OPERATOR_DECLINED_NO_FILE_TO_REPLACE,
+                OPERATOR_DECLINED_AMBIGUOUS_FILE,
+            ):
+                assert outcome not in source, (method.__name__, outcome)
 
     def test_the_automatic_decision_path_never_calls_it(self):
         for method in (

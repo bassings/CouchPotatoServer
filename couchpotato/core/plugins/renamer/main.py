@@ -1,6 +1,7 @@
 """Main Renamer class combining all mixin functionality."""
 import hashlib
 import os
+import threading
 import time
 import traceback
 import uuid
@@ -17,9 +18,18 @@ from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_SIZE_CONTRADICTS_QUALITY,
     DECLINED_SOURCE_CHANGED,
     DECLINED_UNVERIFIED_IDENTITY,
+    OPERATOR_DECLINED_AMBIGUOUS_FILE,
+    OPERATOR_REFUSED_ALREADY_RUNNING,
+    OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
+    OPERATOR_REPLACE,
     REPLACE,
+    decide_operator_replacement,
 )
-from couchpotato.core.plugins.renamer.swap import identity_of, replace_atomically
+from couchpotato.core.plugins.renamer.swap import (
+    REFUSED_NO_SOURCE,
+    identity_of,
+    replace_atomically,
+)
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
 from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
@@ -66,6 +76,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             'params': {
                 'base_folder': {'desc': 'Optional folder to scan instead of the configured from-folder'},
                 'media_folder': {'desc': 'Optional specific media folder'},
+            },
+            'return': {'type': 'object: {"success": true}'},
+        })
+
+        addApiView('renamer.operator_replace', self.operatorReplaceView, docs={
+            'desc': 'Replace the library copy of a film with a file the '
+                    'operator placed by hand under the configured download '
+                    'folder. Backgrounded; poll notifications for the outcome.',
+            'params': {
+                'media_id': {'desc': 'The media whose library copy is being replaced'},
+                'source': {'desc': 'Name of a file already listed under the configured from-folder'},
             },
             'return': {'type': 'object: {"success": true}'},
         })
@@ -1121,6 +1142,235 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'Release %s is off "done" but still lists the replaced path. '
                 'A later upgrade of this movie may refuse as ambiguous until '
                 'that document is corrected.', superseded.get('_id'),
+            )
+
+    # ------------------------------------------------------------------
+    # FEAT-011: the operator-initiated replacement. A SEPARATE entry point
+    # from the automatic path above, sharing only the mechanical safety
+    # net (the atomic swap, the re-entrancy guard, the library-containment
+    # check) and never `decide_replacement` or `_identityIsAsserted` --
+    # the operator naming a specific film and a specific file IS the
+    # identity assertion (spec owner decision 1). `upgrade_replace` and
+    # the quality comparison are deliberately never consulted here.
+    # ------------------------------------------------------------------
+
+    #: Marks a release document as claiming a file the OPERATOR placed by
+    #: hand, distinct from every `identity_source` `folder_scanner
+    #: .determineMedia` can produce (`ASSERTED_IDENTITY_SOURCES` above). An
+    #: explicit, different marker, not one of those four, so a later read
+    #: can tell an operator-authored release apart from one the automatic
+    #: path derived.
+    OPERATOR_IDENTITY_SOURCE = 'operator_placed'
+
+    def operatorReplaceView(self, **kwargs):
+        """API-facing entry point for an operator's replacement.
+
+        Reads only `media_id` and `source` out of `kwargs` -- every other
+        key is ignored, so a request carrying `destination`, `dst`, `to`,
+        `path`, `media_folder` or `base_folder` cannot redirect the
+        destructive step anywhere (AC-SEC-1). The destination is always
+        resolved server-side, inside `_executeOperatorReplacement`, from
+        the media's own release records.
+
+        Runs the real work on a background thread rather than inline
+        (spec owner decision 2): the prompting case is a 20.3 GB copy
+        across NAS mounts, and answering synchronously would hold the
+        request open for minutes. The thread is kept at
+        `self._operator_thread` purely so a test can join it
+        deterministically -- nothing else may depend on that attribute.
+        """
+        media_id = kwargs.get('media_id')
+        source = kwargs.get('source')
+
+        thread = threading.Thread(
+            target=self._executeOperatorReplacement,
+            args=(media_id, source),
+        )
+        thread.daemon = True
+        self._operator_thread = thread
+        thread.start()
+
+        return {'success': True}
+
+    def _executeOperatorReplacement(self, media_id, source_name):
+        """Act on an operator's decision to replace a film's library copy.
+
+        Synchronous worker for `operatorReplaceView`. `source_name` is a
+        bare name (or relative path) chosen from a listing already
+        produced under `conf('from')` -- never a full path supplied by a
+        caller. Returns `(outcome, destination_or_None)`; `destination` is
+        non-None only when `outcome` is `OPERATOR_REPLACE`.
+
+        Holds the SAME re-entrancy guard `scan()` uses above (AC-ARCH-7):
+        the check-and-set is atomic under `media_lock('renamer-scan')` and
+        held only for that instant, so a second operator activation, or a
+        scan, running at the same time is refused promptly rather than
+        queued behind the first -- a per-route lock would queue it, which
+        is the exact trap the spec calls out.
+        """
+        with media_lock('renamer-scan'):
+            if self.renaming_started:
+                log.info('Renamer is already running, refusing the operator replacement')
+                return OPERATOR_REFUSED_ALREADY_RUNNING, None
+            self.renaming_started = True
+
+        try:
+            return self._runOperatorReplacement(media_id, source_name)
+        finally:
+            with media_lock('renamer-scan'):
+                self.renaming_started = False
+
+    def _runOperatorReplacement(self, media_id, source_name):
+        """The actual work, unguarded -- always called through
+        `_executeOperatorReplacement`, never directly."""
+        source = self._resolveOperatorSource(source_name)
+        if source is None:
+            return OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, None
+
+        releases = fireEvent(
+            'release.for_media', media_id, require_complete=True, single=True,
+        ) or []
+        outcome, existing_release = decide_operator_replacement(releases)
+        if outcome != OPERATOR_REPLACE:
+            return outcome, None
+
+        # The destination is the release's OWN recorded file, exactly as
+        # it stands -- never recomputed from the naming template (spec's
+        # fifth, derived decision). More than one recorded file is the
+        # same "do not guess" shape as an ambiguous release: replacing one
+        # of several risks destroying a file the operator did not choose.
+        movie_files = (existing_release.get('files') or {}).get('movie') or []
+        if len(movie_files) != 1:
+            return OPERATOR_DECLINED_AMBIGUOUS_FILE, None
+        destination = sp(movie_files[0])
+
+        # AC-SEC-3: checked against `conf('to')` alone, via the SAME method
+        # the automatic path uses -- no request-supplied folder is ever
+        # consulted.
+        if not self._destinationIsInsideTheLibrary(destination):
+            return DECLINED_OUTSIDE_LIBRARY, None
+
+        # The picker's OWN measurement, taken here, immediately before it
+        # is handed to the swap -- never a value trusted from an earlier
+        # step or from the caller.
+        try:
+            expected_source_size = os.path.getsize(source)
+        except OSError:
+            return REFUSED_NO_SOURCE, None
+
+        incoming_quality = fireEvent(
+            'quality.guess', files=[source],
+            size=expected_source_size / 1024 / 1024, single=True,
+        ) or {}
+
+        media_doc = fireEvent('media.get', media_id, single=True) or {}
+        group = {
+            'media': {'_id': media_id},
+            'identifier': media_doc.get('identifier') or media_id,
+            'meta_data': {'quality': incoming_quality},
+            'files': {'movie': [destination]},
+            'identity_source': self.OPERATOR_IDENTITY_SOURCE,
+        }
+
+        # AC-SEC-4: the ONLY route to the destructive step, with a
+        # measured, non-None `expected_source_size` and a
+        # `destination_identity` from `swap.identity_of` -- so
+        # `refused_source_is_symlink`, `refused_destination_is_symlink`,
+        # `refused_same_file`, `refused_source_changed` and
+        # `failed_destination_changed` all stay reachable here exactly as
+        # they are on the automatic path.
+        ok, reason = replace_atomically(
+            source, destination,
+            expected_source_size=expected_source_size,
+            destination_identity=identity_of(destination),
+            about_to_replace=lambda: self._announceImminentReplacement(
+                source, destination, existing_release, group,
+            ),
+        )
+        if not ok:
+            return reason, None
+
+        # Bookkeeping BEFORE disposal, and the order is not free -- the
+        # same reasoning `_moveRenamedFiles` documents above for the
+        # automatic path applies here unchanged: both are best-effort, and
+        # a kill between them must leave the RECOVERABLE half-finished
+        # state, which is the download still on disk with the database
+        # already accounting for the swap that already happened, not the
+        # download gone with nothing recording it.
+        #
+        # `release.add` first: without a release claiming the placed file
+        # at its detected quality the media is permanently
+        # `declined_no_owner` on every later decision (owner decision 4).
+        fireEvent('release.add', group, single=True)
+        self._supersedeRelease(existing_release, group, destination)
+
+        # Owner decision 3: the operator's source is ALWAYS consumed now,
+        # whatever `default_file_action` says -- only after the swap has
+        # verified, never before.
+        self._disposeOfOperatorSource(source, media_id)
+
+        return OPERATOR_REPLACE, destination
+
+    def _resolveOperatorSource(self, source_name):
+        """Resolve the operator's chosen SOURCE name to a path confined to
+        the configured watch folder, or None.
+
+        AC-SEC-2. `os.path.realpath` on both the folder and the candidate,
+        re-derived HERE rather than trusted from a name a caller echoes
+        back, and refused -- never clamped -- when it lands outside. A
+        relative traversal, an absolute path elsewhere on disk, a name
+        containing a NUL byte and a symlink whose target escapes the
+        folder all reach this refusal, proven the way
+        `softchroot.chroot2abs` is proven
+        (`couchpotato/core/softchroot.py:167-205`): the caller learns
+        nothing about which hostile shape it was.
+
+        The path returned is the LEXICAL join, not the realpath: a source
+        that is itself a symlink, whose target still resolves inside the
+        folder, is handed back as the symlink so that
+        `replace_atomically`'s own `REFUSED_SOURCE_IS_SYMLINK` check still
+        sees it as one rather than as the regular file it points at.
+        """
+        watch = self.conf('from')
+        if not watch or not source_name:
+            return None
+        try:
+            root = os.path.realpath(sp(watch))
+            lexical = os.path.normpath(os.path.join(root, source_name))
+            resolved = os.path.realpath(lexical)
+        except (OSError, ValueError):
+            # ValueError: a NUL byte in the name. OSError: a component that
+            # cannot be resolved. Both are refusals, not exceptions to
+            # propagate to a caller.
+            return None
+        if resolved != root and not resolved.startswith(root + os.path.sep):
+            return None
+        return lexical
+
+    def _disposeOfOperatorSource(self, source, media_id=None):
+        """Owner decision 3: the operator's source is ALWAYS removed after
+        a verified swap, whatever `default_file_action` says.
+
+        `_disposeOfSourceAfterReplacement` above leaves the source in
+        place on `copy` and `link`, which is correct for the AUTOMATIC
+        path -- but here it is exactly the trap the spec calls out: the
+        next scan finds the operator's file again and repeats the refusal
+        FEAT-012 exists to end, on exactly the setting values that cause
+        it. The library already holds a verified complete copy at this
+        point, so nothing is lost by removing the one left in the watch
+        folder.
+
+        Best-effort, same as the automatic path's equivalent: the swap has
+        already succeeded, and nothing that happens to the download now
+        can justify raising through a completed replacement.
+        """
+        try:
+            os.remove(source)
+        except OSError as error:
+            log.warning(
+                'Replaced the library copy for media %s, but could not '
+                'remove the operator-placed source from the watch folder '
+                'afterwards: %s', media_id, self._withoutPaths(error),
             )
 
     def _warnAboutTheDeadSetting(self):
