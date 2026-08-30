@@ -54,18 +54,28 @@
       {% endif %}
 
       {% if current_page != 'library' %}
-      <!-- Filter buttons (Wanted page only) -->
+      <!-- Filter buttons (Wanted page only).
+           :aria-pressed exposes the selected chip programmatically
+           (AC-A11Y-2) -- selection was previously signalled by a colour
+           class swap alone, which assistive technology cannot report.
+           min-h-6 (24px) is appended, not substituted, so the literal
+           `px-2.5 py-1 rounded-md transition-colors` string this branch's
+           own AC-DESIGN-1 test pins stays intact; at text-[10px] the row's
+           natural height measured 23px, 1px under WCAG 2.2 AA's 2.5.8
+           24x24 target (AC-A11Y-8). -->
       <div class="flex gap-1 text-[10px]">
-        <button @click="setFilter('')" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">All</button>
-        <button @click="setFilter('wanted')" :class="filterStatus === 'wanted' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" class="px-2.5 py-1 rounded-md transition-colors">Wanted</button>
+        <button @click="setFilter('')" :class="filterStatus === '' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" :aria-pressed="(filterStatus === '').toString()" class="px-2.5 py-1 rounded-md transition-colors min-h-6">All</button>
+        <button @click="setFilter('wanted')" :class="filterStatus === 'wanted' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'" :aria-pressed="(filterStatus === 'wanted').toString()" class="px-2.5 py-1 rounded-md transition-colors min-h-6">Wanted</button>
         <button @click="setFilter('available')"
                 :class="filterStatus === 'available' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
-                class="px-2.5 py-1 rounded-md transition-colors">
+                :aria-pressed="(filterStatus === 'available').toString()"
+                class="px-2.5 py-1 rounded-md transition-colors min-h-6">
           Available
         </button>
         <button @click="setFilter('downloaded')"
                 :class="filterStatus === 'downloaded' ? 'bg-cp-accent/10 text-cp-accent' : 'bg-white/[0.03] text-cp-muted hover:text-cp-text'"
-                class="px-2.5 py-1 rounded-md transition-colors">Review</button>
+                :aria-pressed="(filterStatus === 'downloaded').toString()"
+                class="px-2.5 py-1 rounded-md transition-colors min-h-6">Review</button>
       </div>
       {% endif %}
 
@@ -118,11 +128,29 @@
 
   <!-- Movie grid (loaded via htmx) (A11Y-004) -->
   <!-- wanted: all active movies, library: done movies -->
+  <!-- No aria-live here (FEAT-010 AC-A11Y-11): the grid used to be a
+       polite live region, which re-announced every unrelated card on any
+       reload -- a single card action (Mark Done/Mark Failed) reloads the
+       WHOLE grid (hx-swap defaults to innerHTML), so a screen reader would
+       read out the entire list again for a change to one card. The
+       loading skeleton above keeps its own role="status" region for the
+       initial load; the action's own outcome is spoken through
+       base.html's persistent toast announcers instead (AC-A11Y-10). -->
   <div id="movie-grid"
        hx-get="{{ new_base }}partial/movies?{% if current_page == 'library' %}status=done{% else %}status=active,downloaded{% endif %}"
-       hx-trigger="load"
+       {# htmx's own "load" trigger is a ONE-SHOT special case (fires once
+          during element init, never registers a real event listener) --
+          a later `htmx.trigger(elt, 'load')` is a silent no-op, confirmed
+          against the vendored htmx-2.0.4 source and by watching the
+          network panel: the request that ran once at page load never runs
+          again. "review-action" is an ordinary trigger name, so it DOES
+          get a real listener and genuinely re-fetches. Card review
+          actions (movie_cards.html) fire this one; bulkRefresh/bulkDelete
+          and the two other refresh buttons below are unchanged and keep
+          using 'load', which is a pre-existing issue outside this
+          change's scope. #}
+       hx-trigger="load, review-action"
        hx-indicator="#loading"
-       aria-live="polite"
        aria-label="Movie list"
        role="region"
        class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
@@ -176,7 +204,7 @@
         Nothing here is called &ldquo;<span class="text-cp-text" x-text="search"></span>&rdquo;.
       </span>
       <span x-show="filterStatus">
-        No movies here have the status &ldquo;<span class="text-cp-text" x-text="filterStatus"></span>&rdquo;.
+        No movies here have the status &ldquo;<span class="text-cp-text" x-text="statusLabel(filterStatus)"></span>&rdquo;.
       </span>
       <span class="block mt-1">
         This list still has <span x-text="totalCount"></span>
@@ -220,6 +248,49 @@ function movieList() {
       document.body.addEventListener('htmx:afterSwap', (e) => {
         if (e.detail.target.id === 'movie-grid') {
           this.filterMovies();
+          // FEAT-010 AC-A11Y-9: a card review action's own reload can
+          // land before the write it triggered is visible to the very
+          // next read -- the acted-on movie would still be showing,
+          // which looks to the user like the action silently failed even
+          // though the write succeeded. The button records which movie
+          // it acted on right before triggering the reload; if that
+          // movie is still present after the swap, re-fetch once more
+          // rather than handing focus onward against stale data. Bounded
+          // so a genuinely stuck write retries a few times and then
+          // gives up, instead of looping forever.
+          if (window.__cpReviewActionMovieId) {
+            // Checked against data-status="downloaded" specifically, not
+            // mere presence: Mark Done's settled state is the card GONE
+            // (moved to the Library), but Mark Failed's settled state is
+            // the SAME card still present with data-status="active"
+            // (AC-PROD-7) -- presence alone would retry forever on every
+            // Mark Failed.
+            const stillDownloaded = document.querySelector(
+              `#movie-grid .poster-card[data-movie-id="${window.__cpReviewActionMovieId}"][data-status="downloaded"]`
+            );
+            if (stillDownloaded) {
+              window.__cpReviewActionRetries = (window.__cpReviewActionRetries || 0) + 1;
+              if (window.__cpReviewActionRetries <= 3) {
+                htmx.trigger('#movie-grid', 'review-action');
+                return;
+              }
+            }
+            window.__cpReviewActionMovieId = null;
+            window.__cpReviewActionRetries = 0;
+          }
+          // FEAT-010 AC-A11Y-9: a card review action (Mark Done/Mark
+          // Failed, movie_cards.html) reloads the whole grid, which
+          // removes the very button that had focus -- activeElement
+          // falls to <body> and the next Tab restarts at the top of the
+          // document. Same bug class already fixed for Clear filters
+          // below and for restoreToWanted() in movie_detail.html. The
+          // button sets this flag right before triggering the reload, so
+          // only THAT reload moves focus -- an ordinary refresh or bulk
+          // action leaves focus wherever it already was.
+          if (window.__cpPendingReviewFocus) {
+            window.__cpPendingReviewFocus = false;
+            this.focusAfterReviewAction();
+          }
         }
       });
 
@@ -272,6 +343,35 @@ function movieList() {
       return this.selectedIds.size;
     },
 
+    // FEAT-010 AC-A11Y-3/AC-PROD-8: the user never chose the internal
+    // status token 'downloaded' -- the label they clicked was "Review".
+    // Used everywhere filterStatus would otherwise be shown verbatim.
+    statusLabel(status) {
+      const labels = { wanted: 'Wanted', available: 'Available', downloaded: 'Review' };
+      return labels[status] || status;
+    },
+
+    // FEAT-010 AC-A11Y-9: send focus somewhere named and still-present
+    // once a card review action has reloaded the grid. Prefers the first
+    // remaining visible card (matches the Home/End keyboard-nav selector
+    // above); falls back to the movie-count region, which lives outside
+    // #movie-grid so it always survives the swap, for the case where the
+    // acted-on card was the last one left.
+    focusAfterReviewAction() {
+      this.$nextTick(() => {
+        const nextCard = document.querySelector('#movie-grid .poster-card:not([style*="display: none"]) a');
+        if (nextCard) {
+          nextCard.focus();
+          return;
+        }
+        const count = document.getElementById('movie-count');
+        if (count) {
+          count.setAttribute('tabindex', '-1');
+          count.focus();
+        }
+      });
+    },
+
     setFilter(status) {
       this.filterStatus = status;
       this.filterMovies();
@@ -312,8 +412,15 @@ function movieList() {
       this.totalCount = totalCount;
 
       const nowEmpty = totalCount > 0 && visibleCount === 0;
+      // FEAT-010 AC-A11Y-3: names the SAME label the panel shows (never
+      // the raw status token), so the announcement and the visible text
+      // agree on what emptied the list.
+      const reasons = [];
+      if (this.search) reasons.push('nothing is called "' + this.search + '"');
+      if (this.filterStatus) reasons.push('no movies have the status "' + this.statusLabel(this.filterStatus) + '"');
+      const reason = reasons.length ? ' (' + reasons.join(' and ') + ')' : '';
       this.emptyStateAnnouncement = nowEmpty
-        ? 'No movies match your filter. This list still has ' + totalCount +
+        ? 'No movies match your filter' + reason + '. This list still has ' + totalCount +
           (totalCount === 1 ? ' movie.' : ' movies.')
         : '';
 

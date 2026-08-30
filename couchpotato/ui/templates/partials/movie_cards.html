@@ -76,7 +76,17 @@
         {% elif status == 'done' %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">done</span>
         {% elif status == 'downloaded' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning on-dark backdrop-blur-sm">downloaded / review</span>
+        {# FEAT-010 AC-A11Y-12: unlike the other status badges above, this
+           one sits directly over arbitrary poster artwork with nothing
+           opaque behind it (the bottom gradient badges don't reach up
+           here). A translucent bg-cp-warning/20 tint with text in the
+           SAME hue measured 1.92:1 against both a black and a white
+           poster fixture -- WCAG 1.4.3 wants 4.5:1, and no tint opacity
+           fixes that while text and background share a colour. Solid
+           bg-cp-warning + black text is opaque enough that the poster
+           behind it stops mattering (9.4:1 against the badge itself, in
+           both themes, since neither colour is theme-variable). #}
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning text-black backdrop-blur-sm">downloaded / review</span>
         {% else %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
@@ -116,13 +126,13 @@
        spoken. -->
   <div class="flex items-center gap-2 px-2.5 pb-2.5">
     <button type="button"
-            class="flex-1 px-2 py-1 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1"
+            class="flex-1 px-2 py-1 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1 min-h-6"
             data-testid="review-mark-done"
             :class="markingDone ? 'opacity-50 cursor-wait' : ''"
             :aria-busy="markingDone ? 'true' : 'false'"
             :aria-disabled="markingDone ? 'true' : 'false'"
             aria-label="Mark {{ title }} as done"
-            @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { toast('Marked done', 'success'); htmx.trigger('#movie-grid', 'load'); } else { toast('Failed to mark as done', 'error'); } }).catch(() => { markingDone = false; toast('Failed to mark as done', 'error'); }); }">
+            @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { toast('Marked as done and moved to the Library', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as done', 'error'); } }).catch(() => { markingDone = false; toast('Failed to mark as done', 'error'); }); }">
       <span x-show="!markingDone">Mark Done</span>
       <span x-show="markingDone">Marking…</span>
     </button>
@@ -132,13 +142,13 @@
        is lexically inside this confirm( branch: there is no path that
        reaches the request without the dialogue. #}
     <button type="button"
-            class="flex-1 px-2 py-1 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1"
+            class="flex-1 px-2 py-1 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1 min-h-6"
             data-testid="review-mark-failed"
             :class="markingFailed ? 'opacity-50 cursor-wait' : ''"
             :aria-busy="markingFailed ? 'true' : 'false'"
             :aria-disabled="markingFailed ? 'true' : 'false'"
             aria-label="Mark {{ title }} as failed"
-            @click="if(!markingFailed && confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { markingFailed = false; if(d.success) { toast('Marked failed, searching for another copy', 'success'); htmx.trigger('#movie-grid', 'load'); } else { toast('Failed to mark as failed', 'error'); } }).catch(() => { markingFailed = false; toast('Failed to mark as failed', 'error'); }); }">
+            @click="if(!markingFailed && confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { markingFailed = false; if(d.success) { toast('Marked failed, searching for another copy', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as failed', 'error'); } }).catch(() => { markingFailed = false; toast('Failed to mark as failed', 'error'); }); }">
       <span x-show="!markingFailed">Mark Failed</span>
       <span x-show="markingFailed">Marking…</span>
     </button>

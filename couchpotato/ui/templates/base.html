@@ -140,6 +140,21 @@ tailwind.config = {
   :root.light .text-cp-danger:not(.on-dark) { color: #b91c1c; }
   :root.light .text-cp-blue:not(.on-dark) { color: #0e7490; }
 
+  /* FEAT-010 AC-A11Y-12/13: the card review control reuses the detail
+     page's bg-cp-danger/10 + text-cp-danger combo (movie_detail.html:284)
+     verbatim -- AC-DESIGN-8 requires it, and that combo already clears
+     WCAG 1.4.3 there. But this card sits on the lighter --cp-card surface
+     rather than directly on the page background, and in the dark theme
+     that composites to 4.46:1, just under the 4.5:1 floor (axe caught it,
+     AC-A11Y-13). Scoped to this one control rather than touching the
+     shared token or the pre-existing detail-page button: lowering the
+     tint's own opacity (without changing the Tailwind class string
+     AC-DESIGN-8 pins) moves the composited background further from the
+     text colour, which is what raises the ratio here (measured 4.57:1 at
+     8%). `.poster-card` in the selector keeps this above the plain
+     Tailwind utility's specificity regardless of stylesheet order. */
+  .poster-card [data-testid="review-mark-failed"] { background-color: rgba(240, 72, 72, 0.08); }
+
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }
   ::-webkit-scrollbar { width: 6px; }
