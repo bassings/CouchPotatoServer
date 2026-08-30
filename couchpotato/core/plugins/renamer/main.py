@@ -11,7 +11,9 @@ from couchpotato.core.helpers.variable import sp, symlink
 from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_MULTI_FILE_GROUP,
     DECLINED_OUTSIDE_LIBRARY,
+    DECLINED_SETTING_OFF,
     DECLINED_SIZE_CONTRADICTS_QUALITY,
     DECLINED_SOURCE_CHANGED,
     DECLINED_UNVERIFIED_IDENTITY,
@@ -34,6 +36,28 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     renaming_started = False
     checking_snatched = False
     _warned_dead_setting = False
+
+    #: Settings that feed the replacement decision. A remembered decision is
+    #: reused only when every one of these reads exactly as it did when the
+    #: entry was recorded (AC-QA-7): turning `upgrade_replace` on,
+    #: retargeting the library, or editing a naming template forces a
+    #: re-decide with no restart needed.
+    DECISION_MEMORY_SETTINGS = ('upgrade_replace', 'to', 'folder_name', 'file_name')
+
+    #: Only a refusal whose cause CANNOT change without a file or a setting
+    #: change is worth remembering (AC-QA-9). `declined_error`,
+    #: `declined_incomplete_evidence` and every outcome `decide_replacement`
+    #: derives from a release document are deliberately absent: those can
+    #: flip on a transient read failure or a release document being edited,
+    #: with neither the source file nor a setting moving at all -- and a
+    #: memory that outlives its cause is worse than the loop it replaces.
+    REMEMBER_ELIGIBLE_OUTCOMES = frozenset({
+        DECLINED_SETTING_OFF,
+        DECLINED_UNVERIFIED_IDENTITY,
+        DECLINED_MULTI_FILE_GROUP,
+        DECLINED_OUTSIDE_LIBRARY,
+        DECLINED_SIZE_CONTRADICTS_QUALITY,
+    })
 
     def __init__(self):
 
@@ -72,6 +96,44 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         return {
             'success': True
         }
+
+    def _folderSignature(self, scan_folder):
+        """A cheap fingerprint of what is actually on disk under
+        `scan_folder`: every file's path relative to it, its size and its
+        mtime in nanoseconds. No identity resolution, no TMDB lookup, no RAR
+        inspection -- just what `os.walk` and `os.stat` already know, which
+        is what binding decision 1 means by "a cheap read of names, sizes
+        and mtimes".
+
+        `None` means the folder could not be walked in full, which fails
+        open: an unmeasurable folder (a permission error, a NAS mount
+        dropping mid-walk, a file that vanished between the walk and the
+        stat) is never treated as unchanged, so it forces a re-decide rather
+        than a silent, permanent skip (AC-QA-14).
+        """
+        entries = []
+        try:
+            for root, _dirs, files in os.walk(scan_folder):
+                for name in files:
+                    full = os.path.join(root, name)
+                    try:
+                        stat_result = os.stat(full)
+                    except OSError:
+                        return None
+                    entries.append((
+                        os.path.relpath(full, scan_folder),
+                        stat_result.st_size,
+                        stat_result.st_mtime_ns,
+                    ))
+        except OSError:
+            return None
+        return frozenset(entries)
+
+    def _settingsSignature(self):
+        """A snapshot of the settings that feed the replacement decision,
+        compared the same way `_folderSignature` compares the filesystem
+        (AC-QA-7)."""
+        return tuple(self.conf(key) for key in self.DECISION_MEMORY_SETTINGS)
 
     def scan(self, base_folder=None, media_folder=None, release_download=None, async_call=False):
         """Scan the from-folder and rename/move completed downloads.
@@ -112,25 +174,102 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             self._warned_no_tool = False
             scan_folder = base_folder or sp(self.conf('from'))
 
+            # Lazily created rather than in __init__: process-local only
+            # (AC-SIMP-5, AC-SEC-5) -- plain state on the instance, nothing
+            # persisted, nothing surviving a restart. Keyed on the folder
+            # actually scanned, never written to disk or the database.
+            if getattr(self, '_decision_memory', None) is None:
+                self._decision_memory = {}
+
             try:
                 if not os.path.isdir(scan_folder):
                     log.warning('Scan folder %s does not exist', scan_folder)
                     return
+
+                # A targeted scan -- a specific media_folder, or one carrying
+                # a release_download -- is an operator asking about ONE
+                # group, not a verdict on the whole folder. It must never be
+                # answered from a memory keyed on the folder as a whole, and
+                # must never overwrite that memory either: doing so would let
+                # one targeted call evict every other group's remembered
+                # decision (AC-OPS-12).
+                targeted = media_folder is not None or release_download is not None
+
+                current_signature = self._folderSignature(scan_folder)
+                current_settings = self._settingsSignature()
+
+                if not targeted:
+                    remembered = self._decision_memory.get(scan_folder)
+                    if (
+                        remembered is not None
+                        and current_signature is not None
+                        and remembered['source_signature'] == current_signature
+                        and remembered['settings_signature'] == current_settings
+                    ):
+                        # Nothing on disk or in the settings that feed the
+                        # decision has changed since every group here was
+                        # last fully decided -- skip the folder walk AND the
+                        # identity resolution inside
+                        # fireEvent('scanner.scan', ...) entirely, rather
+                        # than only skipping the log line that follows it.
+                        # This is the cost the production incident paid
+                        # roughly 1,100 times: a full rescan and a live TMDB
+                        # search for a decision that could not have changed.
+                        # D8: no path at INFO, matching every other record in
+                        # this file -- the count and the fact that nothing
+                        # changed is all an operator needs here.
+                        log.info(
+                            'Renamer: %d group(s) already decided and '
+                            'unchanged; skipping the scan',
+                            remembered['group_count'],
+                        )
+                        log.debug('The unchanged scan folder was: %s', scan_folder)
+                        return
 
                 groups = fireEvent('scanner.scan', folder=scan_folder,
                                   simple=not bool(release_download),
                                   single=True) or {}
 
                 log.info('Renamer found %d groups to process in %s', len(groups), scan_folder)
+
+                # True only while every group seen this scan is safely
+                # parkable -- a REPLACE, a plain move, a raised exception, or
+                # any outcome outside REMEMBER_ELIGIBLE_OUTCOMES turns it off
+                # for the rest of this scan, so one unresolved group cannot
+                # let the whole folder be remembered as settled.
+                all_remember_eligible = bool(groups)
                 for group_identifier, group in groups.items():
                     if self.shuttingDown():
+                        all_remember_eligible = False
                         break
 
                     try:
-                        self._processGroup(group, media_folder, release_download)
+                        outcomes = self._processGroup(group, media_folder, release_download)
                     except Exception:
                         log.error('Error processing group %s: %s',
                                  group_identifier, traceback.format_exc())
+                        all_remember_eligible = False
+                        continue
+
+                    if not outcomes or any(
+                        outcome not in self.REMEMBER_ELIGIBLE_OUTCOMES
+                        for outcome in outcomes
+                    ):
+                        all_remember_eligible = False
+
+                if not targeted:
+                    if all_remember_eligible and current_signature is not None:
+                        self._decision_memory[scan_folder] = {
+                            'source_signature': current_signature,
+                            'settings_signature': current_settings,
+                            'group_count': len(groups),
+                        }
+                    else:
+                        # Something this scan was not safely parkable, or
+                        # the folder could not be fingerprinted -- forget any
+                        # earlier memory for it rather than risk vouching for
+                        # a folder that no longer matches what was recorded.
+                        self._decision_memory.pop(scan_folder, None)
 
             except Exception:
                 log.error('Failed during renamer scan: %s', traceback.format_exc())
@@ -174,11 +313,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         skipped = False
         moved_any = False
+        # One entry per (src, dst) pair handled below, in the order they
+        # are processed. `scan()` reads this back to decide whether the
+        # group's decision is safe to remember (AC-QA-9): only when it is
+        # non-empty and every entry is one of `REMEMBER_ELIGIBLE_OUTCOMES`.
+        # `None` marks a pair that was not a DECLINED_* refusal at all -- a
+        # missing source, an ordinary move, or a failed move -- and, like
+        # `REPLACE` itself, always makes the whole group ineligible to
+        # remember.
+        outcomes = []
 
         for src, dst in rename_files.items():
             if not os.path.exists(src):
                 log.warning('Source file does not exist: %s', src)
                 skipped = True
+                outcomes.append(None)
                 continue
 
             if os.path.exists(dst):
@@ -290,6 +439,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                             src, dst, (group.get('media') or {}).get('_id'),
                         )
                         moved_any = True
+                        outcomes.append(REPLACE)
                         continue
                     # The swap refused or failed. The library file is intact
                     # and a complete copy of the download survives -- swap.py
@@ -319,27 +469,32 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 )
                 log.debug('The collided destination was: %s', dst)
                 skipped = True
+                outcomes.append(outcome)
                 continue
 
             try:
                 self.moveFile(src, dst, use_default = True)
                 log.info('Moved: %s -> %s', os.path.basename(src), dst)
                 moved_any = True
+                outcomes.append(None)
             except Exception as e:
                 log.error('Failed to move %s: %s', src, e)
                 skipped = True
+                outcomes.append(None)
 
         # Never delete the source folder when anything was left behind. This is
         # the data-loss half: previously a skipped move was followed by cleanup,
         # so the file the user had just downloaded was skipped AND destroyed.
         if skipped:
             log.info('Leaving source folder in place: not every file was moved')
-            return
+            return outcomes
 
         if moved_any and self.conf('cleanup', default = True):
             source_folder = group.get('parentdir')
             if source_folder and os.path.isdir(source_folder):
                 self.deleteFolder(source_folder)
+
+        return outcomes
 
     @staticmethod
     def _rankViaEvent(quality):
@@ -901,8 +1056,6 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         from couchpotato.core.plugins.renamer.replacement import (
             DECLINED_ERROR,
             DECLINED_INCOMPLETE_EVIDENCE,
-            DECLINED_MULTI_FILE_GROUP,
-            DECLINED_SETTING_OFF,
             decide_replacement,
         )
 
@@ -1094,4 +1247,4 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         log.error('Failed to create folder %s: %s', dst_dir, e)
                         return
 
-        self._moveRenamedFiles(rename_files, group)
+        return self._moveRenamedFiles(rename_files, group)
