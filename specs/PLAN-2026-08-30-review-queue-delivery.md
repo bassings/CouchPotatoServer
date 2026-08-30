@@ -33,8 +33,8 @@ automatic beta runs unattended.
 - [x] T2: FEAT-012, the renamer remembers it already decided — state: built (b314601a)
 - [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
 - [x] T3: FEAT-011a, the operator replace decision and destination resolution — state: built (ba1b652a)
-- [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: building
-- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
+- [x] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: built (fd396423)
+- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: building
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
@@ -211,3 +211,19 @@ changes for the operator. **Then stop and hand it over.**
   argument depends on. Journal last written 11 minutes before this tick, which
   is within normal for an agent mid-implementation, so no liveness action.
   Rework rounds: T4 0. Armed: T4's workflow plus the heartbeat.
+- **Tick 9, 2026-08-31.** T4 built (`fd396423`), 20 tests, suite 3679.
+  The property that matters is proven the right way. I injected the EXACT
+  AC-SEC-1 vulnerability, making `operatorReplaceView` honour a caller-supplied
+  `destination`, and the guard failed on a SHA256 comparison of a decoy file
+  that should never have been touched. That is the difference between a test
+  that checks a return value and one that checks whether a file was harmed.
+  `renamer/main.py` restored to a matching checksum.
+  Design confirmed in source as well as by test: the view reads only
+  `media_id` and `source`, the destination is resolved server-side from T3's
+  decision, and the destructive step goes through `replace_atomically` so every
+  symlink and size refusal stays reachable.
+  T5 launched, the last build task. Its prompt carries the two accessibility
+  measurements this branch has already produced as evidence that class names
+  are not a proxy for rendered values: a chip at 23px against a 24px floor and
+  a badge at 1.92:1 against 4.5:1, both with correct-looking Tailwind tokens.
+  Rework rounds: T4 0, T5 0. Armed: T5's workflow plus the heartbeat.
