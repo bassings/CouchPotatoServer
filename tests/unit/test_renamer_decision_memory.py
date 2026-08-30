@@ -32,10 +32,17 @@ import subprocess
 import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
+from tests.unit.conftest import sanitized_git_env
 
+# env=sanitized_git_env() on every git call here, enforced by
+# tests/unit/test_fixtures_do_not_leak_gitdir.py and not optional: git exports
+# GIT_DIR into a pre-push hook launched from a worktree, so an unsanitised
+# call operates on the REAL repository rather than its own cwd. That is a
+# recorded incident in this repo, not a hypothetical.
 REPO_ROOT = subprocess.run(
     ['git', 'rev-parse', '--show-toplevel'],
     capture_output=True, text=True, check=True,
+    env=sanitized_git_env(),
 ).stdout.strip()
 
 
@@ -215,6 +222,7 @@ class TestFolderScannerIsUntouched:
             ['git', 'diff', '--quiet', 'master', '--',
              'couchpotato/core/plugins/scanner/folder_scanner.py'],
             cwd=REPO_ROOT,
+            env=sanitized_git_env(),
         )
         assert result.returncode == 0, (
             'couchpotato/core/plugins/scanner/folder_scanner.py differs '
