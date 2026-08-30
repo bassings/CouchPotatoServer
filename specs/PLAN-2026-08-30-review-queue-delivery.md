@@ -29,8 +29,8 @@ automatic beta runs unattended.
 
 ## Tasks
 
-- [ ] T1: T67, the HTTP cache silently stores nothing — state: in progress
-- [ ] T2: FEAT-012, the renamer remembers it already decided — state: queued
+- [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
+- [ ] T2: FEAT-012, the renamer remembers it already decided — state: building
 - [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: queued
 - [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
@@ -104,3 +104,22 @@ changes for the operator. **Then stop and hand it over.**
   Serial is the cheaper mistake. Rework rounds so far: 0 on every task.
   Armed: T1's workflow notification, plus a fallback heartbeat. Next wake
   expects T1 either committed or aborted.
+- **Tick 2, 2026-08-30.** T1 (T67) built and verified independently: commit
+  `09818b58`, on the right branch despite the workflow report citing a stale
+  one. Bytes now round-trip via base64 inside the JSON envelope, chosen over a
+  utf-8 decode because HTTP bodies are not guaranteed utf-8 and a lossy decode
+  would corrupt a cached response rather than fail to cache it; the pickle CVE
+  mitigation is untouched. The silent skip is now a WARNING.
+  Both halves mutation-proven, cache.py restored to a matching checksum.
+  **One probe of mine was not hostile and I nearly recorded its green as
+  evidence**: the report call is split across lines, so a single-line pattern
+  matched nothing and the suite passed because nothing had been mutated. Redone
+  against the real line. That is the sixth stand-in on this branch and the
+  second one that was mine.
+  **Box semantics, deviation recorded:** T1 to T5 are build tasks on ONE
+  branch, not separate PRs, so they tick at `built` rather than at `merged`.
+  T8, T9 and T10 keep the PR-level meaning. Without this nothing ticks until
+  the very end and the plan carries no progress signal.
+  T2 (FEAT-012) launched. Rework rounds: T1 0, T2 0.
+  Armed: T2's workflow notification plus a fallback heartbeat. Next wake
+  expects T2 committed, or T2 aborted on a limit as T1's earlier sibling was.
