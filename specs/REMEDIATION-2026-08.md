@@ -2425,10 +2425,39 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       round three introduced, plus one it half-delivered. Those are this
       branch's own debt, not the structural problem.
 
-      **Also outstanding, per `~/.claude/CLAUDE.md` §3a:** `npm audit` reports
-      6 high-severity findings on the committed package pair. Unrelated to this
-      diff, but §3a requires a recorded decision per finding before the PR, and
-      that has not been done.
+      **DEPENDENCY TRIAGE, per `~/.claude/CLAUDE.md` §3a. Decision: HOLD all
+      six, one root cause.** `npm audit` reports 6 high findings, and they are
+      not six problems: they are `extract-zip`'s unvalidated symlink path
+      traversal counted once at each level of a single chain.
+
+          @lhci/cli -> lighthouse -> puppeteer-core
+                    -> @puppeteer/browsers -> extract-zip
+
+      Also open as Dependabot alert #114 (HIGH) against `package-lock.json`.
+
+      Held rather than taken or rejected, on three measurements:
+
+      - **No patched version exists.** The advisory's vulnerable range is
+        `<= 2.0.1` and its first patched version is NONE. There is nothing to
+        upgrade to, so "take it" is not on the table.
+      - **The only fix npm offers is a MAJOR DOWNGRADE**, `@lhci/cli` 0.15.1
+        to 0.12.0, reachable only through `npm audit fix --force`, which §3a
+        already says to avoid. It would also break the version-lockstep guard
+        this very branch adds, and it would still not patch `extract-zip`.
+      - **It cannot reach production.** `npm ls extract-zip --omit=dev` is
+        empty, `package.json` is the private `couchpotato-ui-tests` harness
+        with ZERO runtime dependencies, and the Dockerfile contains no npm or
+        node reference at all. The shipped image is Python only, so no npm
+        package enters it by any path.
+
+      **Revisit when** `extract-zip` publishes a patched release, or
+      `@puppeteer/browsers` moves to a dependency that has one. Not before:
+      re-running the triage on an unchanged advisory produces the same answer
+      and costs a review round.
+
+      Distinct from the Trivy finding fixed in this branch
+      (`CVE-2026-14456`, openssl), which was taken rather than held precisely
+      because a published fix existed and the image genuinely ships it.
 
 - [x] T48: the settings page renders API keys and tracker passkeys UNMASKED — state: **merged #275** (`b1ef797a`, 2026-08-19) — **security, pre-existing**. **Ticked late, 2026-08-20:** the merge commit never ticked its own entry, so the box stayed open for a day while the work was on master — found by review of T52, not by me. Exactly the staleness T18's parenthesis predicts about itself, and the reason the needs-list is now a test rather than a promise
 
