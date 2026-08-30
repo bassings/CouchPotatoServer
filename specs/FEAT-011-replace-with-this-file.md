@@ -81,15 +81,54 @@ This will recur on every Dolby Vision Profile 5 release.
   per `CLAUDE.md` it may not move a possible loss *up* the recoverability
   ranking.
 
-**Four spec decisions the owner still owes the implementer.** Every criterion
-below is written to be testable whichever way each is decided, but an
-implementer who has to guess will guess: (1) is the operator action gated on
-`upgrade_replace` and on `renamer.enabled`; (2) is it synchronous in the request
-or backgrounded with a polled status, given the prompting case is a 20.3 GB
-cross-mount copy; (3) what happens to the operator's hand-placed source after a
-successful swap, on each `default_file_action` value; (4) what claims the
-destination in the database afterwards, given a hand-placed file has no release
-document.
+**The four open decisions, ANSWERED by the owner 2026-08-30.** These are the
+contract; an implementer does not get to re-decide them.
+
+1. **Not gated on `upgrade_replace`.** That setting governs whether the system
+   replaces a library file *of its own accord*, and it is off on the owner's
+   production install. Gating this action on it would ship a feature that does
+   nothing on the only install it was written for, and the only way to reach it
+   would be to enable the automatic replacement that destroyed an irreplaceable
+   file twice. **An operator naming a specific film and a specific file is a
+   different authorisation from the system deciding by itself**, and the two
+   must not share a switch. `renamer.enabled` DOES still apply: with the
+   renamer disabled the application does not move files at all, and this action
+   is a file move.
+2. **Backgrounded, with observable progress**, not synchronous in the request.
+   The prompting case is a 20.3 GB copy across NAS mounts. Built to the
+   existing sub-second pattern the page appears hung, the operator clicks
+   again, and the per-route lock queues the retry instead of refusing it. A
+   second activation while one is in flight is **refused, not queued**.
+3. **The operator's source is always consumed on a verified swap**, whatever
+   `default_file_action` says. The file becomes the library copy, so nothing is
+   lost. This overrides the setting deliberately: on `copy` and `link` the
+   original stays in the watch folder, the next scan finds it again, and the
+   repeating refusal that FEAT-012 exists to end returns immediately, on
+   exactly the setting values that cause it. Consumption happens only AFTER the
+   swap is verified, never before.
+4. **A release document is written for the placed file**, recording it as the
+   film's current copy at its detected quality and marked as operator-placed.
+   Without one the media is permanently `declined_no_owner`: every later
+   upgrade or replacement decision refuses on those grounds, and the library
+   holds a file the database cannot describe.
+
+**A fifth decision, derived rather than asked, because it follows from the
+safety requirement and eight of the nine lenses raised it as High.**
+
+**The destination is resolved from the media's EXISTING file record, never
+recomputed from the naming template.** The operator says "replace *this film's*
+copy", so the file to be destroyed is the one the database already records as
+that film's copy. Recomputing it from the template is what makes this
+dangerous: `lens-data` executed the real template and got
+`The Thing ()/The Thing.mkv` for two different films that both lack a year, so
+a template-resolved destination can name a **different film's** file. That is
+the precise failure the `_identityIsAsserted` guard exists to prevent, and
+reintroducing it through the feature designed to bypass that guard would be the
+third incident.
+
+If the media has no recorded file to replace, the action **refuses with a named
+outcome** rather than falling back to the template. Nothing to replace is not
+the same as permission to guess.
 
 ### lens-security
 
