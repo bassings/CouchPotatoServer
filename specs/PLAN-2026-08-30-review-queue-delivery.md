@@ -448,3 +448,27 @@ changes for the operator. **Then stop and hand it over.**
   are remembered can be widened to include REPLACE itself with the suite green.
   Rework rounds: T7b1 1, T7b2 1. No fix has yet introduced a defect a later
   round had to repair, so the circuit-breaker has not tripped.
+- **Tick 23, 2026-08-31.** T7b2 done (`398072ca`). NINE of twelve Highs fixed.
+  Zero assertions removed from the pre-existing memory tests, 15 added.
+  **H6, the kill switch, proven in BOTH halves separately, which matters
+  because they fail differently.** Making `scanView` stop forcing fails 2
+  tests. Letting the forced scan bypass the check but never POP the entry fails
+  1: the operator presses the button, sees it re-decide, and the stale park
+  silently reasserts on the very next scheduled scan. The second half looks
+  like it works, which is why it needed its own probe.
+  **My first attempt at that second probe replaced the pop with a bare `pass`
+  at the wrong indent and produced a COLLECTION ERROR, which I did not accept
+  as evidence.** A collection error means the test never ran, not that it
+  caught something. Redone with an `ast.parse` check before believing the
+  result. That is the same discipline as the non-hostile mutation at tick 2,
+  arrived at from the opposite direction.
+  H5 resolved by REMOVING `DECLINED_SIZE_CONTRADICTS_QUALITY` from the
+  remembered set rather than widening the invalidation signature: its cause is
+  a quality document that the settings signature cannot see, so no signature
+  could have expired that park correctly.
+  T7b3 launched, the last three Highs. **H12 is this session's recurring defect
+  one more time:** E2E tests that pass because they stub a response shape the
+  SERVER CANNOT PRODUCE. A test that stubs an impossible response proves the
+  test, not the code.
+  Rework rounds: T7b2 1, T7b3 1. Still no fix has introduced a defect a later
+  round had to repair.
