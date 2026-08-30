@@ -1,0 +1,90 @@
+# Delivery plan: review queue, renamer memory, manual replace
+
+Conducted plan for the remaining work on branch
+`feat/review-queue-and-manual-replace`.
+
+**Owner instruction, 2026-08-30:** run to the end without stopping. Findings
+that would normally warrant a check-in are RECORDED and the run continues; the
+owner reads them at the end. Decisions are taken with the default named in each
+task rather than referred back.
+
+**The one exception, and it is the owner's own written rule.** `CLAUDE.md`
+rule 6: "Production deploys only by explicit agreement: never as a side effect
+of finishing work." Running to the end would make the promotion exactly that
+side effect. So T10 prepares the promotion, takes the backup and names the
+build, and then STOPS. Everything up to and including the merge and the
+automatic beta runs unattended.
+
+## Context
+
+- Specs: `specs/FEAT-010-review-queue-in-wanted.md` (61 criteria, BUILT),
+  `specs/FEAT-011-replace-with-this-file.md` (95),
+  `specs/FEAT-012-renamer-remembers-its-decisions.md` (47), plus T67 in
+  `specs/REMEDIATION-2026-08.md`.
+- FEAT-010 is functionally complete: seeding, the `media.done` precondition,
+  the widened Wanted query and Review chip, card actions, bulk-delete skip
+  message, and the accessibility pass. Not yet reviewed as a branch.
+- All owner decisions are already recorded in the specs. No task below needs
+  an answer that is not already written down.
+
+## Tasks
+
+- [x] T1: T67, the HTTP cache silently stores nothing — state: in progress
+- [ ] T2: FEAT-012, the renamer remembers it already decided — state: queued
+- [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: queued
+- [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
+- [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
+- [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
+- [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
+- [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
+- [ ] T9: CI green, resolve threads, merge to master — state: queued (needs: T8)
+- [ ] T10: backup prod, name the beta, STAGE the promotion and STOP — state: queued (needs: T9)
+
+## Task detail
+
+**T1 (T67).** Bytes must round-trip through `SQLiteCache`, existing callers
+unaffected, and the silent skip replaced by something visible. Must not
+reintroduce pickle. The encoding choice must be stated and a non-utf-8 body
+tested.
+
+**T2 (FEAT-012).** The skip lives in `Renamer.scan` before
+`fireEvent('scanner.scan', ...)`. `folder_scanner.py` must have an EMPTY diff:
+it is shared with `manage.updateLibrary`, whose cleanup deletes any `done`
+movie absent from the scan result, so a memory placed there deletes films from
+the library. Nothing is persisted; a restart re-decides. AC-OPS-3's bound holds
+independently of the memory.
+
+**T3 to T5 (FEAT-011).** The five owner decisions are already in the spec and
+are binding: not gated on `upgrade_replace`; backgrounded with progress and a
+second activation refused rather than queued; the source is always consumed on
+a verified swap; a release document is written; and **the destination comes
+from the media's existing file record, never recomputed from the naming
+template** (a lens executed that template and got `The Thing ()/The Thing.mkv`
+for two different films). This is the highest-risk change in the backlog: it
+deletes media files by design, on the code path that destroyed irreplaceable
+files twice.
+
+**T6 and T7.** `/review-cycle` over the whole branch diff. The bounded fix
+loop applies: rounds 1 to 3 resume the same implementer, 4 to 5 use a fresh one
+on a more capable model, and at 5 the remaining findings are adjudicated and
+recorded rather than fixed. A round that surfaces a NEW class rather than more
+instances of a known one is the signal to re-open the approach.
+
+**T8 and T9.** `make verify` must pass in full locally before the push, per
+rule 2. The `secrets` job is a required check. Conversation resolution is
+required on `master`, so review threads must be answered and resolved.
+
+**T10.** Run `./scripts/backup.sh` against production. Identify the beta tag
+built from the merge commit. Write down exactly what would be promoted and what
+changes for the operator. **Then stop and hand it over.**
+
+## Standing constraints
+
+- Never push untested code; `make verify` green locally first.
+- Sub-agents commit locally and stop; the orchestrator pushes.
+- A sub-agent's report is not evidence: verify against the repo.
+- When a test or guard is the deliverable, break it, watch it fail, restore by
+  file copy, and confirm the restore by hash. Five stand-in guards were found
+  on this branch already; assume a sixth.
+- Australian English, no em dashes in any artefact except where a machine-read
+  format requires one.
