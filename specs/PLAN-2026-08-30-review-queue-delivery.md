@@ -285,3 +285,12 @@ changes for the operator. **Then stop and hand it over.**
   carries EXACTLY media_id and source by intercepting the request, so an extra
   parameter cannot creep in later unnoticed.
   Rework rounds: T5d 0, T5e 0. Armed: T5e's workflow plus the heartbeat.
+- **Tick 13, 2026-08-31.** Quiet hold, T5e mid-flight and active: journal
+  written two minutes before this tick, `tests/e2e/operator-replace-modal.spec.ts`
+  created, `scripts/seed_e2e_data.py` being modified (it needs a candidate file
+  under the watch folder for the listing to return). No action.
+  Worth watching rather than acting on: the seed script is shared
+  infrastructure, and its own guard test
+  (`tests/unit/test_seed_e2e_data_guard.py`) should catch a bad edit. If that
+  guard goes red, it is a real finding, not noise.
+  Rework rounds: T5e 0. Armed: T5e's workflow plus the heartbeat.
