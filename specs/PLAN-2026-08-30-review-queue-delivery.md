@@ -29,6 +29,26 @@ automatic beta runs unattended.
 
 ## Tasks
 
+**status: blocked-on-human (T8 to T10 only):** two questions put to the owner
+2026-08-31, neither blocking T7b2, T7b3 or the medium/low triage, which
+continue.
+
+1. **Release scope.** The owner chose "all three features, one release" BEFORE
+   the review. FEAT-011 has since returned two Criticals: a destructive route
+   answering a cross-origin request, and a size guard comparing a value with
+   itself such that a still-copying file would install truncated over the
+   complete library copy and the partial then be deleted. Both are fixed and
+   mutation-proven, but that is two Criticals from ONE feature, on a code path
+   that has destroyed irreplaceable files twice before, and the review states
+   the class will recur "wherever this entry point is extended". FEAT-010,
+   FEAT-012 and T67 produced ZERO Criticals between them. Should manual
+   replace still ride along with the fix for the problem the owner actually
+   reported, or ship separately after its own clean review?
+2. **Medium and Low triage.** Fix all 35, or fix what matters and reject the
+   rest with evidence? CLAUDE.md's own exit condition says a marginal nit on a
+   low-risk change is rejected with evidence and stopped, not silenced.
+
+
 - [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
 - [x] T2: FEAT-012, the renamer remembers it already decided — state: built (b314601a)
 - [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
