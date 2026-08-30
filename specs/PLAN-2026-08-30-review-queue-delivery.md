@@ -29,7 +29,7 @@ automatic beta runs unattended.
 
 ## Tasks
 
-- [x] T1: T67, the HTTP cache silently stores nothing — state: in progress
+- [ ] T1: T67, the HTTP cache silently stores nothing — state: in progress
 - [ ] T2: FEAT-012, the renamer remembers it already decided — state: queued
 - [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: queued
 - [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
