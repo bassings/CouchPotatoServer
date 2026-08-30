@@ -30,9 +30,9 @@ automatic beta runs unattended.
 ## Tasks
 
 - [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
-- [ ] T2: FEAT-012, the renamer remembers it already decided — state: partial (b314601a: core skip only)
-- [ ] T2b: FEAT-012 remainder, the guards and the surface around the skip — state: building (needs: T2)
-- [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: queued
+- [x] T2: FEAT-012, the renamer remembers it already decided — state: built (b314601a)
+- [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
+- [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: building
 - [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
@@ -161,3 +161,27 @@ changes for the operator. **Then stop and hand it over.**
   intended. If it survives T2b, it is either moved to `tmp_path` or gitignored
   with a reason, not left loose. Rework rounds: T2b 0.
   Armed: T2b's workflow plus the heartbeat.
+- **Tick 6, 2026-08-31.** T2b returned BLOCKED at three implementation
+  attempts, and I OVERRODE that rather than stopping. Recorded because it
+  overrides this plan's own circuit-breaker.
+  The evidence said the frame was fine: all 13 of its tests passed, and the
+  suite failed on ONE unrelated repo guard,
+  `test_fixtures_do_not_leak_gitdir`, because the new file made two subprocess
+  git calls without `env=sanitized_git_env()`. That guard is correct and its
+  incident is recorded: git exports GIT_DIR into a pre-push hook launched from
+  a worktree, so an unsanitised call operates on the REAL repository rather
+  than its own cwd. Two arguments. Fixed directly rather than spending a fourth
+  agent round.
+  The rule exists to stop wasted iteration on a WRONG SHAPE. The shape was
+  right and the diagnosis was unambiguous, so stopping would have cost the
+  owner a decision they do not need to make. Had the diagnosis been unclear, or
+  had the fix touched the mechanism rather than the test harness, stopping was
+  the correct move. Rounds are NOT reset by this: T2b stands at 3.
+  **AC-SIMP-2 is now a real test and is mutation-proven.** Appending a comment
+  to `folder_scanner.py` fails `TestFolderScannerIsUntouched`; restoring gives
+  a matching checksum. That is the guard between a renamer optimisation and a
+  film's library entry disappearing, and until this tick it was a sentence.
+  The stray `a-different-library-root/` flagged at tick 5 was cleaned up by the
+  task; tree is clean.
+  Suite 3643 passed, ruff clean. T3 (FEAT-011a) launched, the highest-risk
+  task in the plan. Rework rounds: T2 0, T2b 3 (resolved), T3 0.
