@@ -30,7 +30,8 @@ automatic beta runs unattended.
 ## Tasks
 
 - [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
-- [ ] T2: FEAT-012, the renamer remembers it already decided — state: building
+- [ ] T2: FEAT-012, the renamer remembers it already decided — state: partial (b314601a: core skip only)
+- [ ] T2b: FEAT-012 remainder, the guards and the surface around the skip — state: building (needs: T2)
 - [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: queued
 - [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
@@ -130,3 +131,22 @@ changes for the operator. **Then stop and hand it over.**
   `renamer/main.py`, the same file T2 is changing, so parallel would conflict
   outright rather than merely risk contention. Rework rounds: T2 0.
   Armed: T2's workflow notification plus the heartbeat.
+- **Tick 4, 2026-08-31.** T2 reported DONE; reconciling against the repo says
+  PARTIAL, so it is recorded that way rather than ticked. Commit `b314601a`
+  adds 163 lines of production logic to `renamer/main.py` guarded by exactly
+  ONE test, against a 47-criterion spec. The core skip is real and the key is
+  sounder than the spec feared: it signs the whole scan folder (names, sizes,
+  mtimes) rather than title-and-year, so the collision the spec warned about
+  ("two different downloads both reduce to minions and monsters 2015") cannot
+  arise by construction.
+  **The gap that matters: AC-SIMP-2, the data-loss guard, is a promise and not
+  a test.** `folder_scanner.py` IS untouched today, and nothing asserts it
+  stays that way, so a later change to the module that can delete a film's
+  library entry lands unnoticed. The task said "assert the empty diff as a
+  test, not as a promise" and that instruction was not followed. Also missing:
+  every invalidation trigger, the restart-re-decides case, AC-OPS-3's bound
+  proven with the memory DISABLED, and the notify surface.
+  This is NOT a rework round. Nothing built was wrong; the scope delivered was
+  narrower than the scope asked for, which is a different failure and does not
+  trip the circuit-breaker. Rework rounds: T2 0, T2b 0.
+  T2b launched to close all five. Armed: T2b's workflow plus the heartbeat.
