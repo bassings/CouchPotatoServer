@@ -37,8 +37,8 @@ automatic beta runs unattended.
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: partial (700cb61e: trigger button only)
 - [ ] T5b: FEAT-011c, the replacement modal — state: partial (2a405d67: dialog shell and wording, no data)
 - [x] T5d: FEAT-011c, the server-side candidate listing route — state: built (a6b0592d)
-- [ ] T5e: FEAT-011c, wire the modal to the listing and the submit — state: building
-- [ ] T5c: FEAT-011c, progress, second-activation refusal, a11y and mobile specs — state: queued (needs: T5b)
+- [x] T5e: FEAT-011c, wire the modal to the listing and the submit — state: built (4051c2c1)
+- [ ] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: building
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
@@ -294,3 +294,22 @@ changes for the operator. **Then stop and hand it over.**
   (`tests/unit/test_seed_e2e_data_guard.py`) should catch a bad edit. If that
   guard goes red, it is a real finding, not noise.
   Rework rounds: T5e 0. Armed: T5e's workflow plus the heartbeat.
+- **Tick 14, 2026-08-31.** T5e COMPLETE (`4051c2c1`), 8 E2E tests, second
+  consecutive full delivery since the test-tier correction. The modal now loads
+  server-supplied candidates as radios, disables confirm until one is chosen,
+  distinguishes an EMPTY listing from a FAILED one (different situations, and
+  the spec required they read differently), re-fetches rather than reloading,
+  and refuses a second submit rather than queueing it.
+  The property worth proving was proven: I smuggled a `destination` parameter
+  onto the destructive submit URL, and exactly ONE test failed, the
+  exactly-two-parameters assertion. Seven others stayed green, so the probe
+  discriminates rather than reddening everything. Template restored to a
+  matching checksum, all 8 pass.
+  That matters because the never-caller-supplied-path property is enforced at
+  BOTH ends now: the server ignores every other key (mutation-proven at tick 9)
+  and the client is pinned to sending exactly two (mutation-proven here).
+  **Second-activation refusal was in scope here and is done**, so T5c reduces
+  to the accessibility floor, which is what it is now building. Progress
+  reporting beyond the in-flight refusal is NOT built and is recorded as debt
+  for the branch review to judge rather than silently dropped.
+  Rework rounds: T5e 0, T5c 0. Armed: T5c's workflow plus the heartbeat.
