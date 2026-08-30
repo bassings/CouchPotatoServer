@@ -464,7 +464,17 @@
                        named after the file verbatim so the value sent
                        back on confirm is exactly what the server offered. -->
                   <template x-if="!loading && !loadError && candidates.length > 0">
-                    <div role="radiogroup" aria-label="Choose a replacement file" class="mt-3 max-h-[400px] overflow-y-auto space-y-1">
+                    <!-- AC-A11Y-1/point 5: arrow keys move focus AND
+                         selection between candidates (WAI-ARIA radiogroup
+                         pattern), scoped to $event.currentTarget rather
+                         than $el -- this list is teleported to <body>
+                         (x-teleport on the ancestor template), so $el (the
+                         un-teleported wrapper) would not contain it, same
+                         reasoning trapFocus() below already follows. -->
+                    <div role="radiogroup" aria-label="Choose a replacement file"
+                         @keydown.arrow-down.prevent="moveSelection($event, 1)"
+                         @keydown.arrow-up.prevent="moveSelection($event, -1)"
+                         class="mt-3 max-h-[400px] overflow-y-auto space-y-1">
                       <template x-for="candidate in candidates" :key="candidate">
                         <button type="button"
                                 role="radio"
@@ -494,13 +504,20 @@
                        uses the real attribute -- nothing is focused to
                        lose before a candidate is chosen. -->
                   <template x-if="!loading && !loadError && candidates.length > 0">
+                    <!-- AC-A11Y-14: this is the control that commits the
+                         deletion, so it carries the 44x44 floor rather than
+                         the 24x24 one -- px-4/py-2/text-xs alone sizes to
+                         32px, under it. min-h-11/min-w-11 (44px on
+                         Tailwind's default scale) adds the floor without
+                         touching the existing padding/token classes
+                         AC-DESIGN-8 pins. -->
                     <button data-testid="operator-replace-confirm"
                             @click="confirmReplace()"
                             :class="replacing ? 'opacity-50 cursor-wait' : ''"
                             :aria-busy="replacing ? 'true' : 'false'"
                             :aria-disabled="replacing ? 'true' : 'false'"
                             :disabled="!selected"
-                            class="px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 disabled:opacity-50">
+                            class="min-h-11 min-w-11 px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 disabled:opacity-50">
                       <span x-show="!replacing">Replace file</span>
                       <span x-show="replacing">Replacing…</span>
                     </button>
@@ -650,6 +667,7 @@ function operatorReplaceModal() {
       this.candidates = [];
       this.loadError = false;
       this.replacing = false;
+      this.setBackgroundInert(true);
       this.$nextTick(() => {
         document.getElementById('operator-replace-modal-close')?.focus();
       });
@@ -658,9 +676,48 @@ function operatorReplaceModal() {
 
     close() {
       this.isOpen = false;
+      this.setBackgroundInert(false);
       if (this.triggerEl) {
         this.triggerEl.focus();
       }
+    },
+
+    // Point 4 / AC-A11Y-10: Tab-order trapping (trapFocus below) keeps a
+    // keyboard user inside the dialog, but a screen reader's browse-mode
+    // virtual cursor can still walk into #main-content and the sidebar
+    // <aside> regardless of tab order -- only inert/aria-hidden removes
+    // them from the accessibility tree. Toggled directly on the DOM,
+    // rather than through an Alpine binding, because both elements live in
+    // base.html outside this component's own (teleported) subtree.
+    setBackgroundInert(state) {
+      const mainContent = document.getElementById('main-content');
+      if (mainContent) {
+        mainContent.inert = state;
+      }
+      const sidebar = document.querySelector('aside');
+      if (sidebar) {
+        sidebar.inert = state;
+      }
+    },
+
+    // Point 5 (WAI-ARIA radiogroup pattern): ArrowDown/ArrowUp move BOTH
+    // focus and selection between candidates. Scoped to
+    // event.currentTarget (the radiogroup div the listener is bound to),
+    // matching trapFocus()'s own pattern below, rather than this.$el --
+    // the candidate list is teleported to <body> (x-teleport), so this.$el
+    // (the un-teleported wrapper) would not contain it.
+    moveSelection(event, direction) {
+      const radios = Array.from(event.currentTarget.querySelectorAll('[role="radio"]'));
+      if (radios.length === 0) {
+        return;
+      }
+      let index = radios.indexOf(document.activeElement);
+      if (index === -1) {
+        index = 0;
+      }
+      const nextIndex = (index + direction + radios.length) % radios.length;
+      this.selected = this.candidates[nextIndex];
+      radios[nextIndex].focus();
     },
 
     notify(message, type) {
@@ -717,6 +774,12 @@ function operatorReplaceModal() {
           // again.
           try {
             await cpSwap('{{ new_base }}partial/movie/{{ movie_id }}' + window.location.search, '#movie-detail-container', 'innerHTML');
+            // The swap destroys this whole component, teleported dialog
+            // included, but #main-content itself is an ancestor of the
+            // swapped container, not replaced by it -- its inert flag set
+            // in open() would otherwise never be cleared, leaving the page
+            // permanently unreachable after a successful replacement.
+            this.setBackgroundInert(false);
             this.$nextTick(() => {
               const heading = document.querySelector('#movie-detail-container h1');
               if (heading) {

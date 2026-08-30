@@ -155,6 +155,25 @@ tailwind.config = {
      Tailwind utility's specificity regardless of stylesheet order. */
   .poster-card [data-testid="review-mark-failed"] { background-color: rgba(240, 72, 72, 0.08); }
 
+  /* FEAT-011 AC-A11Y-10: the operator-replace modal's confirm control
+     reuses the same bg-cp-danger/10 + text-cp-danger combo, sitting on the
+     dialog's own bg-cp-card surface -- the identical shape as the rule
+     above, and the identical dark-theme number (measured 4.46:1 composited
+     over #161618). Same fix: lowering the tint's own opacity to 8% (without
+     touching the Tailwind class string AC-DESIGN-8 pins) raises it to
+     ~4.57:1. */
+  [data-testid="operator-replace-modal"] [data-testid="operator-replace-confirm"] { background-color: rgba(240, 72, 72, 0.08); }
+
+  /* FEAT-011 AC-A11Y-10 also caught a second, PRE-EXISTING instance of the
+     same bug: the release table's own "Mark failed" control
+     (partials/movie_releases.html), independent of the operator-replace
+     modal -- it composites to the identical #2c1b1d in the dark theme
+     because that table sits on the same cp-card-toned surface. Included
+     here (not there) because every other instance of this exact fix already
+     lives in this file rather than in the template that renders the
+     control. */
+  #movie-releases [data-testid="release-mark-failed"] { background-color: rgba(240, 72, 72, 0.08); }
+
   [x-cloak] { display: none !important; }
   * { letter-spacing: -0.01em; }
   ::-webkit-scrollbar { width: 6px; }
