@@ -472,3 +472,16 @@ changes for the operator. **Then stop and hand it over.**
   test, not the code.
   Rework rounds: T7b2 1, T7b3 1. Still no fix has introduced a defect a later
   round had to repair.
+- **Tick 24, 2026-08-31.** Quiet hold, T7b3 mid-flight with tests running.
+  Checked one thing that looked out of scope rather than assuming: it is
+  editing `renamer/main.py`, which is not obviously part of three UI and test
+  findings. It is legitimate. H12 requires the server to be ABLE to produce a
+  refusal, so a refusal decidable before any byte is touched is now answered
+  SYNCHRONOUSLY rather than only inside the fire-and-forget thread. Before it,
+  the operator was told "Replacement started" for a request that could never
+  have started, which is the same silent-success shape H1 closed for the log,
+  now closed for the response the browser sees. 41 insertions, zero deletions.
+  That is a better fix than the finding asked for: H12 was written as a test
+  defect, and closing it properly required admitting the server had no way to
+  say no.
+  Rework rounds: T7b3 1. Armed: T7b3's workflow plus the heartbeat.
