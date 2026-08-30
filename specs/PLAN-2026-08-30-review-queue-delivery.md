@@ -313,3 +313,13 @@ changes for the operator. **Then stop and hand it over.**
   reporting beyond the in-flight refusal is NOT built and is recorded as debt
   for the branch review to judge rather than silently dropped.
   Rework rounds: T5e 0, T5c 0. Armed: T5c's workflow plus the heartbeat.
+- **Tick 15, 2026-08-31.** Quiet hold. T5c's journal had been silent for 24
+  minutes, the longest gap of the run, so I checked liveness rather than
+  assuming either way: it is mid-Playwright-run on the accessibility project
+  (`operator-replace-modal.a11y.spec.ts`), load 5.4. The silence was one long
+  tool call, not a death. Two background jobs HAVE died silently on this branch,
+  so the check was worth making rather than waiting out.
+  Both spec files exist with the correct names
+  (`*.a11y.spec.ts`, `*.mobile.spec.ts`), which is the thing that determines
+  whether these assertions run at all.
+  Rework rounds: T5c 0. Armed: T5c's workflow plus the heartbeat.
