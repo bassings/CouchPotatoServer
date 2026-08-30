@@ -32,8 +32,8 @@ automatic beta runs unattended.
 - [x] T1: T67, the HTTP cache silently stores nothing — state: built (09818b58)
 - [x] T2: FEAT-012, the renamer remembers it already decided — state: built (b314601a)
 - [x] T2b: FEAT-012 remainder, the guards and the surface — state: built (19e0289a, d87e1283)
-- [ ] T3: FEAT-011a, the operator replace decision and destination resolution — state: building
-- [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: queued (needs: T3)
+- [x] T3: FEAT-011a, the operator replace decision and destination resolution — state: built (ba1b652a)
+- [ ] T4: FEAT-011b, backgrounded execution, source consumption, release document — state: building
 - [ ] T5: FEAT-011c, the picker UI, confirmation and accessibility — state: queued (needs: T4)
 - [ ] T6: whole-branch multi-lens review cycle — state: queued (needs: T2, T5)
 - [ ] T7: fix every confirmed review finding, re-review until clean — state: queued (needs: T6)
@@ -185,3 +185,21 @@ changes for the operator. **Then stop and hand it over.**
   task; tree is clean.
   Suite 3643 passed, ruff clean. T3 (FEAT-011a) launched, the highest-risk
   task in the plan. Rework rounds: T2 0, T2b 3 (resolved), T3 0.
+- **Tick 7, 2026-08-31.** T3 built (`ba1b652a`) and verified: 375 insertions,
+  ZERO deletions, so the automatic path is structurally untouched rather than
+  merely asserted to be. Three named outcomes, and the decision reads the
+  film's recorded file rather than computing one.
+  Both refusals mutation-proven. Resolving ambiguity by taking the first
+  candidate fails two tests including the one that runs the same pair in both
+  orders; treating "nothing recorded" as permission to proceed fails six.
+  replacement.py restored to a matching checksum.
+  Noted from the RED verifier and NOT fixed, because it is cosmetic and the
+  test carries its load elsewhere: one closing assertion compares two
+  fixture-supplied paths that differ by construction, so that line alone is
+  near-tautological. Recorded here so the branch review can judge it rather
+  than rediscover it.
+  T4 launched: the layer that actually deletes the file. Every safety property
+  in its prompt has its own test demanded, including that the destroyed path is
+  never caller-supplied, proven by handing it a decoy victim file and hashing
+  that file before and after.
+  Rework rounds: T3 0, T4 0. Armed: T4's workflow plus the heartbeat.
