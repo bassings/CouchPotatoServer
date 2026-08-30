@@ -357,18 +357,88 @@
           </template>
         </button>
         {% if ns.has_operator_replace_target %}
-        <!-- AC-DESIGN-1/AC-DESIGN-2: entry point only. Picking a candidate,
-             the design-system confirmation naming what is destroyed
-             (AC-DESIGN-6, AC-A11Y-8) and the backgrounded-progress re-entry
-             guard (AC-DESIGN-9, AC-A11Y-6) land in a follow-up step against
-             the existing operatorReplaceView entry point -- not invented
-             here. This step only pins that the trigger renders in the
-             right cases with the right label and grammar. -->
-        <button data-testid="operator-replace-trigger"
-                class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
-          <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
-          Replace with this file
-        </button>
+        <!-- AC-DESIGN-1/AC-DESIGN-2: the trigger itself is pinned by
+             test_operator_replace_trigger_ui_template.py. This increment
+             (test_operator_replace_modal_ui_template.py) adds the
+             design-system modal the trigger opens, carrying the
+             destructive confirmation that names the film AND states the
+             CURRENT library copy will be deleted and replaced
+             (AC-DESIGN-7/AC-QA-12/AC-PROD-3) -- "replace with X?" alone is
+             the failure mode this exists to prevent. It is a real
+             role="dialog"/aria-modal dialog, never window.confirm()
+             (AC-DESIGN-6, overridden over lens-simplicity's planning
+             proposal -- see "Vetoed at planning" in
+             specs/FEAT-011-replace-with-this-file.md), and the operator
+             can never type a path into it (AC-SEC-1).
+
+             The candidate picker itself (AC-DESIGN-3/4/5) and wiring the
+             confirm step to the existing operatorReplaceView entry point
+             with its in-flight/outcome states (AC-DESIGN-9/11, AC-A11Y-6)
+             are follow-up steps against this same shell, not invented
+             here. -->
+        <div x-data="operatorReplaceModal()" class="inline-flex items-center">
+          <button data-testid="operator-replace-trigger"
+                  x-ref="replaceTriggerBtn"
+                  @click="open()"
+                  class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
+            <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/></svg>
+            Replace with this file
+          </button>
+
+          <template x-teleport="body">
+            <div x-show="isOpen"
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"
+                 @click.self="close()"
+                 @keydown.escape.window="if (isOpen) close()"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="operator-replace-modal-title"
+                 data-testid="operator-replace-modal"
+                 class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+              <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg"
+                   @click.stop
+                   @keydown.tab="trapFocus($event)">
+                <!-- Header -->
+                <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+                  <h3 id="operator-replace-modal-title" class="text-sm font-medium">Replace with this file</h3>
+                  <button @click="close()"
+                          id="operator-replace-modal-close"
+                          class="text-cp-muted hover:text-cp-text"
+                          aria-label="Close">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Body: the destructive confirmation. The candidate
+                     picker this text will sit above lands in a later
+                     step -- see the comment on the wrapping x-data
+                     component above. -->
+                <div class="px-4 py-4 text-sm text-cp-text">
+                  <p>
+                    Replacing <strong>{{ title }}</strong> will permanently
+                    delete its current library copy and put the file you
+                    choose in its place. This cannot be undone.
+                  </p>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
+                  <button @click="close()"
+                          class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
         {% endif %}
         <button @click="if(confirm('Delete this movie?')) { deleting = true; fetch(CP.apiBase + '/media.delete/?id={{ movie_id }}').then(() => { window.location.href = CP.newBase; }); }"
                 class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 rounded-md text-xs transition-colors disabled:opacity-50"
@@ -477,6 +547,52 @@ function cpSwap(url, target, swap) {
     }
     htmx.swap(target, html, { swapStyle: swap });
   });
+}
+
+// operatorReplaceModal() backs the "Replace with this file" trigger and its
+// design-system dialog (FEAT-011). isOpen/open()/close() follows the same
+// convention as movieInfoModal() (partials/movie_info_modal.html), and
+// trapFocus() is copied from the same source rather than re-derived, since
+// both dialogs share the same header/body/footer shape
+// (docs/design-system/CONFORMANCE.md:38). The candidate list and the
+// submission call into the existing operatorReplaceView entry point are
+// follow-up steps against this shell -- see the comment on the trigger's
+// wrapping x-data in the markup above.
+function operatorReplaceModal() {
+  return {
+    isOpen: false,
+    triggerEl: null,
+
+    open() {
+      this.triggerEl = this.$refs.replaceTriggerBtn;
+      this.isOpen = true;
+      this.$nextTick(() => {
+        document.getElementById('operator-replace-modal-close')?.focus();
+      });
+    },
+
+    close() {
+      this.isOpen = false;
+      if (this.triggerEl) {
+        this.triggerEl.focus();
+      }
+    },
+
+    trapFocus(event) {
+      const modal = event.currentTarget;
+      const focusable = modal.querySelectorAll('button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  };
 }
 
 function restoreToWanted() {
