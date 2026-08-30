@@ -150,3 +150,14 @@ changes for the operator. **Then stop and hand it over.**
   narrower than the scope asked for, which is a different failure and does not
   trip the circuit-breaker. Rework rounds: T2 0, T2b 0.
   T2b launched to close all five. Armed: T2b's workflow plus the heartbeat.
+- **Tick 5, 2026-08-31.** Quiet hold, T2b mid-flight and progressing: the
+  memory test file has gone from 1 test to 7, plus a new
+  `test_renamer_decision_memory_invalidation.py`. Nothing acted on.
+  **Flagged for the pre-push check:** an untracked `a-different-library-root/`
+  directory has appeared at the REPO ROOT, presumably a fixture for the
+  destination-changed invalidation case. A test that writes into the repo root
+  rather than `tmp_path` leaves debris that a later `git add -A` commits, and
+  this branch has already spent a day on artefacts reaching places nobody
+  intended. If it survives T2b, it is either moved to `tmp_path` or gitignored
+  with a reason, not left loose. Rework rounds: T2b 0.
+  Armed: T2b's workflow plus the heartbeat.
