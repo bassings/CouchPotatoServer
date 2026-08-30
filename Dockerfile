@@ -51,13 +51,22 @@ ENV PYTHONUNBUFFERED=1 \
 # - c-ares is pulled in transitively; pin it to the patched version to clear
 #   CVE-2026-33630 (HIGH, use-after-free/double-free) which fails the Trivy gate.
 #   Drop this explicit pin once the base image ships c-ares >= 1.34.8-r0.
+# - libcrypto3/libssl3 arrive with the base image at 3.5.7-r0 and are pinned
+#   for the same reason: CVE-2026-14456 (HIGH, unbounded memory growth in the
+#   QUIC server path) is fixed in 3.5.8-r0, which Alpine v3.24 main already
+#   carries. This is a real finding rather than a number to silence: nothing
+#   here serves QUIC, so the practical exposure is low, but the fix is a
+#   version bump that is already published and costs nothing to take.
+#   Drop this explicit pin once the base image ships openssl >= 3.5.8-r0.
 RUN apk add --no-cache \
         ca-certificates \
         su-exec \
         mediainfo \
         libstdc++ \
         7zip \
-        "c-ares>=1.34.8-r0"
+        "c-ares>=1.34.8-r0" \
+        "libcrypto3>=3.5.8-r0" \
+        "libssl3>=3.5.8-r0"
 
 # Create app user
 ARG PUID=1000
