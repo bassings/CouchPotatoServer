@@ -88,3 +88,19 @@ changes for the operator. **Then stop and hand it over.**
   on this branch already; assume a sixth.
 - Australian English, no em dashes in any artefact except where a machine-read
   format requires one.
+
+## Conductor log
+
+- **Tick 1, 2026-08-30.** Plan armed: `.claude/active-plan` written (gitignored,
+  so it is session state rather than a committed artefact). Running under
+  `/loop /conduct-plan`. Reconciled against the repo rather than memory:
+  branch `feat/review-queue-and-manual-replace`, tip `b0ba8b68`, nothing
+  pushed, no PR open, FEAT-010's six build tasks all committed and each
+  mutation-proven. T1 (T67, the cache) is in flight as a tdd-task workflow and
+  has not committed yet, so it stays `in progress` rather than being re-issued.
+  T2 is unblocked but is deliberately NOT started in parallel: both tasks run
+  the full Python suite and both mutate production files to prove their guards,
+  and this branch has already seen parallel agents trample a shared checkout.
+  Serial is the cheaper mistake. Rework rounds so far: 0 on every task.
+  Armed: T1's workflow notification, plus a fallback heartbeat. Next wake
+  expects T1 either committed or aborted.
