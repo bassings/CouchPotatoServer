@@ -59,6 +59,9 @@ EXCLUDED_PATHS = [
     "reports/mutation/stryker.html",
     "coverage/index.html",
     ".claude/worktrees/agent-abc/couchpotato/api.py",
+    ".lighthouseci/report.html",
+    "couchpotato/.lighthouseci/report.html",
+    ".claude/harness-ledger.jsonl",
 ]
 
 
@@ -158,18 +161,62 @@ def test_allowlisted_runtime_paths_are_actually_gitignored_and_untracked():
     """
     import subprocess
 
-    for path in (".config", "data/config", ".e2e-data", "test_data"):
-        target = REPO_ROOT / path
-        if not target.exists():
-            continue
+    # A trailing slash marks a DIRECTORY entry, and it is load-bearing rather
+    # than decoration: .gitignore's entries here are directory-only patterns,
+    # and `git check-ignore` can only apply one to a path that either exists on
+    # disk as a directory or is spelled with the slash. Carrying it in the
+    # corpus is what lets the check run against a path that is absent, which is
+    # the normal case for every one of these on a fresh clone and in CI.
+    for entry in (
+        ".config/",
+        "data/config/",
+        ".e2e-data/",
+        "test_data/",
+        # Added after review found both of these allowlisted with nothing
+        # asserting the premise. Deleting `.claude/harness-ledger.jsonl` from
+        # .gitignore left every suite green while .gitleaks.toml still told the
+        # scanner to skip it -- the gate silently stops gating, which is the
+        # one failure this whole test exists to make impossible.
+        ".lighthouseci/",
+        ".claude/harness-ledger.jsonl",
+    ):
+        path = entry.rstrip("/")
+        # NO existence check, and that absence is the point. This loop used to
+        # open with `if not target.exists(): continue`, which made every entry
+        # inert on exactly the machines that matter: none of these paths exist
+        # in a fresh clone or on a CI runner, so the assertions below never ran
+        # there. `.claude/harness-ledger.jsonl` is untracked telemetry that is
+        # absent by default, so its guard -- added in the round that was
+        # supposed to close this -- never executed once outside a dev box that
+        # had already run the harness. Reviewers found the same skip twice.
+        #
+        # Neither check needs the file. `git check-ignore` answers from the
+        # ignore rules, and `git ls-files --error-unmatch` answers from the
+        # index -- and a path tracked in the index but deleted from the working
+        # tree is a case worth failing on, not skipping.
         result = subprocess.run(
             ["git", "ls-files", "--error-unmatch", path],
             cwd=REPO_ROOT,
             capture_output=True,
             text=True, env=sanitized_git_env())
         assert result.returncode != 0, (
-            f"{path} is TRACKED by git but allowlisted from secret scanning — "
+            f"{path} is TRACKED by git but allowlisted from secret scanning -- "
             f"that combination hides real secrets. Untrack it or drop the allowlist entry."
+        )
+        # The other half of this test's own name, which it did not check until
+        # review pointed at it: untracked-today is not the premise, ignored-so-
+        # it-cannot-become-tracked is. A path that is merely untracked is one
+        # `git add -A` away from being allowlisted AND committed.
+        ignored = subprocess.run(
+            ["git", "check-ignore", "-q", entry],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True, env=sanitized_git_env())
+        assert ignored.returncode == 0, (
+            f"{path} is allowlisted from secret scanning but NOT gitignored, so "
+            f"a routine `git add -A` commits it and the scan stays silent about "
+            f"the file it just committed. Add it to .gitignore or drop the "
+            f"allowlist entry."
         )
 
 
