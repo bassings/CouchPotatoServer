@@ -521,3 +521,26 @@ changes for the operator. **Then stop and hand it over.**
   Journal 12 minutes old with tests idle, which has been normal for a
   decision-heavy task; no liveness action.
   Rework rounds: T7c1 1. Armed: T7c1's workflow plus the heartbeat.
+- **Tick 27, 2026-08-31.** T7c1 done (`d107624e`): **11 FIXED, 13 REJECTED
+  with evidence.** That split is the point. The instruction was to reject
+  rather than fix to reach zero, and the rejections read as judgements rather
+  than avoidance: documentation with no cost today, a test the review itself
+  had already driven, and one real defect explicitly DEFERRED with its reason
+  named rather than quietly dropped.
+  The eleven fixes include three worth naming:
+  - **M6, the replay guard, was the same class as the critical.** It compared
+    a stat with itself, so a replayed request performed a SECOND destructive
+    swap. The probe's log shows "About to replace a library copy" firing twice.
+  - **M2: `cache.db` was created world-readable at 0644**, and after T67 it
+    holds provider response bodies with indexer API keys embedded. T67 was a
+    correct fix whose consequence was writing credentials to a readable file.
+    Neither change is wrong alone, which is why only a whole-branch review
+    finds it.
+  - **M20: the Wanted page's bulk Delete used `cp-error`, a token base.html
+    does not define**, so Tailwind generated no rule and the most destructive
+    control on the page rendered with NO danger styling.
+  T7c2 launched on the 11 Low, told plainly to expect to reject most of them,
+  and to append a final tally so the next reader sees the whole outcome in one
+  place.
+  Rework rounds: T7c1 1, T7c2 1. Circuit-breaker still not tripped: no fix has
+  introduced a defect a later round had to repair.
