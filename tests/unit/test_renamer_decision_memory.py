@@ -416,6 +416,67 @@ class TestParkedGroupIsDiscoverableViaNotify:
         )
 
 
+class TestNotifyNeverLeaksTheRawDownloadFolderName:
+    """L1 (branch review 2026-08-31, QA/branch-review-2026-08-31-review-queue.md)
+    / FEAT-012 AC-SEC-8.
+
+    AC-SEC-8's letter is met (no token beginning "/" ever reaches the
+    message), but its value is narrower than the letter suggests:
+    `_notifyParked`'s title fallback is
+    `getTitle(library) or group.get('dirname') or 'Unknown'`, and
+    `dirname` is the raw scene-release folder name read straight off the
+    operator's download folder. That fallback fires exactly when the group
+    could not be identified -- which is the common case for a park, not an
+    edge case -- so the folder name (source, group and quality markers
+    baked into a scene-release string) leaves the machine in a
+    `fireEvent('notify', ...)` payload sent to every configured
+    third-party provider (Pushover, Telegram, Prowl) and is retained 28
+    days in the notification document. Sending a resolved film TITLE to a
+    provider is a design decision the spec records; a filesystem-derived
+    folder name is a different thing nobody chose.
+
+    Currently RED: the fallback chain includes `group.get('dirname')`, so
+    an unresolvable title sends the folder name verbatim.
+    """
+
+    def test_unresolved_title_does_not_send_the_raw_download_folder_name(
+        self, world,
+    ):
+        raw_folder_name = 'Minions.and.Monsters.2015.1080p.BluRay.x264-GRP'
+        group = {
+            'media': {
+                '_id': 'media-unidentified',
+                # Deliberately no 'titles' key anywhere reachable by
+                # getTitle(): this is the "identity could not be
+                # resolved" state that produces
+                # declined_unverified_identity in the first place, so it
+                # is the realistic case for this fallback to be reached
+                # in, not a contrived one.
+                'info': {'year': 2015},
+            },
+            'dirname': raw_folder_name,
+        }
+
+        world['plugin']._notifyParked(group, 'declined_unverified_identity')
+
+        assert world['notify_calls'], (
+            'fireEvent("notify", ...) was never called for a parked group '
+            'with no resolvable title -- this test cannot prove anything '
+            'about what value was sent in that message'
+        )
+        sent = world['notify_calls'][0]
+        message = sent.get('message', '') if isinstance(sent, dict) else ''
+        assert raw_folder_name not in message, (
+            'the notify message for a film with no resolvable title '
+            'contains the raw download folder name (%r), which leaves '
+            'the machine in every configured notification provider '
+            '(Pushover, Telegram, Prowl) and is retained 28 days in the '
+            'notification document. A filesystem-derived scene-release '
+            'string is not decision metadata and must never substitute '
+            'for a title. Got message: %r' % (raw_folder_name, message)
+        )
+
+
 class TestRestartRedecides:
     """AC-SEC-5 / AC-SIMP-5 / item 3: a process restart is the operator's
     cheapest correct remedy, and it must re-decide -- a memory that
@@ -706,3 +767,109 @@ class TestDecisionMemoryStoresAreBounded:
                 park_count, notified_size,
             )
         )
+
+
+class TestFolderSignatureIsBoundedAgainstAnArbitraryCallerSuppliedFolder:
+    """L2 (branch review 2026-08-31, QA/branch-review-2026-08-31-review-queue.md).
+
+    `scanView` passes a caller-supplied `base_folder` straight through to
+    `scan()`, which hands it to `_folderSignature` unconditionally --
+    before this fix, an authenticated caller asking for `base_folder=/`
+    made the container `os.walk` and `os.stat` the entire mounted
+    filesystem, one tuple per file, before any other check ran. M12
+    already bounds how many DISTINCT folders `_decision_memory` remembers,
+    but that says nothing about the cost of walking any ONE of them, so a
+    single request against a huge or hostile `base_folder` still needed its
+    own bound.
+
+    `FOLDER_SIGNATURE_MAX_ENTRIES` is monkeypatched down to a small number
+    so this test creates a few dozen real files rather than tens of
+    thousands -- the mechanism under test is "stops walking past the cap",
+    which a small cap and a small tree over-cap prove identically to a
+    large one.
+    """
+
+    def test_a_folder_over_the_cap_fails_open_rather_than_being_fingerprinted(
+        self, world, tmp_path, monkeypatch,
+    ):
+        plugin = world['plugin']
+        monkeypatch.setattr(type(plugin), 'FOLDER_SIGNATURE_MAX_ENTRIES', 5, raising=False)
+
+        huge_folder = tmp_path / 'not-the-watch-folder'
+        huge_folder.mkdir()
+        for i in range(50):
+            (huge_folder / ('file-%d.mkv' % i)).write_bytes(b'x')
+
+        assert plugin._folderSignature(str(huge_folder)) is None, (
+            'a folder holding more entries than FOLDER_SIGNATURE_MAX_ENTRIES '
+            'was still fully fingerprinted -- it must fail open (None) '
+            'instead, the same answer an unreadable or vanished folder '
+            'already gets, so a caller-supplied base_folder pointed at a '
+            'filesystem root cannot make this walk the entire mount'
+        )
+
+    def test_the_walk_stops_at_the_cap_rather_than_visiting_every_file_first(
+        self, world, tmp_path, monkeypatch,
+    ):
+        """The previous test alone would still pass a version of this
+        method that walks and `stat`s every file, THEN returns None once
+        `len(entries)` is checked at the very end -- which is exactly the
+        unbounded cost this fix exists to remove. This test proves the
+        walk itself is cut short: `os.stat` must be called at most a
+        handful of times, never once per file in a much larger tree.
+        """
+        plugin = world['plugin']
+        monkeypatch.setattr(type(plugin), 'FOLDER_SIGNATURE_MAX_ENTRIES', 5, raising=False)
+
+        huge_folder = tmp_path / 'not-the-watch-folder'
+        huge_folder.mkdir()
+        file_count = 500
+        for i in range(file_count):
+            (huge_folder / ('file-%d.mkv' % i)).write_bytes(b'x')
+
+        stat_calls = {'count': 0}
+        real_stat = os.stat
+
+        def _counting_stat(path, *args, **kwargs):
+            if str(path).startswith(str(huge_folder)):
+                stat_calls['count'] += 1
+            return real_stat(path, *args, **kwargs)
+
+        monkeypatch.setattr(
+            'couchpotato.core.plugins.renamer.main.os.stat', _counting_stat,
+        )
+
+        result = plugin._folderSignature(str(huge_folder))
+
+        assert result is None
+        assert stat_calls['count'] <= plugin.FOLDER_SIGNATURE_MAX_ENTRIES, (
+            '_folderSignature called os.stat %d times against a folder '
+            'holding %d files and a cap of %d -- the walk must stop AT '
+            'the cap, not merely discard the result after visiting every '
+            'file, or a caller-supplied base_folder pointed at a huge '
+            'tree still pays the full walk cost this fix exists to avoid'
+            % (stat_calls['count'], file_count, plugin.FOLDER_SIGNATURE_MAX_ENTRIES)
+        )
+
+    def test_a_folder_under_the_cap_is_still_fingerprinted_normally(
+        self, world, tmp_path, monkeypatch,
+    ):
+        """The cap must not turn into a de facto ban on remembering any
+        caller-supplied folder -- M12's own test already relies on
+        `_folderSignature` working normally for small caller-supplied
+        folders, so this pins that a folder comfortably under the cap is
+        unaffected."""
+        plugin = world['plugin']
+        monkeypatch.setattr(type(plugin), 'FOLDER_SIGNATURE_MAX_ENTRIES', 5, raising=False)
+
+        small_folder = tmp_path / 'small-watch-folder'
+        small_folder.mkdir()
+        (small_folder / 'movie.mkv').write_bytes(b'incoming bytes')
+
+        result = plugin._folderSignature(str(small_folder))
+        assert result is not None, (
+            'a folder well under FOLDER_SIGNATURE_MAX_ENTRIES was still '
+            'refused a fingerprint -- the cap must only refuse an '
+            'OVERSIZED folder, never a normal one'
+        )
+        assert len(result) == 1

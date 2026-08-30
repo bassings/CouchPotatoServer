@@ -80,6 +80,18 @@ none live at the time of measurement. Raised separately as T67.
 Fixing the cache alone would NOT fix this problem. It would make an endless
 loop quieter, which is worse than an endless loop that is obvious.
 
+### Success measure
+
+L9 (branch review 2026-08-31): AC-PROD-8 required this sentence to exist
+somewhere the owner will actually read it, not only inside the acceptance
+criterion that asks for it. After the next parked download, `docker logs`
+over the following 24 hours contains at most 24 "already decided and
+unchanged; skipping the scan" records for that folder (one per
+`DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS`, 3600 seconds -- AC-OPS-3, AC-OPS-4),
+and the parked film's title and outcome appear once in `notification.list`
+(AC-OPS-5). Both are checkable today, with the logging and notification this
+change already ships, and need no new instrumentation.
+
 ## Not in scope
 
 - **Changing any replacement decision.** Every outcome in

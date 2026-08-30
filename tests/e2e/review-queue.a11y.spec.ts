@@ -638,6 +638,106 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     expect(activeInfo.hasAccessibleName, `focus landed on an unnamed element (${activeInfo.tag}) -- must be a NAMED destination`).toBe(true);
   });
 
+  test('Mark Done on the MIDDLE card of three sends focus to the card that followed it, not back to the first card (AC-A11Y-9, L4, branch review 2026-08-31)', async ({ page }) => {
+    // L4 (QA/branch-review-2026-08-31-review-queue.md): AC-A11Y-9's own
+    // wording names the destination as "the next card's link, or the
+    // movie-count region" -- `focusAfterReviewAction()` instead does
+    // `querySelector('#movie-grid .poster-card:not([style*="display:
+    // none"]) a')`, which is unconditionally the FIRST visible card. The
+    // existing "LAST visible card" test above cannot distinguish these two
+    // behaviours, because with one card left "first" and "next" are the
+    // same element by construction. This test uses three cards so they
+    // are provably different: BYSTANDER_FIRST, then the review card that
+    // gets acted on, then BYSTANDER_LAST. AC-A11Y-9 requires focus to land
+    // on BYSTANDER_LAST's link; the current code lands it on
+    // BYSTANDER_FIRST's, which for a keyboard user working down a longer
+    // real grid means being thrown back to the top after every action.
+    //
+    // Fully synthetic /partial/movies fixture (both the initial load and
+    // the post-action reload), rather than the seeded review-gate movies:
+    // this isolates the ordering claim from whatever order the real seed
+    // data happens to render in, which this test must not depend on. The
+    // review card's Mark Done button is copied verbatim from
+    // partials/movie_cards.html's real markup (data-testid, aria-label,
+    // Alpine x-data/@click shape) so the real client script under test
+    // runs unmodified against it.
+    const BYSTANDER_FIRST_ID = 'l4-bystander-first';
+    const BYSTANDER_LAST_ID = 'l4-bystander-last';
+    const REVIEW_CARD_ID = 'l4-review-card';
+
+    const bystanderCard = (id: string, label: string) => `
+      <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
+           data-title="${label}" data-status="active" data-has-releases="false" data-movie-id="${id}">
+        <a href="/movie/${id}/" class="block" aria-label="${label}"><div class="p-2">${label}</div></a>
+      </div>`;
+
+    const reviewCard = `
+      <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
+           x-data="{ markingDone: false }"
+           data-title="L4 Review Card" data-status="downloaded" data-has-releases="true" data-movie-id="${REVIEW_CARD_ID}">
+        <a href="/movie/${REVIEW_CARD_ID}/" class="block" aria-label="L4 Review Card"><div class="p-2">L4 Review Card</div></a>
+        <div class="flex items-center gap-2 px-2.5 pb-2.5">
+          <button type="button"
+                  data-testid="review-mark-done"
+                  :aria-busy="markingDone ? 'true' : 'false'"
+                  :aria-disabled="markingDone ? 'true' : 'false'"
+                  aria-label="Mark Done: L4 Review Card"
+                  @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id=${REVIEW_CARD_ID}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '${REVIEW_CARD_ID}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } }); }">
+            Mark Done
+          </button>
+        </div>
+      </div>`;
+
+    const beforeGrid = bystanderCard(BYSTANDER_FIRST_ID, 'Bystander First')
+      + reviewCard
+      + bystanderCard(BYSTANDER_LAST_ID, 'Bystander Last');
+    // The review card is entirely absent from the post-action grid, same
+    // as a real backend would render once its status leaves 'downloaded'.
+    const afterGrid = bystanderCard(BYSTANDER_FIRST_ID, 'Bystander First')
+      + bystanderCard(BYSTANDER_LAST_ID, 'Bystander Last');
+
+    let gridRequests = 0;
+    await page.route(/\/partial\/movies/, (route) => {
+      gridRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/html',
+        body: gridRequests === 1 ? beforeGrid : afterGrid,
+      });
+    });
+    await page.route(/media\.done/, (route) =>
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ success: true }) }),
+    );
+
+    await page.goto('/wanted');
+    await waitForGridLoaded(page);
+    await expect(page.locator('#movie-grid .poster-card')).toHaveCount(3);
+
+    await page
+      .locator(`.poster-card[data-movie-id="${REVIEW_CARD_ID}"]`)
+      .locator('[data-testid="review-mark-done"]')
+      .click();
+
+    await expect(page.locator('#movie-grid .poster-card')).toHaveCount(2, { timeout: 10000 });
+
+    const focusedMovieId = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null;
+      const card = el?.closest('.poster-card');
+      return card?.getAttribute('data-movie-id') ?? null;
+    });
+
+    expect(
+      focusedMovieId,
+      `after Mark Done on the MIDDLE card of three, focus landed on movie ` +
+        `"${focusedMovieId}" -- AC-A11Y-9 requires it to land on the card ` +
+        `that followed the acted-on card ("${BYSTANDER_LAST_ID}"), not on ` +
+        `whichever card is now first in the grid ` +
+        `("${BYSTANDER_FIRST_ID}"). Landing on the first card throws a ` +
+        `keyboard user back to the top of the grid after every action, ` +
+        `regardless of where in the grid they were working.`,
+    ).toBe(BYSTANDER_LAST_ID);
+  });
+
   test('Mark Done on a card with others remaining: defined focus, a real Library-naming announcement, and a confined grid update (AC-A11Y-9/10/11, others-remain case, REAL backend)', async ({ page }) => {
     await gotoWantedWithReviewCards(page);
     const destructiveCard = page.locator(`.poster-card[data-movie-id="${REVIEW_DESTRUCTIVE_MOVIE_ID}"]`);

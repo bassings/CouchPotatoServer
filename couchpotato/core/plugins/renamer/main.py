@@ -134,6 +134,24 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: order (oldest write dropped first).
     OPERATOR_REPLAY_GUARD_MAX_ENTRIES = 200
 
+    #: L2 (branch review 2026-08-31). `scanView` passes a caller-supplied
+    #: `base_folder` straight through to `scan()`, which hands it to
+    #: `_folderSignature` unconditionally -- an authenticated caller can ask
+    #: for `base_folder=/` and make the container `os.walk` and `os.stat`
+    #: the entire mounted filesystem, materialising one tuple per file in
+    #: RAM, before any other check runs. M12's cap on `_decision_memory`
+    #: bounds how many DISTINCT folders get remembered, but does nothing
+    #: about the cost of walking any ONE of them, so a caller-supplied
+    #: `base_folder` still needs its own bound. `_folderSignature` already
+    #: fails open (returns None) on anything it cannot fully measure, which
+    #: is exactly the right answer for "too big to fingerprint cheaply"
+    #: too: an oversized folder is simply never remembered, so it re-decides
+    #: every scan rather than being cached, the same fallback a permission
+    #: error already gets. The cap is generous for the folder this feature
+    #: actually targets (one download-client watch folder) and small next
+    #: to a filesystem root.
+    FOLDER_SIGNATURE_MAX_ENTRIES = 20000
+
     def __init__(self):
 
         addApiView('renamer.scan', self.scanView, docs={
@@ -229,11 +247,24 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         dropping mid-walk, a file that vanished between the walk and the
         stat) is never treated as unchanged, so it forces a re-decide rather
         than a silent, permanent skip (AC-QA-14).
+
+        L2 (branch review 2026-08-31): `scan_folder` can be a caller-
+        supplied `base_folder`, with no restriction on where it points, so
+        this walk stops and fails open the moment it has seen more than
+        `FOLDER_SIGNATURE_MAX_ENTRIES` files -- rather than walking and
+        `stat`-ing an arbitrarily large tree (a filesystem root, a NAS
+        mount) to completion before deciding the result is too large to be
+        the "cheap fingerprint" this method promises. Same fail-open
+        semantics as every other case here: too big to fingerprint cheaply
+        is treated exactly like unreadable or vanished, never like
+        unchanged.
         """
         entries = []
         try:
             for root, _dirs, files in os.walk(scan_folder):
                 for name in files:
+                    if len(entries) >= self.FOLDER_SIGNATURE_MAX_ENTRIES:
+                        return None
                     full = os.path.join(root, name)
                     try:
                         stat_result = os.stat(full)
@@ -315,7 +346,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
 
         from couchpotato.core.helpers.variable import getTitle
         library = (group.get('media') or {}).get('info', {})
-        media_title = getTitle(library) or group.get('dirname') or 'Unknown'
+        # L1 (branch review 2026-08-31): `group.get('dirname')` used to sit
+        # in this fallback chain. That is the raw scene-release folder name
+        # read straight off the operator's download folder, and it fires
+        # exactly when the group could not be identified, which is the
+        # common case for a park rather than an edge case. A resolved
+        # title is an accepted design decision (AC-SEC-8); a
+        # filesystem-derived folder name is a different thing nobody
+        # chose, so it must never substitute for one.
+        media_title = getTitle(library) or 'an unidentified download'
 
         # No absolute path in the message (AC-SEC-8): `media_title` and
         # `outcome` are both TMDB/decision metadata, never a filesystem

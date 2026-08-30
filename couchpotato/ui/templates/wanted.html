@@ -237,12 +237,36 @@ function movieList() {
     bulkProcessing: false,
     countText: '',
     allSelected: false,
+    // L4 (branch review 2026-08-31, FEAT-010 AC-A11Y-9): the acted-on
+    // card's position among the visible cards, captured just before the
+    // reload it triggered replaces the grid. Read once by
+    // focusAfterReviewAction() and cleared, so a plain 'load' reload
+    // (Clear filters, the scan button) never inherits a stale index.
+    _reviewActionCardIndex: null,
 
     init() {
       // IMP-004: Restore state from URL
       const params = new URLSearchParams(window.location.search);
       if (params.has('filter')) this.filterStatus = params.get('filter');
       if (params.has('q')) this.search = params.get('q');
+
+      // L4 (branch review 2026-08-31, FEAT-010 AC-A11Y-9): capture the
+      // acted-on card's position among the visible cards BEFORE the swap
+      // that removes it -- htmx:beforeSwap fires while the old grid is
+      // still in the DOM, which htmx:afterSwap's handler below no longer
+      // has. window.__cpReviewActionMovieId is only set while a review
+      // action's reload is in flight (movie_cards.html sets it right
+      // before triggering 'review-action'), so an ordinary 'load' reload
+      // (Clear filters, the scan button) never sets an index here.
+      document.body.addEventListener('htmx:beforeSwap', (e) => {
+        if (e.detail.target && e.detail.target.id === 'movie-grid' && window.__cpReviewActionMovieId) {
+          const visible = [...document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"])')];
+          const idx = visible.findIndex((card) => card.dataset.movieId === window.__cpReviewActionMovieId);
+          if (idx !== -1) {
+            this._reviewActionCardIndex = idx;
+          }
+        }
+      });
 
       // Update count after htmx loads
       document.body.addEventListener('htmx:afterSwap', (e) => {
@@ -352,14 +376,31 @@ function movieList() {
     },
 
     // FEAT-010 AC-A11Y-9: send focus somewhere named and still-present
-    // once a card review action has reloaded the grid. Prefers the first
-    // remaining visible card (matches the Home/End keyboard-nav selector
-    // above); falls back to the movie-count region, which lives outside
-    // #movie-grid so it always survives the swap, for the case where the
-    // acted-on card was the last one left.
+    // once a card review action has reloaded the grid. AC-A11Y-9 names the
+    // destination as "the next card's link, or the movie-count region" --
+    // L4 (branch review 2026-08-31): this used to always take the FIRST
+    // visible card, which for a keyboard user working down a longer grid
+    // means being thrown back to the top after every action. The card now
+    // occupying the acted-on card's former position (captured by the
+    // htmx:beforeSwap listener in init(), above) IS the next card, because
+    // removing one entry shifts every following card back by one index;
+    // clamping to the last index handles the acted-on card having been
+    // the last one. Falls back to the first card if no index was
+    // captured, then to the movie-count region (outside #movie-grid, so
+    // it always survives the swap) when no cards remain at all.
     focusAfterReviewAction() {
       this.$nextTick(() => {
-        const nextCard = document.querySelector('#movie-grid .poster-card:not([style*="display: none"]) a');
+        const cards = [...document.querySelectorAll('#movie-grid .poster-card:not([style*="display: none"]) a')];
+        const capturedIndex = this._reviewActionCardIndex;
+        this._reviewActionCardIndex = null;
+
+        let nextCard = null;
+        if (cards.length > 0 && typeof capturedIndex === 'number') {
+          nextCard = cards[Math.min(capturedIndex, cards.length - 1)];
+        }
+        if (!nextCard) {
+          nextCard = cards[0];
+        }
         if (nextCard) {
           nextCard.focus();
           return;

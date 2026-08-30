@@ -1089,3 +1089,200 @@ Chromium render, the Playwright E2E tier) this task's validation commands
 cannot provide, or would require disproportionate new test scaffolding for
 this pass, are rejected with a stated revisit condition rather than patched
 blind or silently dropped.
+
+---
+
+## Triage outcomes (2026-08-31, LOW findings L1-L11)
+
+Same shape as the MEDIUM round: every finding gets exactly one outcome,
+fixed and mutation-proven or rejected with evidence. Eleven Lows is not
+eleven fixes owed -- Low is precisely the review's judgement that the cost
+of each is small, and CLAUDE.md's own warning applies here more than
+anywhere else in this branch: making the count reach zero is not the goal.
+Six were fixed because investigation showed either a live floor violation
+(L1, L3), a real and cheaply-closed DoS surface (L2), a live keyboard a11y
+regression (L4), or a trivial, safe documentation gap (L7, L9). Five were
+rejected because the underlying behaviour is already correct today and the
+fix is disproportionate coverage-scaffolding for a Low (L6, L10, L11), the
+suggested fix does not survive contact with the rest of the diff (L2's
+sibling M12 test, discovered while investigating -- resolved by bounding
+the walk instead of skipping it, see L2 below), or the blast radius of the
+"fix" is wider than the finding (L8), or no live defect exists to guard
+against yet (L5).
+
+### Fixed (6)
+
+| # | Finding | Fix | Proof |
+|---|---|---|---|
+| L1 | An unresolved-title park notified third parties with the raw scene-release **download folder name** (not just a title) | `_notifyParked` no longer falls back to `group.get('dirname')`; an unresolved title now sends the literal string `'an unidentified download'` | `tests/unit/test_renamer_decision_memory.py::TestNotifyNeverLeaksTheRawDownloadFolderName` (FROZEN, supplied for this round). Mutation: restored the `group.get('dirname')` fallback, watched the folder name reappear in the notify message, restored, sha256 confirmed byte-identical to the fixed file |
+| L2 | An authenticated caller's `base_folder` drove an **unbounded** `os.walk`+`os.stat` of an arbitrary path (e.g. `base_folder=/`), materialising one tuple per file in RAM before any other check ran | Investigated the review's own suggested fix ("skip `_folderSignature` for a non-`conf('from')` folder") and found it would have broken the ALREADY-FIXED M12 regression test, which requires `_folderSignature` to keep working for 300 distinct caller-supplied folders (that is the mechanism M12's cap manages, not disables). Fixed the actual DoS instead: added `FOLDER_SIGNATURE_MAX_ENTRIES` (20000) and made the walk stop and fail open (`return None`) the moment it is exceeded, rather than materialising and stat-ing an arbitrarily large tree to completion | Three new tests in `tests/unit/test_renamer_decision_memory.py::TestFolderSignatureIsBoundedAgainstAnArbitraryCallerSuppliedFolder` (not frozen, written this round). Mutation: replaced the cap check with `if False:`, watched a 50-file folder over a cap of 5 get fully fingerprinted instead of failing open, restored, sha256 confirmed. Also proved the walk genuinely STOPS at the cap (not merely discards the result after visiting every file): `os.stat` called at most `FOLDER_SIGNATURE_MAX_ENTRIES` times against a 500-file tree, not 500 |
+| L3 | The operator-replace confirm control used the real `disabled` attribute (CLAUDE.md/AC-A11Y-6 forbid this on any control that may hold focus) whenever no candidate was chosen, removing it from the tab order with no indication a selection was required; the aria-busy/focus-retention half of the same control had no test at all | `movie_detail.html`'s confirm button now uses `:aria-disabled="(replacing \|\| !selected) ? 'true' : 'false'"` only, never `:disabled`; `confirmReplace()`'s existing re-entry guard (`if (this.replacing \|\| !this.selected) return;`) is what actually blocks the click, matching the pattern `movie_cards.html`'s review controls already use | Two new tests in `tests/e2e/operator-replace-modal.a11y.spec.ts` (not frozen). Mutation: reverted `movie_detail.html` to HEAD, watched "the confirm control is reachable by Tab before any candidate is chosen" fail with the real `disabled` attribute present, restored, sha256 confirmed byte-identical. The second new test (aria-busy/focus retention while genuinely in flight, using a held-open route so the in-flight window is real rather than same-tick) passes both before and after -- that half was already correct, only untested; kept as the regression guard AC-A11Y-6 named as missing |
+| L4 | Focus after a card review action always landed on the FIRST visible card, not the next one -- a keyboard user acting on the last card of a longer grid was thrown back to the top | `wanted.html` now captures the acted-on card's index among the visible cards on `htmx:beforeSwap` (while the pre-swap DOM still exists), and `focusAfterReviewAction()` focuses the card now occupying that index post-swap (clamped to the last card), falling back to the first card, then `#movie-count` | `tests/e2e/review-queue.a11y.spec.ts` (FROZEN, supplied for this round): "Mark Done on the MIDDLE card of three...". Mutation: reverted `wanted.html` to HEAD, watched the test fail with focus landing on the wrong (first) card, restored, sha256 confirmed byte-identical. All 18 tests in the file, including the two PRE-EXISTING AC-A11Y-9 tests, stayed green |
+| L7 | The downloaded/review badge (`movie_cards.html`) was deliberately changed to a solid contrast-safe variant, but `docs/design-system/README.md` still documented the old, contrast-failing translucent pattern | Added the solid-over-artwork exception to `docs/design-system/README.md`'s badge section, with the measured reason (1.92:1 translucent vs 9.4:1 solid) | Docs-only; no test claims this exact README text, confirmed by grep. `python3 scripts/check_conformance.py` still passes (34 templates) |
+| L9 | FEAT-012's spec had no stated success measure anywhere the owner would actually read it -- only inside the AC-PROD-8 criterion asking for one | Added a "Success measure" section to `specs/FEAT-012-renamer-remembers-its-decisions.md` stating the concrete, already-checkable observation: at most 24 skip records per 24h (one per `DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS` = 3600s) and the parked film appearing once in `notification.list` | Docs-only; the two numbers (3600s, notification.list) are read directly from the shipped H7/AC-OPS-5 implementation, not invented |
+
+All six mutations were confirmed to land (`git diff` / sha256 before and
+after) and every touched file is byte-identical to its intended fixed state
+once restored. Full unit suite, `npx vitest run` (214 tests) and
+`python3 scripts/check_conformance.py` (34 templates) are green with all six
+fixes in place; the full accessibility/mobile/chromium E2E sweep across
+every touched spec file (`review-queue.a11y.spec.ts`,
+`operator-replace-modal.a11y.spec.ts`, `operator-replace-modal.spec.ts`,
+`filters.spec.ts`, `review-queue.mobile.spec.ts`, `movie-detail.spec.ts`,
+`interactions.e2e.spec.ts`, `small-screen.mobile.spec.ts`) is green, with one
+PRE-EXISTING, unrelated failure noted below.
+
+**Caveat found while proving L3, not part of this triage:** `tests/e2e/operator-replace-modal.spec.ts`'s
+"a successful replacement re-fetches the movie detail rather than calling
+location.reload() (point 5)" fails against a clean `HEAD` checkout, with no
+files from this round touched -- confirmed by stashing every change from
+this round and re-running it in isolation. Its cause is the MEDIUM round's
+own M22 fix: `confirmReplace()`'s success branch was deliberately changed to
+stop calling `cpSwap(...)` (so the operator is no longer shown the old
+file's details right after "Replacement started"), which is exactly the
+behaviour this older test still pins. Pre-existing, unrelated to any L1-L11
+finding, and outside this round's scope -- flagged for the owner rather than
+fixed here.
+
+### Rejected (5)
+
+**L5 -- Neither of AC-DESIGN-15's phone-width assertions was written for the
+Wanted-page chip row, and the chip container itself has no `flex-wrap`.**
+REJECTED. Checked before rejecting: the existing document-level reflow test
+(`review-queue.mobile.spec.ts`'s "no horizontal reflow at 393px") already
+passes today with all four chips present, which it would not if the missing
+`flex-wrap` were an active defect rather than a speculative one -- the
+finding's own consequence is "adding a FIFTH chip silently pushes the group
+past 393px", not a defect with today's four. Adding defensive CSS with no
+test that can fail today is exactly the kind of guard CLAUDE.md's own
+doctrine (search "load-bearing") warns cannot be proven, and the harder
+half (a bounding-box assertion for the card action row) is new E2E
+scaffolding, not a quick addition. Revisit condition: when a fifth chip (or
+a longer chip label) is actually proposed, in the same change.
+
+**L6 -- Several a11y guards assert presence where their AC specifies a
+measurement (the focus-ring probe reads contrast/width but only asserts
+`.visible === true`; the operator-modal focus-trap tests derive their
+expected first/last element from `trapFocus()`'s own selector string,
+so a wrong selector produces a matching wrong expectation).** REJECTED.
+Half of this finding's location is `review-queue.a11y.spec.ts`, which is
+FROZEN for this round and cannot be touched for any reason. The
+operator-modal half (`operator-replace-modal.a11y.spec.ts`, not frozen)
+is coverage debt on behaviour the review's own lens independently verified
+correct today (ring contrast 8.99:1/5.36:1, computed directly rather than
+through the probe) -- same "regression gap, not a live defect" shape
+already accepted as a rejection basis for M5 and M10 in the MEDIUM round.
+Building the stronger probe (return the composited colour, assert `>=3:1`
+plus exact `outlineWidth`/`outlineOffset`; derive focus-trap expectations
+from an independent source such as declared DOM order) is real new
+test-scaffolding, not a quick fix, and touching only the non-frozen half
+this round would leave the finding half-closed. Revisit condition: a
+dedicated a11y-test-strength pass covering both spec files together.
+
+**L8 -- The card renders "Mark Failed" while the detail page renders "Mark
+Failed & Re-search" for the identical action.** REJECTED. Checked the blast
+radius before rejecting: `grep -rn "Mark Failed\b"` across `tests/` shows
+the exact card-surface string "Mark Failed" is independently pinned by
+`test_fastapi_web.py` (multiple assertions, including a testid/label pairing
+at line ~1107), `review-queue.mobile.spec.ts`, and `review-queue.a11y.spec.ts`
+(the last of which is FROZEN this round). AC-DESIGN-7, which pins the
+non-destructive twin's label to be character-identical across both surfaces,
+does not cover this control by the review's own admission ("the drift is
+inside the specification's blind spot"), so there is no AC requiring the
+change. The review's own fix note flags a real risk this round has no
+budget to absorb safely: "Mark Failed & Re-search" may not fit at
+`text-[10px]` in a `flex-1` button on a ~174px card, which would mean
+shortening BOTH labels to a new, third string agreed for both surfaces --
+a design decision, not a one-line rename, and one that would need to
+touch a frozen test file regardless. Revisit condition: a small,
+dedicated pass that also resolves the "Mark as Done"/"Mark Done" pair the
+same finding names as its sibling.
+
+**L10 -- The Review chip's partition/count properties (AC-PROD-3, AC-PROD-4)
+are proven at the pure-function level but never against a rendered grid.**
+REJECTED. AC-PROD-3 and AC-PROD-4 both already PASS in this report's own AC
+verdict summary -- this is coverage debt on already-correct behaviour, the
+same shape as M10/M11 in the MEDIUM round ("the backend/logic makes the
+behaviour very likely correct today; what is missing is the guard"), and
+the two sibling chips (Wanted, Available) already have grid-level tests in
+`filters.spec.ts`, so the fix is a well-understood addition rather than new
+infrastructure -- but it is still a new E2E test for a Low with no live
+defect behind it, and this round already spent its budget on six higher-
+priority items. Revisit condition: added alongside the Wanted/Available
+grid-level tests it is missing next to, the next time `filters.spec.ts` is
+touched.
+
+**L11 -- Two criteria (FEAT-011 AC-QA-17's staging-throughput measurement,
+FEAT-010 AC-QA-8's Stryker mutation score) are unmet because the underlying
+measurement was never taken, and AC-QA-8 explicitly wants the number quoted
+in a PR body.** REJECTED. Neither is a code defect to fix; both ask for a
+measurement to be taken and recorded. No PR exists yet for this branch (per
+this project's own process, the orchestrator raises it after this triage
+and the local review gate), so there is nowhere to put the PR-body figure
+AC-QA-8 asks for, and fabricating a throughput number without actually
+timing a 1GB+ copy to the real library filesystem would be exactly the
+"assert what you have not measured" CLAUDE.md forbids. Revisit condition:
+both measurements belong to whoever raises the PR -- run `make
+mutation-changed` over `movie-filter.js` and time one real staging copy
+before that PR body is written, per the review's own fix note.
+
+### Note on scope
+
+Six of eleven, not eleven of eleven, matches CLAUDE.md's own instruction for
+this round: Low is the review's judgement that the cost is already small,
+and reaching zero is not the goal. Two of the six fixes (L1, L3) closed
+real violations of floor rules stated verbatim in this project's own
+CLAUDE.md ("no ... private filesystem paths" leaving the machine;
+"never use the disabled attribute on a control that may hold focus").
+One (L2) closed a genuine, cheaply-bounded resource-exhaustion surface,
+after investigation showed the review's own suggested fix would have
+broken an already-shipped regression test (M12) protecting a related
+property -- the bound was moved to where it actually needed to sit rather
+than applied as first suggested. One (L4) closed a live WCAG 2.4.3 keyboard
+regression. Two (L7, L9) were free, safe documentation corrections. The
+five rejections are not silence: each is either coverage debt on
+independently-verified-correct behaviour, a fix whose blast radius (frozen
+test files, or test churn across several non-frozen ones) exceeds what a
+Low with no live defect justifies, or work this task's own validation
+surface cannot credibly produce (a real throughput measurement, a PR body
+that does not exist yet).
+
+---
+
+## Branch review, final state (2026-08-31)
+
+The whole triage in one place, so the next reader does not have to
+reconstruct it from three separate sections.
+
+| Severity | Total | Fixed | Rejected |
+|---|---:|---:|---:|
+| Critical | 2 | 2 | 0 |
+| High | 12 | 12 | 0 |
+| Medium | 24 | 11 | 13 |
+| Low | 11 | 6 | 5 |
+| **Total** | **49** | **31** | **18** |
+
+Every finding at every severity has exactly one recorded outcome: fixed and
+mutation-proven, or rejected with evidence and a stated revisit condition.
+Nothing was left silent. Criticals and Highs were fixed in full, per this
+report's own verdict item 1 and 3 -- neither class is a judgement call on
+this branch's own irrecoverable-data-loss/security ranking. Mediums and Lows
+were triaged rather than zeroed out, which is the outcome CLAUDE.md's own
+doctrine asks for: fixing every Low to reach zero would itself have been the
+failure mode the doctrine warns about, the count becoming the goal rather
+than the code.
+
+**Still open, not this round's to close:**
+- The scope ESCALATE in arbitration A5 (whether FEAT-011 ships on this
+  branch at all) is a human decision above the accessibility line, per the
+  harness's own precedence order, and nothing in the Medium or Low rounds
+  resolves it.
+- Item 4 of the Verdict section: the Playwright E2E tier still needs a full
+  run by the person raising the PR, not only the touched-file sweeps each
+  triage round has run against its own changes.
+- Item 6: dependencies (Dependabot, `pip-audit`, Trivy, the lockfile) have
+  not been triaged by any round so far and remain the PR-raiser's
+  responsibility per §3a.
+- The pre-existing, unrelated E2E failure surfaced while proving L3 (see
+  above): `operator-replace-modal.spec.ts`'s "point 5" test still pins the
+  pre-M22 `cpSwap` behaviour and needs its own fix or removal.

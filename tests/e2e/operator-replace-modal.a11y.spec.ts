@@ -380,6 +380,74 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
   });
 
   // -------------------------------------------------------------------
+  // L3 (branch review 2026-08-31) / AC-A11Y-6: the confirm control must
+  // use aria-disabled, never the real `disabled` attribute, so it stays
+  // reachable by Tab both before a candidate is chosen AND while a
+  // replacement is in flight -- and the in-flight half must be provably
+  // in flight, not merely toggled instantly.
+  // -------------------------------------------------------------------
+  test('the confirm control is reachable by Tab before any candidate is chosen (AC-A11Y-6)', async ({ page }) => {
+    const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
+
+    // Deliberately nothing selected yet -- this is the state AC-A11Y-6
+    // exists for: `disabled` would remove the control from the tab order
+    // entirely here, so a keyboard user tabbing the dialog would meet
+    // Cancel and then wrap straight past it with no indication a
+    // selection was required.
+    const focusable = modal.locator(
+      'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
+    await expect(
+      confirmBtn,
+      'the confirm control must never carry the real disabled attribute -- aria-disabled only',
+    ).not.toHaveAttribute('disabled', /.*/);
+    const names = await focusable.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid') || el.tagName));
+    expect(
+      names,
+      'the confirm control must be present among the dialog\'s Tab-reachable elements even with nothing selected',
+    ).toContain('operator-replace-confirm');
+
+    await expect(confirmBtn, 'aria-disabled must be true while nothing is selected').toHaveAttribute('aria-disabled', 'true');
+  });
+
+  test('the confirm control keeps focus and reports aria-busy while a replacement is genuinely in flight (AC-A11Y-6)', async ({ page }) => {
+    // A route that does not resolve until this test explicitly lets it --
+    // otherwise the in-flight window is too narrow to reliably observe
+    // (a same-tick fulfil could settle before the assertions below run).
+    let releaseResponse: () => void = () => {};
+    const held = new Promise<void>((resolve) => { releaseResponse = resolve; });
+    await page.route(REPLACE_ROUTE, async (route) => {
+      await held;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"success":true}' });
+    });
+
+    const modal = await openReplaceModal(page, REVIEW_MOVIE_ID);
+    await modal.getByRole('radio', { name: CANDIDATES[0], exact: true }).click();
+
+    const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
+    await confirmBtn.focus();
+    await expect(confirmBtn).toBeFocused();
+    await page.keyboard.press('Enter');
+
+    // Still in flight: the fetch above is blocked on `held`, which this
+    // test has not resolved yet.
+    await expect(
+      confirmBtn,
+      'aria-busy must be true while the replacement request is in flight',
+    ).toHaveAttribute('aria-busy', 'true');
+    await expect(
+      confirmBtn,
+      'focus must stay on the confirm control while the replacement is in flight -- a native `disabled` attribute here would blur it to <body>',
+    ).toBeFocused();
+
+    releaseResponse();
+    await expect
+      .poll(async () => (await page.locator('[data-testid="toast-announcer-polite"]').textContent()) || '', { timeout: 5000 })
+      .toMatch(/replac/i);
+  });
+
+  // -------------------------------------------------------------------
   // Point 3: Escape closes the dialog and returns focus to the trigger,
   // never to <body>.
   // -------------------------------------------------------------------

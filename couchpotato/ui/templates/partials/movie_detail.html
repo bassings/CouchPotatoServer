@@ -496,13 +496,20 @@
                           class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">
                     Cancel
                   </button>
-                  <!-- aria-disabled, not `disabled`, for the in-flight
-                       state (same fix as confirmRestore() above): the
-                       browser blurs a focused element the moment it
-                       becomes disabled, and replacing() runs while this
-                       control is focused. `:disabled="!selected"` still
-                       uses the real attribute -- nothing is focused to
-                       lose before a candidate is chosen. -->
+                  <!-- L3 (branch review 2026-08-31) / AC-A11Y-6: aria-disabled,
+                       never the real `disabled` attribute, for BOTH reasons
+                       this control can be inert -- no candidate chosen yet,
+                       or a replacement already in flight. `disabled` removes
+                       an element from the tab order entirely, so before this
+                       fix a keyboard user tabbing the dialog met Cancel and
+                       then wrapped straight past this control with no
+                       indication a selection was required. aria-disabled
+                       keeps it reachable and its state announced, and
+                       confirmReplace()'s own re-entry guard
+                       (`if (this.replacing || !this.selected) return;`,
+                       below) is what actually stops the click, matching the
+                       pattern movie_cards.html's review controls already
+                       use. -->
                   <template x-if="!loading && !loadError && candidates.length > 0">
                     <!-- AC-A11Y-14: this is the control that commits the
                          deletion, so it carries the 44x44 floor rather than
@@ -513,11 +520,10 @@
                          AC-DESIGN-8 pins. -->
                     <button data-testid="operator-replace-confirm"
                             @click="confirmReplace()"
-                            :class="replacing ? 'opacity-50 cursor-wait' : ''"
+                            :class="replacing ? 'opacity-50 cursor-wait' : (!selected ? 'opacity-50 cursor-not-allowed' : '')"
                             :aria-busy="replacing ? 'true' : 'false'"
-                            :aria-disabled="replacing ? 'true' : 'false'"
-                            :disabled="!selected"
-                            class="min-h-11 min-w-11 px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 disabled:opacity-50">
+                            :aria-disabled="(replacing || !selected) ? 'true' : 'false'"
+                            class="min-h-11 min-w-11 px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15">
                       <span x-show="!replacing">Replace file</span>
                       <span x-show="replacing">Replacing…</span>
                     </button>
