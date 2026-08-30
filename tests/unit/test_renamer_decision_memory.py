@@ -26,10 +26,17 @@ Currently RED: nothing remembers anything yet, so `scan()` calls
 identical scans of one unchanged group currently ask the scanner five times.
 """
 import logging
+import os
+import subprocess
 
 import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
+
+REPO_ROOT = subprocess.run(
+    ['git', 'rev-parse', '--show-toplevel'],
+    capture_output=True, text=True, check=True,
+).stdout.strip()
 
 
 @pytest.fixture(autouse=True)
@@ -90,11 +97,18 @@ def world(tmp_path, monkeypatch):
         }
 
     scan_calls = {'scanner.scan': 0}
+    notify_calls = []
 
     def _fire(event, *args, **kwargs):
         if event == 'scanner.scan':
             scan_calls['scanner.scan'] += 1
             return {'group-1': _group()}
+        if event == 'notify':
+            # Captured, not asserted on by the original test -- this is
+            # binding decision 3's out-of-band surface (item 5): one
+            # fireEvent('notify', ...) per parked group, nothing more.
+            notify_calls.append(kwargs if kwargs else (args[0] if args else None))
+            return None
         return None
 
     monkeypatch.setattr(
@@ -119,6 +133,8 @@ def world(tmp_path, monkeypatch):
         'original_dst_bytes': original_dst_bytes,
         'original_src_bytes': original_src_bytes,
         'scan_calls': scan_calls,
+        'notify_calls': notify_calls,
+        'group_factory': _group,
     }
 
 
@@ -171,4 +187,256 @@ class TestAnUnchangedDeclinedGroupIsNotRescanned:
         assert open(world['src'], 'rb').read() == world['original_src_bytes'], (
             'the download was modified by a scan that should only ever '
             'have refused'
+        )
+
+
+class TestFolderScannerIsUntouched:
+    """AC-SIMP-2 / binding decision 1 -- the data-loss guard.
+
+    `folder_scanner.py` is shared with `manage.updateLibrary`, whose cleanup
+    at `manage.py:274-275` deletes any 'done' movie absent from the scan
+    result: the media document, its releases, watch history, tags, profile
+    and review state, with no backup taken automatically. Nothing about the
+    renamer's memory may ever change what that shared scanner returns.
+
+    This is a structural guard, not a missing-behaviour test: the diff is
+    genuinely empty right now, so this assertion PASSES today, by design.
+    Its value is as a tripwire for a LATER change, and CLAUDE.md's guard
+    doctrine (search "load-bearing") requires proving a guard by breaking
+    the thing it protects and watching the guard fail -- which means
+    editing `folder_scanner.py`, even transiently. That mutate-observe-
+    restore proof is deliberately NOT done in this step: this step writes
+    tests only and touches no production file. The proof belongs to the
+    step that commits this test.
+    """
+
+    def test_folder_scanner_has_no_diff_against_master(self):
+        result = subprocess.run(
+            ['git', 'diff', '--quiet', 'master', '--',
+             'couchpotato/core/plugins/scanner/folder_scanner.py'],
+            cwd=REPO_ROOT,
+        )
+        assert result.returncode == 0, (
+            'couchpotato/core/plugins/scanner/folder_scanner.py differs '
+            'from master. This module is shared with manage.updateLibrary, '
+            'whose cleanup deletes any "done" movie absent from the scan '
+            'result -- the one irrecoverable loss AC-SIMP-2 exists to '
+            'prevent. Run `git diff master -- '
+            'couchpotato/core/plugins/scanner/folder_scanner.py` to see '
+            'what changed.'
+        )
+
+
+class TestDestinationChangesInvalidateTheMemory:
+    """AC-QA-6 (a) and (b) / design constraint: "the destination appearing
+    or disappearing" must expire a remembered refusal.
+
+    Both scenarios below leave `world['downloads']` -- the folder the
+    memory actually fingerprints -- completely untouched; only the library
+    file at `world['dst']` changes. That is deliberate: it isolates the gap.
+    `_folderSignature` walks `scan_folder` (the downloads folder) only, so
+    today NOTHING about the destination feeds the remembered key, and a
+    destination change is invisible to it.
+
+    Sub-case (c), "a destination that did not exist and now does", is not
+    exercised here: every outcome in `REMEMBER_ELIGIBLE_OUTCOMES` is reached
+    only from inside `if os.path.exists(dst):` in `_moveRenamedFiles`
+    (main.py), so a remembered decision can only ever have been recorded
+    with the destination already present -- "appearing" cannot be a later
+    transition for an entry that already exists. It collapses into the
+    "changed in place" case below, which is exercised.
+    """
+
+    def test_destination_deleted_forces_a_redecide_and_files_the_download(
+        self, world, caplog,
+    ):
+        """AC-QA-6(a), the operator's actual remedy from the production
+        incident: they delete the stale library file so the download can
+        finally land. This must work on the next SCHEDULED scan, with no
+        restart -- a remedy that silently does nothing is worse than the
+        loop, because the operator believes it is handled."""
+        with caplog.at_level(logging.WARNING):
+            world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must park the group before this test '
+            'can prove anything about invalidating that park'
+        )
+
+        os.remove(world['dst'])
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            world['plugin'].scan(base_folder=world['downloads'])
+
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            'fireEvent("scanner.scan", ...) was not called again after the '
+            'blocking library file was deleted -- the memory kept treating '
+            'the group as unchanged because the destination is not part of '
+            'its fingerprint, so the operator\'s remedy from the '
+            'production incident (deleting the stale file) would silently '
+            'do nothing until the container is restarted'
+        )
+        assert os.path.exists(world['dst']), (
+            'the download was never filed even after the blocking '
+            'destination was cleared -- "already decided" outlived its '
+            'own cause'
+        )
+        assert open(world['dst'], 'rb').read() == world['original_src_bytes'], (
+            'a file exists at the destination but its bytes are not the '
+            'download -- the wrong thing landed there'
+        )
+
+    def test_destination_changed_in_place_forces_a_redecide(
+        self, world, caplog,
+    ):
+        """AC-QA-6(b): the file at the destination path is replaced with
+        different bytes at the same path, without ever disappearing. A
+        signature keyed only on the downloads folder cannot see this
+        either."""
+        with caplog.at_level(logging.WARNING):
+            world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must park the group before this test '
+            'can prove anything about invalidating that park'
+        )
+
+        world['dst'] and open(world['dst'], 'wb').write(
+            b'a different library file entirely, same path' * 10
+        )
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING):
+            world['plugin'].scan(base_folder=world['downloads'])
+
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            'fireEvent("scanner.scan", ...) was not called again after the '
+            'destination file at the same path was replaced with '
+            'different bytes -- an in-place destination change is '
+            'invisible to a signature keyed only on the downloads folder'
+        )
+
+
+class TestBoundedLogHoldsIndependentlyOfMemory:
+    """AC-OPS-3 restated, with the memory out of the picture entirely.
+
+    FEAT-009B already required this exact bound once (its AC-OPS-6) and
+    shipped unmet -- measured at 40 records for 20 calls, growing linearly
+    -- because the bound was only ever proven on a path that happened to go
+    through `log_suppressed`. `_moveRenamedFiles` is also reachable through
+    a TARGETED scan (`media_folder` / `release_download`), which per D8
+    neither reads nor writes the memory at all, so the backstop must hold
+    on its own. This test calls `_moveRenamedFiles` directly, bypassing
+    `scan()` and the memory completely.
+    """
+
+    def test_an_unchanged_collision_does_not_grow_the_log_linearly(
+        self, world, caplog,
+    ):
+        group = world['group_factory']()
+        rename_files = {world['src']: world['dst']}
+
+        with caplog.at_level(logging.INFO):
+            for _ in range(20):
+                world['plugin']._moveRenamedFiles(rename_files, group)
+
+        records = [
+            r for r in caplog.records if r.levelno >= logging.INFO
+        ]
+        assert records, (
+            'the refusal never logged at all, so this run proves nothing '
+            'about a bound -- the decision path itself was never reached'
+        )
+        assert len(records) <= 4, (
+            '_moveRenamedFiles produced %d records at INFO or above for '
+            '20 direct calls against one completely unchanged collision, '
+            'with the per-folder memory never involved. AC-OPS-3 requires '
+            'this bound to hold independently of the memory -- exactly '
+            'what FEAT-009B already required and shipped unmet, measured '
+            'then at 40 records for 20 calls -- because the refusal record '
+            'in _moveRenamedFiles is a plain log.warning/log.info, not '
+            'wrapped in the existing log_suppressed helper.' % len(records)
+        )
+
+
+class TestParkedGroupIsDiscoverableViaNotify:
+    """Binding decision 3 / AC-OPS-5 / AC-SEC-8 (item 5): entering a parked
+    state must fire exactly one fireEvent('notify', ...), using the
+    existing durable notification document and the existing
+    notification.list API, so the film is discoverable without reading the
+    log. No new route, template or setting.
+
+    Currently RED: nothing in the renamer fires 'notify' at all, at any
+    point, so a parked film is discoverable nowhere but the log -- which is
+    exactly what AC-OPS-4's bounded restatement means an operator will not
+    be reading in real time.
+    """
+
+    def test_notify_fires_once_on_park_and_not_again_on_repeat_scans(
+        self, world,
+    ):
+        for _ in range(3):
+            world['plugin'].scan(base_folder=world['downloads'])
+
+        assert world['notify_calls'], (
+            'fireEvent("notify", ...) was never called across 3 scans of '
+            'a group parked as declined_unverified_identity. Binding '
+            'decision 3 requires exactly one notify per parked group so '
+            'the film is discoverable through notification.list without '
+            'reading the log; today it is discoverable nowhere but the '
+            'log.'
+        )
+        assert len(world['notify_calls']) == 1, (
+            'fireEvent("notify", ...) fired %d times across 3 scans of '
+            'one unchanged parked group; it must fire exactly once, on '
+            'entering the parked state, not once per scan -- otherwise '
+            'this recreates the production flood in a different channel.'
+            % len(world['notify_calls'])
+        )
+
+
+class TestRestartRedecides:
+    """AC-SEC-5 / AC-SIMP-5 / item 3: a process restart is the operator's
+    cheapest correct remedy, and it must re-decide -- a memory that
+    survives a restart removes the one action a human would expect to
+    clear a stuck state. Nothing is persisted (AC-SIMP-5): the memory is
+    plain state on the `Renamer` instance, never written through `get_db()`
+    or `Env`, so a freshly constructed instance -- standing in for the
+    process that comes back after a restart -- must know nothing about a
+    folder an EARLIER instance parked.
+    """
+
+    def test_a_freshly_constructed_renamer_redecides_a_folder_parked_by_another_instance(
+        self, world,
+    ):
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must park the group before this test '
+            'can prove anything about a restart clearing it'
+        )
+
+        # Confirm the ORIGINAL instance really did park it (a second scan on
+        # the same instance must stay skipped), or the "restart" half below
+        # would prove nothing -- a memory that never held anything trivially
+        # "survives" no restart.
+        world['plugin'].scan(base_folder=world['downloads'])
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the original instance did not actually park the '
+            'group -- it re-asked the scanner on an unchanged repeat scan, '
+            'so this test cannot isolate what a restart does'
+        )
+
+        # `conf`/`shuttingDown` were monkeypatched onto the CLASS
+        # (`type(plugin)`), so a second instance inherits them without
+        # redoing any of that wiring -- exactly as a real restart would
+        # reconstruct the plugin against the same settings.
+        restarted = Renamer.__new__(Renamer)
+        restarted.scan(base_folder=world['downloads'])
+
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            'a freshly constructed Renamer, standing in for the process '
+            'coming back after a restart, did not re-decide a folder '
+            'parked by a DIFFERENT (the pre-restart) instance -- if the '
+            'memory is somehow surviving across instances, a stuck '
+            'refusal would outlive the one remedy an operator expects a '
+            'restart to provide'
         )

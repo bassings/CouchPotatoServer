@@ -135,6 +135,72 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         (AC-QA-7)."""
         return tuple(self.conf(key) for key in self.DECISION_MEMORY_SETTINGS)
 
+    @staticmethod
+    def _destinationSignature(paths):
+        """A cheap fingerprint of the destination paths a remembered
+        decision was recorded against: whether each one exists, and if so
+        its size and mtime. `_folderSignature` only ever walks the
+        DOWNLOADS folder, so a change on the library side -- the operator
+        deleting the stale file that was blocking a park, or replacing it
+        in place -- is otherwise invisible to the memory (AC-QA-6). A path
+        that cannot be stat-ed is recorded as `(path, None, None)` rather
+        than skipped, so "missing" and "present with these bytes" are never
+        confused with each other.
+        """
+        entries = []
+        for path in paths:
+            try:
+                stat_result = os.stat(path)
+            except OSError:
+                entries.append((path, None, None))
+            else:
+                entries.append((path, stat_result.st_size, stat_result.st_mtime_ns))
+        # Sorted so the comparison does not depend on dict/set ordering --
+        # `paths` is built from `rename_files.items()`, whose order is not a
+        # contract worth relying on here. Safe to sort tuples of mixed
+        # None/int in the trailing positions because every leading `path`
+        # is unique, so comparison never falls through to them.
+        return tuple(sorted(entries))
+
+    def _notifyParked(self, group, outcome):
+        """Binding decision 3: entering a parked state fires exactly one
+        `fireEvent('notify', ...)`, using the existing durable notification
+        document and the existing `notification.list` API -- no new route,
+        template or setting. So a parked film is discoverable without
+        reading the log, which is what AC-OPS-4's bounded restatement means
+        an operator will not be doing in real time.
+
+        Deduplicated on `(media id, outcome)` for the life of the process:
+        process-local only, like the rest of this memory (AC-SIMP-5), never
+        written through `get_db()` or `Env` itself. Re-entering the SAME
+        parked state on a later scan -- whether because the memory skipped
+        the folder outright, or because it was invalidated and re-decided
+        onto the same outcome -- fires nothing further (AC-OPS-5); a
+        DIFFERENT outcome for the same media is a new park and notifies
+        again.
+        """
+        media_id = (group.get('media') or {}).get('_id')
+        key = (media_id, outcome)
+
+        if getattr(self, '_notified_parked', None) is None:
+            self._notified_parked = set()
+        if key in self._notified_parked:
+            return
+        self._notified_parked.add(key)
+
+        from couchpotato.core.helpers.variable import getTitle
+        library = (group.get('media') or {}).get('info', {})
+        media_title = getTitle(library) or group.get('dirname') or 'Unknown'
+
+        # No absolute path in the message (AC-SEC-8): `media_title` and
+        # `outcome` are both TMDB/decision metadata, never a filesystem
+        # path, matching the WARNING record this restates.
+        fireEvent(
+            'notify',
+            message='"%s" is parked and needs a look: %s' % (media_title, outcome),
+            data={'media_id': media_id, 'outcome': outcome},
+        )
+
     def scan(self, base_folder=None, media_folder=None, release_download=None, async_call=False):
         """Scan the from-folder and rename/move completed downloads.
 
@@ -205,6 +271,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         and current_signature is not None
                         and remembered['source_signature'] == current_signature
                         and remembered['settings_signature'] == current_settings
+                        and self._destinationSignature(remembered['destination_paths'])
+                            == remembered['destination_signature']
                     ):
                         # Nothing on disk or in the settings that feed the
                         # decision has changed since every group here was
@@ -238,6 +306,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # for the rest of this scan, so one unresolved group cannot
                 # let the whole folder be remembered as settled.
                 all_remember_eligible = bool(groups)
+                # Destination paths behind every group this scan decided to
+                # park, so the NEXT scan can cheaply re-stat exactly those
+                # paths and notice a deleted or replaced library file before
+                # it ever trusts the memory (AC-QA-6). Only ever populated
+                # from a fully eligible group -- see below -- because the
+                # memory is keyed on the whole folder, not per group.
+                destination_paths = []
                 for group_identifier, group in groups.items():
                     if self.shuttingDown():
                         all_remember_eligible = False
@@ -251,17 +326,37 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         all_remember_eligible = False
                         continue
 
-                    if not outcomes or any(
-                        outcome not in self.REMEMBER_ELIGIBLE_OUTCOMES
-                        for outcome in outcomes
-                    ):
+                    if not outcomes:
+                        all_remember_eligible = False
+                        continue
+
+                    group_eligible = True
+                    for outcome, dst in outcomes:
+                        if outcome in self.REMEMBER_ELIGIBLE_OUTCOMES:
+                            # Binding decision 3: the film is discoverable
+                            # through notification.list the moment it is
+                            # parked, without reading the log. Fires at most
+                            # once per (media, outcome) for the life of the
+                            # process -- deduplicated inside the method --
+                            # so repeated scans of an unchanged park, and
+                            # repeated re-decides that land on the same
+                            # outcome, never re-fire it.
+                            self._notifyParked(group, outcome)
+                        else:
+                            group_eligible = False
+                    if group_eligible:
+                        destination_paths.extend(dst for _outcome, dst in outcomes)
+                    else:
                         all_remember_eligible = False
 
                 if not targeted:
                     if all_remember_eligible and current_signature is not None:
+                        destination_paths = tuple(sorted(set(destination_paths)))
                         self._decision_memory[scan_folder] = {
                             'source_signature': current_signature,
                             'settings_signature': current_settings,
+                            'destination_paths': destination_paths,
+                            'destination_signature': self._destinationSignature(destination_paths),
                             'group_count': len(groups),
                         }
                     else:
@@ -313,21 +408,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         skipped = False
         moved_any = False
-        # One entry per (src, dst) pair handled below, in the order they
-        # are processed. `scan()` reads this back to decide whether the
-        # group's decision is safe to remember (AC-QA-9): only when it is
-        # non-empty and every entry is one of `REMEMBER_ELIGIBLE_OUTCOMES`.
-        # `None` marks a pair that was not a DECLINED_* refusal at all -- a
-        # missing source, an ordinary move, or a failed move -- and, like
-        # `REPLACE` itself, always makes the whole group ineligible to
-        # remember.
+        # One `(outcome, dst)` entry per (src, dst) pair handled below, in
+        # the order they are processed. `scan()` reads this back to decide
+        # whether the group's decision is safe to remember (AC-QA-9): only
+        # when it is non-empty and every outcome is one of
+        # `REMEMBER_ELIGIBLE_OUTCOMES`, and it reads `dst` off the eligible
+        # entries to know which library paths a remembered park depends on
+        # (AC-QA-6). `outcome=None` marks a pair that was not a DECLINED_*
+        # refusal at all -- a missing source, an ordinary move, or a failed
+        # move -- and, like `REPLACE` itself, always makes the whole group
+        # ineligible to remember.
         outcomes = []
 
         for src, dst in rename_files.items():
             if not os.path.exists(src):
                 log.warning('Source file does not exist: %s', src)
                 skipped = True
-                outcomes.append(None)
+                outcomes.append((None, dst))
                 continue
 
             if os.path.exists(dst):
@@ -439,7 +536,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                             src, dst, (group.get('media') or {}).get('_id'),
                         )
                         moved_any = True
-                        outcomes.append(REPLACE)
+                        outcomes.append((REPLACE, dst))
                         continue
                     # The swap refused or failed. The library file is intact
                     # and a complete copy of the download survives -- swap.py
@@ -462,31 +559,51 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # that ships and rotates unattended, so it names the media and
                 # the decision. DEBUG is the level somebody turns on while
                 # actually diagnosing a collision, and it gets the path.
-                log.warning(
+                #
+                # AC-OPS-3: bounded by `log_suppressed` independently of the
+                # memory above. FEAT-009B already required this exact bound
+                # once (its AC-OPS-6) and shipped unmet -- measured at 40
+                # records for 20 calls, growing linearly -- because the bound
+                # was proven only on a path that happened to go through
+                # `log_suppressed` elsewhere. This method is also reachable
+                # through a TARGETED scan, which per D8 never touches the
+                # memory at all, so the backstop has to hold on its own.
+                media_id = (group.get('media') or {}).get('_id')
+                log_suppressed(
+                    log.warning,
+                    'renamer_collision:%s:%s' % (media_id, outcome),
                     'Destination already exists, keeping it: media %s '
                     '(upgrade decision: %s)',
-                    (group.get('media') or {}).get('_id'), outcome,
+                    media_id, outcome,
                 )
                 log.debug('The collided destination was: %s', dst)
                 skipped = True
-                outcomes.append(outcome)
+                outcomes.append((outcome, dst))
                 continue
 
             try:
                 self.moveFile(src, dst, use_default = True)
                 log.info('Moved: %s -> %s', os.path.basename(src), dst)
                 moved_any = True
-                outcomes.append(None)
+                outcomes.append((None, dst))
             except Exception as e:
                 log.error('Failed to move %s: %s', src, e)
                 skipped = True
-                outcomes.append(None)
+                outcomes.append((None, dst))
 
         # Never delete the source folder when anything was left behind. This is
         # the data-loss half: previously a skipped move was followed by cleanup,
         # so the file the user had just downloaded was skipped AND destroyed.
         if skipped:
-            log.info('Leaving source folder in place: not every file was moved')
+            # DEBUG, not INFO: the WARNING above (or the "source file does
+            # not exist" / "failed to move" record for whichever pair
+            # skipped) already names the reason at a level that ships and
+            # rotates unattended. Restating "not every file was moved" at
+            # INFO on every one of those calls was the other half of the
+            # AC-OPS-3 baseline (40 records for 20 calls: 20 WARNING plus 20
+            # of this line), and it carries no information the caller does
+            # not already have.
+            log.debug('Leaving source folder in place: not every file was moved')
             return outcomes
 
         if moved_any and self.conf('cleanup', default = True):
