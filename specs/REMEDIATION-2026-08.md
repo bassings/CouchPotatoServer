@@ -3547,7 +3547,50 @@ Conductor checklist. States: `queued -> building -> pr-open #N -> awaiting-ci #N
       should write one check, not two. Prove it by adding the link back and
       watching it fail.
 
-- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64, T65, T66 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
+- [ ] T67: the HTTP response cache silently stores nothing (state: queued, no deps) **performance, resource use**
+
+      Every provider response fetched through `getJsonData` / `getRSSData` is
+      dropped by the cache instead of stored, and the failure is invisible.
+
+      `HTTPClient.request` returns **bytes** (its own docstring says so).
+      `SQLiteCache.set` does `json.dumps(value)`, which raises `TypeError` on
+      bytes, catches it, logs at `log.debug` and returns. Nothing above it can
+      tell a skipped write from a successful one, so every subsequent read
+      misses and refetches.
+
+      Proven by executing the real class, not by reading it:
+
+          bytes (what urlopen returns)  -> cached? False
+          str                           -> cached? True
+          dict                          -> cached? True
+
+      Consistent with production: `data/cache/python/cache.db` held 122
+      entries, all written by call sites that pass a dict or a string, none
+      live at the time of measurement. It is not that caching is broken in
+      general, it is that the HTTP bodies it exists to hold never reach it.
+
+      Found while measuring the renamer loop (FEAT-012), where a TMDB search
+      was refetched on all ~1,100 polls instead of once. **The scope is much
+      wider than that one path**: this silently disables HTTP response caching
+      for every provider in the application, which is why it is its own task
+      and explicitly out of FEAT-012's scope.
+
+      **Do not fix it by making the cache accept bytes without deciding what
+      the stored form should be.** The class stores JSON deliberately, to avoid
+      the pickle deserialisation CVE that got `diskcache` removed
+      (`couchpotato/core/cache.py:1-11`), so any fix must keep the stored form
+      inspectable and must not reintroduce arbitrary object deserialisation.
+      Decoding at the boundary and storing text is the obvious candidate; the
+      encoding question needs answering rather than assuming utf-8.
+
+      **The silent-skip is the real defect and outlives whatever fix is
+      chosen.** A cache that cannot store a value should say so at a level
+      somebody sees, or the next type it cannot serialise repeats this exactly.
+      Prove the fix by asserting a stored-then-read round trip for the type
+      `urlopen` actually returns, and prove the guard by passing a type that
+      genuinely cannot be stored and watching it complain.
+
+- [ ] T18: a final sweep for dead code, dead docs and dead instructions — state: queued (needs: **every other open task** — T6, T7, T8, T11, T15, T20, T21, T23, T25, T32, T34, T37, T38, T39, T40, T41, T43, T45, T49, T50, T54, T55, T58, T59, T60, T61, T62, T64, T65, T66, T67 — because each adds residue and several rewrite the code this would sweep. Deliberately phrased as "every other open task" FIRST and enumerated second: the list has now gone stale FOUR times by enumeration alone (count reconciled 2026-08-19; the running total in this clause had itself gone stale, which review caught). T19 was omitted by the very commit that wrote this line; T20, T21 and T22 were then added by later tasks and omitted again, caught in review of #249 — which is the same failure this parenthesis already described, reproduced while describing it. T13, T14, T17, T19 and T22 have since merged and are dropped from the list. T29 and T30 closed by removal (2026-08-12), not by a fix, and are dropped too. **Third incident, 2026-08-19, and both directions at once:** the commit that ticked T36 left it named here as open, and the same commit added T45 without listing it. Caught in review, not by the author — which is the third time this parenthesis has been proved right by the commit editing it. The enumeration is the defect; the phrase "every other open task" is the contract, and any reader should trust that phrase over the list that follows it. **That advice is now out of date in one direction and worth reading with the correction:** since 2026-08-19 the list is the machine-checked artefact, pinned in both directions by `tests/unit/test_plan_needs_list.py`, while the phrase is the half nothing verifies. The task-line format `- [ ] Tn:` is load-bearing to that check, so anyone reformatting a task line must change the test in the same commit or silently blind it.)
       **Add to its scope (2026-08-18):** citations that rot. This session
       converted three-line-number citations into a third-party package and
       several stale line references into symbol citations, for one reason:
