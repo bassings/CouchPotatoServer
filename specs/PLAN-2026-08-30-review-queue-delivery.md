@@ -40,8 +40,10 @@ automatic beta runs unattended.
 - [x] T5e: FEAT-011c, wire the modal to the listing and the submit — state: built (4051c2c1)
 - [x] T5c: FEAT-011c, accessibility and mobile specs for the modal — state: built (ccdf6229)
 - [x] T6: whole-branch multi-lens review cycle — state: done (2 Critical, 12 High, 24 Medium, 11 Low)
-- [ ] T7a: fix C1 and C2, the two criticals — state: building
-- [ ] T7b: fix the 12 High findings — state: queued (needs: T7a)
+- [x] T7a: fix C1 and C2, the two criticals — state: done (500b2dc6), both mutation-proven
+- [ ] T7b1: H1, H3, H8, H9, H10, the operator path — state: building
+- [ ] T7b2: H4, H5, H6, H7, the decision memory — state: queued (needs: T7b1)
+- [ ] T7b3: H2, H11, H12, the UI and its incidentally-passing tests — state: queued (needs: T7b2)
 - [ ] T7c: triage Medium and Low, fix or record with evidence — state: queued (needs: T7b)
 - [ ] T8: full `make verify`, push, open the PR — state: queued (needs: T7)
 - [ ] T9: CI green, resolve threads, merge to master — state: queued (needs: T8)
@@ -394,3 +396,23 @@ changes for the operator. **Then stop and hand it over.**
   that the local branch ref was deleted and recreated beneath it by another
   session. That is a process defect independent of the code.
   Rework rounds: T7a is round 1 of the fix loop.
+- **Tick 20, 2026-08-31. BOTH CRITICALS FIXED AND MUTATION-PROVEN** (`500b2dc6`).
+  C2's fix is the right shape rather than a patch: the file's size is now
+  recorded WHEN THE CANDIDATE LIST IS PRODUCED, which is the moment the
+  operator actually sees and chooses it, and compared against that at
+  execution. Neutering the comparison fails the new test; the identical
+  rewrite left all 36 operator tests green before.
+  C1 reuses the origin helper that already existed, via a named set of routes
+  requiring the check, rather than a second mechanism that would drift.
+  Removing `renamer.operator_replace` from that set fails two tests while the
+  candidates route stays covered, so the probe discriminates.
+  T7b split into three by the files they touch, to avoid the same-file
+  conflicts that forced serial ordering earlier. T7b1 launched.
+  **H9 is the finding I would most want fixed if only one could be:** the
+  confirmation for an irreversible deletion names NEITHER the file it will
+  destroy NOR the file it will install, and no size on either side. The whole
+  point of that dialogue was to say what is about to be lost.
+  **H3 is another deleted-guard-stays-green case:** the check that stops a
+  replacement destroying the wrong half of a multi-file release has no test,
+  and the reviewer removed the guard with the entire suite still passing.
+  Rework rounds: T7a 1 (round 1 of the fix loop, no regressions introduced).
