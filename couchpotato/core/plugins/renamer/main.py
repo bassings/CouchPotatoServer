@@ -27,6 +27,7 @@ from couchpotato.core.plugins.renamer.replacement import (
 )
 from couchpotato.core.plugins.renamer.swap import (
     REFUSED_NO_SOURCE,
+    REFUSED_SOURCE_CHANGED,
     identity_of,
     replace_atomically,
 )
@@ -1269,13 +1270,29 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         if not self._destinationIsInsideTheLibrary(destination):
             return DECLINED_OUTSIDE_LIBRARY, None
 
-        # The picker's OWN measurement, taken here, immediately before it
-        # is handed to the swap -- never a value trusted from an earlier
-        # step or from the caller.
+        # C2: refuse against the size recorded when the operator's
+        # candidate listing was produced, not against a second stat of
+        # THIS SAME file taken microseconds later -- two fresh
+        # measurements of one file can never disagree, whatever it has
+        # done since the operator actually looked at it. Same shape as
+        # the automatic path's `_sourceStillMatchesTheScan`: the figure
+        # compared against comes from an earlier, independent point in
+        # time.
+        #
+        # No recorded entry (a caller that never went through
+        # `_listOperatorCandidates`, as most of this file's own unit
+        # tests do not) is not the same as "unchanged" -- there is
+        # nothing to compare against, so this falls back to the single
+        # fresh measurement it always took.
         try:
             expected_source_size = os.path.getsize(source)
         except OSError:
             return REFUSED_NO_SOURCE, None
+
+        recorded_size = getattr(self, '_operator_candidate_sizes', None) or {}
+        decision_time_size = recorded_size.get(source_name)
+        if decision_time_size is not None and decision_time_size != expected_source_size:
+            return REFUSED_SOURCE_CHANGED, None
 
         incoming_quality = fireEvent(
             'quality.guess', files=[source],
@@ -1386,6 +1403,12 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         with something else touching the folder) is excluded rather than
         aborting the whole listing -- a production watch folder holds
         files the operator does not fully control.
+
+        Also the operator's decision moment for C2: each offered entry's
+        size is recorded on `self._operator_candidate_sizes`, keyed by the
+        same bare name returned here, so `_runOperatorReplacement` can
+        later refuse a source that grew or shrank since this listing was
+        produced instead of comparing a fresh stat against itself.
         """
         watch = self.conf('from')
         if not watch:
@@ -1397,16 +1420,24 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return []
 
         candidates = []
+        sizes = {}
         for name in entries:
             try:
                 if not os.path.isfile(os.path.join(watch, name)):
                     continue
             except OSError:
                 continue
-            if self._resolveOperatorSource(name) is None:
+            resolved = self._resolveOperatorSource(name)
+            if resolved is None:
+                continue
+            try:
+                size = os.path.getsize(resolved)
+            except OSError:
                 continue
             candidates.append(name)
+            sizes[name] = size
 
+        self._operator_candidate_sizes = sizes
         return candidates
 
     def _disposeOfOperatorSource(self, source, media_id=None):

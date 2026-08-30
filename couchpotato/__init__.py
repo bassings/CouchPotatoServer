@@ -828,6 +828,24 @@ def _cross_origin_post(request) -> bool:
     return urlparse(stated).netloc not in known
 
 
+# Dynamic `addApiView` routes whose action is destructive or discloses
+# filesystem contents, so a cross-origin caller must never reach them --
+# see C1 in the branch review. `_cross_origin_post` was written for the
+# logout POST, but the check itself is method-agnostic (it only looks at
+# headers), so it applies unchanged here even though both of these routes
+# are reachable as a plain GET as well as a POST.
+#
+# `renamer.operator_replace` permanently deletes a media file with no
+# undo; `renamer.operator_candidates` lists the contents of the operator's
+# download folder. Neither is protected by CORS -- a bare GET triggers no
+# preflight -- and both carry the api_key in the URL, which every rendered
+# page already embeds verbatim (see the comment above `create_app`).
+ORIGIN_CHECKED_API_ROUTES = frozenset({
+    'renamer.operator_replace',
+    'renamer.operator_candidates',
+})
+
+
 def session_cookie_attributes() -> dict:
     """The ONE source of the session cookie's attributes, set and delete alike.
 
@@ -1198,6 +1216,25 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         route = route.strip('/')
         if not route:
             return RedirectResponse(url=web_base + 'docs/')
+
+        if route in ORIGIN_CHECKED_API_ROUTES and _cross_origin_post(request):
+            # WARNING, and it names both values, matching the logout route:
+            # a bare 403 with nothing in the log is how a stripped or
+            # rewritten proxy header turns into a silent, unexplained
+            # refusal for the operator.
+            log.warning('Refused a cross-origin request to "%s" whose '
+                        'Origin/Referer (%s) does not match this server '
+                        '(Host %s, X-Forwarded-Host %s). If this is your '
+                        'own reverse proxy, set it to forward the original '
+                        'host.',
+                        route,
+                        request.headers.get('origin') or request.headers.get('referer'),
+                        request.headers.get('host'),
+                        request.headers.get('x-forwarded-host'))
+            return JSONResponse(
+                content={'success': False, 'error': 'Cross-origin request refused'},
+                status_code=403,
+            )
 
         # Serve cached files (posters, etc.) directly
         if route.startswith('file.cache/'):
