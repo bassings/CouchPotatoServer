@@ -1,5 +1,6 @@
 """Main Renamer class combining all mixin functionality."""
 import hashlib
+import inspect
 import os
 import threading
 import time
@@ -157,6 +158,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: to a filesystem root.
     FOLDER_SIGNATURE_MAX_ENTRIES = 20000
 
+    #: P1 (branch review 2026-08-31). `folder_scanner.py:183-188`
+    #: (`checkFilesChanged`) silently drops any group whose files are
+    #: still settling, using this many seconds as its window
+    #: (`unchanged_for`'s default, couchpotato/core/plugins/base.py:352).
+    #: Read straight from that default rather than repeated here as a
+    #: second literal 60, so `_folderHasSettlingFiles` below cannot drift
+    #: out of sync with the window `checkFilesChanged` actually applies.
+    SETTLING_WINDOW_SECONDS = inspect.signature(
+        Plugin.checkFilesChanged
+    ).parameters['unchanged_for'].default
+
     def __init__(self):
 
         addApiView('renamer.scan', self.scanView, docs={
@@ -290,6 +302,52 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         except OSError:
             return None
         return frozenset(entries)
+
+    def _folderHasSettlingFiles(self, scan_folder):
+        """True when any file under `scan_folder` has an mtime inside the
+        same settling window `checkFilesChanged` uses
+        (`SETTLING_WINDOW_SECONDS`, mirroring `unchanged_for`'s default in
+        `checkFilesChanged`, couchpotato/core/plugins/base.py:352) -- i.e.
+        the file could still be mid-write by a download client.
+
+        This exists because `folder_scanner.py:183-188` silently drops any
+        group `checkFilesChanged` flags as too new: the group is simply
+        absent from `scanner.scan`'s result, logged only at INFO. That
+        file cannot be touched here (`TestFolderScannerIsUntouched` pins
+        an empty diff against master -- it is shared with
+        `manage.updateLibrary`, whose cleanup deletes any 'done' movie
+        absent from the scan result), so the renamer has to notice a
+        settling file for itself, straight off the filesystem, rather than
+        trusting that the scan it just ran saw everything under
+        `scan_folder`.
+
+        Bounded exactly like `_folderSignature`, against the same
+        `FOLDER_SIGNATURE_MAX_ENTRIES` cap, and fails open the same way an
+        unmeasurable folder does there -- but "open" means the opposite
+        conclusion here. `_folderSignature` fails open to `None`, which
+        forces a re-decide. This fails open to `True`, which blocks
+        recording the decision: the cost of not remembering is a repeated
+        scan, the cost of wrongly remembering is a film that is never
+        processed.
+        """
+        now = time.time()
+        seen = 0
+        try:
+            for root, _dirs, files in os.walk(scan_folder):
+                for name in files:
+                    if seen >= self.FOLDER_SIGNATURE_MAX_ENTRIES:
+                        return True
+                    seen += 1
+                    full = os.path.join(root, name)
+                    try:
+                        mtime = os.path.getmtime(full)
+                    except OSError:
+                        return True
+                    if mtime > now - self.SETTLING_WINDOW_SECONDS:
+                        return True
+        except OSError:
+            return True
+        return False
 
     def _settingsSignature(self):
         """A snapshot of the settings that feed the replacement decision,
@@ -570,7 +628,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         all_remember_eligible = False
 
                 if not targeted:
-                    if all_remember_eligible and current_signature is not None:
+                    if (
+                        all_remember_eligible
+                        and current_signature is not None
+                        and not self._folderHasSettlingFiles(scan_folder)
+                    ):
                         destination_paths = tuple(sorted(set(destination_paths)))
                         self._rememberDecision(scan_folder, {
                             'source_signature': current_signature,
@@ -580,10 +642,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                             'group_count': len(groups),
                         })
                     else:
-                        # Something this scan was not safely parkable, or
-                        # the folder could not be fingerprinted -- forget any
-                        # earlier memory for it rather than risk vouching for
-                        # a folder that no longer matches what was recorded.
+                        # Something this scan was not safely parkable, the
+                        # folder could not be fingerprinted, or a file
+                        # under it is still inside the settling window --
+                        # this scan cannot have seen everything
+                        # folder_scanner would eventually report for it
+                        # (folder_scanner.py:183-188 silently drops a
+                        # settling group). Forget any earlier memory for
+                        # it rather than risk vouching for a folder that no
+                        # longer matches what was recorded.
                         self._decision_memory.pop(scan_folder, None)
 
             except Exception:

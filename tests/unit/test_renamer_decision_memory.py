@@ -28,6 +28,7 @@ identical scans of one unchanged group currently ask the scanner five times.
 import logging
 import os
 import subprocess
+import time
 
 import pytest
 
@@ -80,6 +81,15 @@ def world(tmp_path, monkeypatch):
     group_folder.mkdir()
     src = group_folder / 'movie.mkv'
     src.write_bytes(b'incoming download bytes' * 100)
+    # Backdated well outside the default 60-second settling window that
+    # `checkFilesChanged` uses (couchpotato/core/plugins/base.py:352,
+    # `unchanged_for=60`). A file this fixture just wrote otherwise has
+    # "now" as its mtime, which is INSIDE that window by construction --
+    # every test below that expects a decision to be recorded relies on
+    # the settling-window guard (TestSettlingFilesBlockRecording) never
+    # firing for this baseline file.
+    settled_time = time.time() - 3600
+    os.utime(str(src), (settled_time, settled_time))
 
     library = tmp_path / 'library'
     library.mkdir()
@@ -913,3 +923,132 @@ class TestFolderSignatureIsBoundedAgainstAnArbitraryCallerSuppliedFolder:
             'OVERSIZED folder, never a normal one'
         )
         assert len(result) == 1
+
+
+class TestSettlingFilesBlockRecording:
+    """The P1 review finding: `folder_scanner.py:183-188`
+    (`checkFilesChanged`, default `unchanged_for=60`,
+    couchpotato/core/plugins/base.py:352) SILENTLY DROPS any group whose
+    files are still settling -- it logs at info and `continue`s, so the
+    dict `scanner.scan` returns simply omits that group. `_folderSignature`
+    walks the same folder on disk and has no such filter, so it DOES
+    include the too-new file's size and mtime.
+
+    Consequence: a folder holding one parked collision plus a newly
+    completed download gets memorised from a scan that never saw the new
+    group. Once the new file's mtime stops changing, the recorded
+    signature keeps matching on every later scheduled scan, so the memory
+    is trusted forever and the completed film is never processed -- the
+    exact production symptom (a downloaded film that never appears) this
+    feature exists to fix, reintroduced by the fix itself.
+
+    `folder_scanner.py` cannot be touched (`TestFolderScannerIsUntouched`
+    above pins an empty diff against master -- it is shared with
+    `manage.updateLibrary`, whose cleanup deletes any 'done' movie absent
+    from the scan result), so the renamer must detect "something under
+    `scan_folder` is still settling" for itself, entirely from the real
+    filesystem, using the same window `checkFilesChanged` uses.
+
+    Currently RED: nothing checks this, so a settling file changes the
+    folder signature (forcing a rescan, which is unrelated to this defect)
+    but does not stop the resulting decision from being recorded.
+    """
+
+    @staticmethod
+    def _add_settling_file(scan_folder):
+        """A second release landing in the same watch folder while still
+        being written. Freshly created, its mtime is "now" -- inside the
+        default 60-second settling window by construction, with no need
+        to fake the clock. It is never referenced by the stubbed
+        `scanner.scan` (the `world` fixture always returns the one
+        `group-1` collision regardless of what is actually on disk), which
+        is deliberate: this pins the RENAMER's own guard, not
+        `folder_scanner`'s real drop behaviour, which is untouchable and
+        already covered by the empty-diff guard above."""
+        new_release = os.path.join(scan_folder, 'New.Release.2020.1080p-GRP')
+        os.makedirs(new_release)
+        with open(os.path.join(new_release, 'movie.mkv'), 'wb') as fh:
+            fh.write(b'still being written by the download client' * 5)
+
+    def test_a_settling_file_blocks_recording_and_forgets_any_earlier_memory(
+        self, world,
+    ):
+        scan_folder = world['downloads']
+        plugin = world['plugin']
+
+        # Baseline: nothing under scan_folder is inside the settling
+        # window (the fixture backdates `src` for exactly this reason), so
+        # this scan records the decision normally -- the behaviour this
+        # fix must not disturb.
+        plugin.scan(base_folder=scan_folder)
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must record the decision before this '
+            'test can prove anything about a later scan failing to keep '
+            'or overwrite it'
+        )
+        assert scan_folder in plugin._decision_memory, (
+            'setup: nothing was recorded after the baseline scan, so this '
+            'test cannot isolate what a settling file does to that memory'
+        )
+
+        self._add_settling_file(scan_folder)
+
+        plugin.scan(base_folder=scan_folder)
+        assert world['scan_calls']['scanner.scan'] == 2, (
+            'setup: adding a file changes the folder signature, so this '
+            'scan must ask the scanner again regardless of the settling '
+            'guard -- this assertion is not what the test is about'
+        )
+        assert scan_folder not in plugin._decision_memory, (
+            'a folder holding a file still inside the settling window was '
+            'recorded as decided. The scan that produced this answer '
+            'could not have seen the group folder_scanner is still '
+            'silently dropping for that file, so the decision must not be '
+            'recorded, and any earlier memory for this folder must be '
+            'forgotten rather than left standing -- it no longer '
+            'describes what is actually on disk'
+        )
+
+        # Nothing about the folder changes between this scan and the last
+        # one (the new file's mtime has not aged past the window in the
+        # handful of milliseconds this test takes), so if the guard above
+        # is not load-bearing, this third scan would wrongly be answered
+        # from a memory entry the previous scan should not have written.
+        plugin.scan(base_folder=scan_folder)
+        assert world['scan_calls']['scanner.scan'] == 3, (
+            'fireEvent("scanner.scan", ...) was not called a third time '
+            'for an unchanged folder that still holds a file inside the '
+            'settling window -- a decision was recorded for it despite '
+            'the settling file, so this scan trusted a memory built from '
+            'an incomplete view of the folder'
+        )
+
+    def test_a_folder_with_every_file_outside_the_window_is_still_recorded(
+        self, world,
+    ):
+        """The settling-window guard must only refuse to record while
+        something is actually settling -- it must not be satisfied by
+        simply never remembering anything, which would silently disable
+        the whole feature this branch exists to add."""
+        scan_folder = world['downloads']
+        plugin = world['plugin']
+
+        plugin.scan(base_folder=scan_folder)
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'setup: the first scan must run before this test can prove '
+            'anything about what it recorded'
+        )
+        assert scan_folder in plugin._decision_memory, (
+            'a folder with every file safely outside the settling window '
+            'was not recorded at all -- the settling-window guard must '
+            'not disable memoisation for a folder where nothing is '
+            'settling, only for the specific case where something is'
+        )
+
+        plugin.scan(base_folder=scan_folder)
+        assert world['scan_calls']['scanner.scan'] == 1, (
+            'a second, completely unchanged scan of a folder with no '
+            'settling files re-asked the scanner -- the settling-window '
+            'guard must not fire when nothing under scan_folder is '
+            'actually settling'
+        )
