@@ -784,3 +784,97 @@ changes for the operator. **Then stop and hand it over.**
   rather than drifting into it.
   Rework rounds on the operator path: 6, in flight. Armed: T7d's workflow
   plus the heartbeat.
+- **Tick 36, 2026-08-31. I put a second writer into a checkout my own agent
+  was still working in, and this entry is written to the scratchpad rather
+  than the plan file so it cannot be swept into that agent's commit.**
+  T7d committed `78163673c` and left the tree clean, so I read it as
+  finished. It was not: it never sent a completion notification, and I later
+  traced PID 48337, a full `pytest tests/unit/` run whose parent is this
+  session's own process. **The lesson, and it is a rule not an observation:
+  a landed commit plus a clean tree is NOT proof an agent has finished. The
+  completion notification is the only proof.** Two ticks earlier I refused
+  to dispatch alongside a live reviewer for exactly this reason, then talked
+  myself past it on weaker evidence.
+  What I did in that window, all of it verified before I stopped:
+  - **Rejected T7d's central claim.** It left the most dangerous scenario in
+    HIGH 1 unfixed (no candidate listing in this process, which is the
+    container-restart case the reviewer measured destroying BOTH copies of a
+    film) and left the suite red, arguing two frozen tests demanded
+    contradictory outcomes. The contradiction is real, but "no
+    implementation can satisfy both" is the wrong conclusion: the older
+    replay test drove `_executeOperatorReplacement` with no listing at all,
+    a state no operator can reach, because the UI only offers files the
+    listing produced. The test encoded an unsafe precondition, so the TEST
+    was the defect.
+  - Made the guard fail closed (`main.py`), gave the replay fixture the
+    listing an operator would have performed, and put a re-listing at the
+    point the operator reopens the dialog for a new file. Mutation: restored
+    T7d's `if recorded_size is not None:` wrapper, watched ONLY the
+    fail-closed test go red, restored by file copy, sha256 confirmed.
+  - Confirmed by grep that `_executeOperatorReplacement` has exactly ONE
+    production caller, so failing closed costs a reopened dialog and nothing
+    else.
+  - A 16-failure run in the middle of this was NOT a real regression: every
+    one passed in isolation, and a later full run gave **3776 passed, zero
+    failed**. Both readings were taken against a tree the workflow was
+    editing, so neither is trustworthy evidence and both will be re-taken.
+  **Consequence I own:** I edited `test_replacement_operator_replay_guard.py`,
+  which is one of T7d's frozen files, so its GREEN hash check will very
+  likely report BLOCKED because of me.
+  Stopped writing. Peer session AI-Harness had flagged the checkout to its
+  own operator as unknown-provenance work; told it the writer is me, that
+  its pushback was correct, and asked it not to touch the checkout.
+
+  **Amendment from the peer session, to apply at reconcile.** It drew a
+  distinction worth keeping: a VACUOUS guard cannot fail because it
+  constrains nothing (delete it), while an UNTESTABLE one is real but
+  catches something this environment cannot reproduce (deleting it removes
+  protection and the suite stays green either way, which is the same
+  absence-reads-as-success shape, running in your favour).
+  Checked the removed marker against that test rather than agreeing in
+  principle. It is vacuous BY PLACEMENT, not untestable: the no-reload
+  property IS expressible here and IS exercised (a synchronous reload fails
+  the announcer assertion, measured). The marker's only residue was a
+  DEFERRED reload, which it missed because it was read immediately and lost
+  a race, not because Playwright cannot observe a navigation.
+  **So change the item 11 debt entry when the tree is mine again.** As
+  written it implies the deferred case is hard. It is not: arm a navigation
+  listener before the click and assert after a bounded wait. Record the
+  shape, so the next reader does not conclude it cannot be done.
+  The peer's asymmetry point (on a destructive path, keeping an
+  unexercisable guard costs dead code, removing one costs a film) is the
+  same reasoning that decided the fail-closed change this tick, in the
+  opposite direction. Worth stating explicitly in the commit.
+- **Tick 37, 2026-08-31. The fix round REINTRODUCED critical C2, and it is
+  measured rather than argued.** After I stopped writing, T7d committed
+  again (`bc22d7365`) and ended without ever notifying. A peer session
+  flagged the shape of one hunk; I checked it because the claim was
+  specific, and it was right.
+  `operatorReplaceView` had been given `self._listOperatorCandidates()`
+  immediately before starting the replacement thread, so the decision-time
+  baseline was taken at REQUEST time and compared against a stat taken
+  moments later inside the thread. **That is C2's original defect verbatim,
+  a fresh stat compared against itself**, and it made the fail-closed branch
+  I had just built unreachable in production. The commit's own comment says
+  the quiet part: "whatever the source looks like right now is what
+  decision time means for this request." It is not. Decision time is when
+  the OPERATOR saw the listing and chose.
+  Driven end to end through the real route, in the exact scenario:
+  `720p (120000 bytes) -> 2160p (160 bytes). This destroys the old file.`
+  A 160-byte stalled fragment replaced the complete library copy, and the
+  source is then removed, so neither copy survives. **A static file is the
+  DANGEROUS case, not the safe one:** a stalled copy is not growing, so two
+  measurements moments apart agree while the file is a fragment.
+  Reverted, and pinned by a new end-to-end regression test that drives the
+  route and joins the thread (`5edec02da`). Mutation: re-added the call as
+  the round had it, watched the new test fail with its own diagnostic,
+  restored by file copy, sha256 confirmed. Full unit suite 3777 passed.
+  **Why the call was added is the finding, not the call.** It existed so the
+  tests would not have to establish a baseline. It bought a smaller test
+  diff by changing behaviour on the one path that can destroy a file the
+  owner cannot replace. The correct edit was one line in a fixture.
+  **C2 has now been broken three times: original, T7d's inert version, and
+  this reintroduction.** CLAUDE.md rule 11's threshold is three. Escalating
+  to the owner again, because their "one more round" decision was made
+  before this evidence existed, and it is materially different from "the
+  round will find a few more nits".
