@@ -1051,3 +1051,36 @@ changes for the operator. **Then stop and hand it over.**
   in this shared checkout and the adversarial one watched it mutating
   files. Putting a writer in alongside a live agent is the mistake I already
   made once today, and the cost of waiting one tick is nothing.
+- **Tick 43, 2026-08-31. Both reviews in. Both say ship. They DISAGREED on
+  one remedy and I took the narrower side, on evidence.**
+  Agreed between them, reached independently: the shipped default is
+  unreachable, FEAT-010 and FEAT-012 are untouched, and the deletion audit
+  is clean in the strongest possible form: of 804 changed test lines, the
+  only nine beginning with a minus are `--- a/...` file headers. **Zero
+  assertions were removed or weakened to make this delta green**, which
+  matters because turning a test off by disabling the feature it tests
+  would have been the easy way through.
+  The second reviewer also independently confirmed what I found this
+  morning: both defaults are now pinned, and each flip fails a test. And it
+  proved the E2E enabling is a FIXTURE rather than a weakened assertion, by
+  deleting only the enable step and watching all eight specs fail.
+  **The disagreement, and it is the useful part.** Reviewer one wanted a
+  second read of the flag added inside each of the three views now, so that
+  "off" means off immediately. Reviewer two wanted it recorded against the
+  re-enablement review and only the misleading description fixed. **Took
+  reviewer two.** Not out of caution: the shipped default makes the fault
+  unreachable, enabling the feature already requires a deliberate decision
+  and its own reviewed change, and every single touch of this path during
+  remediation has introduced something new. Adding code to a destructive
+  path to fix something that cannot reach the owner in this release is
+  precisely the trade that has gone badly all day.
+  Fixed the honest half: the setting description now states the restart
+  requirement in BOTH directions rather than promising it enables the API
+  immediately, which is measurably false. Everything else is written into
+  FEAT-011 as **blocking preconditions** with the measurements attached, so
+  the next person meets them rather than rediscovering them: the one-way
+  control (with the additive fix shape spelled out so it does not replace
+  the registration gate), `settings.save` sitting outside
+  `ORIGIN_CHECKED_API_ROUTES` while arming three origin-checked routes, the
+  loss of end-to-end coverage of the real route, and the dead CSS.
+  Final gate running before push.
