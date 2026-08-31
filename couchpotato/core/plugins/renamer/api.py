@@ -180,7 +180,7 @@ config = [{
                     'name': 'operator_replace_enabled',
                     'type': 'bool',
                     'label': 'Enable "Replace with this file"',
-                    'description': 'Show the operator-triggered replace action on a movie\'s detail page and enable its API. This permanently deletes the current library file and cannot be undone. Off by default.',
+                    'description': 'Show the operator-triggered replace action on a movie\'s detail page and enable its API. This permanently deletes the current library file and cannot be undone. Off by default. REQUIRES A RESTART to take effect, in both directions: until CouchPotato is restarted, turning this on leaves the API unavailable, and turning it off hides the control while the API stays live.',
                     'default': False,
                 },
                 {

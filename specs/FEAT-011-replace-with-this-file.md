@@ -357,3 +357,57 @@ backlog** and should be reviewed as such.
 ## Review cycle
 
 *(To be filled by the review cycle.)*
+
+
+## Blocking preconditions before this is ever enabled
+
+Recorded 2026-08-31 from two independent adversarial reviews of the
+shipped-disabled change. These are not nice-to-haves: each was measured,
+and each must be closed and proven before `operator_replace_enabled` is
+turned on for a real library.
+
+1. **The setting is a one-way control today.** Route registration is read
+   ONCE in `Renamer.__init__`; the template reads the setting fresh on
+   every request. So turning the feature OFF hides the control and leaves
+   the three routes live until a restart. Measured through the real
+   dispatcher: after disabling via `settings.save`, a plain GET returned
+   success and the library file went from 2600 to 27900 bytes, sha256
+   changed. The operator sees "off" and the delete endpoint still works.
+   That is the emergency-stop direction, which is the worst one to have
+   broken. Deliberately NOT fixed in the shipping change, because the
+   default makes it unreachable and every touch of this path during
+   remediation introduced something new. **Fix shape, additive so it does
+   not replace the registration gate the owner chose after three failed
+   in-handler guards:** a second, independent read of the same key at the
+   top of each of the three views, so a route exists only if the flag was
+   on at boot AND answers only while it is still on. Until then, the
+   settings description carries the restart requirement in both directions.
+
+2. **`settings.save` is not in `ORIGIN_CHECKED_API_ROUTES`**
+   (`couchpotato/__init__.py`), so the switch that arms three
+   origin-checked destructive routes is itself less protected than they
+   are. Measured: a request with NO Origin and NO Referer wrote
+   `operator_replace_enabled = 1` and persisted it to `config.ini`. Not a
+   way in today (it needs a restart AND the api_key, which a cross-origin
+   caller cannot read), and pre-existing rather than introduced here, but
+   this change is what made it consequential. Weigh the fix carefully: a
+   header-stripping proxy would then lock the operator out of ALL
+   settings, which is the same reasoning that keeps the logout route
+   fail-open.
+
+3. **There is no longer any end-to-end coverage of the real destructive
+   route.** The three operator E2E specs enable the feature through the
+   template gate and intercept every operator fetch themselves, which is
+   correct while the feature ships off, but it means no test drives the
+   real route through a real server any more. Restore that before
+   enabling, or the re-enablement review will be reading code rather than
+   watching behaviour.
+
+4. **Dead CSS** at `couchpotato/ui/templates/base.html` still names
+   `[data-testid="operator-replace-modal"]` outside the gate, so it ships
+   on every page. Cosmetic, no behaviour, recorded so nobody rediscovers
+   it and mistakes it for a leak.
+
+`tests/unit/test_operator_route_does_not_forge_its_own_baseline.py` must
+survive all of this unchanged. It pins the defect that was reintroduced
+three times, and it has been independently re-proven load-bearing twice.
