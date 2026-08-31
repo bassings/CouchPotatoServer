@@ -411,3 +411,67 @@ turned on for a real library.
 `tests/unit/test_operator_route_does_not_forge_its_own_baseline.py` must
 survive all of this unchanged. It pins the defect that was reintroduced
 three times, and it has been independently re-proven load-bearing twice.
+
+### Added from the PR #292 automated review, 2026-08-31
+
+Seven further findings, all on this feature's code and therefore all
+unreachable while it ships disabled. Recorded rather than fixed, for the
+reason the release itself was scoped that way: every touch of this path
+during remediation introduced something new. Each must be closed and
+proven before `operator_replace_enabled` is turned on.
+
+5. **A missing `media_id` starts the destructive worker anyway** (P1,
+   `main.py` around the `operatorReplaceView` thread start). An
+   authenticated caller supplying a valid `source` but no `media_id`
+   reaches the worker with `media_id=None`. On the production SQLite
+   adapter `release.for_media(None)` degrades to an unfiltered index
+   query, so an installation with exactly one completed release can have
+   THAT release chosen as the destination and its library file
+   overwritten. Validate `media_id` is present and resolves to the
+   intended media document before starting the thread.
+
+6. **Release bookkeeping uses the internal id, not the IMDb identifier**
+   (P1). For normal media documents the IMDb value lives at
+   `identifiers.imdb`, not the top-level `identifier`, so the expression
+   falls back to the database id. `release.add` reads
+   `group['identifier']` as an IMDb id, so AFTER the file has been
+   swapped this can fail or file bookkeeping under a bogus movie while
+   the following code supersedes the real release and deletes the source.
+   Use `getIdentifier(media_doc)` and refuse BEFORE cleanup if it cannot
+   be resolved.
+
+7. **Size baselines are shared across requests** (P1). The baseline is an
+   instance-wide map, so a second candidates or preview request between
+   one operator's listing and their confirm replaces the baseline with a
+   newer measurement. The first request then compares against a size its
+   operator never saw and can accept a changed or partially copied file.
+   This is the same class as the reintroduced C2 and the reason that one
+   was so hard to kill: the baseline must be bound to the listing the
+   operator actually saw, via an unforgeable token carried through
+   confirmation, not a mutable map shared by every request.
+
+8. **The worker logs a full traceback** (P1). An unexpected filesystem
+   error carrying the source or library filename reaches the ERROR log via
+   `traceback.format_exc()`. `PrivacyFilter` masks recognised home
+   prefixes and secrets, so a NAS path such as `/mnt/media/...` survives
+   into `docker logs`. This file already has `_withoutPaths(error)` for
+   exactly this: use it instead of the formatted traceback.
+
+9. **The replay guard keys on a pathname, not file identity** (P2). After
+   a successful replacement removes the source, a genuinely different
+   file later placed under the same watch-folder name reuses the same
+   `(destination, source)` key and is refused as a replay until restart.
+   Include the recorded source identity in the key.
+
+10. **The preview endpoint bypasses the candidate cap** (P2). It calls the
+    uncapped `_listOperatorCandidates()` wrapper, so a watch folder with
+    more than `OPERATOR_CANDIDATE_LIST_CAP` video files returns every
+    filename and size, while the sibling candidates endpoint caps at 200.
+    Slice to the same cap and report truncation consistently.
+
+11. **The modal reports every listing failure as an empty folder** (P2,
+    `movie_detail.html`). `operatorCandidatesView` deliberately returns
+    `success: true` with a distinct `reason` when the download folder is
+    unset, missing or unreadable, and the client discards it. An operator
+    with a broken mount is told only that no files were found, which hides
+    the one thing that would let them fix it. Branch on `data.reason`.
