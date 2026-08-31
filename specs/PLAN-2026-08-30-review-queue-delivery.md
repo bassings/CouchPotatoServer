@@ -31,7 +31,17 @@ automatic beta runs unattended.
 
 **Both owner questions ANSWERED 2026-08-31; no longer blocked.**
 
-1. **Release scope: ALL THREE SHIP TOGETHER, as originally chosen.** The owner
+1. **SUPERSEDED 2026-08-31, read this before acting on anything below it.**
+   **FEAT-011 (operator replace) is HELD BACK from this release**, by an
+   explicit owner decision taken after that path reintroduced the same
+   film-destroying defect for the THIRD time (the route minting its own
+   decision-time baseline, measured end to end: a 160-byte stalled fragment
+   replaced a complete library copy). It ships DISABLED and unreachable, not
+   deleted. FEAT-010 and FEAT-012 ship. **Do not re-enable it, and do not act
+   on the superseded paragraph below, which is kept only so the change of
+   decision is legible.** The original text, now void:
+
+   ~~**Release scope: ALL THREE SHIP TOGETHER, as originally chosen.** The owner
    was given the case for splitting, in terms: FEAT-011 produced BOTH
    Criticals, on a path that has destroyed irreplaceable files twice, and the
    review states the class recurs wherever that entry point is extended, while
@@ -39,13 +49,30 @@ automatic beta runs unattended.
    reaffirmed the single release having heard it. **That is their decision and
    it is not to be re-raised.** What it obliges instead: FEAT-011 carries the
    release's risk, so its second review round is the one that must come back
-   genuinely clean, not merely quieter.
+   genuinely clean, not merely quieter.~~
 2. **Medium and Low: fix what matters, reject the rest WITH EVIDENCE.** Every
    one of the 35 gets exactly one of two outcomes, and neither is silence: a
    fix with a mutation proving it, or a recorded rejection naming why it does
    not warrant one. Fixing all 35 to reach zero is the pressure CLAUDE.md warns
    about, where the number becomes the goal rather than the code; dropping them
    unrecorded is how the same finding is raised again next cycle.
+
+## Open tasks
+
+Restored as a real checklist 2026-08-31: this plan had NO `- [ ] Tn` lines,
+only prose, so the plan-guard Stop hook counted zero open tasks and permitted
+every stop silently for the whole run. The no-stall invariant was inert the
+entire time. Re-arming happened by habit rather than by enforcement, which is
+the same absence-reads-as-success shape this branch has been fighting all day.
+
+A live `status: blocked-on-human` line must sit ABOVE the `## Conductor log`
+heading and start at the beginning of its own line. Anything written below
+that heading is history and does not disarm the guard.
+
+- [ ] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: building
+- [ ] T8: full `make verify`, push, open the PR -- state: queued (needs: T8a)
+- [ ] T9: CI green, resolve review threads, merge to master -- state: queued (needs: T8)
+- [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: queued (needs: T9)
 
 ## Task detail
 
