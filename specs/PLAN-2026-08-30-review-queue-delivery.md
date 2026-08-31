@@ -936,3 +936,26 @@ changes for the operator. **Then stop and hand it over.**
   test stood in its way.
   Rework rounds on the operator path: 7, and this one removes it from the
   release rather than fixing it, which is why the count stops mattering.
+- **Tick 39, 2026-08-31.** T8a live and in its implementation phase, and the
+  three things I checked are the three that could go wrong:
+  - `operator_replace_enabled` is defined with `'default': False`, and its
+    description names the consequence in the settings UI itself
+    ("permanently deletes the current library file and cannot be undone")
+    rather than describing the feature neutrally. An operator turning this
+    on should have to read what it does.
+  - **`test_operator_route_does_not_forge_its_own_baseline.py` is untouched.**
+    That was the explicit off-limits instruction, and it is the one that
+    matters: it is the only thing standing between this branch and a fourth
+    reintroduction, and the previous round's instinct was to edit whichever
+    test blocked it.
+  - Production files moved (`api.py`, `main.py`, `ui/__init__.py`,
+    `movie_detail.html`) alongside a new `test_operator_replace_feature_flag.py`
+    and edits to the three operator E2E specs, which is expected: those
+    specs drive a feature that is now off, so they must turn it on
+    explicitly rather than assume it.
+  Also worth recording from this tick's start: **the repaired plan guard's
+  first act was to catch me.** I ended the previous turn relying on a wakeup
+  armed in an earlier turn, and it refused the stop. For the entire run
+  before the checklist was restored it would have said nothing, which is
+  what "the invariant was inert" actually cost.
+  Armed: T8a's workflow plus the heartbeat.
