@@ -394,19 +394,46 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
     // entirely here, so a keyboard user tabbing the dialog would meet
     // Cancel and then wrap straight past it with no indication a
     // selection was required.
-    const focusable = modal.locator(
-      'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
-    );
     const confirmBtn = modal.locator('[data-testid="operator-replace-confirm"]');
     await expect(
       confirmBtn,
       'the confirm control must never carry the real disabled attribute -- aria-disabled only',
     ).not.toHaveAttribute('disabled', /.*/);
-    const names = await focusable.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid') || el.tagName));
+
+    // T7d item 8 (round two on L3): this test used to approximate "in the
+    // tab order" with the SAME CSS selector `trapFocus()` itself uses
+    // (`button:not([disabled]), a[href], input, select, textarea,
+    // [tabindex]:not([tabindex="-1"])`) and never pressed Tab at all. That
+    // selector cannot see the one thing that actually determines the
+    // browser's real tab order versus a plain `querySelectorAll`: giving
+    // the confirm button `tabindex="-1"` still matches
+    // `button:not([disabled])` (tabindex plays no part in that clause), so
+    // the old assertion kept passing while a real Tab key press would
+    // skip straight over the control. This walks the ACTUAL tab order
+    // with real key presses and checks the real `document.activeElement`,
+    // which is the only thing that can see a `tabindex="-1"` regression.
+    const focusable = modal.locator(
+      'button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    const count = await focusable.count();
+    await focusable.nth(0).focus();
+
+    let reachedByTab = false;
+    for (let i = 0; i < count + 2; i++) {
+      await page.keyboard.press('Tab');
+      const testid = await page.evaluate(
+        () => document.activeElement?.getAttribute('data-testid') || null,
+      );
+      if (testid === 'operator-replace-confirm') {
+        reachedByTab = true;
+        break;
+      }
+    }
     expect(
-      names,
-      'the confirm control must be present among the dialog\'s Tab-reachable elements even with nothing selected',
-    ).toContain('operator-replace-confirm');
+      reachedByTab,
+      'pressing Tab repeatedly from the dialog\'s first focusable control never actually moved focus onto the confirm control -- it is not reachable by keyboard even though nothing marks it disabled',
+    ).toBe(true);
+    await expect(confirmBtn, 'the confirm control must actually be focused after being reached by Tab').toBeFocused();
 
     await expect(confirmBtn, 'aria-disabled must be true while nothing is selected').toHaveAttribute('aria-disabled', 'true');
   });

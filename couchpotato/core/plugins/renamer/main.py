@@ -126,12 +126,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     #: for that pair. Same eviction order as the decision memory.
     NOTIFIED_PARKED_MAX_ENTRIES = 200
 
-    #: M6 (branch review 2026-08-31). `_operator_replaced_identities`
-    #: remembers the destination identity captured immediately after each
-    #: successful operator replacement, so a stale replay can be told apart
-    #: from a genuine new one. Same unbounded-growth shape as the two
-    #: stores above if left uncapped, so it gets the same cap and eviction
-    #: order (oldest write dropped first).
+    #: M6 (branch review 2026-08-31, round two on T7d item 6).
+    #: `_operator_replaced_identities` remembers the destination identity
+    #: captured immediately after each successful operator replacement, so
+    #: a stale replay can be told apart from a genuine new one. Keyed on
+    #: `(destination, source)`, not on `destination` alone -- otherwise a
+    #: genuinely later, distinct replacement of the same film (a different
+    #: source) is refused forever too, since nothing else touches the file
+    #: between the first swap and the second, unrelated one. Same
+    #: unbounded-growth shape as the two stores above if left uncapped, so
+    #: it gets the same cap and eviction order (oldest write dropped
+    #: first).
     OPERATOR_REPLAY_GUARD_MAX_ENTRIES = 200
 
     #: L2 (branch review 2026-08-31). `scanView` passes a caller-supplied
@@ -1490,13 +1495,17 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         'size': size,
                     }
 
+        # T7d item 1 (round two on C2): `_operator_candidate_sizes` is now
+        # keyed by the RESOLVED path `_resolveOperatorSource` returns, not
+        # by the bare name -- so the lookup here goes through the same
+        # resolver rather than indexing the dict by `name` directly.
         candidate_names = self._listOperatorCandidates()
         sizes = getattr(self, '_operator_candidate_sizes', None) or {}
-        candidates = [
-            {'name': name, 'size': sizes[name]}
-            for name in candidate_names
-            if name in sizes
-        ]
+        candidates = []
+        for name in candidate_names:
+            resolved = self._resolveOperatorSource(name)
+            if resolved in sizes:
+                candidates.append({'name': name, 'size': sizes[resolved]})
 
         return {'destination': destination, 'candidates': candidates}
 
@@ -1635,8 +1644,20 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # it did the instant our own prior replacement finished; anything a
         # third party has touched since is a different situation, and this
         # check has nothing to say about it.
+        #
+        # T7d item 6 (round two on M6): keyed on `(destination, source)`,
+        # not on `destination` alone. After a successful swap nothing else
+        # touches the file, so the destination's identity never again
+        # disagrees with the recorded value -- keying on the destination
+        # alone therefore refused every LATER, genuinely distinct
+        # replacement of the same film forever, on a process that stays up
+        # for a long time between restarts. Scoping the record to the
+        # SOURCE that produced it means a stale retry of the exact same
+        # request (same destination, same source) is still refused, while a
+        # deliberate later replacement from a different source is a
+        # different request and is not.
         replayed = getattr(self, '_operator_replaced_identities', None) or {}
-        previous_identity = replayed.get(destination)
+        previous_identity = replayed.get((destination, source))
         if previous_identity is not None and identity_of(destination) == previous_identity:
             self._logOperatorOutcome(
                 OPERATOR_REFUSED_ALREADY_REPLACED, media_id,
@@ -1663,11 +1684,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # compared against comes from an earlier, independent point in
         # time.
         #
-        # No recorded entry (a caller that never went through
-        # `_listOperatorCandidates`, as most of this file's own unit
-        # tests do not) is not the same as "unchanged" -- there is
-        # nothing to compare against, so this falls back to the single
-        # fresh measurement it always took.
+        # T7d item 1 (round two on C2). `_operator_candidate_sizes` not
+        # existing AT ALL -- this plugin instance has never produced a
+        # candidate listing -- and `_operator_candidate_sizes` existing but
+        # missing an entry for THIS source are different situations,
+        # mirroring `swap.py`'s own `_IDENTITY_NOT_REQUESTED` sentinel for
+        # the destination side: the first is "no baseline was requested",
+        # the second is "one was requested and is missing", and only the
+        # first may fall back to a single fresh measurement.
+        #
+        # Keyed on the RESOLVED path (`source`, from `_resolveOperatorSource`
+        # above), not on `source_name` -- a caller respelling the same file
+        # (`./incoming.mkv` vs `incoming.mkv`) must still find the entry
+        # `_listOperatorCandidatesWithReason` recorded for it.
         try:
             expected_source_size = os.path.getsize(source)
         except OSError:
@@ -1677,14 +1706,15 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             )
             return REFUSED_NO_SOURCE, None
 
-        recorded_size = getattr(self, '_operator_candidate_sizes', None) or {}
-        decision_time_size = recorded_size.get(source_name)
-        if decision_time_size is not None and decision_time_size != expected_source_size:
-            self._logOperatorOutcome(
-                REFUSED_SOURCE_CHANGED, media_id,
-                release_id=existing_release.get('_id'),
-            )
-            return REFUSED_SOURCE_CHANGED, None
+        recorded_size = getattr(self, '_operator_candidate_sizes', None)
+        if recorded_size is not None:
+            decision_time_size = recorded_size.get(source)
+            if decision_time_size is None or decision_time_size != expected_source_size:
+                self._logOperatorOutcome(
+                    REFUSED_SOURCE_CHANGED, media_id,
+                    release_id=existing_release.get('_id'),
+                )
+                return REFUSED_SOURCE_CHANGED, None
 
         incoming_quality = fireEvent(
             'quality.guess', files=[source],
@@ -1740,10 +1770,14 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # best-effort and the library file is already the thing a replay
         # must not be allowed to touch again regardless of what happens to
         # either.
+        #
+        # T7d item 6: keyed on `(destination, source)` -- see the check
+        # above for why the destination alone is not scoped narrowly
+        # enough.
         if getattr(self, '_operator_replaced_identities', None) is None:
             self._operator_replaced_identities = {}
-        self._operator_replaced_identities.pop(destination, None)
-        self._operator_replaced_identities[destination] = identity_of(destination)
+        self._operator_replaced_identities.pop((destination, source), None)
+        self._operator_replaced_identities[(destination, source)] = identity_of(destination)
         while len(self._operator_replaced_identities) > self.OPERATOR_REPLAY_GUARD_MAX_ENTRIES:
             self._operator_replaced_identities.pop(
                 next(iter(self._operator_replaced_identities)),
@@ -1906,7 +1940,11 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             except OSError:
                 continue
             candidates.append(name)
-            sizes[name] = size
+            # T7d item 1 (round two on C2): keyed on the RESOLVED path, not
+            # on `name` (the client's spelling) -- a respelling of the same
+            # source that still resolves to this path (`./incoming.mkv` vs
+            # `incoming.mkv`) must still find this entry.
+            sizes[resolved] = size
 
         self._operator_candidate_sizes = sizes
 

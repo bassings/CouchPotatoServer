@@ -252,15 +252,85 @@ class TestSQLiteCacheFilePermissions:
             'review 2026-08-31)' % (cache_dir, mode)
         )
 
-    def test_the_cache_db_file_is_created_private(self, cache_dir, cache):
-        db_path = os.path.join(cache_dir, 'cache.db')
-        cache.set('k1', b'<rss><link>http://indexer/dl?apikey=SECRET</link></rss>')
+    def test_every_file_in_the_cache_directory_is_created_private(
+        self, cache_dir, cache,
+    ):
+        """T7d item 5, round two on M2. This test used to name `cache.db`
+        alone and assert on it exclusively -- which passed while missing
+        the actual leak the review measured. The cache runs in WAL mode
+        (`cache.py:70`), so a recent write does not necessarily land in
+        `cache.db` at all: it can sit in `cache.db-wal` until the next
+        checkpoint, and `cache.db-shm` is the shared-memory index SQLite
+        keeps beside it. Only `cache.db` was ever chmod'd, so with a plain
+        022 umask `cache.db-wal` and `cache.db-shm` are created at 0644 --
+        world-readable -- and it is `cache.db-wal`, not `cache.db`, that
+        actually holds a just-cached credential most of the time. Naming
+        one file let this test stay green while the secret sat in a
+        readable sibling; it must instead cover every file the cache
+        directory contains, whatever SQLite decides to name it.
+        """
+        old_umask = os.umask(0o022)
+        try:
+            cache.set(
+                'k1', b'<rss><link>http://indexer/dl?apikey=SECRET</link></rss>',
+            )
 
-        mode = os.stat(db_path).st_mode & 0o777
-        assert mode == 0o600, (
-            'cache.db was created with mode %o (world-readable at 0644 is '
-            'what the review measured) -- it must be 0600 (owner read/write '
-            'only), because a Torznab/Jackett response body cached here '
-            'routinely embeds the indexer\'s own API key (M2, branch '
-            'review 2026-08-31)' % mode
+            entries = sorted(os.listdir(cache_dir))
+            assert entries, (
+                'fixture broken: the cache directory is empty after a set()'
+            )
+
+            offending = []
+            for name in entries:
+                path = os.path.join(cache_dir, name)
+                if not os.path.isfile(path):
+                    continue
+                mode = os.stat(path).st_mode & 0o777
+                if mode != 0o600:
+                    offending.append((name, oct(mode)))
+
+            assert not offending, (
+                'the following cache directory files were left readable '
+                'by group/other (0600 required, umask 022 in effect): %r '
+                '-- a Torznab/Jackett response body cached here routinely '
+                'embeds the indexer\'s own API key, and under WAL mode a '
+                'just-written credential can sit in `cache.db-wal` rather '
+                'than `cache.db` itself (M2, branch review 2026-08-31, '
+                'round two)' % (offending,)
+            )
+        finally:
+            os.umask(old_umask)
+
+    def test_a_chmod_failure_is_logged_rather_than_silently_swallowed(
+        self, cache_dir, monkeypatch, caplog,
+    ):
+        """The current `except OSError: pass` around every chmod call in
+        `SQLiteCache.__init__` means a filesystem that ignores or refuses
+        chmod (a permission-stripping network mount, a filesystem mounted
+        without POSIX permission support) silently loses every one of
+        these protections with nothing anywhere to say so. A guard that
+        fails must say that it failed.
+        """
+        import logging
+
+        def _always_fails(*args, **kwargs):
+            raise OSError(1, 'Operation not permitted')
+
+        monkeypatch.setattr(os, 'chmod', _always_fails)
+
+        with caplog.at_level(logging.WARNING):
+            cache = SQLiteCache(cache_dir)
+            try:
+                cache.set('k1', 'v1')
+            finally:
+                cache.close()
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('chmod' in m.lower() or 'permission' in m.lower()
+                   for m in messages), (
+            'every chmod call that protects the cache directory and its '
+            'files failed, and nothing was logged about it -- an operator '
+            'on a filesystem that ignores chmod has no way to know these '
+            'protections silently do not apply. Messages were: %r'
+            % messages
         )

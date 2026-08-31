@@ -377,9 +377,16 @@ class TestTheRouteRequiresAuthenticationAndReturnsOnlyBasenames:
 
     def test_the_correct_api_key_reaches_the_route_and_reports_basenames_only(self):
         client = self._client()
+        # T7d items 2 and 3 (round two on C1): this route now refuses a
+        # request carrying no Origin/Referer evidence at all -- see
+        # `test_operator_route_origin_guard.py`, which owns that behaviour
+        # -- so a request proving legitimate AUTH, the concern this test is
+        # actually about, needs a same-origin Origin header to reach the
+        # route at all.
         resp = client.get(
             '/api/%s/%s' % (self.API_KEY, self.ROUTE),
             params={'media_id': 'media-1'},
+            headers={'origin': 'http://testserver'},
         )
 
         assert resp.status_code == 200, (

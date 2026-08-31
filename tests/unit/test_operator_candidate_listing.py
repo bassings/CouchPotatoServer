@@ -317,8 +317,16 @@ class TestTheRouteRequiresAuthentication:
 
     def test_the_correct_api_key_reaches_the_route(self):
         client = self._client()
+        # T7d item 2 (round two on C1): this route now refuses a request
+        # carrying no Origin/Referer evidence at all (a header-less GET is
+        # exactly what a cross-origin <img> tag sends), so a request
+        # proving legitimate AUTH -- the concern this test is actually
+        # about -- needs a same-origin Origin header to reach the route at
+        # all. `test_operator_route_origin_guard.py` owns the
+        # origin-checking behaviour itself.
         resp = client.get(
             '/api/%s/%s' % (self.API_KEY, self.ROUTE),
+            headers={'origin': 'http://testserver'},
         )
 
         assert resp.status_code == 200, (

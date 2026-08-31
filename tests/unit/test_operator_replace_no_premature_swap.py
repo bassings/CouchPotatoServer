@@ -22,9 +22,31 @@ TEMPLATE = (
 )
 
 
+def _strip_line_comments(js_source):
+    """Drop every `//`-to-end-of-line comment, keeping the code before it
+    on each line.
+
+    T7d item 9 (round two on M22): without this, the extracted branch
+    below still carries its own 11-line explanatory comment, which is
+    plain English prose written to EXPLAIN the fix -- so it happens to
+    contain the very words ("background", "running") the second test
+    checks for in the real behaviour. Replacing the actual
+    `this.notify(...)` message with the premature-swap text M22 exists to
+    eliminate, while leaving the comment untouched, left both tests here
+    passing against a regressed page: not because the code was right, but
+    because the regex could not tell a comment from a real string.
+    Stripping comments first means both assertions can only be satisfied
+    by the CODE, never by prose about the code.
+    """
+    return '\n'.join(
+        re.sub(r'//.*$', '', line) for line in js_source.splitlines()
+    )
+
+
 def _confirm_replace_success_branch():
     """The body of `confirmReplace()`'s `if (data.success) { ... }` branch,
-    up to (not including) its matching `} else {`."""
+    up to (not including) its matching `} else {`, with `//` comments
+    already stripped out."""
     text = TEMPLATE.read_text(encoding='utf-8')
     match = re.search(
         r'async confirmReplace\(\).*?if \(data\.success\) \{(.*?)\} else \{',
@@ -35,7 +57,7 @@ def _confirm_replace_success_branch():
         'movie_detail.html -- test setup is broken, not the finding under '
         'test'
     )
-    return match.group(1)
+    return _strip_line_comments(match.group(1))
 
 
 class TestTheDetailPageDoesNotSwapOnAMerelyAcceptedReplacement:

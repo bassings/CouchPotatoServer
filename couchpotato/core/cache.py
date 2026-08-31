@@ -53,10 +53,21 @@ class SQLiteCache:
         # for a dead store into a new, world-readable, on-disk credential
         # surface. chmod is explicit here rather than relying on umask,
         # which is process-wide and not this cache's to assume.
+        #
+        # T7d item 5 (round two on M2): a chmod failure is logged at
+        # WARNING rather than swallowed -- on a filesystem that ignores or
+        # refuses chmod, every one of these protections silently does not
+        # apply, and an operator has no way to know unless something says
+        # so.
         try:
             os.chmod(directory, 0o700)
-        except OSError:
-            pass
+        except OSError as error:
+            log.warning(
+                'Cache: could not chmod the cache directory %s to 0700 -- '
+                'if this filesystem ignores or refuses chmod, cached files '
+                'may be readable by other users: %s', directory, error,
+            )
+        self._directory = directory
         self._db_path = os.path.join(directory, 'cache.db')
         self._local = threading.local()
         self._eviction_interval = eviction_interval
@@ -69,10 +80,44 @@ class SQLiteCache:
         conn.execute(_CREATE_INDEX)
         conn.execute('PRAGMA journal_mode=WAL')
         conn.commit()
+        self._secure_cache_files()
+
+    def _secure_cache_files(self):
+        """Chmod every file currently in the cache directory to 0600 (M2,
+        round two on T7d item 5).
+
+        The cache runs in WAL mode (`journal_mode=WAL` above), and SQLite
+        creates `cache.db-wal` and `cache.db-shm` LAZILY -- on the first
+        write after WAL mode is enabled, not when the pragma is set -- so
+        neither existed for a chmod call made only once, in `__init__`,
+        to protect. A just-cached Torznab/Jackett response embedding the
+        indexer's own API key can sit in `cache.db-wal` rather than
+        `cache.db` itself until the next checkpoint. Chmoding every file
+        the directory actually contains, called again after each write,
+        covers whichever file SQLite wrote the value into, whatever it is
+        named, rather than naming `cache.db` alone and missing its
+        siblings.
+        """
         try:
-            os.chmod(self._db_path, 0o600)
+            entries = os.listdir(self._directory)
         except OSError:
-            pass
+            return
+        for name in entries:
+            path = os.path.join(self._directory, name)
+            try:
+                if not os.path.isfile(path):
+                    continue
+            except OSError:
+                continue
+            try:
+                os.chmod(path, 0o600)
+            except OSError as error:
+                log.warning(
+                    'Cache: could not chmod %s to 0600 -- if this '
+                    'filesystem ignores or refuses chmod, this cached '
+                    'file may be readable by other users: %s',
+                    name, error,
+                )
 
     def _conn(self):
         """Return a per-thread SQLite connection."""
@@ -151,18 +196,25 @@ class SQLiteCache:
             (key, value_json, expiry),
         )
         conn.commit()
+        # T7d item 5: this is the write that can create `cache.db-wal` for
+        # the first time (SQLite creates it lazily, on first write, not
+        # when WAL mode is enabled) -- re-secure after every write rather
+        # than only once in __init__.
+        self._secure_cache_files()
 
     def delete(self, key):
         """Remove a single key."""
         conn = self._conn()
         conn.execute('DELETE FROM cache WHERE key = ?', (key,))
         conn.commit()
+        self._secure_cache_files()
 
     def clear(self):
         """Remove all entries."""
         conn = self._conn()
         conn.execute('DELETE FROM cache')
         conn.commit()
+        self._secure_cache_files()
 
     def close(self):
         """Close the current thread's connection."""
@@ -191,6 +243,7 @@ class SQLiteCache:
             if cursor.rowcount > 0:
                 log.debug('Cache: evicted %d expired entries', cursor.rowcount)
             conn.commit()
+            self._secure_cache_files()
         except sqlite3.OperationalError:
             pass
 

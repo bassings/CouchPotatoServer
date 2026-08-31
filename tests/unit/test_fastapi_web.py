@@ -1102,10 +1102,17 @@ class TestTemplateRendering:
         assert resp.status_code == 200
         rendered = resp.text
 
-        for testid, visible_text in (
-            ('review-mark-done', 'Mark Done'),
-            ('review-mark-failed', 'Mark Failed'),
-        ):
+        # T7d item 7 (round two on H11): this used to HARDCODE the expected
+        # prefix ('Mark Done', 'Mark Failed') instead of reading what the
+        # template actually renders as the button's visible text. A
+        # hardcoded expectation cannot detect the exact SC 2.5.3 violation
+        # it exists to catch: change the rendered `<span>` text (e.g. to
+        # "Complete") while leaving `aria-label` alone, and this test kept
+        # passing because it was comparing the OLD label against itself,
+        # never against what a sighted user actually sees on screen. The
+        # visible text must be extracted from the same response the
+        # accessible name is extracted from.
+        for testid in ('review-mark-done', 'review-mark-failed'):
             testid_pos = rendered.index('data-testid="{}"'.format(testid))
             tag_start = rendered.rindex('<button', 0, testid_pos)
             tag_end = rendered.index('>', testid_pos)
@@ -1115,13 +1122,32 @@ class TestTemplateRendering:
             assert match, '{} must carry an aria-label'.format(testid)
             accessible_name = html_entities.unescape(match.group(1))
 
+            # The visible label sits in the first <span>...</span> after
+            # the button's closing '>', e.g. <span x-show="!markingDone">
+            # Mark Done</span> -- read it from the render rather than
+            # asserting a literal the template might no longer produce.
+            span_match = re.search(
+                r'<span[^>]*>([^<]*)</span>', rendered[tag_end:],
+            )
+            assert span_match, (
+                '{} has no visible <span> text immediately after its '
+                'opening tag to compare the accessible name against'
+                .format(testid)
+            )
+            visible_text = html_entities.unescape(span_match.group(1)).strip()
+            assert visible_text, (
+                '{} rendered an empty visible label -- nothing to compare '
+                'the accessible name against'.format(testid)
+            )
+
             assert accessible_name.startswith(visible_text), (
                 'WCAG 2.5.3 Label in Name: the accessible name for {!r} must '
-                'start with its own visible text {!r} so a Voice Control/Dragon '
-                'user can activate it by speaking what they see -- got accessible '
-                'name {!r}, which does not have it as a prefix. Fix: reorder to '
-                '"{}: {{{{ title }}}}" so the visible text stays a literal '
-                'prefix.'.format(testid, visible_text, accessible_name, visible_text)
+                'start with its own RENDERED visible text {!r} so a Voice '
+                'Control/Dragon user can activate it by speaking what they '
+                'see -- got accessible name {!r}, which does not have the '
+                'rendered visible text as a prefix.'.format(
+                    testid, visible_text, accessible_name,
+                )
             )
 
     def test_movie_detail_labels_downloaded_status_as_review_gate(self, client):

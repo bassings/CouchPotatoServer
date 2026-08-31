@@ -38,7 +38,9 @@ import pytest
 
 from couchpotato.core.plugins.renamer.main import Renamer
 from couchpotato.core.plugins.renamer.owner import copy_id_for_sizes
-from couchpotato.core.plugins.renamer.replacement import OPERATOR_REPLACE
+from couchpotato.core.plugins.renamer.replacement import (
+    OPERATOR_REFUSED_ALREADY_REPLACED, OPERATOR_REPLACE,
+)
 
 OLD = b'existing 720p copy' * 100
 NEW = b'incoming 2160p copy' * 900
@@ -218,12 +220,21 @@ class TestAReplayAfterDisposalFailsIsRefusedNotRepeated:
             'media-1', 'incoming.mkv',
         )
 
-        assert second_outcome != OPERATOR_REPLACE, (
-            'a replay against an already-replaced destination performed a '
-            'SECOND destructive swap instead of being refused -- the replay '
-            'guard is comparing a fresh stat against itself rather than '
-            'against the identity captured when the first replacement was '
-            'decided (M6, branch review 2026-08-31)'
+        # T7d item 10 (round two on M6/M9's own shape): this used to assert
+        # `second_outcome != OPERATOR_REPLACE`, the same stand-in shape M9
+        # already removed from four OTHER assertions this branch. `grep`
+        # for OPERATOR_REFUSED_ALREADY_REPLACED across tests/ found no test
+        # asserting it at all, so the refusal reason could silently change
+        # to any other refusal constant -- reporting the wrong cause to the
+        # operator diagnosing a destroyed file -- with nothing here able to
+        # notice.
+        assert second_outcome == OPERATOR_REFUSED_ALREADY_REPLACED, (
+            'a replay against an already-replaced destination did not '
+            'report OPERATOR_REFUSED_ALREADY_REPLACED (got %r instead) -- '
+            'either it performed a SECOND destructive swap, or it refused '
+            'for the wrong reason, which tells the operator diagnosing a '
+            'destroyed file something false about what happened '
+            '(M6, branch review 2026-08-31)' % (second_outcome,)
         )
         assert second_destination is None
 
@@ -243,4 +254,69 @@ class TestAReplayAfterDisposalFailsIsRefusedNotRepeated:
             'replace_atomically was invoked %d times for two calls against '
             'the same destination -- the second call reached the atomic '
             'swap instead of being refused before it' % len(swap_calls)
+        )
+
+
+class TestAGenuinelyLaterReplacementOfTheSameDestinationIsNotRefusedForever:
+    """T7d item 6: the guard `TestAReplayAfterDisposalFailsIsRefusedNotRepeated`
+    pins above is right to refuse a STALE RETRY of the exact same request --
+    but it is scoped to the destination PATH for the life of the process,
+    not to the request that produced the record. After a successful
+    replacement nothing else touches the file, so
+    `identity_of(destination)` never again disagrees with the value
+    recorded at that first swap -- which means a SECOND, genuinely new and
+    deliberate operator replacement of the same film (a better release
+    placed in the watch folder an hour, a day, a week later) is refused
+    forever too, on a process that stays up for a long time between
+    restarts. `operatorReplaceView` still answers success up front, so the
+    operator is told to reload and finds nothing changed, with no reason
+    given, indefinitely.
+
+    This must not be "fixed" by weakening the guard back to comparing a
+    fresh stat against itself -- that is the exact defect M6 exists to
+    close, and `TestAReplayAfterDisposalFailsIsRefusedNotRepeated` above
+    must keep passing. The record needs to be scoped to the request that
+    produced it (or expired), not tied to the destination path forever.
+    """
+
+    def test_a_second_distinct_replacement_after_the_first_succeeds(
+        self, world,
+    ):
+        plugin = world['plugin']
+        watch = os.path.dirname(world['src'])
+
+        first_outcome, first_destination = plugin._executeOperatorReplacement(
+            'media-1', 'incoming.mkv',
+        )
+        assert first_outcome == OPERATOR_REPLACE, (
+            'the first replacement did not even succeed -- fixture is broken'
+        )
+        assert first_destination == world['dst']
+
+        # A genuinely later, distinct release -- NOT a resend of the same
+        # request. Different bytes, different name, placed in the watch
+        # folder well after the first swap finished.
+        EVEN_NEWER = b'a genuinely later, better release' * 500
+        better = os.path.join(watch, 'even-better.mkv')
+        with open(better, 'wb') as fh:
+            fh.write(EVEN_NEWER)
+
+        second_outcome, second_destination = plugin._executeOperatorReplacement(
+            'media-1', 'even-better.mkv',
+        )
+
+        assert second_outcome == OPERATOR_REPLACE, (
+            'a SECOND, genuinely distinct operator replacement of the same '
+            'film was refused (outcome was %r) purely because nothing had '
+            'touched the destination since the first, unrelated swap -- '
+            'the replay guard is keyed on the destination path for the '
+            'life of the process rather than on the request that produced '
+            'the record, so this film can never be replaced again' % (
+                second_outcome,
+            )
+        )
+        assert second_destination == world['dst']
+        assert _sha(world['dst']) == hashlib.sha256(EVEN_NEWER).hexdigest(), (
+            'the second, later replacement was accepted but did not '
+            'actually install the new file'
         )

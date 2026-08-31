@@ -1286,3 +1286,279 @@ than the code.
 - The pre-existing, unrelated E2E failure surfaced while proving L3 (see
   above): `operator-replace-modal.spec.ts`'s "point 5" test still pins the
   pre-M22 `cpSwap` behaviour and needs its own fix or removal.
+
+## Fix round T7d
+
+Two independent reviewers re-reviewed the remediation delta `27ed3304..HEAD`
+and found that several fixes from earlier rounds did not actually hold. This
+is the owner's explicitly agreed final round on this branch: fix, prove each
+guard by mutation, one more review, done -- not a sixth attempt.
+
+### 1. HIGH -- the decision-time size guard failed open on a lookup miss (round two on C2)
+
+FIXED, with one item left open and documented below rather than forced.
+`_runOperatorReplacement`'s size guard now distinguishes "no baseline was
+ever requested in this process" (falls back, as before, to a single fresh
+measurement) from "a baseline WAS requested and this source is missing from
+it" (refuses), mirroring `swap.py`'s own `_IDENTITY_NOT_REQUESTED` sentinel.
+The recorded-size dictionary is now keyed on the RESOLVED path
+`_resolveOperatorSource` returns rather than on the client's spelling of the
+name, so `./incoming.mkv` and `incoming.mkv` land on the same entry.
+
+- Scenario 2 (a respelled source name misses the recorded baseline by dict
+  key): FIXED and proven. Mutation: reverted the whole guard block plus the
+  recording key back to their exact pre-fix text (`recorded_size.get(source_name)`
+  keyed by bare `name`) -- `tests/unit/test_replacement_operator_size_guard_fails_closed.py`'s
+  three tests all went RED, restored by file copy, sha256 confirmed
+  byte-identical before and after.
+- Scenario 3 (a subfolder source has no recorded baseline because listing is
+  not recursive): FIXED without making the listing recursive. The frozen
+  test `test_a_source_in_a_subfolder_is_never_offered_as_a_candidate` says
+  explicitly, in its own docstring, that if listing becomes recursive this
+  probe should go red and be replaced with the positive case -- so recursion
+  was deliberately NOT added. Instead, the fail-closed-on-missing-key logic
+  above already closes the gap: `_listOperatorCandidates()` called on a
+  subfolder source records an empty dict (attribute set, no matching key),
+  which is now the "requested and missing" case and refuses. Proven by the
+  same mutation as scenario 2, above (both are one code change).
+- Scenario 1 (no candidate listing was ever produced in this process at
+  all) is **NOT FIXED, and cannot be within this branch's own frozen test
+  suite as written.** `test_replacement_operator_size_guard_fails_closed.py
+  ::TestNoRecordedBaselineRefusesRatherThanFallingBackToASelfComparison`
+  and `test_replacement_operator_replay_guard.py
+  ::TestAReplayAfterDisposalFailsIsRefusedNotRepeated` -- both explicitly
+  named as frozen deliverables of this same round -- construct IDENTICAL
+  preconditions (a fresh `Renamer.__new__(Renamer)`, `_operator_candidate_sizes`
+  never set, `_executeOperatorReplacement('media-1', 'incoming.mkv')` called
+  directly with no prior listing) and assert OPPOSITE outcomes: the first
+  requires REFUSE, the second requires OPERATOR_REPLACE (and currently
+  passes; it is not new to this round). No function of `(self, media_id,
+  source_name)` at that call can satisfy both, because there is nothing to
+  distinguish the two calls by. This was verified three ways, not asserted:
+  by direct code reading of both fixtures side by side, by running each in
+  isolation to confirm the preconditions really do match bit for bit, and by
+  running a mutation that would satisfy scenario 1 (fail closed
+  unconditionally on a missing baseline) against the replay-guard file,
+  which broke its first, currently-green test. Per this project's own
+  instruction ("if a test is wrong, stop and say so") this is flagged for
+  the owner rather than resolved unilaterally by editing either frozen file.
+  The candidate resolution most consistent with production reality: the
+  real UI always calls the picker or the preview (`operatorCandidatesView`
+  / `operatorReplacementPreviewView`) before `operatorReplaceView` can fire,
+  so `replay_guard.py`'s `world` fixture calling `_listOperatorCandidates()`
+  once, matching that real flow, would make scenario 1 the true edge case
+  it is meant to describe (a raw API call that bypasses the UI entirely)
+  rather than the ordinary first-call shape every other test in this branch
+  uses -- but that edit is to a file this round was told is frozen, so it is
+  left to the owner's call rather than made here.
+
+`_operatorReplacementPreview`'s consumer of `_operator_candidate_sizes` was
+updated to resolve each candidate name through `_resolveOperatorSource`
+before the size lookup, to match the new resolved-path keying --
+`test_operator_replacement_preview.py` (8 tests) stayed green throughout,
+proving the external `{'name': ..., 'size': ...}` contract did not shift.
+
+### 2. HIGH -- the two operator routes were reachable with no origin evidence at all (round two on C1)
+
+FIXED and proven. `_cross_origin_post` (the logout POST's check) is now a
+thin wrapper over a new shared `_cross_origin_request(request,
+refuse_on_absent_evidence=...)`, and a second wrapper,
+`_cross_origin_guarded_route`, passes `refuse_on_absent_evidence=True` for
+`ORIGIN_CHECKED_API_ROUTES`. The logout route's own behaviour is untouched
+-- same function, same default -- so its fail-open-on-absent-evidence
+reasoning (a header-stripping proxy must not lock the operator out of their
+only revocation mechanism) still applies exactly as before, and
+`test_session_revocation.py` (32 tests, including
+`test_a_post_with_no_origin_header_still_signs_out`) stayed green
+throughout. The false "applies unchanged" comment above
+`ORIGIN_CHECKED_API_ROUTES` is corrected to say what actually differs and
+why.
+
+Mutation: reverted the dispatch call site from `_cross_origin_guarded_route`
+back to `_cross_origin_post` -- `TestTheOperatorRoutesRefuseWhenNoOriginEvidenceIsPresent`'s
+two tests went RED (a header-less GET reached both the destructive replace
+route and the candidate-listing route, status 200). Restored by file copy,
+sha256 confirmed byte-identical before and after.
+
+Fixing this surfaced two OTHER, pre-existing tests that were incidentally
+relying on the old fail-open behaviour while testing a different concern
+(auth, not origin checking): `test_operator_candidate_listing.py
+::test_the_correct_api_key_reaches_the_route` and
+`test_operator_replacement_preview.py
+::test_the_correct_api_key_reaches_the_route_and_reports_basenames_only`
+both sent a header-less GET and asserted 200. Both now send `Origin:
+http://testserver` (same-origin, matching the app's own `TestClient` host)
+so they keep testing what they say they test -- correct-API-key auth -- and
+not the origin check `test_operator_route_origin_guard.py` already owns.
+Neither file is in this round's frozen list.
+
+### 3. MEDIUM, found independently by both reviewers -- `renamer.operator_replacement_preview` was not origin-checked
+
+FIXED. Added to `ORIGIN_CHECKED_API_ROUTES`, and its `addApiView(...)`
+registration is real (`renamer/main.py:189`), so the guard actually reaches
+it. `TestTheOperatorReplacementPreviewRouteRefusesCrossOrigin`'s three tests
+(cross-origin refused, header-less refused, same-origin still succeeds) all
+pass.
+
+The regression guard already exists in the frozen test file:
+`TestEveryRegisteredOperatorRouteIsOriginChecked
+::test_every_renamer_operator_route_appears_in_the_guarded_set` reads the
+plugin's own `addApiView('renamer.operator_*', ...)` calls out of source via
+`inspect.getsource` + regex, rather than maintaining a second hand-written
+list of "routes that should be guarded" (which would just be the same
+failure mode one level up), and fails the moment a new
+`renamer.operator_*` route is registered without being added to
+`ORIGIN_CHECKED_API_ROUTES`. No separate production change was needed to
+make this test itself load-bearing -- it already caught the omission it was
+written to catch (that is how this item was confirmed RED before the fix
+and GREEN after).
+
+### 4. HIGH -- the real operator call site's `operator_initiated` flag was unproven (round two on M17)
+
+Already correct; no production change needed. `_runOperatorReplacement`'s
+`about_to_replace=lambda: self._announceImminentReplacement(..., operator_initiated=True)`
+call site (main.py:1724-1727) already passes the literal `True`.
+`test_replacement_operator_announce_call_site.py` drives the real operator
+path end to end and asserts on the rendered "OPERATOR-requested" text --
+passed on first run, no fix required. Left as pure test-hardening: the
+frozen file is the only thing that closes the gap the task describes
+(nothing previously drove this real call site and checked what it actually
+passed), and it now does.
+
+### 5. HIGH, found independently by both reviewers -- cache.db-wal and cache.db-shm stayed world-readable (round two on M2)
+
+FIXED and proven, with the load-bearing mechanism narrower than it first
+looked. `SQLiteCache` gained `_secure_cache_files()`, which chmods every
+file currently in the cache directory to 0600 rather than naming `cache.db`
+alone, called after `__init__`'s schema setup AND after every write
+(`set`, `delete`, `clear`, `_maybe_evict`). Both directory- and file-level
+chmod failures are now logged at WARNING instead of swallowed in a bare
+`except OSError: pass`.
+
+Measured directly (not assumed) which call is actually load-bearing, because
+the first mutation attempt was misleading: SQLite copies the main database
+file's permission bits onto `-wal`/`-shm` at the moment they are created, so
+if `cache.db` is already 0600 by the time the first write happens, the
+siblings inherit 0600 regardless of any per-write securing call. Confirmed
+with a standalone script (`os.chmod` the main file 0600 before vs. after a
+write, checking the resulting sibling modes both ways). This means the
+`__init__`-time-only call and the `set()`-time call are NOT independently
+load-bearing against each other on this platform -- removing just one of
+them left the test green because the other still ran before `os.listdir`
+was checked. Reverting BOTH together (the exact pre-fix code: `os.chmod(self._db_path,
+0o600)` only, in `__init__`, nothing after `set()`) reproduced the review's
+own measurement exactly -- `cache.db` 0600, `cache.db-wal`/`cache.db-shm`
+0644 -- and `test_every_file_in_the_cache_directory_is_created_private`
+went RED. Restored by file copy, sha256 confirmed byte-identical before and
+after.
+
+The chmod-failure logging was proven the same way: monkeypatching `os.chmod`
+to always raise satisfies `test_a_chmod_failure_is_logged_rather_than_silently_swallowed`
+via EITHER the directory-level or the per-file warning alone, so reverting
+only one leaves the other still logging and the test green for the wrong
+reason. Reverting both `except OSError as error: log.warning(...)` sites
+back to `except OSError: pass` together produced the RED this test is meant
+to catch (`Messages were: []`). Restored by file copy, sha256 confirmed
+byte-identical before and after.
+
+`test_sqlite_cache.py` (31 tests) green throughout except during the
+mutations above.
+
+### 6. MEDIUM -- the M6 replay guard refused every later replacement of the same film forever (round two on M6)
+
+FIXED and proven. `_operator_replaced_identities` is now keyed on
+`(destination, source)` rather than on `destination` alone. A stale retry
+of the exact same request (same destination, same source) is still refused
+-- `TestAReplayAfterDisposalFailsIsRefusedNotRepeated` stayed green
+throughout -- while a genuinely later, distinct replacement (a different
+source placed in the watch folder after the first swap) is a different key
+and is not refused.
+
+Mutation: reverted both the lookup (`replayed.get((destination, source))`
+back to `replayed.get(destination)`) and the two record-side lines back to
+keying on `destination` alone -- `TestAGenuinelyLaterReplacementOfTheSameDestinationIsNotRefusedForever`
+went RED (`operator_refused_already_replaced` instead of
+`operator_replace`), while `TestAReplayAfterDisposalFailsIsRefusedNotRepeated`
+stayed green throughout (the property it protects was never touched).
+Restored by file copy, sha256 confirmed byte-identical before and after.
+
+### 7. MEDIUM, found independently by both reviewers -- WCAG 2.5.3 Label in Name guards that could not fail
+
+Already correct; no production template change needed. The rendered
+`<span>` text in `movie_cards.html` already matches the `aria-label` prefix
+it is compared against. `test_fastapi_web.py`'s template test now reads the
+button's visible `<span>` text out of the actual response instead of a
+hardcoded `'Mark Done'` literal, and `review-queue.a11y.spec.ts` now derives
+its expected prefix from the SAME live elements' rendered text (via
+`data-testid`) rather than from a Playwright role-locator that had already
+filtered by the very prefix the old assertion re-checked. Both suites
+passed on first run against the current template and page (`test_fastapi_web.py`
+66 tests; the accessibility E2E project, 43 tests, including the two
+`review-queue.a11y.spec.ts` tests this item touches).
+
+### 8. MEDIUM -- the "reachable by Tab" E2E test never pressed Tab
+
+Already correct; no production template change needed. The confirm button
+in `movie_detail.html` carries no `tabindex="-1"` and no `disabled`
+attribute, so it was already in the real tab order. `operator-replace-modal.a11y.spec.ts`
+now walks the tab order with actual `page.keyboard.press('Tab')` presses
+and asserts on `document.activeElement`, rather than approximating "in the
+tab order" with the same CSS selector `trapFocus()` itself uses. Passed on
+first run (accessibility project, 43 tests including this one).
+
+### 9. MEDIUM -- the premature-swap regression test's regex could not tell code from its own explanatory comment
+
+Already correct; no production JS change needed. `movie_detail.html`'s
+`confirmReplace()` success branch does not contain the premature-swap
+notify text M22 was written to eliminate. `test_operator_replace_no_premature_swap.py`
+now strips `//`-to-end-of-line comments before running its regex over the
+extracted branch, so an 11-line explanatory comment that happens to contain
+the words the second test checks for can no longer satisfy the assertion in
+the code's place. Passed on first run (2 tests).
+
+### 10. LOW -- the replay guard's refusal reason was pinned by a stand-in
+
+Already correct; no production change needed (this item is test-only
+hardening, and the round 6 fix above already returns the exact named
+constant on this path). `test_replacement_operator_replay_guard.py` now
+asserts `second_outcome == OPERATOR_REFUSED_ALREADY_REPLACED` instead of
+`second_outcome != OPERATOR_REPLACE`, closing the gap the task named: no
+other test in the suite asserted this constant by name, so a refusal
+silently reporting the wrong reason to the operator would previously have
+passed unnoticed.
+
+### 11. RECORDED AS DEBT, not fixed this round
+
+**The deferred `setTimeout` + `location.reload()` on the replacement
+success path destroys the live region mid-announcement (WCAG 4.1.3).**
+Nothing in this repo's test suite catches it. This predates this round's
+fixes -- it is not something round two on point 5 (item 9, above)
+introduced -- and fixing it is a genuine behaviour change to the success
+flow (replace the reload with an in-place DOM update, or delay it past the
+announcement window) rather than a guard correction, which puts it outside
+this round's scope of "make the frozen tests pass with minimum production
+code." Revisit condition: a dedicated pass on the replacement success
+flow's post-announcement behaviour, with its own E2E coverage added at the
+same time so the fix is provably load-bearing rather than asserted.
+
+### Full-suite verification
+
+- `PYTHONPATH=libs .venv/bin/python -m pytest tests/unit/ -q`: 3775 passed,
+  2 skipped, 3 xfailed, **1 failed** -- the single documented scenario-1
+  conflict in item 1, above. Every other test in the 3781-test suite,
+  including every file this round touched or could have affected, is
+  green.
+- `npx vitest run`: 214 passed (9 files).
+- `python3 scripts/check_conformance.py`: 34 templates scanned, passed.
+- `npx playwright test tests/e2e/review-queue.a11y.spec.ts tests/e2e/operator-replace-modal.a11y.spec.ts --project=accessibility --workers=1`:
+  43 passed.
+
+### What this round did not touch
+
+Items 4, 7, 8, 9 and 10 needed no production code change: the behaviour the
+reviewers flagged as unproven was already correct, and the frozen test
+files supplied for this round are what actually closes the proof gap. No
+existing assertion was weakened or deleted anywhere in this round; every
+test-file edit made (`test_operator_candidate_listing.py`,
+`test_operator_replacement_preview.py`, both non-frozen) added a header to
+keep an unrelated auth test testing auth, not origin checking.

@@ -334,11 +334,29 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     // where the title interrupted the visible words. Matched by prefix
     // rather than by the old `mark .* as done` shape, which this rename
     // makes obsolete.
-    const controls = page.getByRole('button', { name: /^Mark Done:/i });
+    // T7d item 7 (round two on H11): this used to select via
+    // `getByRole('button', { name: /^Mark Done:/i })` -- a locator that
+    // already FILTERS by the very prefix the assertion below then checked
+    // for, so `names.every((n) => n.startsWith('Mark Done'))` was a value
+    // compared with itself: Playwright's role engine had discarded every
+    // control that would have failed before the assertion ever ran.
+    // Selecting by `data-testid` instead reaches every review-gate
+    // control regardless of what its accessible name currently is.
+    const controls = page.locator('[data-testid="review-mark-done"]');
     const count = await controls.count();
     expect(count, 'expected one Mark Done control per review-gated card').toBe(2);
 
-    const names = await controls.evaluateAll((els) => els.map((el) => el.getAttribute('aria-label') || el.textContent));
+    // Both the accessible name AND the rendered visible text are read from
+    // the SAME live elements, so a template change that moves the two out
+    // of sync (e.g. the visible <span> becoming "Complete" while
+    // aria-label keeps saying "Mark Done: …") is something this pair can
+    // actually detect, rather than the hardcoded literal used before.
+    const pairs = await controls.evaluateAll((els) => els.map((el) => ({
+      accessibleName: el.getAttribute('aria-label') || el.textContent || '',
+      visibleText: (el.querySelector('span')?.textContent || '').trim(),
+    })));
+
+    const names = pairs.map((p) => p.accessibleName);
     expect(new Set(names).size, `accessible names must be unique across cards, got: ${JSON.stringify(names)}`).toBe(names.length);
     expect(names.some((n) => n?.includes(REVIEW_MOVIE_TITLE))).toBe(true);
     expect(names.some((n) => n?.includes(REVIEW_DESTRUCTIVE_MOVIE_TITLE))).toBe(true);
@@ -351,10 +369,13 @@ test.describe('FEAT-010 Review queue accessibility', () => {
     // middle of its accessible name rather than at the start of it. A
     // Voice Control/Dragon user activates a control by speaking the text
     // they see, which only works if that text is a literal prefix.
-    expect(
-      names.every((n) => (n || '').startsWith('Mark Done')),
-      `every Mark Done control's accessible name must start with its own visible text "Mark Done", got: ${JSON.stringify(names)}`,
-    ).toBe(true);
+    for (const { accessibleName, visibleText } of pairs) {
+      expect(visibleText, `control with accessible name ${JSON.stringify(accessibleName)} rendered no visible label text to compare against`).not.toBe('');
+      expect(
+        accessibleName.startsWith(visibleText),
+        `accessible name ${JSON.stringify(accessibleName)} must start with its own RENDERED visible text ${JSON.stringify(visibleText)}`,
+      ).toBe(true);
+    }
   });
 
   // ---------------------------------------------------------------------

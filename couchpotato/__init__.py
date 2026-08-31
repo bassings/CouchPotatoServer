@@ -764,35 +764,39 @@ def _expire_legacy_root_cookie(response) -> None:
     )
 
 
-def _cross_origin_post(request) -> bool:
-    """Is this POST demonstrably from somewhere other than this app?
-
-    `SameSite=Lax` is the second layer the logout route relies on, and it does
-    NOT scope to an origin -- it scopes to a SITE, which ignores the port and
-    covers subdomains of the same registrable domain. This project's own
-    deployment is the example: Jackett on :9117 and CouchPotato on :5050 of the
-    same host are same-site, so a compromised sibling's cross-origin POST DOES
-    carry the session cookie. `require_auth` then passes and the secret
-    rotates, signing the operator out of every device -- repeatably.
+def _cross_origin_request(request, *, refuse_on_absent_evidence: bool) -> bool:
+    """Shared evidence check behind `_cross_origin_post` and
+    `_cross_origin_guarded_route` (T7d item 2, round two on C1). Is this
+    request demonstrably from somewhere other than this app?
 
     An Origin check rather than a token, because AC-SIMP-11 forbids CSRF token
     machinery and header validation is not that.
 
-    Returns True ONLY when a header is present and disagrees. A request with
-    neither `Origin` nor `Referer` is allowed through: refusing would risk
-    locking an operator out from behind a proxy that strips them, and a browser
-    always sends `Origin` on the cross-origin POST this exists to stop. Absent
-    evidence is not evidence.
+    `refuse_on_absent_evidence` decides what a request carrying NEITHER
+    `Origin` nor `Referer` means, and the two callers need opposite answers:
+
+    * The logout POST (`allow`, via `_cross_origin_post`) risks locking an
+      operator out from behind a proxy that strips these headers, and a
+      browser always sends `Origin` on the cross-origin POST that route
+      exists to stop -- so absent evidence there is not evidence.
+    * `ORIGIN_CHECKED_API_ROUTES` (`refuse`, via `_cross_origin_guarded_route`)
+      are reachable as a plain GET, which a cross-origin `<img>` tag sends
+      with NO `Origin` header at all, and whose `Referer` the attacking page
+      suppresses with a single `<meta name="referrer" content="no-referrer">`
+      tag. There is no header-stripping-proxy story for an `<img>` tag: a
+      same-origin browser GET to these routes always has a real `Origin` or
+      `Referer` once the client actually asked for the page carrying it, so
+      absent evidence there IS the attack, not an innocent proxy.
     """
     stated = request.headers.get('origin')
     if not stated:
         referer = request.headers.get('referer')
         if not referer:
-            return False
+            return refuse_on_absent_evidence
         parsed = urlparse(referer)
         stated = '%s://%s' % (parsed.scheme, parsed.netloc) if parsed.netloc else ''
         if not stated:
-            return False
+            return refuse_on_absent_evidence
 
     # `X-Forwarded-Host` counts as this app's identity too, and that is a
     # deliberate trade rather than laxity.
@@ -823,26 +827,79 @@ def _cross_origin_post(request) -> bool:
             continue
         known.update(part.strip() for part in value.split(',') if part.strip())
     if not known:
-        return False
+        return refuse_on_absent_evidence
 
     return urlparse(stated).netloc not in known
 
 
+def _cross_origin_post(request) -> bool:
+    """Is this POST demonstrably from somewhere other than this app?
+
+    `SameSite=Lax` is the second layer the logout route relies on, and it does
+    NOT scope to an origin -- it scopes to a SITE, which ignores the port and
+    covers subdomains of the same registrable domain. This project's own
+    deployment is the example: Jackett on :9117 and CouchPotato on :5050 of the
+    same host are same-site, so a compromised sibling's cross-origin POST DOES
+    carry the session cookie. `require_auth` then passes and the secret
+    rotates, signing the operator out of every device -- repeatably.
+
+    Returns True ONLY when a header is present and disagrees. A request with
+    neither `Origin` nor `Referer` is allowed through: refusing would risk
+    locking an operator out from behind a proxy that strips them, and a browser
+    always sends `Origin` on the cross-origin POST this exists to stop. Absent
+    evidence is not evidence.
+    """
+    return _cross_origin_request(request, refuse_on_absent_evidence=False)
+
+
+def _cross_origin_guarded_route(request) -> bool:
+    """Is this request to an `ORIGIN_CHECKED_API_ROUTES` route demonstrably
+    from somewhere other than this app, OR carrying no origin evidence at
+    all?
+
+    T7d item 2 (round two on C1): unlike `_cross_origin_post`, absent
+    evidence here IS refused. These routes are reachable as a plain GET,
+    which a cross-origin `<img src="...">` sends with no `Origin` header at
+    all, and whose `Referer` the attacking page suppresses with a single
+    `<meta name="referrer" content="no-referrer">` tag -- so a request
+    carrying neither is exactly what that attack looks like, not an
+    innocent header-stripping proxy. The logout route's fail-open reasoning
+    does not transfer: it is a POST that a real browser always sends
+    `Origin` on, and refusing risks the operator's only revocation
+    mechanism; these routes have no such asymmetry.
+    """
+    return _cross_origin_request(request, refuse_on_absent_evidence=True)
+
+
 # Dynamic `addApiView` routes whose action is destructive or discloses
 # filesystem contents, so a cross-origin caller must never reach them --
-# see C1 in the branch review. `_cross_origin_post` was written for the
-# logout POST, but the check itself is method-agnostic (it only looks at
-# headers), so it applies unchanged here even though both of these routes
-# are reachable as a plain GET as well as a POST.
+# see C1 in the branch review. Guarded by `_cross_origin_guarded_route`, NOT
+# by `_cross_origin_post` (T7d item 2, round two on C1): that comment used to
+# claim the logout check "applies unchanged" here, which is false -- these
+# routes are reachable as a plain GET, which sends no `Origin` header at all,
+# and whose `Referer` an attacking page suppresses with a single
+# `<meta name="referrer" content="no-referrer">` tag, so a request carrying
+# neither must be REFUSED here, the opposite of the logout POST's fail-open.
 #
 # `renamer.operator_replace` permanently deletes a media file with no
 # undo; `renamer.operator_candidates` lists the contents of the operator's
-# download folder. Neither is protected by CORS -- a bare GET triggers no
-# preflight -- and both carry the api_key in the URL, which every rendered
-# page already embeds verbatim (see the comment above `create_app`).
+# download folder; `renamer.operator_replacement_preview` (T7d item 3)
+# discloses strictly MORE than `operator_candidates` -- the destination's
+# name, quality and size, plus the full candidate listing with each
+# candidate's own size. None is protected by CORS -- a bare GET triggers no
+# preflight -- and all three carry the api_key in the URL, which every
+# rendered page already embeds verbatim (see the comment above `create_app`).
+#
+# `TestEveryRegisteredOperatorRouteIsOriginChecked`
+# (`tests/unit/test_operator_route_origin_guard.py`) reads the plugin's own
+# `addApiView(...)` registrations and fails the moment a new
+# `renamer.operator_*` route is added here without being listed below, so
+# the omission that put `operator_replacement_preview` here a commit late
+# cannot repeat silently.
 ORIGIN_CHECKED_API_ROUTES = frozenset({
     'renamer.operator_replace',
     'renamer.operator_candidates',
+    'renamer.operator_replacement_preview',
 })
 
 
@@ -1217,7 +1274,7 @@ def create_app(api_key: str, web_base: str, static_dir: str = None) -> FastAPI:
         if not route:
             return RedirectResponse(url=web_base + 'docs/')
 
-        if route in ORIGIN_CHECKED_API_ROUTES and _cross_origin_post(request):
+        if route in ORIGIN_CHECKED_API_ROUTES and _cross_origin_guarded_route(request):
             # WARNING, and it names both values, matching the logout route:
             # a bare 403 with nothing in the log is how a stripped or
             # rewritten proxy header turns into a silent, unexplained
