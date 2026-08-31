@@ -418,3 +418,50 @@ class TestOperatorReplaceStillWorksEndToEndWhenExplicitlyEnabled:
         body = resp.json()
         assert body.get('success') is True
         assert body.get('destination', {}).get('name') == 'The Thing.mkv'
+
+
+class TestTheShippedSettingsDefaultIsAlsoOff:
+    """The other default, and the one a real installation actually reads.
+
+    There are TWO defaults for this setting and only one of them was
+    pinned. `Renamer.__init__` falls back to False when the key is absent
+    from config, and the tests above prove that: mutating it to True fails
+    four of them. But the settings SCHEMA in
+    `couchpotato/core/plugins/renamer/api.py` carries its own `'default'`,
+    and that is the value a fresh install writes into its config file and
+    the value the settings page presents. Flipping the schema default to
+    True left every test in this file passing, which means the claim this
+    feature ships off could be broken by a one-word edit that nothing
+    caught.
+
+    Pinned here because "ships disabled" is a promise about what an
+    operator's server does after an upgrade, not about a code path's
+    fallback. The feature deletes a library file with no undo, and it is
+    held back precisely because that path reintroduced the same data-loss
+    defect three times, so the value that decides whether it is live on a
+    real machine gets a test of its own.
+    """
+
+    def test_the_schema_default_is_false(self):
+        from couchpotato.core.plugins.renamer.api import config
+
+        found = [
+            option
+            for section in config
+            for group in section.get('groups', [])
+            for option in group.get('options', [])
+            if option.get('name') == 'operator_replace_enabled'
+        ]
+
+        assert len(found) == 1, (
+            'expected exactly one operator_replace_enabled option in the '
+            'renamer settings schema, found %d. If it moved or was '
+            'duplicated, this guard stops describing reality' % len(found)
+        )
+        assert found[0].get('default') is False, (
+            'the shipped settings default for operator_replace_enabled is '
+            '%r, not False. A fresh install writes this value into its '
+            'config, so this is what decides whether an operator-triggered, '
+            'irreversible library deletion is reachable on a real server'
+            % (found[0].get('default'),)
+        )
