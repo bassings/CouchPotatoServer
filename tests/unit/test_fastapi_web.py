@@ -1170,6 +1170,81 @@ class TestTemplateRendering:
         assert resp.status_code == 200
         assert 'downloaded / review' in resp.text
 
+    def test_movie_detail_hides_operator_replace_trigger_and_modal_at_default_setting(
+        self, client,
+    ):
+        """T8a. FEAT-011's 'Replace with this file' trigger and the modal it
+        opens must not render while `operator_replace_enabled` sits at its
+        shipped default (off) -- the owner's explicit decision after the
+        underlying destructive path reintroduced the same film-destroying
+        defect three times.
+
+        The movie here carries a completed release WITH a movie file (the
+        exact condition `partials/movie_detail.html`'s own
+        `ns.has_operator_replace_target` gate already looks for) and a
+        status of 'downloaded' (the FEAT-010 review-gate condition), so
+        BOTH the operator-replace markup and the review-gate controls would
+        render today if nothing suppressed the former -- this is not a
+        movie with "nothing to show", it is a movie with everything to show
+        and only one half of it permitted to.
+
+        Both assertions live in the same test (per T8a's instruction) so a
+        template change that blanks the whole page, rather than gating the
+        one feature, cannot pass by accident: it would fail here on the
+        review-gate controls going missing too.
+        """
+        def media_get_handler(**kwargs):
+            return {
+                'media': {
+                    '_id': 'm1',
+                    'status': 'downloaded',
+                    'info': {'titles': ['Replace Me']},
+                    'releases': [
+                        {
+                            'status': 'downloaded',
+                            'quality': '720p',
+                            'files': {'movie': ['/library/Replace Me.mkv']},
+                        },
+                    ],
+                },
+            }
+
+        old_handler = api.get('media.get')
+        api['media.get'] = media_get_handler
+        api_locks['media.get'] = __import__('threading').Lock()
+
+        try:
+            resp = client.get('/partial/movie/m1')
+        finally:
+            if old_handler:
+                api['media.get'] = old_handler
+            else:
+                api.pop('media.get', None)
+
+        assert resp.status_code == 200
+
+        assert 'data-testid="operator-replace-trigger"' not in resp.text, (
+            'the operator-replace trigger rendered with '
+            'operator_replace_enabled at its default (off)'
+        )
+        assert 'data-testid="operator-replace-modal"' not in resp.text, (
+            'the operator-replace modal rendered with '
+            'operator_replace_enabled at its default (off)'
+        )
+        assert 'Replace with this file' not in resp.text, (
+            'the operator-replace trigger/modal text rendered with '
+            'operator_replace_enabled at its default (off)'
+        )
+
+        assert 'data-testid="review-mark-done"' in resp.text, (
+            'FEAT-010 review-gate Mark Done control must still render -- '
+            'gating FEAT-011 must not touch FEAT-010'
+        )
+        assert 'data-testid="review-mark-failed"' in resp.text, (
+            'FEAT-010 review-gate Mark Failed control must still render -- '
+            'gating FEAT-011 must not touch FEAT-010'
+        )
+
 
 # --- FastAPI App Creation Tests ---
 

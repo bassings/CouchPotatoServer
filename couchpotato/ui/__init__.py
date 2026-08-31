@@ -77,6 +77,15 @@ def _ctx(extra=None):
         # session to end. An install with no login would otherwise show a
         # button that signs the operator out of nothing.
         'auth_required': auth_is_required(),
+        # T8a: FEAT-011's operator replace trigger/modal
+        # (partials/movie_detail.html) render only when this mirrors the
+        # same key `Renamer.conf('operator_replace_enabled', default=False)`
+        # reads (couchpotato/core/plugins/renamer/main.py) -- section
+        # 'renamer' matches `Plugin.conf`'s derivation of the section name
+        # from the plugin's class name, not a name invented here.
+        'operator_replace_enabled': Env.setting(
+            'operator_replace_enabled', section='renamer', default=False,
+        ),
     }
     if extra:
         ctx.update(extra)

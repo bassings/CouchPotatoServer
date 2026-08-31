@@ -46,6 +46,15 @@ def _render(movie):
         'web_base': '/',
         'new_base': '/',
         'movie': movie,
+        # T8a: the trigger only renders when this mirrors production's
+        # `Renamer.conf('operator_replace_enabled', default=False)` --
+        # this module renders the template directly rather than through
+        # `_ctx()`, so the fixture sets it explicitly. The feature's own
+        # OFF-by-default gating is pinned separately by
+        # test_operator_replace_feature_flag.py and
+        # test_fastapi_web.py; this file's contract is what renders once
+        # the feature is on.
+        'operator_replace_enabled': True,
     }
     ctx.update(_releases_ctx(movie, movie.get('_id', ''), {}))
     return _jinja.get_template('partials/movie_detail.html').render(**ctx)

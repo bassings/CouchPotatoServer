@@ -168,39 +168,46 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             'return': {'type': 'object: {"success": true}'},
         })
 
-        addApiView('renamer.operator_replace', self.operatorReplaceView, docs={
-            'desc': 'Replace the library copy of a film with a file the '
-                    'operator placed by hand under the configured download '
-                    'folder. Backgrounded; poll notifications for the outcome.',
-            'params': {
-                'media_id': {'desc': 'The media whose library copy is being replaced'},
-                'source': {'desc': 'Name of a file already listed under the configured from-folder'},
-            },
-            'return': {'type': 'object: {"success": true}'},
-        })
-
-        addApiView('renamer.operator_candidates', self.operatorCandidatesView, docs={
-            'desc': 'List the file names available under the configured '
-                    'download folder for an operator to choose from as a '
-                    'replacement source. Names only, never paths.',
-            'return': {'type': 'object: {"success": true, "candidates": [...]}'},
-        })
-
-        addApiView(
-            'renamer.operator_replacement_preview',
-            self.operatorReplacementPreviewView,
-            docs={
-                'desc': 'Read-only preview of an operator replacement: the '
-                        'basename, quality label and byte size of the '
-                        'library file that would be destroyed, plus the '
-                        'basename and byte size of each candidate that '
-                        'could replace it. Never a path.',
+        # T8a. FEAT-011's operator replace path is gated OFF at the root:
+        # with `operator_replace_enabled` at its default, these three views
+        # are never registered, so an unknown route name is the only thing a
+        # request can reach -- not a refusal inside the handler, which has
+        # now failed to hold three times. See
+        # specs/FEAT-011-replace-with-this-file.md's "Shipped disabled" note.
+        if self.conf('operator_replace_enabled', default=False):
+            addApiView('renamer.operator_replace', self.operatorReplaceView, docs={
+                'desc': 'Replace the library copy of a film with a file the '
+                        'operator placed by hand under the configured download '
+                        'folder. Backgrounded; poll notifications for the outcome.',
                 'params': {
-                    'media_id': {'desc': 'The media whose replacement is being previewed'},
+                    'media_id': {'desc': 'The media whose library copy is being replaced'},
+                    'source': {'desc': 'Name of a file already listed under the configured from-folder'},
                 },
-                'return': {'type': 'object: {"success": true, "destination": ..., "candidates": [...]}'},
-            },
-        )
+                'return': {'type': 'object: {"success": true}'},
+            })
+
+            addApiView('renamer.operator_candidates', self.operatorCandidatesView, docs={
+                'desc': 'List the file names available under the configured '
+                        'download folder for an operator to choose from as a '
+                        'replacement source. Names only, never paths.',
+                'return': {'type': 'object: {"success": true, "candidates": [...]}'},
+            })
+
+            addApiView(
+                'renamer.operator_replacement_preview',
+                self.operatorReplacementPreviewView,
+                docs={
+                    'desc': 'Read-only preview of an operator replacement: the '
+                            'basename, quality label and byte size of the '
+                            'library file that would be destroyed, plus the '
+                            'basename and byte size of each candidate that '
+                            'could replace it. Never a path.',
+                    'params': {
+                        'media_id': {'desc': 'The media whose replacement is being previewed'},
+                    },
+                    'return': {'type': 'object: {"success": true, "destination": ..., "candidates": [...]}'},
+                },
+            )
 
         addEvent('renamer.scan', self.scan)
         addEvent('renamer.check_snatched', self.checkSnatched)

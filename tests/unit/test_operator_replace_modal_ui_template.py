@@ -59,6 +59,12 @@ def _render(movie):
         'web_base': '/',
         'new_base': '/',
         'movie': movie,
+        # T8a: the trigger/modal only render when this mirrors production's
+        # `Renamer.conf('operator_replace_enabled', default=False)` --
+        # this module renders the template directly rather than through
+        # `_ctx()`, so the fixture sets it explicitly. Mirrors
+        # test_operator_replace_trigger_ui_template.py.
+        'operator_replace_enabled': True,
     }
     ctx.update(_releases_ctx(movie, movie.get('_id', ''), {}))
     return _jinja.get_template('partials/movie_detail.html').render(**ctx)

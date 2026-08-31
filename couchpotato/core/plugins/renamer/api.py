@@ -166,6 +166,24 @@ config = [{
                     'default': False,
                 },
                 {
+                    # T8a. The operator-driven "Replace with this file"
+                    # action (FEAT-011) is gated OFF at the root rather than
+                    # merely refused: with this key at its default,
+                    # `Renamer.__init__` does not register the three
+                    # operator API views at all, and the template does not
+                    # render the trigger or its modal. Owner decision after
+                    # the underlying destructive path reintroduced the same
+                    # film-destroying defect three times -- see
+                    # specs/FEAT-011-replace-with-this-file.md's "Shipped
+                    # disabled" note for what must be true before this is
+                    # turned on.
+                    'name': 'operator_replace_enabled',
+                    'type': 'bool',
+                    'label': 'Enable "Replace with this file"',
+                    'description': 'Show the operator-triggered replace action on a movie\'s detail page and enable its API. This permanently deletes the current library file and cannot be undone. Off by default.',
+                    'default': False,
+                },
+                {
                     'advanced': True,
                     'name': 'run_every',
                     'label': 'Run every',

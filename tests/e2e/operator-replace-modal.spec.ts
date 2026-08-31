@@ -83,6 +83,20 @@ async function gotoReviewMovie(page: Page, movieId: string) {
     '`.venv/bin/python scripts/seed_e2e_data.py --data_dir=.e2e-data` before ' +
     'starting the server.',
   ).toBe(true);
+
+  // T8a: the operator-replace trigger/modal render only when
+  // `operator_replace_enabled` is on (default OFF in production, per
+  // specs/FEAT-011-replace-with-this-file.md's "Shipped disabled" note).
+  // This file's own tests intercept the operator_candidates/operator_replace
+  // fetches themselves (never letting them reach the real backend), so
+  // flipping the template's gate through the real settings.save API and
+  // reloading is enough -- no server restart needed, since
+  // couchpotato.ui._ctx() reads the setting fresh on every request.
+  await page.evaluate(async () => {
+    await fetch(window.CP.apiBase + '/settings.save/?section=renamer&name=operator_replace_enabled&value=true');
+  });
+  await page.reload();
+  await page.locator('#movie-releases').waitFor({ state: 'attached', timeout: 15000 });
 }
 
 /**

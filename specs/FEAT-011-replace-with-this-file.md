@@ -8,6 +8,42 @@
 **Status:** draft
 **Lenses run:** <plan-cycle to fill> · **Skipped:** <plan-cycle to fill>
 
+## Shipped disabled (T8a, 2026-08-31)
+
+This feature ships **off by default**, behind a new renamer setting,
+`operator_replace_enabled` (`couchpotato/core/plugins/renamer/api.py`,
+default `False`). This lets `feat/review-queue-and-manual-replace` carry
+FEAT-010 (the review-gate) and FEAT-012 (renamer decision memory) without
+also shipping a reachable path that permanently deletes a media file.
+
+**Why.** The operator replace path has reintroduced the same
+film-destroying defect three times, most recently the route minting its
+own decision-time baseline rather than using the one recorded when the
+operator opened the picker. Three reintroductions of the same class of
+defect is the owner's explicit trigger (per `CLAUDE.md` rule 11: "after
+three failed fixes, question the frame, not the fix") to stop trusting a
+fourth guard and turn the feature off at the root instead.
+
+**What "off" means here.** Not a refusal inside the handler -- a guard in
+that position has now failed three times. With the setting at its
+default, `Renamer.__init__` does not register `renamer.operator_replace`,
+`renamer.operator_candidates` or `renamer.operator_replacement_preview`
+at all, so a request for any of them reaches the same "API call doesn't
+exist" answer as any other unknown route name. The movie detail page's
+"Replace with this file" trigger and the modal it opens do not render
+either. Nothing in this spec, its implementation, or its tests was
+removed or weakened to do this -- the feature is intact and can return as
+its own reviewed change once the condition below is met.
+
+**What must be true before this is turned on.** A review specifically
+scoped to the destructive path's decision-to-execution boundary --
+tracing how a baseline is recorded, read back, and enforced at the moment
+of the swap -- with the reviewer given the history of the first three
+defects so it can check the fourth attempt against the actual pattern
+those shared, not just against this spec's acceptance criteria in
+isolation. Turning the setting on is a deliberate, separate change, not a
+side effect of any other work on this branch.
+
 ## Problem
 
 The owner sometimes needs to replace a library file for a reason the system

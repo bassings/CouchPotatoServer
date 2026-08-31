@@ -283,7 +283,8 @@
         <!-- Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md phase 3c):
              non-destructive confirmation that the landed copy is good. Calls the
              existing media.done route (movie -> done, owning release -> done). -->
-        <button @click="markingReviewDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked done', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewDone = false; toast('Failed to mark as done', 'error'); } }).catch(() => { markingReviewDone = false; toast('Failed to mark as done', 'error'); })"
+        <button data-testid="review-mark-done"
+                @click="markingReviewDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked done', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewDone = false; toast('Failed to mark as done', 'error'); } }).catch(() => { markingReviewDone = false; toast('Failed to mark as done', 'error'); })"
                 class="px-3.5 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 :disabled="markingReviewDone">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
@@ -293,7 +294,8 @@
         <!-- Destructive: discards the landed copy and re-searches immediately, so
              confirm() first (mirrors the Delete button's confirm below). Calls
              movie.searcher.mark_failed (param media_id, per searcher.py:428). -->
-        <button @click="if(confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingReviewFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked failed — searching for another copy', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); } }).catch(() => { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); }); }"
+        <button data-testid="review-mark-failed"
+                @click="if(confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingReviewFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked failed — searching for another copy', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); } }).catch(() => { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); }); }"
                 class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 :disabled="markingReviewFailed">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
@@ -356,7 +358,12 @@
             </div>
           </template>
         </button>
-        {% if ns.has_operator_replace_target %}
+        {# T8a: gated OFF at the root (operator_replace_enabled defaults
+           False) so the trigger and the modal it teleports never render --
+           per specs/FEAT-011-replace-with-this-file.md's "Shipped
+           disabled" note. Route-level gating lives in
+           couchpotato/core/plugins/renamer/main.py's `Renamer.__init__`. #}
+        {% if ns.has_operator_replace_target and operator_replace_enabled %}
         <!-- AC-DESIGN-1/AC-DESIGN-2: the trigger itself is pinned by
              test_operator_replace_trigger_ui_template.py. This increment
              (test_operator_replace_modal_ui_template.py) adds the
@@ -643,6 +650,7 @@ function cpSwap(url, target, swap) {
   });
 }
 
+{% if operator_replace_enabled %}
 // operatorReplaceModal() backs the "Replace with this file" trigger and its
 // design-system dialog (FEAT-011). isOpen/open()/close() follows the same
 // convention as movieInfoModal() (partials/movie_info_modal.html), and
@@ -815,6 +823,7 @@ function operatorReplaceModal() {
     }
   };
 }
+{% endif %}
 
 function restoreToWanted() {
   return {
