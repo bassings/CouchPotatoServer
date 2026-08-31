@@ -1428,18 +1428,25 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 ),
             }
 
-        # T7e (round three on C2): this is the ONE production caller of
-        # `_executeOperatorReplacement`, and the size guard inside it now
-        # refuses outright when no decision-time baseline is on record
-        # (rather than falling back to comparing a fresh stat against
-        # itself). Most of the time the operator already produced one by
-        # loading the picker first, but nothing enforces that ordering,
-        # and the request that actually matters -- the POST that starts
-        # the destructive work -- is itself a perfectly good decision
-        # moment to measure from. Recorded HERE, synchronously, before the
-        # background thread starts: whatever the source looks like right
-        # now is what "decision time" means for this request.
-        self._listOperatorCandidates()
+        # T7e round four, and the reason this call is NOT here. A previous
+        # round added `self._listOperatorCandidates()` at this point so the
+        # route would always have a baseline and the tests would not need
+        # to establish one. Measured effect: it reintroduced critical C2
+        # verbatim. The baseline was then taken at REQUEST time and
+        # compared against a stat taken moments later inside the thread,
+        # which is a fresh stat compared against itself, and it made the
+        # "refuse when nothing knows what the operator saw" branch
+        # unreachable in production.
+        #
+        # Driven end to end through this route: a stalled 160-byte partial
+        # replaced a complete 120000-byte library copy, and the plugin's
+        # own warning recorded it as "120000 bytes -> 160 bytes. This
+        # destroys the old file." Pinned by
+        # tests/unit/test_operator_route_does_not_forge_its_own_baseline.py
+        #
+        # Decision time is when the OPERATOR saw the listing and chose from
+        # it. It is not when their request arrived. A baseline this route
+        # mints for itself carries no information about that choice.
 
         thread = threading.Thread(
             target=self._executeOperatorReplacement,

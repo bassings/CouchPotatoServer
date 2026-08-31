@@ -159,6 +159,20 @@ def guarded_world(tmp_path, monkeypatch):
     Renamer.renaming_started = False
     Renamer._warned_dead_setting = True
 
+    # T7f: the operator reaches Confirm by opening the picker, and opening
+    # it is what records the decision-time size the replace guard compares
+    # against. Establish that here, so the same-origin counterweight below
+    # exercises a real replacement rather than being refused for a reason
+    # this file is not testing. Asserted, not assumed, because a listing
+    # that quietly produced nothing would make the counterweight pass for
+    # the wrong reason and hide a guard that refuses everything.
+    plugin._listOperatorCandidatesWithReason()
+    assert getattr(plugin, '_operator_candidate_sizes', None), (
+        'fixture broken: no decision-time baseline was recorded, so the '
+        'same-origin request below would be refused by the size guard '
+        'rather than by anything to do with origin'
+    )
+
     addApiView('renamer.operator_replace', plugin.operatorReplaceView)
     addApiView('renamer.operator_candidates', plugin.operatorCandidatesView)
     addApiView(
