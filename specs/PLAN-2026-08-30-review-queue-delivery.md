@@ -987,3 +987,31 @@ changes for the operator. **Then stop and hand it over.**
   question is never "did a mutation fail" but "did I mutate the thing the
   claim is actually about". I mutated the right file only because the first
   mutation passed and that was surprising.
+- **Tick 41, 2026-08-31. Gate GREEN on all seven steps, and still not
+  pushed.** 3786 unit, 214 vitest, 166 + 83 + 10 + 2 = 261 E2E, exit 0.
+  Read from the step banners rather than the trailing "safe to open a PR"
+  line, which this session has already learned can sit under a suite that
+  never ran.
+  **The delta since the last review has never been reviewed**, and it is not
+  a small one: the C2 revert, the regression test pinning it, the whole
+  feature-flag change, and my schema-default guard. The flag's entire
+  purpose is to make a destructive path unreachable, which is precisely the
+  kind of claim that should not go in on the author's say-so. Two reviewers,
+  non-overlapping:
+  - **Adversarial reachability.** One job: with the flag at default, GET IN
+    ANYWAY. Told to try route spellings the dispatcher might accept,
+    alternative callers of the replacement functions (events, scheduled
+    tasks, the automatic scan), late re-registration after a settings
+    change or plugin reload, anything the compiled JS still emits, and
+    whether the flag itself can be flipped cross-origin, which would make
+    this a two-step attack. Proof standard stated explicitly: a status code
+    is not proof, compare the library file's sha256 before and after,
+    because a refusal and a swap that happened anyway look identical in a
+    response body.
+  - **Did the flag break what actually ships.** FEAT-010 is the bug the
+    owner reported; if hiding the replace controls disturbed the Mark Done
+    or Mark Failed controls, the release fixes nothing. Told to diff the
+    RENDERED page and account for every difference, and to run a deletion
+    audit, because turning a test off by disabling the feature it tests
+    would be the easy way to make this delta green.
+  Both are told CLEAN is legitimate, so neither manufactures a finding.
