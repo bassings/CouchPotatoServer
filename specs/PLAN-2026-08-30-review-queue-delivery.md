@@ -70,8 +70,8 @@ heading and start at the beginning of its own line. Anything written below
 that heading is history and does not disarm the guard.
 
 - [x] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: done
-- [ ] T8: full `make verify`, push, open the PR -- state: building
-- [ ] T9: CI green, resolve review threads, merge to master -- state: queued (needs: T8)
+- [x] T8: full `make verify`, push, open the PR -- state: pr-open #292
+- [ ] T9: CI green, resolve review threads, merge to master -- state: awaiting-ci #292
 - [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: queued (needs: T9)
 
 ## Task detail
@@ -1084,3 +1084,22 @@ changes for the operator. **Then stop and hand it over.**
   `ORIGIN_CHECKED_API_ROUTES` while arming three origin-checked routes, the
   loss of end-to-end coverage of the real route, and the dead CSS.
   Final gate running before push.
+- **Tick 44, 2026-08-31. Final gate green, pushed, PR #292 open.**
+  All seven steps, 3786 unit + 214 vitest + 261 E2E, and the pre-push hook
+  ran its own gate independently before allowing the push.
+  **Dependencies triaged BEFORE raising, per the standing rule**, prompted by
+  GitHub's push warning: one open alert, `extract-zip <= 2.0.1`, high,
+  unvalidated symlink path traversal, **no patched version exists** so it
+  cannot be bumped away. Outcome **HOLD with the reason recorded**, not
+  silence: it is a dev-only transitive dependency four levels under
+  `@lhci/cli`, `package.json` declares ZERO production dependencies, and
+  the Dockerfile contains no npm or node steps, so it never enters the
+  shipped image. Verified both claims rather than asserting them. Revisit
+  when a patch ships or Lighthouse CI is next upgraded. No Dependabot PRs
+  open.
+  The PR body states the disabled feature and the three reintroductions
+  plainly rather than burying them, including the measured
+  `120000 bytes -> 160 bytes. This destroys the old file.` A reviewer who
+  reads only the PR should still learn the most important thing about this
+  branch.
+  Next: CI, then merge, then T10, which STOPS at a staged promotion.
