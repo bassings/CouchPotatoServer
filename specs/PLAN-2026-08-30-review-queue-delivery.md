@@ -660,9 +660,6 @@ changes for the operator. **Then stop and hand it over.**
   Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, not
   re-tripped.
 
-status: blocked-on-human: the operator-replace path (FEAT-011) has now
-produced defects in five consecutive rounds. Ship it, hold it, or fix once
-more? See tick 32.
 
 - **Tick 32, 2026-08-31. THE CIRCUIT-BREAKER HAS TRIPPED PROPERLY AND I AM
   STOPPING.** The local review of the remediation delta came back with two
@@ -703,3 +700,41 @@ more? See tick 32.
   findings. Every High here is on the operator-replace path.
   Second reviewer still running; its findings will add to this, not change
   its shape.
+- **Tick 33, 2026-08-31. Owner answered: ONE MORE FIX ROUND, then re-review.**
+  Block cleared. My recommendation was to hold FEAT-011 back and ship the
+  visibility fix alone; the owner chose to fix and re-review, having been
+  told plainly that the previous five rounds each looked like a small fix
+  too. That is their value call to make and it is now made, so the position
+  stands on the record and the work proceeds.
+  **T7d scope, one consolidated round, not two:**
+  1. **HIGH 1** the decision-time size baseline must FAIL CLOSED, and be
+     keyed on the path `_resolveOperatorSource` returns rather than the
+     client's spelling. Mirror `swap.py:186`'s `_IDENTITY_NOT_REQUESTED`
+     sentinel so "no baseline requested" and "baseline requested and
+     missing" are different answers. Candidate listing is non-recursive
+     while the resolver accepts relative paths, so the subfolder case must
+     be closed at the same time or the guard stays inert for scene releases.
+  2. **HIGH 2** on the destructive routes ONLY, absent evidence must be a
+     refusal. Not on logout, where the fail-open exists to stop a
+     header-stripping proxy locking the operator out, and that reasoning is
+     still sound for a POST.
+  3. **MEDIUM 3** `renamer.operator_replacement_preview` is missing from
+     `ORIGIN_CHECKED_API_ROUTES`, and a hand-maintained set of route-name
+     strings is the fragile shape. Prefer something that cannot silently
+     omit a route.
+  4. **MEDIUM 2** M6's replay guard currently disables replacement for a
+     destination for the process lifetime while still answering "success".
+     Fails safe for data, so it is a usability defect, but it broke the
+     feature it protects.
+  5. **MEDIUM 1** M2 chmods `cache.db` while the credential is in
+     `cache.db-wal` at 0644. Cover the WAL and SHM siblings, and log at
+     WARNING when a chmod fails instead of swallowing it.
+  **Not dispatched this tick, deliberately.** The second reviewer is still
+  live and mutating files in this shared checkout; putting an implementer
+  in alongside it is how a worktree collision destroys work. It is the
+  armed wake source, and the round goes out as one task the moment it
+  lands, so its test-quality findings are fixed in the same round rather
+  than becoming a seventh.
+  Rework rounds on the operator path: 6 as of this dispatch. Circuit-breaker
+  tripped and ESCALATED at tick 32; the owner overrode, which is the
+  breaker working as designed rather than being ignored.
