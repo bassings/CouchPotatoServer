@@ -878,3 +878,34 @@ changes for the operator. **Then stop and hand it over.**
   to the owner again, because their "one more round" decision was made
   before this evidence existed, and it is materially different from "the
   round will find a few more nits".
+- **Tick 38, 2026-08-31. Owner decision: HOLD FEAT-011 BACK. T8a dispatched.**
+  The decision was taken with the measured reintroduction in front of them,
+  which is the difference from tick 33: that answer was given when the next
+  round still looked like it would converge.
+  T7d's workflow finally reported, hours after committing twice, and its
+  verdict is **BLOCKED** on the same whole-file hash check as the LOW round.
+  Its own evidence is worth keeping, because it corroborates tick 37 from a
+  different direction: it notes the commit rationale was "operatorReplaceView
+  now records a baseline itself" and flags that as **the author's stated
+  rationale, not an independent verification**. Its "3776 passed" predates
+  my revert and is stale. Both its flagged files changed by ADDITION only,
+  zero deletions, so again nothing was weakened to pass; the freeze check
+  simply cannot express "appended a fixture line".
+  **T8a's brief, and the one word that matters in it: UNREACHABLE.** A guard
+  on this path has failed three times, so the requirement is that the
+  destructive code cannot be ENTERED when the setting is off, not that it
+  refuses when entered. The three operator API views are not registered at
+  all; the trigger and modal do not render. Explicitly NOT deletion: the
+  implementation, tests and specs all stay, so the feature returns as its
+  own reviewed change rather than being rebuilt from memory later.
+  Two instructions in the brief exist because of today specifically:
+  the tests must prove the library file is byte-identical afterwards rather
+  than asserting a status code (a status code cannot tell a refusal from a
+  swap that happened anyway), and
+  `test_operator_route_does_not_forge_its_own_baseline.py` is declared
+  off-limits, with "if your change makes it fail, your change is wrong".
+  That test is the only thing standing between this branch and a fourth
+  reintroduction, and the previous round's instinct was to edit whatever
+  test stood in its way.
+  Rework rounds on the operator path: 7, and this one removes it from the
+  release rather than fixing it, which is why the count stops mattering.
