@@ -1015,3 +1015,39 @@ changes for the operator. **Then stop and hand it over.**
     audit, because turning a test off by disabling the feature it tests
     would be the easy way to make this delta green.
   Both are told CLEAN is legitimate, so neither manufactures a finding.
+- **Tick 42, 2026-08-31. Adversarial reviewer: the default IS unreachable,
+  and the switch only works in ONE DIRECTION.**
+  The good half first, because it answers the owner's actual requirement:
+  at the shipped default the destructive path could not be reached. The
+  reviewer tried 42 request spellings against a real `create_app` (case,
+  trailing slash, percent-encoding, dot-segments, JSONP, header auth, GET
+  and POST), 21 config values that a human might read as "off", every other
+  caller of the three replacement functions, event dispatch, re-registration
+  after a runtime settings change, the rendered page, and the compiled
+  bundle. `registered operator routes at default: []`. It also verified its
+  own probe was hostile FIRST, by turning the feature on and destroying a
+  file with one plain GET, which is the step that separates a real negative
+  from a broken harness.
+  **H1, and it is the emergency-stop direction.** Registration is read ONCE
+  in `Renamer.__init__`; the template reads the setting fresh on EVERY
+  request. So turning the feature off hides the button and leaves the routes
+  live. Measured: after disabling through the real `settings.save`,
+  `plugin.conf` read False, the UI showed nothing, and a plain GET still
+  returned success with the library file going 2600 to 27900 bytes, sha256
+  changed. **The operator believes it is off. It is not.** Verified the
+  asymmetry myself at `main.py:176` and `ui/__init__.py:86`: it is invisible
+  in the diff because the two halves look symmetrical.
+  Also found: `settings.save` is NOT in `ORIGIN_CHECKED_API_ROUTES`, so the
+  switch that arms three origin-checked destructive routes is itself less
+  protected than they are (H2, not a way in today: it needs a restart AND
+  the api_key, which a cross-origin caller cannot read). The setting's own
+  description claims it enables the API immediately, which is false until a
+  restart (M1). Dead CSS naming the modal ships on every page (L1). The
+  three operator E2E specs now intercept their own fetches, so there is no
+  end-to-end coverage of the real destructive route any more (L2).
+  It independently re-proved my pinning test load-bearing by re-inserting
+  the exact reintroduction and watching it fail on the sha256 comparison.
+  **Not dispatching the fix this tick.** The second reviewer is still live
+  in this shared checkout and the adversarial one watched it mutating
+  files. Putting a writer in alongside a live agent is the mistake I already
+  made once today, and the cost of waiting one tick is nothing.
