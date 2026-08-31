@@ -464,6 +464,24 @@ changes for the operator. **Then stop and hand it over.**
   names what it will destroy AND what it will install, with sizes on both
   sides. It was asking the owner to approve deleting an irreplaceable file
   without identifying it.
+  **CORRECTION, 2026-08-31, and this claim was FALSE when written.** The
+  PR #292 review checked it and it does not hold. Only the BACKEND half
+  landed: `operatorReplacementPreviewView` returns the destination name,
+  quality and size plus each candidate's size, and is tested. **Nothing in
+  the UI ever calls it.** A repo-wide grep for
+  `operator_replacement_preview` outside Python returns zero hits, and the
+  modal's `loadCandidates()` fetches only `renamer.operator_candidates`,
+  which returns bare names. So the confirmation still shows generic text
+  naming neither file, which is the original H9 finding verbatim. The
+  template test that was supposed to cover this asserts fixed substrings
+  ("current library copy", "delete", "cannot be undone") and would pass
+  pointed at the wrong film, which is the stand-in shape this branch has
+  produced all day.
+  Left in place with the correction attached rather than rewritten, because
+  a plan that silently reads as though it always said the right thing is
+  worse than one that shows where it was wrong. Recorded in FEAT-011's
+  preconditions: **re-enabling on the strength of this entry would have
+  shipped the exact defect a full review cycle already fixed once.**
   T7b2 launched on the decision memory. **H6 is an operability defect worth
   naming: the feature's documented kill switch does not work.** A
   `renamer.scan` is answered FROM the memory and does nothing, so the one
