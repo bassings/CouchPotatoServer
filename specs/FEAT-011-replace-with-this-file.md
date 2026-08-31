@@ -475,3 +475,49 @@ proven before `operator_replace_enabled` is turned on.
     unset, missing or unreadable, and the client discards it. An operator
     with a broken mount is told only that no files were found, which hides
     the one thing that would let them fix it. Branch on `data.reason`.
+
+12. **The preview route re-mints the decision-time baseline. C2, FOURTH
+    recurrence** (P1, found by the PR #292 review, NOT fixed).
+    `_operatorReplacementPreview` calls `_listOperatorCandidates`, a thin
+    wrapper over `_listOperatorCandidatesWithReason`, which
+    unconditionally reassigns `self._operator_candidate_sizes`. A preview
+    issued between the listing and the confirmation therefore overwrites
+    the record of what the operator was shown, and the guard degrades into
+    a stat compared against another stat taken moments later. The route's
+    docstring calls itself read-only; it is read-only with respect to the
+    library, not with respect to the safety baseline, which is the more
+    important of the two.
+    Concrete: the operator opens the picker while the source is copying
+    (baseline 400MB), anything triggers a preview after the copy stalls at
+    6GB, the baseline is rewritten to 6GB, and Confirm then compares 6GB
+    against 6GB and installs the fragment over the complete copy.
+    **Pinned as a strict xfail** in
+    `tests/unit/test_operator_route_does_not_forge_its_own_baseline.py`.
+    It expects-fails today and turns the SUITE RED the moment the defect
+    is fixed, so whoever fixes it is told to remove the marker and close
+    this entry. Minimal fix shape, proven to work by mutation while
+    validating the marker: let the listing take a `record_baseline=False`
+    parameter so the preview reads the baseline without regenerating it.
+    **This is the fourth recurrence of one defect class, each introduced by
+    an individually reasonable-looking change. Treat it as a shape problem
+    on re-enablement, not a fourth patch.**
+
+13. **The confirmation still names neither file** (P1, found by the PR #292
+    review). This is the ORIGINAL H9 finding, which the plan log recorded
+    as closed. Only the backend half landed: `operatorReplacementPreviewView`
+    returns the destination's name, quality and size plus each candidate's
+    size, and is tested, but **nothing in the UI ever calls it**. A
+    repo-wide grep for `operator_replacement_preview` outside Python
+    returns zero hits, and the modal's `loadCandidates()` fetches only
+    `renamer.operator_candidates`, which returns bare names. So the
+    operator is still asked to approve deleting an irreplaceable file that
+    the dialog does not identify.
+    The template test meant to cover it asserts fixed substrings
+    ("current library copy", "delete", "cannot be undone") and would pass
+    pointed at the wrong film, which is why the gap survived a full review
+    cycle. Wire the preview call before the confirmation renders, and
+    replace that test with one that asserts the rendered text against the
+    ACTUAL film and sizes.
+    The plan log entry claiming this was done has been corrected in place.
+    **Re-enabling on the strength of that entry would have shipped the exact
+    defect a full review cycle already fixed once.**

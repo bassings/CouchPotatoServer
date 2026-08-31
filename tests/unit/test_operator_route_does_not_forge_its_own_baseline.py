@@ -27,6 +27,8 @@ import hashlib
 import os
 import threading
 
+import pytest
+
 from tests.unit.test_replacement_operator_replay_guard import world  # noqa: F401
 
 COMPLETE_LIBRARY_COPY = b'the complete 2160p remux' * 5000
@@ -102,3 +104,94 @@ class TestARestartedProcessCannotVouchForWhatTheOperatorChose:
             % (len(STALLED_PARTIAL), len(COMPLETE_LIBRARY_COPY))
         )
         assert os.path.getsize(destination) == len(COMPLETE_LIBRARY_COPY)
+
+
+class TestThePreviewRouteMustNotReMintTheBaseline:
+    """C2, fourth recurrence, found by the PR #292 review. NOT YET FIXED.
+
+    `_operatorReplacementPreview` calls `_listOperatorCandidates`, a thin
+    wrapper over `_listOperatorCandidatesWithReason`, which unconditionally
+    reassigns `self._operator_candidate_sizes`. That dict is the record of
+    what the operator was shown when they chose. So a preview issued
+    between the listing and the confirmation silently replaces the baseline
+    with a fresh measurement, and the guard becomes a stat compared against
+    another stat taken moments later, which is exactly the defect this file
+    was written to pin.
+
+    The route's own docstring calls itself read-only. It is read-only with
+    respect to the library and not with respect to the safety baseline,
+    which is the more important of the two.
+
+    Why this is xfail rather than a fix. The feature ships disabled and
+    unreachable (`operator_replace_enabled` defaults False in both the
+    settings schema and the code fallback), so this cannot happen on a real
+    installation today. It is the FOURTH time this same defect class has
+    been reintroduced by an individually reasonable-looking change, and the
+    project's own rule is that after three the answer is to question the
+    shape rather than apply a fourth patch. Fixing it inside a release whose
+    purpose is to take this path OUT of service would be the same trade that
+    produced the other three.
+
+    `strict=True` is the point of writing it this way: when the baseline is
+    finally bound to the listing the operator saw, this test starts passing,
+    the suite goes RED on the unexpected pass, and whoever fixed it is told
+    to delete the marker. A comment in a spec cannot do that.
+
+    See specs/FEAT-011-replace-with-this-file.md, blocking preconditions.
+    """
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            'C2 recurrence 4: the preview route re-mints the decision-time '
+            'baseline. Unreachable while operator_replace_enabled is off. '
+            'When this passes, remove the marker and close the precondition.'
+        ),
+    )
+    def test_a_preview_between_listing_and_confirm_does_not_rebase_the_guard(
+        self, world,
+    ):
+        plugin = world['plugin']
+        source, destination = world['src'], world['dst']
+
+        with open(destination, 'wb') as fh:
+            fh.write(COMPLETE_LIBRARY_COPY)
+        complete_sha = _sha(destination)
+
+        # The operator opens the picker while the source is still copying.
+        with open(source, 'wb') as fh:
+            fh.write(b'first 400MB of a NAS copy' * 40)
+        plugin._listOperatorCandidatesWithReason()
+
+        # The copy then stalls, so it is static but incomplete.
+        with open(source, 'wb') as fh:
+            fh.write(b'stalled fragment' * 10)
+
+        # Anything at all issues a preview before they press Confirm. This
+        # is the whole finding: it re-stats the folder and overwrites the
+        # baseline with the stalled size.
+        plugin._operatorReplacementPreview('media-1')
+
+        started = []
+        real_thread = threading.Thread
+
+        class _CapturingThread(real_thread):
+            def start(self):
+                started.append(self)
+                super().start()
+
+        import couchpotato.core.plugins.renamer.main as renamer_main
+        renamer_main.threading.Thread = _CapturingThread
+        try:
+            plugin.operatorReplaceView(media_id='media-1', source='incoming.mkv')
+        finally:
+            renamer_main.threading.Thread = real_thread
+        for thread in started:
+            thread.join(timeout=30)
+
+        assert _sha(destination) == complete_sha, (
+            'a preview issued between the listing and the confirmation '
+            're-minted the decision-time baseline, so the stalled fragment '
+            'matched its own fresh measurement and replaced the complete '
+            'library copy'
+        )
