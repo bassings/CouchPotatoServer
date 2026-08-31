@@ -113,6 +113,21 @@ def world(tmp_path, monkeypatch):
     Renamer.renaming_started = False
     Renamer._warned_dead_setting = True
 
+    # T7e: produce the candidate listing the operator would have seen
+    # before they could choose anything, which is what records the
+    # decision-time size baseline the source-size guard now requires
+    # outright (round three on C2 -- a missing baseline refuses instead of
+    # falling back to comparing a fresh stat against itself). Without this
+    # the fixture drives a state no real operator submission can reach: in
+    # production `operatorReplaceView` always records one itself before
+    # handing off to this same worker.
+    plugin._listOperatorCandidatesWithReason()
+    assert getattr(plugin, '_operator_candidate_sizes', None), (
+        'fixture broken: the candidate listing recorded no decision-time '
+        'baseline, so the replacement below would be refused for a reason '
+        'this file is not testing'
+    )
+
     return {
         'plugin': plugin, 'src': str(src), 'dst': str(dst),
         'lib': lib, 'watch': watch, 'state': state,

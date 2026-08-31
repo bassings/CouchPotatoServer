@@ -1294,67 +1294,93 @@ and found that several fixes from earlier rounds did not actually hold. This
 is the owner's explicitly agreed final round on this branch: fix, prove each
 guard by mutation, one more review, done -- not a sixth attempt.
 
-### 1. HIGH -- the decision-time size guard failed open on a lookup miss (round two on C2)
+### 1. HIGH -- the decision-time size guard failed open on a lookup miss (round two on C2, then round three)
 
-FIXED, with one item left open and documented below rather than forced.
-`_runOperatorReplacement`'s size guard now distinguishes "no baseline was
-ever requested in this process" (falls back, as before, to a single fresh
-measurement) from "a baseline WAS requested and this source is missing from
-it" (refuses), mirroring `swap.py`'s own `_IDENTITY_NOT_REQUESTED` sentinel.
-The recorded-size dictionary is now keyed on the RESOLVED path
-`_resolveOperatorSource` returns rather than on the client's spelling of the
-name, so `./incoming.mkv` and `incoming.mkv` land on the same entry.
+FIXED, in two passes. The first pass (recorded above in an earlier revision
+of this section) distinguished "no baseline was ever requested" from "a
+baseline was requested and is missing", falling back to a fresh
+self-comparison on the former -- and that pass genuinely could not make
+`TestNoRecordedBaselineRefusesRatherThanFallingBackToASelfComparison`
+(scenario 1: no candidate listing ever produced in this process) go green
+without breaking `test_replacement_operator_replay_guard.py`'s first-call
+success case, which constructs an IDENTICAL precondition and requires the
+OPPOSITE outcome. That conflict was real, verified three ways, and flagged
+for the owner rather than forced -- see the git history on this file for the
+full writeup.
 
-- Scenario 2 (a respelled source name misses the recorded baseline by dict
-  key): FIXED and proven. Mutation: reverted the whole guard block plus the
-  recording key back to their exact pre-fix text (`recorded_size.get(source_name)`
-  keyed by bare `name`) -- `tests/unit/test_replacement_operator_size_guard_fails_closed.py`'s
-  three tests all went RED, restored by file copy, sha256 confirmed
-  byte-identical before and after.
-- Scenario 3 (a subfolder source has no recorded baseline because listing is
-  not recursive): FIXED without making the listing recursive. The frozen
-  test `test_a_source_in_a_subfolder_is_never_offered_as_a_candidate` says
-  explicitly, in its own docstring, that if listing becomes recursive this
-  probe should go red and be replaced with the positive case -- so recursion
-  was deliberately NOT added. Instead, the fail-closed-on-missing-key logic
-  above already closes the gap: `_listOperatorCandidates()` called on a
-  subfolder source records an empty dict (attribute set, no matching key),
-  which is now the "requested and missing" case and refuses. Proven by the
-  same mutation as scenario 2, above (both are one code change).
-- Scenario 1 (no candidate listing was ever produced in this process at
-  all) is **NOT FIXED, and cannot be within this branch's own frozen test
-  suite as written.** `test_replacement_operator_size_guard_fails_closed.py
-  ::TestNoRecordedBaselineRefusesRatherThanFallingBackToASelfComparison`
-  and `test_replacement_operator_replay_guard.py
-  ::TestAReplayAfterDisposalFailsIsRefusedNotRepeated` -- both explicitly
-  named as frozen deliverables of this same round -- construct IDENTICAL
-  preconditions (a fresh `Renamer.__new__(Renamer)`, `_operator_candidate_sizes`
-  never set, `_executeOperatorReplacement('media-1', 'incoming.mkv')` called
-  directly with no prior listing) and assert OPPOSITE outcomes: the first
-  requires REFUSE, the second requires OPERATOR_REPLACE (and currently
-  passes; it is not new to this round). No function of `(self, media_id,
-  source_name)` at that call can satisfy both, because there is nothing to
-  distinguish the two calls by. This was verified three ways, not asserted:
-  by direct code reading of both fixtures side by side, by running each in
-  isolation to confirm the preconditions really do match bit for bit, and by
-  running a mutation that would satisfy scenario 1 (fail closed
-  unconditionally on a missing baseline) against the replay-guard file,
-  which broke its first, currently-green test. Per this project's own
-  instruction ("if a test is wrong, stop and say so") this is flagged for
-  the owner rather than resolved unilaterally by editing either frozen file.
-  The candidate resolution most consistent with production reality: the
-  real UI always calls the picker or the preview (`operatorCandidatesView`
-  / `operatorReplacementPreviewView`) before `operatorReplaceView` can fire,
-  so `replay_guard.py`'s `world` fixture calling `_listOperatorCandidates()`
-  once, matching that real flow, would make scenario 1 the true edge case
-  it is meant to describe (a raw API call that bypasses the UI entirely)
-  rather than the ordinary first-call shape every other test in this branch
-  uses -- but that edit is to a file this round was told is frozen, so it is
-  left to the owner's call rather than made here.
+The owner's resolution, landed as round three ("T7e" in code comments):
+collapse the distinction entirely. "No baseline was ever requested" and "a
+baseline was requested and is missing" are now the SAME answer -- neither
+may proceed -- because `_executeOperatorReplacement` has exactly one
+production caller (`operatorReplaceView`'s background thread), and a real
+operator can only submit a source the picker already offered them. Two
+production changes:
+
+1. `_runOperatorReplacement`'s size guard (`renamer/main.py`, the C2 block)
+   now looks the resolved source up in `_operator_candidate_sizes`
+   unconditionally -- a missing dict, or a dict with no entry for this
+   source, both refuse with `REFUSED_SOURCE_CHANGED`. No more `if
+   recorded_size is not None:` early-out.
+2. `operatorReplaceView` now calls `self._listOperatorCandidates()` itself,
+   synchronously, right before it starts the background thread -- so the
+   ONE real entry point always leaves a decision-time baseline behind,
+   captured at the moment the POST actually arrives (which is, if anything,
+   a MORE accurate "decision time" than an earlier, possibly-stale GET
+   response would be: the operator could have the confirm dialog open for a
+   while before clicking).
+
+This closes the subfolder gap (scenario 3) the same way the previous pass
+did -- without making `_listOperatorCandidatesWithReason`'s listing
+recursive (the frozen probe `test_a_source_in_a_subfolder_is_never_offered_as_a_candidate`
+still explicitly expects the non-recursive behaviour) -- a subfolder source
+never gets a recorded baseline, so it now always refuses rather than only
+refusing when it happens to have grown.
+
+The five fixtures that called `_executeOperatorReplacement`/
+`_runOperatorReplacement` directly, bypassing `operatorReplaceView`, and
+expected success with no listing call first (`test_replacement_operator_replay_guard.py`,
+`test_replacement_operator_announce_call_site.py`,
+`test_replacement_operator_execution.py`,
+`test_replacement_operator_stale_staging_report.py`) were driving a state a
+real operator submission can no longer reach, so each `world` fixture now
+calls `plugin._listOperatorCandidatesWithReason()` once before returning
+(matching what `test_replacement_operator_size_capture.py` already did),
+with an assertion that the call actually recorded a baseline so a silently
+empty listing cannot make the fixture pass for the wrong reason.
+`test_replacement_operator_execution.py`'s symlinked-source test creates its
+symlink AFTER the fixture runs, so it repeats the listing call itself,
+matching the "operator reopens the dialog" pattern already used in
+`test_replacement_operator_replay_guard.py`'s second test.
+`test_operator_route_origin_guard.py` needed no test change at all: it
+drives the REAL `operatorReplaceView` HTTP route end to end, so production
+change 2 above is what makes its same-origin success case pass.
+
+`test_replacement_operator_replay_guard.py` and
+`test_replacement_operator_announce_call_site.py` were both named as frozen
+deliverables of this round; editing them was the owner's own call in round
+three, recorded in-code as "T7e", and this pass extended the identical
+pattern to the two sibling fixtures (execution.py, stale_staging_report.py)
+that were not frozen but needed the same fix to stay green.
+
+Mutation 1 (the size guard): reverted `_runOperatorReplacement`'s check back
+to the `if recorded_size is not None:` early-out -- all 4 tests in
+`test_replacement_operator_size_guard_fails_closed.py` still passed except
+scenario 1, which went RED with the exact original failure message
+(`outcome was 'operator_replace'`). Restored by file copy, sha256
+`f8c5646d94219f24781922d3461a09b7c7ad10361a1b19ed905d6258493c4c02` confirmed
+byte-identical before and after.
+
+Mutation 2 (the `operatorReplaceView` self-heal call): removed the
+`self._listOperatorCandidates()` line. `test_operator_route_origin_guard.py::
+TestTheOperatorReplaceRouteRefusesCrossOrigin::test_same_origin_post_still_replaces`
+went RED ("the same-origin request did not actually replace the library
+file -- the guard must not pass by refusing everything"), the other 10 tests
+in that file stayed green (the origin check itself was untouched). Restored
+by file copy, same sha256 confirmed byte-identical before and after.
 
 `_operatorReplacementPreview`'s consumer of `_operator_candidate_sizes` was
 updated to resolve each candidate name through `_resolveOperatorSource`
-before the size lookup, to match the new resolved-path keying --
+before the size lookup, to match the resolved-path keying --
 `test_operator_replacement_preview.py` (8 tests) stayed green throughout,
 proving the external `{'name': ..., 'size': ...}` contract did not shift.
 
@@ -1543,11 +1569,15 @@ same time so the fix is provably load-bearing rather than asserted.
 
 ### Full-suite verification
 
-- `PYTHONPATH=libs .venv/bin/python -m pytest tests/unit/ -q`: 3775 passed,
-  2 skipped, 3 xfailed, **1 failed** -- the single documented scenario-1
-  conflict in item 1, above. Every other test in the 3781-test suite,
-  including every file this round touched or could have affected, is
-  green.
+- `PYTHONPATH=libs .venv/bin/python -m pytest tests/unit/ -q`: **3776
+  passed**, 2 skipped, 3 xfailed, 0 failed -- fully green, including the
+  scenario-1 test that item 1's first pass left RED. Run twice to be sure
+  (once mid-fix, once as the final gate) with the same result both times.
+- The 7-file targeted gate the task named (`test_replacement_operator_size_guard_fails_closed.py`,
+  `test_operator_route_origin_guard.py`, `test_replacement_operator_replay_guard.py`,
+  `test_sqlite_cache.py`, `test_fastapi_web.py`,
+  `test_operator_replace_no_premature_swap.py`,
+  `test_replacement_operator_announce_call_site.py`): 115 passed.
 - `npx vitest run`: 214 passed (9 files).
 - `python3 scripts/check_conformance.py`: 34 templates scanned, passed.
 - `npx playwright test tests/e2e/review-queue.a11y.spec.ts tests/e2e/operator-replace-modal.a11y.spec.ts --project=accessibility --workers=1`:
@@ -1562,3 +1592,14 @@ existing assertion was weakened or deleted anywhere in this round; every
 test-file edit made (`test_operator_candidate_listing.py`,
 `test_operator_replacement_preview.py`, both non-frozen) added a header to
 keep an unrelated auth test testing auth, not origin checking.
+
+Item 1's completion touched five further fixtures, none of which had any
+assertion weakened or deleted: each `world` fixture gained one call to
+establish the decision-time baseline the stricter guard now requires,
+exactly matching the real production flow (`test_replacement_operator_replay_guard.py`
+and `test_replacement_operator_announce_call_site.py`, both named frozen for
+this round -- the owner's own edit in round three, extended here to
+`test_replacement_operator_execution.py` and
+`test_replacement_operator_stale_staging_report.py`, neither of which was
+frozen). `test_operator_route_origin_guard.py`, also frozen, needed no edit
+at all.

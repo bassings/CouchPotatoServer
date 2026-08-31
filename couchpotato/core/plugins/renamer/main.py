@@ -1428,6 +1428,19 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 ),
             }
 
+        # T7e (round three on C2): this is the ONE production caller of
+        # `_executeOperatorReplacement`, and the size guard inside it now
+        # refuses outright when no decision-time baseline is on record
+        # (rather than falling back to comparing a fresh stat against
+        # itself). Most of the time the operator already produced one by
+        # loading the picker first, but nothing enforces that ordering,
+        # and the request that actually matters -- the POST that starts
+        # the destructive work -- is itself a perfectly good decision
+        # moment to measure from. Recorded HERE, synchronously, before the
+        # background thread starts: whatever the source looks like right
+        # now is what "decision time" means for this request.
+        self._listOperatorCandidates()
+
         thread = threading.Thread(
             target=self._executeOperatorReplacement,
             args=(media_id, source),
@@ -1684,14 +1697,22 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         # compared against comes from an earlier, independent point in
         # time.
         #
-        # T7d item 1 (round two on C2). `_operator_candidate_sizes` not
-        # existing AT ALL -- this plugin instance has never produced a
-        # candidate listing -- and `_operator_candidate_sizes` existing but
-        # missing an entry for THIS source are different situations,
-        # mirroring `swap.py`'s own `_IDENTITY_NOT_REQUESTED` sentinel for
-        # the destination side: the first is "no baseline was requested",
-        # the second is "one was requested and is missing", and only the
-        # first may fall back to a single fresh measurement.
+        # T7e (round three on C2). Both "this plugin instance has never
+        # produced a candidate listing" and "a listing exists but holds no
+        # entry for THIS source" are the SAME answer here: there is nothing
+        # in this process that can say the file still matches what the
+        # operator was shown, so neither may proceed. T7d treated the first
+        # as "no baseline was requested" and allowed it, which left the
+        # exact scenario the review measured destroying both copies of a
+        # film: the container restarts while the operator has the modal
+        # open, they click Confirm, the size dict is empty, and a source
+        # still being copied installs truncated over the complete library
+        # copy before the partial is deleted.
+        #
+        # `_executeOperatorReplacement` has ONE production caller (the
+        # thread started by `operatorReplaceView`), and the operator can
+        # only submit a source the listing offered them, so refusing costs
+        # a reopened dialog and nothing else.
         #
         # Keyed on the RESOLVED path (`source`, from `_resolveOperatorSource`
         # above), not on `source_name` -- a caller respelling the same file
@@ -1706,15 +1727,14 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             )
             return REFUSED_NO_SOURCE, None
 
-        recorded_size = getattr(self, '_operator_candidate_sizes', None)
-        if recorded_size is not None:
-            decision_time_size = recorded_size.get(source)
-            if decision_time_size is None or decision_time_size != expected_source_size:
-                self._logOperatorOutcome(
-                    REFUSED_SOURCE_CHANGED, media_id,
-                    release_id=existing_release.get('_id'),
-                )
-                return REFUSED_SOURCE_CHANGED, None
+        recorded_size = getattr(self, '_operator_candidate_sizes', None) or {}
+        decision_time_size = recorded_size.get(source)
+        if decision_time_size is None or decision_time_size != expected_source_size:
+            self._logOperatorOutcome(
+                REFUSED_SOURCE_CHANGED, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return REFUSED_SOURCE_CHANGED, None
 
         incoming_quality = fireEvent(
             'quality.guess', files=[source],

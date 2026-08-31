@@ -160,6 +160,21 @@ def world(tmp_path, monkeypatch):
         _remove_that_cannot_touch_the_source,
     )
 
+    # T7e: produce the candidate listing the operator would have seen
+    # before they could choose anything, which is what records the
+    # decision-time size baseline. Without this the fixture drives a state
+    # no operator can reach (a confirm with no listing ever produced), and
+    # the source-size guard now refuses that outright rather than falling
+    # back to comparing a fresh stat against itself. Asserted rather than
+    # assumed, because a listing that silently produced nothing would make
+    # every replay test below pass for the wrong reason.
+    plugin._listOperatorCandidatesWithReason()
+    assert getattr(plugin, '_operator_candidate_sizes', None), (
+        'fixture broken: the candidate listing recorded no decision-time '
+        'baseline, so the replacements below would be refused for a reason '
+        'this file is not testing'
+    )
+
     return {
         'plugin': plugin, 'src': str(src), 'dst': str(dst),
         'state': state,
@@ -300,6 +315,13 @@ class TestAGenuinelyLaterReplacementOfTheSameDestinationIsNotRefusedForever:
         better = os.path.join(watch, 'even-better.mkv')
         with open(better, 'wb') as fh:
             fh.write(EVEN_NEWER)
+
+        # T7e: the operator reopens the dialog to choose this new file, and
+        # opening it lists the candidates again. That listing is what
+        # records the decision-time size for a file which did not exist
+        # when the fixture's listing ran, so it belongs here, at the point
+        # the operator actually performs it, rather than in the fixture.
+        plugin._listOperatorCandidatesWithReason()
 
         second_outcome, second_destination = plugin._executeOperatorReplacement(
             'media-1', 'even-better.mkv',

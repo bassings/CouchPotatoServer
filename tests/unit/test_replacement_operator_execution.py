@@ -186,6 +186,24 @@ def world(tmp_path, monkeypatch):
     Renamer.renaming_started = False
     Renamer._warned_dead_setting = True
 
+    # T7e: produce the candidate listing the operator would have seen
+    # before they could choose anything, which is what records the
+    # decision-time size baseline the source-size guard now requires
+    # outright (round three on C2 -- a missing baseline refuses instead of
+    # falling back to comparing a fresh stat against itself). Without this
+    # most tests below would be driving a state no real operator
+    # submission can reach: in production `operatorReplaceView` always
+    # records one itself before handing off to this same worker. The
+    # decoy/outside-library/traversal cases are unaffected -- they are
+    # refused earlier, on the destination or the source path itself, for
+    # reasons this listing call does not touch.
+    plugin._listOperatorCandidatesWithReason()
+    assert getattr(plugin, '_operator_candidate_sizes', None), (
+        'fixture broken: the candidate listing recorded no decision-time '
+        'baseline, so replacements below would be refused for a reason '
+        'this file is not testing'
+    )
+
     return {
         'plugin': plugin, 'src': str(src), 'dst': str(dst),
         'lib': lib, 'watch': watch, 'state': state,
@@ -472,6 +490,12 @@ class TestTheDestructiveStepOnlyHappensThroughTheAtomicSwap:
         link = world['watch'] / 'incoming_link.mkv'
         os.symlink(str(real_target), str(link))
         target_sha = _sha(real_target)
+
+        # T7e: this file did not exist when the fixture's listing ran, so
+        # the operator has to see the picker again before choosing it --
+        # matching the earlier fixture comment, this is the listing that
+        # records a decision-time baseline for it.
+        world['plugin']._listOperatorCandidatesWithReason()
 
         outcome, resulting_dst = world['plugin']._executeOperatorReplacement(
             'media-1', 'incoming_link.mkv',
