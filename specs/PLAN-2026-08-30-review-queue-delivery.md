@@ -72,7 +72,7 @@ that heading is history and does not disarm the guard.
 - [x] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: done
 - [x] T8: full `make verify`, push, open the PR -- state: pr-open #292
 - [x] T9: CI green, resolve review threads, merge to master -- state: merged (bd9fecda9)
-- [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: building
+- [x] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: staged, awaiting owner
 
 ## Task detail
 
@@ -1221,3 +1221,27 @@ changes for the operator. **Then stop and hand it over.**
   flight; the promotion note goes to the owner once its tag exists, and
   **T10 STOPS THERE.** CLAUDE.md rule 6: production deploys only by explicit
   agreement, never as a side effect of finishing work.
+- **Tick 48, 2026-08-31. T10 COMPLETE, and it stops here by design.**
+  Beta build succeeded on the merge commit. **`v3.75.0-beta.1` resolves to
+  `bd9fecda9`**, the merge commit itself, verified with `git rev-list`
+  rather than inferred from the tag name.
+  **The promotion, staged and NOT executed:**
+  | | |
+  |---|---|
+  | Production runs now | `:latest`, digest `sha256:f2e9c41e...`, tag `v3.69.0` |
+  | Would be promoted | `v3.75.0-beta.1` (`bd9fecda9`) |
+  | Commits between | 11 |
+  | Backup | `backups/20260831-162457`, integrity_check `ok` |
+  | Mechanism | byte-for-byte re-tag of the tested beta to `:latest`, the sole writer of that tag |
+  What changes for the operator: a downloaded film stays in Wanted with a
+  review chip and Mark Done / Mark Failed instead of disappearing; the
+  renamer stops re-polling files it has already judged; the cache file
+  holding indexer API keys becomes 0600 in a 0700 directory. What does NOT
+  change: "Replace with this file" ships off and unreachable, so no new
+  destructive path becomes available.
+  **STOPPED. CLAUDE.md rule 6: production deploys only by explicit
+  agreement, never as a side effect of finishing work.** The owner asked for
+  a release to be triggered, and merging plus the beta is that; re-tagging
+  `:latest` is the separate act that needs a separate yes, especially on the
+  release that carries the film-visibility fix to the machine holding the
+  only copy of the library.
