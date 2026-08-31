@@ -69,8 +69,8 @@ A live `status: blocked-on-human` line must sit ABOVE the `## Conductor log`
 heading and start at the beginning of its own line. Anything written below
 that heading is history and does not disarm the guard.
 
-- [ ] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: building
-- [ ] T8: full `make verify`, push, open the PR -- state: queued (needs: T8a)
+- [x] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: done
+- [ ] T8: full `make verify`, push, open the PR -- state: building
 - [ ] T9: CI green, resolve review threads, merge to master -- state: queued (needs: T8)
 - [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: queued (needs: T9)
 
@@ -959,3 +959,31 @@ changes for the operator. **Then stop and hand it over.**
   before the checklist was restored it would have said nothing, which is
   what "the invariant was inert" actually cost.
   Armed: T8a's workflow plus the heartbeat.
+- **Tick 40, 2026-08-31. T8a DONE and verified, but not before its guard was
+  caught half-proving its own claim.** T8a's own RED evidence is the strong
+  kind: before the fix, the default-off test showed the replacement ACTUALLY
+  EXECUTING through the real dispatcher ("This destroys the old file"), so
+  the test drives the real path rather than inspecting a registry, which is
+  exactly what the brief demanded and what a weaker test would have faked.
+  Then the mutation I ran myself found the gap. **This setting has TWO
+  defaults and only one was pinned:**
+  - `main.py:177`'s `self.conf('operator_replace_enabled', default=False)`,
+    the fallback when the key is absent. Flipping it fails four tests.
+    Genuinely load-bearing, and the fixture deliberately leaves the key
+    ABSENT so those tests exercise the fallback instead of pre-deciding the
+    answer. That is good design, not an oversight.
+  - `api.py`'s settings-schema `'default': False`. Flipping THAT to True
+    left all seven tests green.
+  The second is the one that decides what happens on the owner's server: a
+  fresh install writes the schema default into its config, and the settings
+  page presents it. **"Ships disabled" is a claim about a machine after an
+  upgrade, not about a code path's fallback**, and it could have been undone
+  by a one-word edit under a green suite. Pinned in `3a0a7df90`, with the
+  count of matching options asserted too so the guard cannot quietly stop
+  describing reality if the option is moved or duplicated. Mutation proven,
+  restored by file copy, sha256 confirmed.
+  Full unit suite 3786 passed. T8's full gate launched detached.
+  The wider lesson, and it is the same one this branch keeps teaching: the
+  question is never "did a mutation fail" but "did I mutate the thing the
+  claim is actually about". I mutated the right file only because the first
+  mutation passed and that was surprising.
