@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { layoutPx, TARGET_SIZE_MIN } from './helpers';
 import { Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -68,8 +69,8 @@ test.describe('FEAT-010 Review queue -- mobile (393px)', () => {
 
     for (const [name, box] of [['Review chip', chipBox], ['Mark Done control', controlBox]] as const) {
       expect(box, `${name} has no bounding box at 393px`).not.toBeNull();
-      expect(box!.width, `${name} width at 393px`).toBeGreaterThanOrEqual(24);
-      expect(box!.height, `${name} height at 393px`).toBeGreaterThanOrEqual(24);
+      expect(layoutPx(box!.width), `${name} width at 393px`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
+      expect(layoutPx(box!.height), `${name} height at 393px`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
     }
 
     const results = await new AxeBuilder({ page })

@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { layoutPx, TARGET_SIZE_MIN, TARGET_SIZE_MIN_LARGE } from './helpers';
 import { type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -233,8 +234,8 @@ test.describe('FEAT-011 Operator replace modal -- mobile (393px)', () => {
 
     for (const [name, box] of boxes) {
       expect(box, `${name} has no bounding box at 393px`).not.toBeNull();
-      expect(box!.width, `${name} width at 393px`).toBeGreaterThanOrEqual(24);
-      expect(box!.height, `${name} height at 393px`).toBeGreaterThanOrEqual(24);
+      expect(layoutPx(box!.width), `${name} width at 393px`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
+      expect(layoutPx(box!.height), `${name} height at 393px`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
     }
 
     const results = await new AxeBuilder({ page })
@@ -253,9 +254,9 @@ test.describe('FEAT-011 Operator replace modal -- mobile (393px)', () => {
     const box = await confirmBtn.boundingBox();
     expect(box, 'confirm control has no bounding box at 393px').not.toBeNull();
     expect(
-      box!.width,
+      layoutPx(box!.width),
       'confirm control width at 393px -- a mis-tap on a phone destroys an irreplaceable file',
-    ).toBeGreaterThanOrEqual(44);
-    expect(box!.height, 'confirm control height at 393px').toBeGreaterThanOrEqual(44);
+    ).toBeGreaterThanOrEqual(TARGET_SIZE_MIN_LARGE);
+    expect(layoutPx(box!.height), 'confirm control height at 393px').toBeGreaterThanOrEqual(TARGET_SIZE_MIN_LARGE);
   });
 });

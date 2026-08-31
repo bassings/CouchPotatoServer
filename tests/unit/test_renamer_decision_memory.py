@@ -232,20 +232,60 @@ class TestFolderScannerIsUntouched:
     """
 
     def test_folder_scanner_has_no_diff_against_master(self):
+        # The base ref is resolved rather than named, because a bare
+        # `master` does NOT fall back to `origin/master`: git's
+        # disambiguation tries refs/remotes/<name>, which is
+        # refs/remotes/master, never refs/remotes/origin/master. A CI
+        # checkout has no local master branch, so `git diff master` exits
+        # 128 "bad revision" there while passing on a developer's machine.
+        # Measured on this branch: CI reported this guard as "folder_scanner
+        # differs from master" when git had not managed to look at all.
+        #
+        # That is the defect this guard exists to prevent, turned on itself:
+        # it could not tell "the protected file changed" from "I could not
+        # check". Those now have different outcomes and different messages.
+        base = None
+        for candidate in ('origin/master', 'master'):
+            probe = subprocess.run(
+                ['git', 'rev-parse', '--verify', '--quiet', candidate],
+                cwd=REPO_ROOT, env=sanitized_git_env(), capture_output=True,
+            )
+            if probe.returncode == 0:
+                base = candidate
+                break
+
+        assert base is not None, (
+            'neither origin/master nor master resolves in this checkout, so '
+            'this guard cannot compare folder_scanner.py against the base at '
+            'all. Failing rather than passing: an unverifiable data-loss '
+            'guard must not report success. Fetch the base ref (CI uses '
+            'fetch-depth: 0) and re-run.'
+        )
+
         result = subprocess.run(
-            ['git', 'diff', '--quiet', 'master', '--',
+            ['git', 'diff', '--quiet', base, '--',
              'couchpotato/core/plugins/scanner/folder_scanner.py'],
             cwd=REPO_ROOT,
             env=sanitized_git_env(),
         )
+
+        # `git diff --quiet` exits 0 for no difference and 1 for a
+        # difference. Anything else is git failing, which is not the same
+        # finding and must not be reported as one.
+        assert result.returncode in (0, 1), (
+            'git could not compare folder_scanner.py against %s (exit %d). '
+            'This is a broken check, not a detected change: fix the checkout '
+            'rather than reading this as a diff.' % (base, result.returncode)
+        )
+
         assert result.returncode == 0, (
             'couchpotato/core/plugins/scanner/folder_scanner.py differs '
-            'from master. This module is shared with manage.updateLibrary, '
+            'from %s. This module is shared with manage.updateLibrary, '
             'whose cleanup deletes any "done" movie absent from the scan '
             'result -- the one irrecoverable loss AC-SIMP-2 exists to '
-            'prevent. Run `git diff master -- '
+            'prevent. Run `git diff %s -- '
             'couchpotato/core/plugins/scanner/folder_scanner.py` to see '
-            'what changed.'
+            'what changed.' % (base, base)
         )
 
 

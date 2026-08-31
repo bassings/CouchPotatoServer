@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { layoutPx, TARGET_SIZE_MIN, TARGET_SIZE_MIN_LARGE } from './helpers';
 import { type Page } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
@@ -764,8 +765,8 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
 
       for (const [name, box] of boxes) {
         expect(box, `${name} has no bounding box`).not.toBeNull();
-        expect(box!.width, `${name} width at 1280px (${theme} theme)`).toBeGreaterThanOrEqual(24);
-        expect(box!.height, `${name} height at 1280px (${theme} theme)`).toBeGreaterThanOrEqual(24);
+        expect(layoutPx(box!.width), `${name} width at 1280px (${theme} theme)`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
+        expect(layoutPx(box!.height), `${name} height at 1280px (${theme} theme)`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN);
       }
     });
 
@@ -779,10 +780,10 @@ test.describe('FEAT-011 Operator replace modal accessibility', () => {
       const box = await confirmBtn.boundingBox();
       expect(box, 'confirm control has no bounding box').not.toBeNull();
       expect(
-        box!.width,
+        layoutPx(box!.width),
         `confirm control width in ${theme} theme -- a mis-tap here destroys an irreplaceable file, so WCAG 2.2 AA 2.5.8's 24px floor is not enough on its own`,
-      ).toBeGreaterThanOrEqual(44);
-      expect(box!.height, `confirm control height in ${theme} theme`).toBeGreaterThanOrEqual(44);
+      ).toBeGreaterThanOrEqual(TARGET_SIZE_MIN_LARGE);
+      expect(layoutPx(box!.height), `confirm control height in ${theme} theme`).toBeGreaterThanOrEqual(TARGET_SIZE_MIN_LARGE);
     });
 
     test(`confirm and cancel controls meet 4.5:1 text contrast against the dialog surface they actually sit on (${theme} theme, point 7)`, async ({ page }) => {
