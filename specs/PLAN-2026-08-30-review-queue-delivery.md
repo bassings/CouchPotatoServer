@@ -659,3 +659,47 @@ changes for the operator. **Then stop and hand it over.**
   outcome so neither invents findings to look thorough.
   Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, not
   re-tripped.
+
+status: blocked-on-human: the operator-replace path (FEAT-011) has now
+produced defects in five consecutive rounds. Ship it, hold it, or fix once
+more? See tick 32.
+
+- **Tick 32, 2026-08-31. THE CIRCUIT-BREAKER HAS TRIPPED PROPERLY AND I AM
+  STOPPING.** The local review of the remediation delta came back with two
+  HIGH findings, and I verified both myself against the code at HEAD rather
+  than relaying them:
+  - **C2's fix is inert on the ordinary case.** `main.py:1680` skips the
+    decision-time size comparison entirely when the source name is not a key
+    in `_operator_candidate_sizes` (`decision_time_size is not None`), and
+    that dict is built by a NON-RECURSIVE `os.listdir` holding bare names,
+    while `_resolveOperatorSource` accepts a relative path by its own
+    docstring. A scene release lands in a subfolder, so the everyday case
+    misses the guard and falls back to the fresh-stat-compared-with-itself
+    behaviour C2 existed to kill. The reviewer measured both copies of a
+    film destroyed in THREE reachable ways.
+  - **C1's origin guard passes when both headers are absent.**
+    `_cross_origin_post` returns False with no Origin and no Referer, and
+    the gate refuses only on True. The comment asserts the check "applies
+    unchanged" to these GET-reachable routes; it does not, because a
+    cross-origin GET sends no Origin at all and the attacking page
+    suppresses Referer with one meta tag. Reviewer drove it: a header-less
+    GET returned 200 and the library file's hash changed.
+  Plus a MEDIUM that is worse than it sounds: **M6's replay guard
+  permanently disables replacement for a path for the process lifetime**, so
+  the fix that stopped a second destructive swap also broke the feature it
+  was protecting, silently, while still answering "success".
+  And **M2 chmods the wrong file**: the credential lives in `cache.db-wal`
+  at 0644, not in the 0600 `cache.db`.
+  **Why this is a frame failure and not four more fixes.** Rounds on this
+  path: build, criticals, three batches of highs, mediums, lows, and now
+  this. Every round was mutation-proven and every round has been followed by
+  a round finding the previous fix inert, bypassable or self-defeating. C2
+  specifically has now been wrong three times, once in MY OWN verification
+  at tick 9. CLAUDE.md rule 11 and the conduct-plan breaker both say the
+  deliverable at this point is "the shape is wrong", not a sixth attempt.
+  **NOT PUSHED.** The gate is green but green is not the question.
+  What is NOT in doubt: FEAT-010 (the film-visibility bug that was actually
+  reported) and FEAT-012 (the renamer polling loop) carry none of these
+  findings. Every High here is on the operator-replace path.
+  Second reviewer still running; its findings will add to this, not change
+  its shape.
