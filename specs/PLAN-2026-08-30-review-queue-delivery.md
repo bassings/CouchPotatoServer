@@ -1103,3 +1103,34 @@ changes for the operator. **Then stop and hand it over.**
   reads only the PR should still learn the most important thing about this
   branch.
   Next: CI, then merge, then T10, which STOPS at a staged promotion.
+- **Tick 45, 2026-08-31. CI went red on a commit whose local gate was green,
+  and BOTH failures were the guards, not the product.** Both are the same
+  shape this branch has produced all day: a check that cannot tell a real
+  finding from its own inability to look.
+  - **`test_folder_scanner_has_no_diff_against_master`** ran
+    `git diff --quiet master` and asserted `returncode == 0`. A bare
+    `master` does NOT fall back to `origin/master`: git's disambiguation
+    tries `refs/remotes/<name>`, which is `refs/remotes/master`, never
+    `refs/remotes/origin/master`. A CI checkout has no local master branch,
+    so git exits **128 "bad revision"** and the guard reported that as
+    "folder_scanner.py differs from master", naming an irrecoverable
+    data-loss risk that had not happened. Reproduced in a CI-shaped clone
+    rather than inferred. Now resolves the base ref, distinguishes 128 from
+    1, and says "this check is broken" instead of "the file changed".
+    Proven in BOTH directions.
+  - **Twelve WCAG target-size assertions** compared a sub-pixel float to an
+    exact integer. Chromium lays out in 1/64th-pixel fixed point, so the
+    review chip, given exactly 24px, measured **23.999996185302734** on
+    Linux and exactly 24 on macOS. Now rounded to three decimals, which
+    absorbs 1e-6 and nothing else. **A half-pixel slack was written first
+    and rejected** as looser than the problem needs: the real defect is a
+    whole pixel.
+    **The honest part, recorded in the helper itself: the 23px case is NOT
+    reproducible on macOS.** Removing `min-h-6` and re-running locally
+    still passes, because the same markup lays out at 24px here. So the
+    change is justified by arithmetic, not by a local mutation, and I am
+    not claiming a proof I do not have. A local pass proves nothing about a
+    target-size guard. All twelve call sites converted, not just the one CI
+    hit: the other eleven were latent failures of the same kind.
+  Gate re-run green before pushing (3786 unit, 214 vitest, 261 E2E), pushed
+  as `1a3f1f858`, CI watch re-armed on #292.
