@@ -1152,3 +1152,46 @@ changes for the operator. **Then stop and hand it over.**
     hit: the other eleven were latent failures of the same kind.
   Gate re-run green before pushing (3786 unit, 214 vitest, 261 E2E), pushed
   as `1a3f1f858`, CI watch re-armed on #292.
+- **Tick 46, 2026-08-31. All sixteen CI checks green, ELEVEN review threads
+  found, triaged and resolved, one live bug fixed.** The merge was blocked
+  by conversation resolution, not by a failing check, which is why the
+  threads mattered.
+  **Triage shape: ten of the eleven were on the operator path, which ships
+  disabled and unreachable.** Real findings about code that cannot execute.
+  Each got a reply naming the evidence (routes unregistered at the default;
+  two adversarial reviews failed to reach them across 42 route spellings and
+  21 config values) and each is now a numbered blocking precondition in
+  FEAT-011, closed and proven before the setting is ever turned on. Resolved
+  on that basis, never as tidying away feedback.
+  **The eleventh was live and is fixed** (`b28f7d1d3`). `folder_scanner`
+  silently drops a group whose files are still settling, with only a
+  log.info, while `_folderSignature` walks the same folder and includes
+  that file, so a folder holding one parked collision plus a
+  just-completed download was memorised from a scan that could not have
+  seen it, and skipped forever after. **That is the owner's original
+  symptom: a downloaded film that never appears.** Fixed without touching
+  `folder_scanner` (empty diff held), deriving the window from
+  `checkFilesChanged`'s own signature rather than duplicating 60. Mutation
+  proven, with the counterweight test passing so it cannot be satisfied by
+  never remembering anything.
+  **Two findings deserve their own record, because both were about my own
+  work being wrong:**
+  - **My plan log claimed H9 was done and it was not.** The backend
+    returns the destination's name, quality and size; nothing in the UI
+    ever calls it (grep for `operator_replacement_preview` outside Python:
+    zero hits). The confirmation still names neither file, which is H9
+    verbatim. The template test asserts fixed substrings and would pass
+    pointed at the wrong film. **Re-enabling on the strength of my entry
+    would have shipped the defect a full review cycle already fixed once.**
+    Corrected IN PLACE, not rewritten.
+  - **C2 came back a FOURTH time**, via the preview route re-minting the
+    baseline, and the reviewer correctly noted my pinning test never
+    exercises a preview between listing and confirm. Not patched: four
+    recurrences of one class, each from an individually reasonable change,
+    is the shape problem rule 11 describes, and patching it inside the
+    release that removes the feature is the trade that lost three times.
+    Pinned as a **strict xfail** instead, proven in both directions:
+    expects-fail today, turns the SUITE RED on the unexpected pass so
+    whoever fixes it is told to remove the marker.
+  Gate green (3788 unit, 4 xfailed, 214 vitest, 261 E2E), pushed, CI
+  re-running.
