@@ -71,8 +71,8 @@ that heading is history and does not disarm the guard.
 
 - [x] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: done
 - [x] T8: full `make verify`, push, open the PR -- state: pr-open #292
-- [ ] T9: CI green, resolve review threads, merge to master -- state: awaiting-ci #292
-- [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: queued (needs: T9)
+- [x] T9: CI green, resolve review threads, merge to master -- state: merged (bd9fecda9)
+- [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: building
 
 ## Task detail
 
@@ -1195,3 +1195,29 @@ changes for the operator. **Then stop and hand it over.**
     whoever fixes it is told to remove the marker.
   Gate green (3788 unit, 4 xfailed, 214 vitest, 261 E2E), pushed, CI
   re-running.
+- **Tick 47, 2026-08-31. MERGED as `bd9fecda9`, and the production backup is
+  taken and verified.** All 16 checks green, state CLEAN, 0 unresolved
+  threads. Squash-merged to match the repo's convention (checked, not
+  assumed: #291 and #288 both landed that way).
+  **The backup trigger was applied MECHANICALLY, not by judgement**, which
+  is what `scripts/backup.sh`'s header demands: 23 files changed since
+  `v3.69.0` fall outside the exempt set, including write paths
+  (`media/_base/media/main.py`, `renamer/main.py`, `core/cache.py`). So the
+  backup is required, and this was derived from
+  `git diff --name-only v3.69.0..origin/master` rather than from a feeling
+  about how risky the release looks.
+  Before running it I compared the DEPLOYED script against the repo's: the
+  hashes differ (`8a7ba51e` vs `a7af6962`), so I diffed them ignoring
+  comments. The only substantive difference is usage text; the backup logic
+  is identical and both use sqlite3's `.backup` or Python's backup API,
+  never `cp`. So there was no reason to modify anything on the production
+  host, and I did not.
+  Snapshot: `/var/lib/plexmediaserver/CouchPotato/backups/20260831-162457`,
+  `couchpotato.db` 5,246,976 bytes plus `config.ini`. **Verified rather than
+  assumed: `PRAGMA integrity_check` on the snapshot returns `ok`.** A
+  backup nobody has opened is not a backup.
+  Production currently runs `ghcr.io/bassings/couchpotatoserver:latest` at
+  digest `sha256:f2e9c41e...`. The beta build for the merge commit is in
+  flight; the promotion note goes to the owner once its tag exists, and
+  **T10 STOPS THERE.** CLAUDE.md rule 6: production deploys only by explicit
+  agreement, never as a side effect of finishing work.
