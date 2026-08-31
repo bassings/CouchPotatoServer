@@ -738,3 +738,36 @@ changes for the operator. **Then stop and hand it over.**
   Rework rounds on the operator path: 6 as of this dispatch. Circuit-breaker
   tripped and ESCALATED at tick 32; the owner overrode, which is the
   breaker working as designed rather than being ignored.
+- **Tick 34, 2026-08-31. Second reviewer landed, tree confirmed clean, T7d
+  dispatched as one consolidated round (11 items).**
+  The second reviewer did something worth recording: **it tested my own
+  judgement and upheld it.** It restored the no-reload marker I deleted in
+  `aa012a1a` verbatim, ran it against three reload mutations, and showed the
+  marker caught nothing the surviving assertions do not. It also found the
+  honest caveat my commit message missed: **a DEFERRED reload is caught by
+  nothing in the repo**, and that gap predates my rewrite rather than being
+  created by it. Recorded as debt in item 11 rather than fixed, because the
+  owner authorised one round, not scope growth.
+  **Two findings were reached independently by both reviewers**, which is
+  the strongest evidence in this whole review: the cache WAL permissions and
+  the unguarded preview route. Neither reviewer saw the other's work.
+  The pattern in the new findings is the same one this branch keeps
+  producing, and it is worth naming plainly: **three of the fixes shipped
+  last round are held up by guards that cannot fail.** The clearest is the
+  operator-initiated flag: flipping `operator_initiated=True` to `False` at
+  `main.py:1726` leaves all 3763 unit tests green, because the test calls
+  the function directly and passes the flag ITSELF. The renderer is proven;
+  the path that runs is not. That is the "correct in source, absent from the
+  thing that actually runs" shape CLAUDE.md section 11 warns about.
+  Also caught: a Label in Name guard that hardcodes the text it claims to
+  read (change the button to "Complete" and both the Python and Playwright
+  guards stay green while Voice Control breaks), a test named "reachable by
+  Tab" that never presses Tab, and a regex satisfied by the words inside an
+  explanatory CODE COMMENT.
+  Ordered so the two that can destroy a film are done first. Every item
+  carries its own mutation requirement, and the prompt names the two
+  non-hostile-probe incidents this branch has already had, so the agent
+  cannot repeat them by accident.
+  Rework rounds on the operator path: 6, dispatched. Circuit-breaker tripped
+  and escalated at tick 32; the owner overrode with the evidence in front of
+  them, which is the breaker working rather than being bypassed.
