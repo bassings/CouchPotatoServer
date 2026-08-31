@@ -771,3 +771,16 @@ changes for the operator. **Then stop and hand it over.**
   Rework rounds on the operator path: 6, dispatched. Circuit-breaker tripped
   and escalated at tick 32; the owner overrode with the evidence in front of
   them, which is the breaker working rather than being bypassed.
+- **Tick 35, 2026-08-31.** Quiet hold. T7d mid-flight in its Test phase, and
+  the shape is right: **only test files have moved, no production code**,
+  which is what the workflow enforces (implementation stays unreachable
+  until the failing tests are verified red for the right reason).
+  Two new files match the two items ordered first, the ones that can destroy
+  a film: `test_replacement_operator_size_guard_fails_closed.py` (item 1) and
+  `test_replacement_operator_announce_call_site.py` (item 4). The seven
+  modified files are the guards-that-cannot-fail items: the origin guard,
+  the cache permissions, the premature-swap regex, the replay guard's
+  stand-in, and both Label in Name copies. Files touched match the brief
+  rather than drifting into it.
+  Rework rounds on the operator path: 6, in flight. Armed: T7d's workflow
+  plus the heartbeat.
