@@ -387,3 +387,434 @@ test.describe('Filtered-to-empty state', () => {
     expect(results.violations.length, `empty-state panel violations:\n${detail}`).toBe(0);
   });
 });
+
+test.describe('Review card actions (FEAT-010)', () => {
+  /*
+   * scripts/seed_e2e_data.py's two dedicated review-gate movies (AC-QA-9),
+   * already seeded status='downloaded' with a landed release -- real
+   * fixtures, not stubMovieGrid(), because these tests exercise the real
+   * movie_cards.html Mark Done / Mark Failed controls and their wiring, not
+   * client-side filter logic.
+   *
+   * REVIEW_MOVIE_ID is reserved for read-only assertions and
+   * REVIEW_DESTRUCTIVE_MOVIE_ID for the state-changing spec (the seed
+   * script's own comment). Every test below intercepts the destructive route
+   * itself rather than letting it reach the real backend, so REVIEW_MOVIE_ID
+   * stays genuinely read-only for whichever spec runs after this one in the
+   * same worker.
+   */
+  const REVIEW_MOVIE_ID = 'e2e-seed-movie-007';
+  const REVIEW_DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-008';
+  const MARK_FAILED_CONFIRM_TEXT =
+    'Mark this download as failed and search for another copy? This discards the current copy.';
+
+  async function gotoWantedWithReviewCards(page: Page) {
+    await page.goto('/wanted');
+    await expect(page.locator('#movie-grid')).toBeVisible({ timeout: 10000 });
+    await waitForGridLoaded(page);
+    const readOnlyCard = page.locator(`.poster-card[data-movie-id="${REVIEW_MOVIE_ID}"]`);
+    const destructiveCard = page.locator(`.poster-card[data-movie-id="${REVIEW_DESTRUCTIVE_MOVIE_ID}"]`);
+    await expect(
+      readOnlyCard,
+      'REVIEW_MOVIE_ID must be seeded and visible on Wanted -- did scripts/seed_e2e_data.py run?',
+    ).toHaveCount(1, { timeout: 10000 });
+    await expect(
+      destructiveCard,
+      'REVIEW_DESTRUCTIVE_MOVIE_ID must be seeded and visible on Wanted -- did scripts/seed_e2e_data.py run?',
+    ).toHaveCount(1, { timeout: 10000 });
+    return { readOnlyCard, destructiveCard };
+  }
+
+  test('dismissing the card Mark Failed confirmation issues zero requests (AC-QA-12)', async ({ page }) => {
+    let markFailedRequests = 0;
+    await page.route(/movie\.searcher\.mark_failed/, (route) => {
+      markFailedRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { readOnlyCard } = await gotoWantedWithReviewCards(page);
+
+    let dialogMessage: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await readOnlyCard.locator('[data-testid="review-mark-failed"]').click();
+    await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
+
+    // Same wording as the detail page (movie_detail.html:283) -- AC-QA-12.
+    expect(dialogMessage).toBe(MARK_FAILED_CONFIRM_TEXT);
+
+    // A moment for a wrongly-unconditional fetch to have fired, so this
+    // cannot pass by polling before the bug would have shown up.
+    await page.waitForTimeout(500);
+    expect(
+      markFailedRequests,
+      'dismissing the confirmation must issue zero requests to movie.searcher.mark_failed',
+    ).toBe(0);
+
+    // The card is still present during an in-flight request too, so the
+    // request-count assertion above -- not card presence -- is what proves
+    // dismissal did nothing (AC-QA-12).
+    await expect(readOnlyCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(readOnlyCard.locator('[data-testid="review-mark-failed"]')).toBeEnabled();
+  });
+
+  test("confirming Mark Failed issues exactly one request for that card's own id, no media.done request, and leaves every other card's status untouched (AC-QA-13)", async ({
+    page,
+  }) => {
+    const failedRequestIds: string[] = [];
+    let doneRequests = 0;
+    await page.route(/movie\.searcher\.mark_failed/, (route) => {
+      const url = new URL(route.request().url());
+      failedRequestIds.push(url.searchParams.get('media_id') || '');
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { readOnlyCard, destructiveCard } = await gotoWantedWithReviewCards(page);
+
+    // Synthesis decision 4: a card action re-fetches the grid, it does not
+    // call location.reload() -- a reload would destroy this marker.
+    await page.evaluate(() => {
+      (window as any).__feat010NoReloadMarker = true;
+    });
+
+    page.once('dialog', (dialog) => dialog.accept());
+    await readOnlyCard.locator('[data-testid="review-mark-failed"]').click();
+
+    await expect.poll(() => failedRequestIds.length, { timeout: 5000 }).toBe(1);
+    expect(failedRequestIds, "the request must carry that card's own media id, no other").toEqual([
+      REVIEW_MOVIE_ID,
+    ]);
+    expect(doneRequests, 'confirming Mark Failed must not also call media.done').toBe(0);
+
+    expect(
+      await page.evaluate(() => (window as any).__feat010NoReloadMarker),
+      'a full location.reload() would have wiped this marker -- the grid must be re-fetched instead',
+    ).toBe(true);
+
+    // The mocked response never reached the real backend, so the other
+    // seeded review card's status is proof no other card was touched.
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+  });
+
+  test('a rejected Mark Done ({success:false}) leaves the card unchanged, re-enables the control, and surfaces an error (AC-QA-15a)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: false }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    const idleLabel = ((await markDoneBtn.textContent()) || '').trim();
+    expect(idleLabel.length).toBeGreaterThan(0);
+
+    await markDoneBtn.click();
+    await expect.poll(() => doneRequests, { timeout: 5000 }).toBe(1);
+
+    // Neither stuck on a pending "Marking…" label nor silently claiming
+    // success.
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(markDoneBtn).toBeEnabled();
+    await expect(markDoneBtn).toHaveAttribute('aria-disabled', 'false');
+    expect(((await markDoneBtn.textContent()) || '').trim()).toBe(idleLabel);
+
+    const errorAnnouncer = page.locator('[data-testid="toast-announcer-assertive"]');
+    await expect(errorAnnouncer).not.toHaveText('', { timeout: 5000 });
+  });
+
+  test('an aborted Mark Done request leaves the card unchanged and re-enables the control (AC-QA-15b)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, (route) => {
+      doneRequests++;
+      return route.abort('failed');
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    const idleLabel = ((await markDoneBtn.textContent()) || '').trim();
+    expect(idleLabel.length).toBeGreaterThan(0);
+
+    await markDoneBtn.click();
+    await expect.poll(() => doneRequests, { timeout: 5000 }).toBe(1);
+
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded');
+    await expect(markDoneBtn).toBeEnabled();
+    expect(((await markDoneBtn.textContent()) || '').trim()).toBe(idleLabel);
+  });
+
+  test('two rapid clicks on Mark Done produce exactly one media.done request (AC-QA-16, pointer)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, async (route) => {
+      doneRequests++;
+      // Held open so a second activation during the in-flight window is a
+      // genuine race against the guard, not a race the guard wins only
+      // because the first request already finished.
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+
+    // force:true: the control uses aria-disabled (not the disabled
+    // attribute, per the project's a11y rule for a control that may hold
+    // focus), so a plain second .click() could be stalled by Playwright's
+    // own actionability retries rather than exercising the guard. Both
+    // clicks are issued back to back with no artificial wait between them.
+    await Promise.all([
+      markDoneBtn.click({ force: true }),
+      markDoneBtn.click({ force: true }),
+    ]);
+    await page.waitForTimeout(700);
+
+    expect(doneRequests).toBe(1);
+  });
+
+  test('two rapid Enter presses on a focused Mark Done produce exactly one media.done request (AC-QA-16, keyboard)', async ({
+    page,
+  }) => {
+    let doneRequests = 0;
+    await page.route(/media\.done/, async (route) => {
+      doneRequests++;
+      await new Promise((resolve) => setTimeout(resolve, 400));
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    const { destructiveCard } = await gotoWantedWithReviewCards(page);
+    const markDoneBtn = destructiveCard.locator('[data-testid="review-mark-done"]');
+    await markDoneBtn.focus();
+    await expect(markDoneBtn).toBeFocused();
+
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForTimeout(700);
+
+    expect(doneRequests).toBe(1);
+  });
+
+  /*
+   * Bulk delete and the review gate (AC-QA-20, AC-SEC-2, synthesis decision
+   * 3). wanted.html:396's bulkDelete() says "This cannot be undone" and then
+   * relies on the server to silently refuse a review-gated id
+   * (main.py:567) -- correct server behaviour, but the confirmation lies
+   * about what is about to happen. These three tests pin: the confirmation
+   * names the skip count BEFORE acting; the count is drawn from the actual
+   * selection, not the whole grid, so a partial selection cannot pass by
+   * reporting every review-gated film in the grid; and the ordinary
+   * (no-review-gated-film) case keeps today's wording untouched.
+   *
+   * ORDINARY_MOVIE_ID is WANTED_MOVIE_ID from scripts/seed_e2e_data.py:
+   * 'active', no releases, safe to select. Every test below either mocks
+   * movie.delete for it or cancels the confirmation before any request is
+   * sent, so nothing here mutates a fixture other spec files depend on.
+   */
+  const ORDINARY_MOVIE_ID = 'e2e-seed-movie-004';
+
+  test('Select All on a grid containing review-gated films states the skip count before acting, never requests their deletion, and they survive end-to-end (AC-QA-20, AC-SEC-2)', async ({
+    page,
+  }) => {
+    const { readOnlyCard, destructiveCard } = await gotoWantedWithReviewCards(page);
+
+    // Measured from the grid itself, not assumed -- AC-QA-9 seeds exactly
+    // two, but tying the assertion below to a live count (rather than a
+    // literal "2") is what makes it fail if the message is ever built from
+    // something other than what is actually on screen.
+    const reviewGatedVisibleCount = await page
+      .locator('#movie-grid .poster-card[data-status="downloaded"]')
+      .count();
+    expect(
+      reviewGatedVisibleCount,
+      'need at least the two seeded review-gate films visible for this test to mean anything',
+    ).toBeGreaterThanOrEqual(2);
+
+    const deleteRequestIds: string[] = [];
+    await page.route(/movie\.delete/, (route) => {
+      const url = new URL(route.request().url());
+      const id = url.searchParams.get('id') || '';
+      deleteRequestIds.push(id);
+      // A review-gated id is let through to the REAL backend -- AC-SEC-2
+      // asks for proof through the newly reachable UI path, not a mock of
+      // it. Every other id is mocked so this test cannot mutate shared E2E
+      // fixtures other spec files depend on.
+      if (id === REVIEW_MOVIE_ID || id === REVIEW_DESTRUCTIVE_MOVIE_ID) {
+        return route.continue();
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ success: true }),
+      });
+    });
+
+    await page.locator('button:has-text("Select All")').click();
+
+    let dialogMessage: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.accept();
+    });
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
+
+    // The count is tied to the skip CLAUSE, not merely present somewhere in
+    // the string. A bare `\b2\b` is satisfied by any "2" anywhere, including
+    // a hardcoded one or the unrelated delete total, which is this repo's
+    // recurring `guards-that-check-a-stand-in` shape. Requiring the number to
+    // sit in the same sentence as the reason makes a hardcoded digit fail.
+    expect(
+      dialogMessage,
+      `the review-gated count (${reviewGatedVisibleCount}) must be stated AS the skip reason, not merely appear somewhere in the message`,
+    ).toMatch(
+      new RegExp(`\\b${reviewGatedVisibleCount}\\b[^.]*awaiting review[^.]*skipped`, 'i'),
+    );
+
+    // And the delete total must be the DELETABLE count, not the selection
+    // size. Without this the message could truthfully name the skipped films
+    // and still promise to delete them.
+    const selectedTotal = await page.locator('#movie-grid .poster-card').count();
+    expect(
+      dialogMessage,
+      `Delete must offer ${selectedTotal - reviewGatedVisibleCount} (selection minus review-gated), not the full selection of ${selectedTotal}`,
+    ).toMatch(new RegExp(`Delete ${selectedTotal - reviewGatedVisibleCount} movies?\\?`));
+
+    // A moment for a wrongly-unconditional fetch to have fired, so this
+    // cannot pass by polling before the bug would have shown up.
+    await page.waitForTimeout(800);
+
+    expect(
+      deleteRequestIds,
+      'movie.delete must never be requested for the read-only review-gated id',
+    ).not.toContain(REVIEW_MOVIE_ID);
+    expect(
+      deleteRequestIds,
+      'movie.delete must never be requested for the destructive review-gated id',
+    ).not.toContain(REVIEW_DESTRUCTIVE_MOVIE_ID);
+
+    await expect(readOnlyCard).toHaveAttribute('data-status', 'downloaded', { timeout: 10000 });
+    await expect(destructiveCard).toHaveAttribute('data-status', 'downloaded', { timeout: 10000 });
+
+    // AC-SEC-2: real DB state through the newly reachable UI path, not just
+    // the DOM card left behind by a re-fetch that could itself be stale.
+    const [readOnlyState, destructiveState] = await page.evaluate(async ([id1, id2]) => {
+      const fetchOne = async (movieId: string) => {
+        const res = await fetch(`${(window as any).CP.apiBase}/media.get/?id=${movieId}`);
+        const data = await res.json();
+        const media = data?.media ?? data;
+        return {
+          status: media?.status,
+          profileId: media?.profile_id,
+          releaseCount: Array.isArray(media?.releases) ? media.releases.length : -1,
+        };
+      };
+      return Promise.all([fetchOne(id1), fetchOne(id2)]);
+    }, [REVIEW_MOVIE_ID, REVIEW_DESTRUCTIVE_MOVIE_ID]);
+
+    expect(readOnlyState.status, 'the read-only review film must still be downloaded, not deleted').toBe(
+      'downloaded',
+    );
+    expect(readOnlyState.profileId, 'its profile_id must still be set').toBeTruthy();
+    expect(readOnlyState.releaseCount, 'its releases must not have been deleted').toBeGreaterThan(0);
+
+    expect(
+      destructiveState.status,
+      'the destructive-fixture review film must still be downloaded, not deleted',
+    ).toBe('downloaded');
+    expect(destructiveState.profileId, 'its profile_id must still be set').toBeTruthy();
+    expect(destructiveState.releaseCount, 'its releases must not have been deleted').toBeGreaterThan(0);
+  });
+
+  test('a partial selection reports only the review-gated films actually selected, not every one seeded (AC-QA-20 caution)', async ({
+    page,
+  }) => {
+    await gotoWantedWithReviewCards(page);
+
+    // Exactly ONE of the two seeded review-gated films, plus one ordinary
+    // film -- a selection that is neither "all of them" nor "none of them".
+    // If the confirmation counted every review-gated film in the grid
+    // instead of the ones actually ticked, it would report 2 here (both
+    // seeded review films) rather than 1 (the one actually selected). The
+    // confirmation is dismissed, so nothing here reaches any backend.
+    await page
+      .locator(`.poster-card[data-movie-id="${REVIEW_MOVIE_ID}"] .movie-select-checkbox`)
+      .check({ force: true });
+    await page
+      .locator(`.poster-card[data-movie-id="${ORDINARY_MOVIE_ID}"] .movie-select-checkbox`)
+      .check({ force: true });
+
+    let dialogMessage: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
+
+    expect(
+      dialogMessage,
+      'the skipped count must name exactly the one selected review-gated film',
+    ).toMatch(/\b1\b/);
+    expect(
+      dialogMessage,
+      'a count derived from the whole grid rather than the selection would report 2 -- both seeded review films -- instead of the one actually selected',
+    ).not.toMatch(/\b2\b/);
+  });
+
+  test('a selection with no review-gated film keeps the confirmation wording unchanged, character for character (AC-QA-20)', async ({
+    page,
+  }) => {
+    await gotoWantedWithReviewCards(page);
+
+    await page
+      .locator(`.poster-card[data-movie-id="${ORDINARY_MOVIE_ID}"] .movie-select-checkbox`)
+      .check({ force: true });
+
+    let dialogMessage: string | null = null;
+    page.once('dialog', async (dialog) => {
+      dialogMessage = dialog.message();
+      await dialog.dismiss();
+    });
+    await page.getByRole('button', { name: 'Delete', exact: true }).click();
+    await expect.poll(() => dialogMessage, { timeout: 5000 }).not.toBeNull();
+
+    // wanted.html's existing wording, byte for byte -- the new review-gate
+    // branch must never touch this path. This is the direction that proves
+    // the new branch cannot swallow the ordinary case.
+    expect(dialogMessage).toBe('Delete 1 movie? This cannot be undone.');
+  });
+});

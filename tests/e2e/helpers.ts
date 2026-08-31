@@ -181,3 +181,37 @@ export function checkNoErrors(errors: string[]): void {
   );
   expect(criticalErrors, `Console errors: ${criticalErrors.join(' | ')}`).toHaveLength(0);
 }
+
+/**
+ * Round a measured CSS pixel length to absorb the browser's layout
+ * arithmetic, and nothing else.
+ *
+ * Chromium lays out in 1/64th-pixel fixed point, so an element given
+ * exactly 24px can be reported by boundingBox() as 23.999996185302734.
+ * That is what happened on this branch: the review chip target-size
+ * assertion passed on macOS, where it computed to exactly 24, and failed
+ * in CI on Linux at four millionths of a pixel under. The control was
+ * never undersized.
+ *
+ * Rounding to three decimal places, rather than subtracting a slack of
+ * half a pixel, is deliberate. It absorbs an error of order 1e-6 and
+ * leaves anything a person could perceive intact: a control genuinely
+ * short of the threshold (the review chips measured 23px before `min-h-6`
+ * was added) is unchanged by this and still fails.
+ *
+ * Do not widen this to make a failure go away. A control genuinely below
+ * the threshold is a WCAG 2.5.8 (24px) or 2.5.5 (44px) failure and the fix
+ * belongs in the CSS, not here.
+ *
+ * Note for whoever revisits this: the 23px case is NOT reproducible on
+ * macOS, where the same markup lays out at 24px naturally. The defect and
+ * its fix are only observable on Linux, which is where CI runs. Do not
+ * conclude from a local pass that a target-size guard is load-bearing.
+ */
+export function layoutPx(px: number): number {
+  return Math.round(px * 1000) / 1000;
+}
+
+/** WCAG 2.2 target-size thresholds in CSS pixels. */
+export const TARGET_SIZE_MIN = 24;
+export const TARGET_SIZE_MIN_LARGE = 44;

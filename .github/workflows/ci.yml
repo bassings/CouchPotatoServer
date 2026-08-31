@@ -268,6 +268,25 @@ jobs:
     steps:
     - uses: actions/checkout@v7
 
+    # The base branch, for the folder_scanner data-loss guard in
+    # tests/unit/test_renamer_decision_memory.py. That guard asserts the
+    # scanner shared with manage.updateLibrary is byte-identical to the
+    # base, because updateLibrary's cleanup deletes any 'done' movie
+    # absent from the scan result.
+    #
+    # This job's checkout is shallow and single-ref, so neither `master`
+    # nor `origin/master` exists here, and the guard cannot compare
+    # anything. It correctly refuses to pass when it cannot look, which is
+    # how this was found: it went red on a branch that had not touched the
+    # file. The answer is to give the check its base, never to let "I could
+    # not compare" report as success.
+    #
+    # Not `|| true`: if the base cannot be fetched, the guard must fail.
+    - name: Fetch the base branch for the folder_scanner guard
+      run: |
+        git fetch --no-tags --depth=1 origin \
+          +refs/heads/master:refs/remotes/origin/master
+
     - name: Set up Python ${{ matrix.python-version }}
       uses: actions/setup-python@v7
       with:

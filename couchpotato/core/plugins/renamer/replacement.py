@@ -175,3 +175,103 @@ def _is_complete_quality(quality):
         and quality.get('identifier')
         and 'is_3d' in quality
     )
+
+
+# FEAT-011. Which library file does an OPERATOR's replacement act on, for a
+# film the operator has already named. This is a second, separate decision
+# from `decide_replacement` above and shares none of its call sites: the
+# operator has already asserted identity by naming a specific film and a
+# specific source file, which is what makes bypassing the automatic path's
+# quality comparison and `_identityIsAsserted` legitimate here and nowhere
+# else (spec owner decision 1). Nothing below reads `identity_source`,
+# `is_better` or `rank`, and nothing in `decide_replacement` calls this.
+#
+# The one outcome that names a library file to destroy.
+OPERATOR_REPLACE = 'operator_replace'
+
+# No release recorded for this film has a completed copy on disk to replace.
+# The ordinary case this feature exists for -- a hand-placed file has nothing
+# recorded about it at all -- must refuse exactly the same way: nothing to
+# replace is not permission to guess a destination from the naming template.
+OPERATOR_DECLINED_NO_FILE_TO_REPLACE = 'operator_declined_no_file_to_replace'
+
+# More than one release for this film has a completed copy on disk. Picking
+# either risks destroying the copy the operator did NOT mean, which is
+# indistinguishable on the wire from picking the wrong film entirely
+# (AC-PROD-4). Refuse rather than choose, and refuse regardless of list order.
+OPERATOR_DECLINED_AMBIGUOUS_FILE = 'operator_declined_ambiguous_file'
+
+# A second operator activation while one is already running. A per-route
+# lock would QUEUE the retry behind the first instead of refusing it -- the
+# exact trap the spec calls out: the operator sees no progress on a 20.3 GB
+# cross-mount copy, clicks again, and the retry silently waits its turn
+# rather than being told plainly that one is already in flight. This reuses
+# the same re-entrancy guard the automatic scan already holds, never a
+# second lock.
+OPERATOR_REFUSED_ALREADY_RUNNING = 'operator_refused_already_running'
+
+# The operator's chosen source name does not resolve, once symlinks are
+# followed, to somewhere inside the configured watch folder. A relative
+# traversal, an absolute path elsewhere on disk, a name containing a NUL
+# byte and a symlink whose target escapes the folder all return this SAME
+# value, deliberately: refuse, never clamp, and never let the refusal tell
+# an attacker which hostile shape they tried, exactly as
+# `softchroot.chroot2abs` is proven (`couchpotato/core/softchroot.py:167-205`).
+OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER = 'operator_refused_source_outside_watch_folder'
+
+# H8 (branch review 2026-08-31). An unhandled exception anywhere inside the
+# operator's worker -- `release.for_media` raising, a database hiccup, an
+# unexpected shape in a release document -- is caught rather than left to
+# propagate to the bare `threading.Thread` target that runs it, which would
+# otherwise land the traceback on stderr only, invisible to CPLog and the
+# PrivacyFilter. Never means the library was touched: it is returned only
+# from a caught exception, always paired with a `None` destination.
+OPERATOR_REFUSED_ERROR = 'operator_refused_error'
+
+# M6 (branch review 2026-08-31). A stale retry against a destination this
+# SAME plugin instance already replaced -- a network resend, a doubled
+# click, or a retry issued because the operator never saw a response (H1).
+# `replace_atomically`'s own `destination_identity` check cannot catch this:
+# both the value captured before the call and the value re-checked inside it
+# are taken AFTER the first call already finished, so within the second call
+# they always agree with each other, whatever they disagree with from
+# before. Refused only when the destination still looks EXACTLY as it did
+# immediately after the earlier replacement; a destination a THIRD party has
+# since touched is a different situation and is not refused by this check.
+OPERATOR_REFUSED_ALREADY_REPLACED = 'operator_refused_already_replaced'
+
+# Only a release that actually landed in the library has a file on disk to be
+# a replacement target. A snatched or ignored release recorded a path it
+# expects to reach, not one that exists yet.
+_COMPLETED_RELEASE_STATUSES = frozenset({'done', 'seeding', 'downloaded'})
+
+
+def decide_operator_replacement(releases):
+    """Return `(outcome, existing_release)` for an operator-named film.
+
+    `releases` is every release document already recorded for the film the
+    operator named -- the caller resolves that scoping, this function does
+    not. `existing_release` is the release whose recorded file would be
+    replaced, and is only non-None when the outcome is `OPERATOR_REPLACE`, so
+    a caller cannot reach for it on a refusal.
+
+    The destination is never computed here: it is `existing_release`'s own
+    `files['movie']` entry, exactly as recorded. Recomputing it from the
+    naming template is the one thing this function exists to forbid --
+    measured on production, the real template renders the identical path for
+    two different films that both lack a year.
+    """
+    completed = [
+        release
+        for release in (releases or [])
+        if release.get('status') in _COMPLETED_RELEASE_STATUSES
+        and (release.get('files') or {}).get('movie')
+    ]
+
+    if not completed:
+        return OPERATOR_DECLINED_NO_FILE_TO_REPLACE, None
+
+    if len(completed) > 1:
+        return OPERATOR_DECLINED_AMBIGUOUS_FILE, None
+
+    return OPERATOR_REPLACE, completed[0]

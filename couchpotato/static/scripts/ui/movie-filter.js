@@ -14,13 +14,14 @@ export function matchesFilter(card, criteria) {
   const matchSearch = !q || title.includes(q);
 
   const filterStatus = criteria.filterStatus || '';
+  const awaitingReview = card.status === 'downloaded';
   let matchStatus;
   if (!filterStatus) {
     matchStatus = true;
   } else if (filterStatus === 'available') {
-    matchStatus = !!card.hasReleases;
+    matchStatus = !!card.hasReleases && !awaitingReview;
   } else if (filterStatus === 'wanted') {
-    matchStatus = !card.hasReleases;
+    matchStatus = !card.hasReleases && !awaitingReview;
   } else {
     matchStatus = (card.status || '') === filterStatus;
   }

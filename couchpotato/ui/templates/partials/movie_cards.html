@@ -17,7 +17,7 @@
 {% set movie_id = movie.get('_id', '') %}
 
 <div class="poster-card rounded-md overflow-hidden bg-cp-card border border-white/[0.05] group relative"
-     x-data="{ refreshing: false, selected: false }"
+     x-data="{ refreshing: false, selected: false, markingDone: false, markingFailed: false }"
      data-title="{{ title }}"
      data-status="{{ status }}"
      data-has-releases="{{ 'true' if releases|length > 0 else 'false' }}"
@@ -76,7 +76,17 @@
         {% elif status == 'done' %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-success/20 text-cp-success on-dark backdrop-blur-sm">done</span>
         {% elif status == 'downloaded' %}
-        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning/20 text-cp-warning on-dark backdrop-blur-sm">downloaded / review</span>
+        {# FEAT-010 AC-A11Y-12: unlike the other status badges above, this
+           one sits directly over arbitrary poster artwork with nothing
+           opaque behind it (the bottom gradient badges don't reach up
+           here). A translucent bg-cp-warning/20 tint with text in the
+           SAME hue measured 1.92:1 against both a black and a white
+           poster fixture -- WCAG 1.4.3 wants 4.5:1, and no tint opacity
+           fixes that while text and background share a colour. Solid
+           bg-cp-warning + black text is opaque enough that the poster
+           behind it stops mattering (9.4:1 against the badge itself, in
+           both themes, since neither colour is theme-variable). #}
+        <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-cp-warning text-black backdrop-blur-sm">downloaded / review</span>
         {% else %}
         <span class="px-1.5 py-0.5 rounded text-[9px] font-medium lowercase bg-white/10 text-white/80 backdrop-blur-sm">{{ status }}</span>
         {% endif %}
@@ -100,12 +110,58 @@
     </div>
   </a>
 
+  {% if status == 'downloaded' %}
+  <!-- Card-level review actions (FEAT-010 AC-QA-4). Siblings of the poster
+       <a>, not nested inside it (AC-A11Y-6), and never hidden behind
+       hover/focus opacity (AC-A11Y-7) -- unlike the refresh button below,
+       which is deliberately not the pattern reused here. Mark Done is first
+       in DOM order so the destructive Mark Failed control is never the
+       first thing reached by Tab (AC-DESIGN-8). Both controls use
+       aria-disabled with a re-entry guard rather than the disabled
+       attribute, matching confirmRestore() in partials/movie_detail.html,
+       so a focused control does not lose focus to <body> mid-request. On
+       success each re-fetches the grid via htmx (synthesis decision 4)
+       rather than location.reload(), which would destroy base.html's
+       persistent live-region announcers before the outcome could be
+       spoken. -->
+  <div class="flex items-center gap-2 px-2.5 pb-2.5">
+    <button type="button"
+            class="flex-1 px-2 py-1 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1 min-h-6"
+            data-testid="review-mark-done"
+            :class="markingDone ? 'opacity-50 cursor-wait' : ''"
+            :aria-busy="markingDone ? 'true' : 'false'"
+            :aria-disabled="markingDone ? 'true' : 'false'"
+            aria-label="Mark Done: {{ title }}"
+            @click="if(!markingDone) { markingDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}&expected_status=downloaded').then(r => r.json()).then(d => { markingDone = false; if(d.success) { toast('Marked as done and moved to the Library', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as done', 'error'); } }).catch(() => { markingDone = false; toast('Failed to mark as done', 'error'); }); }">
+      <span x-show="!markingDone">Mark Done</span>
+      <span x-show="markingDone">Marking…</span>
+    </button>
+    {# Destructive: discards the landed copy and re-searches immediately, so
+       confirm() first with the SAME wording the detail page uses
+       (movie_detail.html:283) -- AC-QA-12, AC-SIMP-4. The mark_failed call
+       is lexically inside this confirm( branch: there is no path that
+       reaches the request without the dialogue. #}
+    <button type="button"
+            class="flex-1 px-2 py-1 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-[10px] transition-colors inline-flex items-center justify-center gap-1 min-h-6"
+            data-testid="review-mark-failed"
+            :class="markingFailed ? 'opacity-50 cursor-wait' : ''"
+            :aria-busy="markingFailed ? 'true' : 'false'"
+            :aria-disabled="markingFailed ? 'true' : 'false'"
+            aria-label="Mark Failed: {{ title }}"
+            @click="if(!markingFailed && confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { markingFailed = false; if(d.success) { toast('Marked failed, searching for another copy', 'success'); window.__cpPendingReviewFocus = true; window.__cpReviewActionMovieId = '{{ movie_id }}'; window.__cpReviewActionRetries = 0; htmx.trigger('#movie-grid', 'review-action'); } else { toast('Failed to mark as failed', 'error'); } }).catch(() => { markingFailed = false; toast('Failed to mark as failed', 'error'); }); }">
+      <span x-show="!markingFailed">Mark Failed</span>
+      <span x-show="markingFailed">Marking…</span>
+    </button>
+  </div>
+  {% endif %}
+
   <!-- Refresh button (DEF-006) - shows on hover/focus (A11Y-002) -->
   <button @click.prevent.stop="if(!refreshing) { refreshing = true; fetch(CP.apiBase + '/movie.refresh/?id={{ movie_id }}').then(() => { refreshing = false; htmx.trigger('#movie-grid', 'load'); }).catch(() => { refreshing = false; }); }"
           class="absolute bottom-12 right-2 p-1.5 rounded-md bg-black/60 text-white/90 hover:text-white hover:bg-black/80 opacity-0 group-hover:opacity-100 focus:opacity-100 transition-all backdrop-blur-sm"
           :class="refreshing ? 'opacity-100' : ''"
           :disabled="refreshing"
-          :aria-label="refreshing ? 'Refreshing metadata for {{ title }}' : 'Refresh metadata for {{ title }}'">
+          data-title-label="{{ title }}"
+          :aria-label="refreshing ? 'Refreshing metadata for ' + $el.dataset.titleLabel : 'Refresh metadata for ' + $el.dataset.titleLabel">
     <svg x-show="!refreshing" aria-hidden="true" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
       <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"/>
     </svg>

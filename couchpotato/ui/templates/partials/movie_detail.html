@@ -35,6 +35,19 @@
 {% set completed_release = completed_releases[0] if completed_releases else None %}
 {% set downloaded_quality = completed_release.get('quality', '') if completed_release else '' %}
 {% set completed_status = completed_release.get('status', '') if completed_release else '' %}
+{# AC-DESIGN-1: the "Replace with this file" trigger needs a completed
+   release that actually carries a movie file -- a release that is
+   'done'/'seeding'/'downloaded' on paper but has nothing on disk yet
+   (files={}) must not show a trigger for an action with nothing to
+   replace. This is gating only, never the destination: the entry point
+   (`operatorReplaceView`) re-resolves the file to replace server-side
+   from the release records, per AC-DATA-1 and AC-SIMP-5. #}
+{% set ns = namespace(has_operator_replace_target=False) %}
+{% for r in completed_releases %}
+  {% if r.get('files', {}).get('movie') %}
+    {% set ns.has_operator_replace_target = True %}
+  {% endif %}
+{% endfor %}
 {% set movie_id = movie.get('_id', '') %}
 {% set imdb_id = info.get('imdb', '') %}
 
@@ -270,7 +283,8 @@
         <!-- Downloaded/review workflow (specs/DOWNLOADED-REVIEW-WORKFLOW.md phase 3c):
              non-destructive confirmation that the landed copy is good. Calls the
              existing media.done route (movie -> done, owning release -> done). -->
-        <button @click="markingReviewDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked done', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewDone = false; toast('Failed to mark as done', 'error'); } }).catch(() => { markingReviewDone = false; toast('Failed to mark as done', 'error'); })"
+        <button data-testid="review-mark-done"
+                @click="markingReviewDone = true; fetch(CP.apiBase + '/media.done/?id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked done', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewDone = false; toast('Failed to mark as done', 'error'); } }).catch(() => { markingReviewDone = false; toast('Failed to mark as done', 'error'); })"
                 class="px-3.5 py-1.5 bg-cp-success/10 text-cp-success hover:bg-cp-success/20 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 :disabled="markingReviewDone">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
@@ -280,7 +294,8 @@
         <!-- Destructive: discards the landed copy and re-searches immediately, so
              confirm() first (mirrors the Delete button's confirm below). Calls
              movie.searcher.mark_failed (param media_id, per searcher.py:428). -->
-        <button @click="if(confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingReviewFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked failed — searching for another copy', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); } }).catch(() => { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); }); }"
+        <button data-testid="review-mark-failed"
+                @click="if(confirm('Mark this download as failed and search for another copy? This discards the current copy.')) { markingReviewFailed = true; fetch(CP.apiBase + '/movie.searcher.mark_failed/?media_id={{ movie_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Marked failed — searching for another copy', 'success'); setTimeout(() => location.reload(), 900); } else { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); } }).catch(() => { markingReviewFailed = false; toast('Failed to mark as failed', 'error'); }); }"
                 class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5"
                 :disabled="markingReviewFailed">
           <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
@@ -343,6 +358,189 @@
             </div>
           </template>
         </button>
+        {# T8a: gated OFF at the root (operator_replace_enabled defaults
+           False) so the trigger and the modal it teleports never render --
+           per specs/FEAT-011-replace-with-this-file.md's "Shipped
+           disabled" note. Route-level gating lives in
+           couchpotato/core/plugins/renamer/main.py's `Renamer.__init__`. #}
+        {% if ns.has_operator_replace_target and operator_replace_enabled %}
+        <!-- AC-DESIGN-1/AC-DESIGN-2: the trigger itself is pinned by
+             test_operator_replace_trigger_ui_template.py. This increment
+             (test_operator_replace_modal_ui_template.py) adds the
+             design-system modal the trigger opens, carrying the
+             destructive confirmation that names the film AND states the
+             CURRENT library copy will be deleted and replaced
+             (AC-DESIGN-7/AC-QA-12/AC-PROD-3) -- "replace with X?" alone is
+             the failure mode this exists to prevent. It is a real
+             role="dialog"/aria-modal dialog, never window.confirm()
+             (AC-DESIGN-6, overridden over lens-simplicity's planning
+             proposal -- see "Vetoed at planning" in
+             specs/FEAT-011-replace-with-this-file.md), and the operator
+             can never type a path into it (AC-SEC-1).
+
+             The candidate picker itself (AC-DESIGN-3/4/5) and wiring the
+             confirm step to the existing operatorReplaceView entry point
+             with its in-flight/outcome states (AC-DESIGN-9/11, AC-A11Y-6)
+             are follow-up steps against this same shell, not invented
+             here. -->
+        <div x-data="operatorReplaceModal()" class="inline-flex items-center">
+          <button data-testid="operator-replace-trigger"
+                  x-ref="replaceTriggerBtn"
+                  @click="open()"
+                  class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 font-medium rounded-md text-xs transition-colors disabled:opacity-50 inline-flex items-center gap-1.5">
+            <svg aria-hidden="true" class="w-3.5 h-3.5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h18M16.5 3 21 7.5m0 0L16.5 12M21 7.5H3"/></svg>
+            Replace with this file
+          </button>
+
+          <template x-teleport="body">
+            <div x-show="isOpen"
+                 x-transition:enter="transition ease-out duration-200"
+                 x-transition:enter-start="opacity-0"
+                 x-transition:enter-end="opacity-100"
+                 x-transition:leave="transition ease-in duration-150"
+                 x-transition:leave-start="opacity-100"
+                 x-transition:leave-end="opacity-0"
+                 @click.self="close()"
+                 @keydown.escape.window="if (isOpen) close()"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="operator-replace-modal-title"
+                 data-testid="operator-replace-modal"
+                 class="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
+              <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg"
+                   @click.stop
+                   @keydown.tab="trapFocus($event)">
+                <!-- Header -->
+                <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
+                  <h3 id="operator-replace-modal-title" class="text-sm font-medium">Replace with this file</h3>
+                  <button @click="close()"
+                          id="operator-replace-modal-close"
+                          class="text-cp-muted hover:text-cp-text"
+                          aria-label="Close">
+                    <svg aria-hidden="true" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                  </button>
+                </div>
+
+                <!-- Body: the destructive confirmation, plus the
+                     candidate picker (FEAT-011 step two). Candidates are
+                     offered as role="radio" BUTTONS, never as a text
+                     entry field: test_operator_replace_modal_ui_template
+                     .py's TestOperatorReplaceModalOffersNoFreeTextPathEntry
+                     already pins zero form-input elements anywhere inside
+                     this modal, and a button carrying role="radio" plus
+                     aria-checked satisfies getByRole('radio', ...) with
+                     no free-text entry surface at all (AC-SEC-1). -->
+                <div class="px-4 py-4 text-sm text-cp-text">
+                  <p>
+                    Replacing <strong>{{ title }}</strong> will permanently
+                    delete its current library copy and put the file you
+                    choose in its place. This cannot be undone.
+                  </p>
+
+                  <!-- Loading: mirrors the spinner grammar at modals.html:95-101. -->
+                  <template x-if="loading">
+                    <div class="flex items-center gap-2 text-xs text-cp-muted py-4">
+                      <svg aria-hidden="true" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                      </svg>
+                      <span>Looking for files to replace with…</span>
+                    </div>
+                  </template>
+
+                  <!-- Error: the listing REQUEST itself failed -- distinct
+                       from a listing that succeeded with nothing in it. -->
+                  <template x-if="!loading && loadError">
+                    <p data-testid="operator-replace-error" class="text-xs text-cp-danger py-4">
+                      Could not check the download folder for files to
+                      replace with. Try again in a moment.
+                    </p>
+                  </template>
+
+                  <!-- Empty: the listing succeeded and found nothing. -->
+                  <template x-if="!loading && !loadError && candidates.length === 0">
+                    <p data-testid="operator-replace-empty" class="text-xs text-cp-muted py-4">
+                      No files were found in the download folder to
+                      replace this with.
+                    </p>
+                  </template>
+
+                  <!-- Populated: one radio-role button per candidate,
+                       named after the file verbatim so the value sent
+                       back on confirm is exactly what the server offered. -->
+                  <template x-if="!loading && !loadError && candidates.length > 0">
+                    <!-- AC-A11Y-1/point 5: arrow keys move focus AND
+                         selection between candidates (WAI-ARIA radiogroup
+                         pattern), scoped to $event.currentTarget rather
+                         than $el -- this list is teleported to <body>
+                         (x-teleport on the ancestor template), so $el (the
+                         un-teleported wrapper) would not contain it, same
+                         reasoning trapFocus() below already follows. -->
+                    <div role="radiogroup" aria-label="Choose a replacement file"
+                         @keydown.arrow-down.prevent="moveSelection($event, 1)"
+                         @keydown.arrow-up.prevent="moveSelection($event, -1)"
+                         class="mt-3 max-h-[400px] overflow-y-auto space-y-1">
+                      <template x-for="candidate in candidates" :key="candidate">
+                        <button type="button"
+                                role="radio"
+                                :aria-checked="selected === candidate ? 'true' : 'false'"
+                                @click="selected = candidate"
+                                :title="candidate"
+                                :class="selected === candidate ? 'bg-cp-accent/10 border-cp-accent/30' : 'border-white/[0.05] hover:bg-white/[0.03]'"
+                                class="w-full text-left px-2 py-1.5 rounded-md border text-xs truncate">
+                          <span x-text="candidate"></span>
+                        </button>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- Footer -->
+                <div class="px-4 py-3 border-t border-white/[0.04] flex justify-end gap-2">
+                  <button @click="close()"
+                          class="px-4 py-2 rounded-md text-xs font-medium text-cp-muted hover:text-cp-text">
+                    Cancel
+                  </button>
+                  <!-- L3 (branch review 2026-08-31) / AC-A11Y-6: aria-disabled,
+                       never the real `disabled` attribute, for BOTH reasons
+                       this control can be inert -- no candidate chosen yet,
+                       or a replacement already in flight. `disabled` removes
+                       an element from the tab order entirely, so before this
+                       fix a keyboard user tabbing the dialog met Cancel and
+                       then wrapped straight past this control with no
+                       indication a selection was required. aria-disabled
+                       keeps it reachable and its state announced, and
+                       confirmReplace()'s own re-entry guard
+                       (`if (this.replacing || !this.selected) return;`,
+                       below) is what actually stops the click, matching the
+                       pattern movie_cards.html's review controls already
+                       use. -->
+                  <template x-if="!loading && !loadError && candidates.length > 0">
+                    <!-- AC-A11Y-14: this is the control that commits the
+                         deletion, so it carries the 44x44 floor rather than
+                         the 24x24 one -- px-4/py-2/text-xs alone sizes to
+                         32px, under it. min-h-11/min-w-11 (44px on
+                         Tailwind's default scale) adds the floor without
+                         touching the existing padding/token classes
+                         AC-DESIGN-8 pins. -->
+                    <button data-testid="operator-replace-confirm"
+                            @click="confirmReplace()"
+                            :class="replacing ? 'opacity-50 cursor-wait' : (!selected ? 'opacity-50 cursor-not-allowed' : '')"
+                            :aria-busy="replacing ? 'true' : 'false'"
+                            :aria-disabled="(replacing || !selected) ? 'true' : 'false'"
+                            class="min-h-11 min-w-11 px-4 py-2 rounded-md text-xs font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15">
+                      <span x-show="!replacing">Replace file</span>
+                      <span x-show="replacing">Replacing…</span>
+                    </button>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+        {% endif %}
         <button @click="if(confirm('Delete this movie?')) { deleting = true; fetch(CP.apiBase + '/media.delete/?id={{ movie_id }}').then(() => { window.location.href = CP.newBase; }); }"
                 class="px-3.5 py-1.5 bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/15 rounded-md text-xs transition-colors disabled:opacity-50"
                 :disabled="deleting">
@@ -451,6 +649,181 @@ function cpSwap(url, target, swap) {
     htmx.swap(target, html, { swapStyle: swap });
   });
 }
+
+{% if operator_replace_enabled %}
+// operatorReplaceModal() backs the "Replace with this file" trigger and its
+// design-system dialog (FEAT-011). isOpen/open()/close() follows the same
+// convention as movieInfoModal() (partials/movie_info_modal.html), and
+// trapFocus() is copied from the same source rather than re-derived, since
+// both dialogs share the same header/body/footer shape
+// (docs/design-system/CONFORMANCE.md:38).
+//
+// The candidate list and the submit call, added here, wire to the existing
+// renamer.operator_candidates / renamer.operator_replace entry points
+// (couchpotato/core/plugins/renamer/main.py) -- client-side data flow only,
+// per the task this shipped against. Progress polling beyond the single
+// re-fetch on success, and every accessibility assertion, are separate
+// tasks against this same shell.
+function operatorReplaceModal() {
+  return {
+    isOpen: false,
+    triggerEl: null,
+    loading: false,
+    loadError: false,
+    candidates: [],
+    selected: '',
+    replacing: false,
+
+    open() {
+      this.triggerEl = this.$refs.replaceTriggerBtn;
+      this.isOpen = true;
+      this.selected = '';
+      this.candidates = [];
+      this.loadError = false;
+      this.replacing = false;
+      this.setBackgroundInert(true);
+      this.$nextTick(() => {
+        document.getElementById('operator-replace-modal-close')?.focus();
+      });
+      this.loadCandidates();
+    },
+
+    close() {
+      this.isOpen = false;
+      this.setBackgroundInert(false);
+      if (this.triggerEl) {
+        this.triggerEl.focus();
+      }
+    },
+
+    // Point 4 / AC-A11Y-10: Tab-order trapping (trapFocus below) keeps a
+    // keyboard user inside the dialog, but a screen reader's browse-mode
+    // virtual cursor can still walk into #main-content and the sidebar
+    // <aside> regardless of tab order -- only inert/aria-hidden removes
+    // them from the accessibility tree. Toggled directly on the DOM,
+    // rather than through an Alpine binding, because both elements live in
+    // base.html outside this component's own (teleported) subtree.
+    setBackgroundInert(state) {
+      const mainContent = document.getElementById('main-content');
+      if (mainContent) {
+        mainContent.inert = state;
+      }
+      const sidebar = document.querySelector('aside');
+      if (sidebar) {
+        sidebar.inert = state;
+      }
+    },
+
+    // Point 5 (WAI-ARIA radiogroup pattern): ArrowDown/ArrowUp move BOTH
+    // focus and selection between candidates. Scoped to
+    // event.currentTarget (the radiogroup div the listener is bound to),
+    // matching trapFocus()'s own pattern below, rather than this.$el --
+    // the candidate list is teleported to <body> (x-teleport), so this.$el
+    // (the un-teleported wrapper) would not contain it.
+    moveSelection(event, direction) {
+      const radios = Array.from(event.currentTarget.querySelectorAll('[role="radio"]'));
+      if (radios.length === 0) {
+        return;
+      }
+      let index = radios.indexOf(document.activeElement);
+      if (index === -1) {
+        index = 0;
+      }
+      const nextIndex = (index + direction + radios.length) % radios.length;
+      this.selected = this.candidates[nextIndex];
+      radios[nextIndex].focus();
+    },
+
+    notify(message, type) {
+      window.dispatchEvent(new CustomEvent('cp-toast', { detail: { message, type } }));
+    },
+
+    // Point 1: fetch the candidate list, offered only as a choice from
+    // this server-produced set (the picker's role="radio" buttons above)
+    // -- never a free-text path the operator could type or edit.
+    async loadCandidates() {
+      this.loading = true;
+      this.loadError = false;
+      try {
+        const res = await fetch(CP.apiBase + '/renamer.operator_candidates/');
+        if (!res.ok) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const data = await res.json();
+        if (!data.success) {
+          throw new Error(data.error || 'Could not list candidates');
+        }
+        this.candidates = data.candidates || [];
+      } catch (e) {
+        console.error('Failed to load replacement candidates:', e);
+        this.loadError = true;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    // Point 2 + point 6: sends exactly media_id and the chosen name back
+    // verbatim -- nothing else, and never a client-constructed path. The
+    // re-entry guard (`this.replacing`) means a second activation while
+    // one is in flight is refused outright rather than queued, matching
+    // the per-route lock the server side already refuses on
+    // (OPERATOR_REFUSED_ALREADY_RUNNING).
+    async confirmReplace() {
+      if (this.replacing || !this.selected) {
+        return;
+      }
+      this.replacing = true;
+      try {
+        const url = CP.apiBase + '/renamer.operator_replace/?media_id={{ movie_id }}&source=' + encodeURIComponent(this.selected);
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.success) {
+          // M22 (branch review 2026-08-31): `data.success` here means the
+          // server has ACCEPTED the request and started a background
+          // thread -- not that a single byte has moved yet
+          // (`operatorReplaceView` answers before the swap runs). This
+          // used to swap the page immediately, which showed the operator
+          // the OLD file's details on the one page whose whole purpose is
+          // telling them what is about to be destroyed, right after
+          // announcing the replacement had begun. No page swap on
+          // "started": close the dialog, return focus to the trigger, and
+          // say plainly that the swap is still running. Progress polling
+          // to a real terminal outcome is a separate, larger task (H1).
+          this.replacing = false;
+          this.close();
+          this.notify(
+            'Replacement running in the background. This can take '
+              + 'several minutes for a large file. Reload this page '
+              + 'afterwards to see the result.',
+            'info',
+          );
+        } else {
+          this.replacing = false;
+          this.notify(data.error || 'Could not start the replacement', 'error');
+        }
+      } catch (e) {
+        this.replacing = false;
+        this.notify('Could not start the replacement', 'error');
+      }
+    },
+
+    trapFocus(event) {
+      const modal = event.currentTarget;
+      const focusable = modal.querySelectorAll('button:not([disabled]), a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    }
+  };
+}
+{% endif %}
 
 function restoreToWanted() {
   return {

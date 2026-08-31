@@ -140,3 +140,197 @@ class TestSQLiteCacheEdgeCases:
         big = 'x' * 100_000
         cache.set('big', big)
         assert cache.get('big') == big
+
+
+class TestSQLiteCacheBytes:
+    """T67: HTTPClient.request returns bytes (its own docstring says so),
+    and getJsonData / getRSSData hand that response body to the cache
+    unchanged. A bytes value must round trip, because a value stored as
+    bytes and read back as anything else silently corrupts every cached
+    HTTP response body.
+    """
+
+    def test_set_and_get_bytes(self, cache):
+        raw = b'{"ok": true}'
+        cache.set('http-body', raw)
+        assert cache.get('http-body') == raw
+
+    def test_bytes_round_trip_preserves_type(self, cache):
+        cache.set('key', b'hello world')
+        result = cache.get('key')
+        assert isinstance(result, bytes), (
+            'cache.get returned %r, not bytes -- a caller that expects the '
+            'exact type urlopen returned will misbehave' % type(result)
+        )
+
+    def test_non_utf8_bytes_round_trip_exactly(self, cache):
+        # HTTP response bodies are not guaranteed to be UTF-8 text. A lossy
+        # decode-to-store would silently corrupt a cached response, which is
+        # worse than not caching it at all -- 0xff 0xfe is not valid UTF-8,
+        # so this fails loudly if the fix assumes utf-8 rather than
+        # preserving the exact bytes.
+        raw = b'\xff\xfe\x00\x01binary\x02\xfd\x80garbage'
+        cache.set('http-body-binary', raw)
+        assert cache.get('http-body-binary') == raw
+
+    def test_empty_bytes_round_trip(self, cache):
+        cache.set('empty-body', b'')
+        assert cache.get('empty-body') == b''
+
+
+class TestSQLiteCacheReportsUnstorableValues:
+    """T67 part two: the silent skip is the real defect and outlives
+    whatever encoding fix bytes gets. A value the cache genuinely cannot
+    store (no JSON representation, and not bytes) must be reported at a
+    level somebody actually sees, not log.debug -- otherwise the next
+    unserialisable type repeats this exact incident.
+    """
+
+    def test_unstorable_object_is_reported_above_debug(self, cache, caplog):
+        class Unrepresentable:
+            """No JSON representation, and not bytes."""
+
+        with caplog.at_level('WARNING'):
+            cache.set('bad-key', Unrepresentable())
+
+        # still not stored -- the guard is about visibility, not persistence
+        assert cache.get('bad-key') is None
+
+        reported = [r for r in caplog.records if r.name == 'couchpotato.core.cache']
+        assert reported, (
+            'cache.set silently dropped a value it could not store -- '
+            'nothing was logged at WARNING or above'
+        )
+        assert 'bad-key' in caplog.text, (
+            'the report does not name the key, so nobody can act on it'
+        )
+
+    def test_unstorable_set_value_is_reported_above_debug(self, cache, caplog):
+        # a python set has no JSON representation
+        with caplog.at_level('WARNING'):
+            cache.set('bad-set', {1, 2, 3})
+
+        assert cache.get('bad-set') is None
+
+        reported = [r for r in caplog.records if r.name == 'couchpotato.core.cache']
+        assert reported, (
+            'cache.set silently dropped a set value -- nothing was logged '
+            'at WARNING or above'
+        )
+
+    def test_unstorable_value_does_not_raise(self, cache):
+        # The cache must not turn a caching failure into a request failure --
+        # setCache is called from inside a fetch that already has the data
+        # in hand; raising here would discard a successful fetch just
+        # because that fetch's result could not be cached.
+        class Unrepresentable:
+            pass
+
+        cache.set('bad-key-2', Unrepresentable())  # must not raise
+
+
+class TestSQLiteCacheFilePermissions:
+    """M2 (branch review 2026-08-31): fixing T67's dead cache turned it into
+    a LIVE on-disk store. What actually reaches `cache.set` is HTTP response
+    bodies -- Torznab/Jackett responses routinely embed the indexer's own
+    API key in a `<link>` element -- and the review measured the created
+    file at mode 0644, world-readable, on a box that runs unattended.
+
+    Nothing here asserts about retention or eviction timing (the review's
+    other two suggested changes) -- only the part that is unambiguously
+    wrong regardless of what the cache is allowed to hold: a file that can
+    contain another service's credentials must not be readable by every
+    other account on the machine.
+    """
+
+    def test_the_cache_directory_is_created_private(self, cache_dir, cache):
+        mode = os.stat(cache_dir).st_mode & 0o777
+        assert mode == 0o700, (
+            'the cache directory %r was created with mode %o -- it must be '
+            '0700 (owner-only) because cache.db can hold indexer API keys '
+            'embedded in cached provider response bodies (M2, branch '
+            'review 2026-08-31)' % (cache_dir, mode)
+        )
+
+    def test_every_file_in_the_cache_directory_is_created_private(
+        self, cache_dir, cache,
+    ):
+        """T7d item 5, round two on M2. This test used to name `cache.db`
+        alone and assert on it exclusively -- which passed while missing
+        the actual leak the review measured. The cache runs in WAL mode
+        (`cache.py:70`), so a recent write does not necessarily land in
+        `cache.db` at all: it can sit in `cache.db-wal` until the next
+        checkpoint, and `cache.db-shm` is the shared-memory index SQLite
+        keeps beside it. Only `cache.db` was ever chmod'd, so with a plain
+        022 umask `cache.db-wal` and `cache.db-shm` are created at 0644 --
+        world-readable -- and it is `cache.db-wal`, not `cache.db`, that
+        actually holds a just-cached credential most of the time. Naming
+        one file let this test stay green while the secret sat in a
+        readable sibling; it must instead cover every file the cache
+        directory contains, whatever SQLite decides to name it.
+        """
+        old_umask = os.umask(0o022)
+        try:
+            cache.set(
+                'k1', b'<rss><link>http://indexer/dl?apikey=SECRET</link></rss>',
+            )
+
+            entries = sorted(os.listdir(cache_dir))
+            assert entries, (
+                'fixture broken: the cache directory is empty after a set()'
+            )
+
+            offending = []
+            for name in entries:
+                path = os.path.join(cache_dir, name)
+                if not os.path.isfile(path):
+                    continue
+                mode = os.stat(path).st_mode & 0o777
+                if mode != 0o600:
+                    offending.append((name, oct(mode)))
+
+            assert not offending, (
+                'the following cache directory files were left readable '
+                'by group/other (0600 required, umask 022 in effect): %r '
+                '-- a Torznab/Jackett response body cached here routinely '
+                'embeds the indexer\'s own API key, and under WAL mode a '
+                'just-written credential can sit in `cache.db-wal` rather '
+                'than `cache.db` itself (M2, branch review 2026-08-31, '
+                'round two)' % (offending,)
+            )
+        finally:
+            os.umask(old_umask)
+
+    def test_a_chmod_failure_is_logged_rather_than_silently_swallowed(
+        self, cache_dir, monkeypatch, caplog,
+    ):
+        """The current `except OSError: pass` around every chmod call in
+        `SQLiteCache.__init__` means a filesystem that ignores or refuses
+        chmod (a permission-stripping network mount, a filesystem mounted
+        without POSIX permission support) silently loses every one of
+        these protections with nothing anywhere to say so. A guard that
+        fails must say that it failed.
+        """
+        import logging
+
+        def _always_fails(*args, **kwargs):
+            raise OSError(1, 'Operation not permitted')
+
+        monkeypatch.setattr(os, 'chmod', _always_fails)
+
+        with caplog.at_level(logging.WARNING):
+            cache = SQLiteCache(cache_dir)
+            try:
+                cache.set('k1', 'v1')
+            finally:
+                cache.close()
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any('chmod' in m.lower() or 'permission' in m.lower()
+                   for m in messages), (
+            'every chmod call that protects the cache directory and its '
+            'files failed, and nothing was logged about it -- an operator '
+            'on a filesystem that ignores chmod has no way to know these '
+            'protections silently do not apply. Messages were: %r'
+            % messages
+        )

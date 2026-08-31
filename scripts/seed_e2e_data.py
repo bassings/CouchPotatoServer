@@ -227,9 +227,18 @@ RELEASES = [
 #: Deliberately NOT 'downloaded': that status puts the movie in the
 #: manual-review gate, which renders a per-release "Mark failed" button and
 #: breaks tests/e2e/movie-detail.spec.ts's "review-gate buttons are absent
-#: for a non-downloaded movie" -- a movie carrying this release must stay a
-#: plain non-downloaded movie. 'done' gives the status filter variety without
-#: changing what the movie IS.
+#: for a non-downloaded movie" -- DONE_RELEASE_MOVIE_ID must stay a plain
+#: non-downloaded movie, or that negative-case spec has nothing left to
+#: assert against. 'done' gives the status filter variety without changing
+#: what the movie IS.
+#:
+#: This is a split by MOVIE, not a blanket avoidance of 'downloaded' across
+#: the whole script any more (FEAT-010, AC-QA-9): REVIEW_MOVIE_ID and
+#: REVIEW_DESTRUCTIVE_MOVIE_ID below are seeded status='downloaded' on
+#: purpose, on their own dedicated movies, precisely so the review gate has
+#: something real to exercise. DONE_RELEASE_MOVIE_ID keeps avoiding it so
+#: movie-detail.spec.ts's negative case keeps working; the REVIEW_* movies
+#: exist specifically to be downloaded.
 DONE_RELEASE = {
     'suffix': '4',
     'protocol': 'torrent',
@@ -240,6 +249,80 @@ DONE_RELEASE = {
     'score': 40.0,
     'age': 45,
     'name': 'E2E.Seed.Movie.2024.720p.WEBRip-GRP4',
+}
+
+
+#: A dedicated profile carrying manual_confirmation=True, so the two
+#: review-gate movies below actually land IN the review gate. Status
+#: 'downloaded' alone is not enough to make a fixture meaningful here --
+#: `restatus` (main.py:791-799) preserves 'downloaded' regardless of the
+#: profile, but nothing about the gate reads as real unless the profile that
+#: put it there is one that would have. PROFILE_ID itself carries
+#: manual_confirmation=False (see above), so this is a second, separate
+#: profile rather than a mutation of the shared one -- flipping the shared
+#: flag would silently change what every other seeded movie's profile means.
+REVIEW_PROFILE_ID = 'e2e-seed-profile-review-001'
+
+#: Two dedicated review-gate movies (AC-QA-9, FEAT-010), mirroring the
+#: MOVIE_ID / DESTRUCTIVE_MOVIE_ID split above:
+#:
+#: - REVIEW_MOVIE_ID: read-only assertions (the chip, the badge, the
+#:   accessible names).
+#: - REVIEW_DESTRUCTIVE_MOVIE_ID: the state-changing Mark Done spec, which
+#:   confirms the movie out of the review gate and must not be able to
+#:   touch the read-only movie's fixture -- the same reasoning that put
+#:   DESTRUCTIVE_MOVIE_ID on its own document rather than sharing MOVIE_ID.
+#:
+#: Neither id is referenced by any other seeded constant. Both are seeded
+#: already status='downloaded', on REVIEW_PROFILE_ID, each with one landed
+#: (status='downloaded') release -- the three things the review gate itself
+#: reads (searcher.py:185, main.py:791-799, movie_detail.html:269-284).
+REVIEW_MOVIE_ID = 'e2e-seed-movie-007'
+REVIEW_IMDB_ID = 'tt9999907'
+
+REVIEW_DESTRUCTIVE_MOVIE_ID = 'e2e-seed-movie-008'
+REVIEW_DESTRUCTIVE_IMDB_ID = 'tt9999908'
+
+#: One landed release each. The Mark Done / Mark Failed buttons act on a
+#: specific release, so a review-gate movie with none is not a real fixture
+#: for this gate.
+#:
+#: FEAT-011: both releases also carry `files.movie` now. `movie_detail.html`'s
+#: "Replace with this file" trigger renders only when a completed release
+#: records a movie file (`r.get('files', {}).get('movie')`), and the E2E tier
+#: for that feature (tests/e2e/operator-replace-modal.spec.ts) needs the trigger
+#: on a real seeded page, not a hand-built Jinja fixture -- the whole point of
+#: writing that tier as Playwright rather than a render test. The path is never
+#: read from disk by anything these two movies' tests exercise: every test that
+#: submits against `renamer.operator_replace` intercepts that route rather than
+#: letting it reach the real backend (same reasoning filters.spec.ts already
+#: documents for reusing REVIEW_MOVIE_ID despite it "looking" destructive), so
+#: the path does not need to exist on disk and no other seeded fixture's
+#: 'files': {} changes.
+REVIEW_RELEASE = {
+    'suffix': '1',
+    'protocol': 'torrent',
+    'quality': '1080p',
+    'status': 'downloaded',
+    'size': 19500,
+    'seeders': 25,
+    'score': 88.0,
+    'age': 3,
+    'name': 'E2E.Review.Gate.Movie.2024.1080p.BluRay-GRP7',
+    'files': {'movie': ['/e2e-fixture-library/E2E Review Gate Movie (2024)/E2E Review Gate Movie (2024).mkv']},
+}
+
+REVIEW_DESTRUCTIVE_RELEASE = {
+    'suffix': '1',
+    'protocol': 'torrent',
+    'quality': '1080p',
+    'status': 'downloaded',
+    'size': 19800,
+    'seeders': 30,
+    'score': 89.0,
+    'age': 4,
+    'name': 'E2E.Review.Gate.Destructive.Movie.2024.1080p.BluRay-GRP8',
+    'files': {'movie': ['/e2e-fixture-library/E2E Review Gate Destructive Movie (2024)/E2E Review Gate Destructive Movie (2024).mkv']},
 }
 
 
@@ -301,7 +384,10 @@ def verify(data_dir):
     Checks the invariant T1.7a established: both Wanted-page movies are
     'active' (so restatus cannot have promoted them out) and the dedicated
     done-release movie is 'done'. T1.9 adds WANTED_MOVIE_ID: 'active', the
-    fixture's only genuine has_releases=False candidate.
+    fixture's only genuine has_releases=False candidate. FEAT-010 (AC-QA-10)
+    adds the two dedicated review-gate movies: 'downloaded', so the review
+    queue has something real to exercise instead of quietly reverting to a
+    default status.
     """
     db = _open_adapter(data_dir)
     try:
@@ -315,6 +401,8 @@ def verify(data_dir):
                 (MOVIE_ID, 'active'),
                 (DESTRUCTIVE_MOVIE_ID, 'active'),
                 (DONE_RELEASE_MOVIE_ID, 'done'),
+                (REVIEW_MOVIE_ID, 'downloaded'),
+                (REVIEW_DESTRUCTIVE_MOVIE_ID, 'downloaded'),
             ]
             + [(mid, 'active') for mid, _imdb, _title in WANTED_MOVIE_IDS]
         ):
@@ -471,14 +559,26 @@ def seed(data_dir, password=None):
             'manual_confirmation': False,
         })
 
-        for movie_id, imdb_id, movie_title, movie_status, releases in (
-              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie', 'active', RELEASES),
-              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie', 'active', RELEASES),
+        created['review_profile'] = _upsert(db, REVIEW_PROFILE_ID, {
+            '_t': 'profile',
+            'label': 'E2E Review Gate Profile',
+            'order': 998,
+            'core': False,
+            'hide': False,
+            'qualities': PROFILE_QUALITIES,
+            'wait_for': [0, 0, 0],
+            'finish': [True, True, True],
+            'manual_confirmation': True,
+        })
+
+        for movie_id, imdb_id, movie_title, movie_status, profile_id, releases in (
+              (MOVIE_ID, IMDB_ID, 'E2E Seed Movie', 'active', PROFILE_ID, RELEASES),
+              (DESTRUCTIVE_MOVIE_ID, DESTRUCTIVE_IMDB_ID, 'E2E Destructive Seed Movie', 'active', PROFILE_ID, RELEASES),
               # T1.7a: isolated on its own movie, deliberately unreferenced by
               # any spec -- see DONE_RELEASE_MOVIE_ID's comment above. Seeded
               # already 'done' (not 'active') so it never depends on the
               # restatus pass and never appears in the Wanted grid at all.
-              (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', [DONE_RELEASE]),
+              (DONE_RELEASE_MOVIE_ID, DONE_RELEASE_IMDB_ID, 'E2E Done Release Movie', 'done', PROFILE_ID, [DONE_RELEASE]),
               # T1.9: zero releases, so this is the fixture's only movie the
               # fixed has_releases=False filter actually puts on the Wanted
               # page -- see WANTED_MOVIE_ID's comment above.
@@ -493,14 +593,20 @@ def seed(data_dir, password=None):
               # mode. Measured: e2e-seed-movie-004 titled "E2E Wanted Only
               # Movie" broke filters.spec.ts's "should have filter buttons",
               # "clicking Wanted filter", and "clicking All" tests this way.
-              *[(mid, imdb, title, 'active', []) for mid, imdb, title in WANTED_MOVIE_IDS],
+              *[(mid, imdb, title, 'active', PROFILE_ID, []) for mid, imdb, title in WANTED_MOVIE_IDS],
+              # FEAT-010 (AC-QA-9): two dedicated review-gate movies, seeded
+              # already 'downloaded' on REVIEW_PROFILE_ID -- see that
+              # constant's comment above for why this is additive rather
+              # than reusing DONE_RELEASE_MOVIE_ID or PROFILE_ID.
+              (REVIEW_MOVIE_ID, REVIEW_IMDB_ID, 'E2E Review Gate Movie', 'downloaded', REVIEW_PROFILE_ID, [REVIEW_RELEASE]),
+              (REVIEW_DESTRUCTIVE_MOVIE_ID, REVIEW_DESTRUCTIVE_IMDB_ID, 'E2E Review Gate Destructive Movie', 'downloaded', REVIEW_PROFILE_ID, [REVIEW_DESTRUCTIVE_RELEASE]),
         ):
             created.setdefault('movies', []).append(_upsert(db, movie_id, {
               '_t': 'media',
               'status': movie_status,
               'title': movie_title,
               'type': 'movie',
-              'profile_id': PROFILE_ID,
+              'profile_id': profile_id,
               'category_id': None,
               'identifiers': {'imdb': imdb_id},
               'info': {
@@ -550,7 +656,12 @@ def seed(data_dir, password=None):
                   'quality': r['quality'],
                   'is_3d': False,
                   'last_edit': now,
-                  'files': {},
+                  # r.get('files', {}), not a bare {}: only REVIEW_RELEASE and
+                  # REVIEW_DESTRUCTIVE_RELEASE set this key (see their own
+                  # comment above) -- every other release dict in this module
+                  # still has none, so this stays {} for them exactly as
+                  # before.
+                  'files': r.get('files', {}),
                   'info': info,
               })
               created['releases'].append((release_id, inserted))

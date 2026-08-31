@@ -138,6 +138,137 @@ class TestMarkDoneCompletesLandedRelease:
         assert release_status_calls == []
 
 
+# --- MediaPlugin.markDone(): optional `expected_status` CAS guard ----------
+#
+# AC-SEC-7 (specs/FEAT-010-review-queue-in-wanted.md): markDone accepts an
+# optional `expected_status` for optimistic concurrency. When supplied and it
+# does not match the freshly re-read stored status, the call performs no
+# write and returns failure; the check must be evaluated INSIDE the existing
+# update_with_retry mutator (_mark_done), atomic against that re-read doc,
+# mirroring MovieSearcher._reset_if_downloaded (searcher.py:817-824). When
+# omitted, behaviour is exactly as today.
+#
+# AMENDED note in the spec, load-bearing here: this is optimistic
+# concurrency, NOT a status allowlist. Mark Done is offered from
+# movie_detail.html:261 for every status except 'done' and 'downloaded', and
+# FEAT-001 exists precisely to move an ACTIVE movie out of the Wanted
+# workflow via this action. A guard that special-cased 'active' out --
+# e.g. by copying _reset_if_downloaded's "only from downloaded" scope check
+# onto this action instead of a plain equality check against whatever
+# expected_status the caller actually sent -- would silently delete that
+# shipped feature while looking correct and passing a naive test.
+
+class TestMarkDoneExpectedStatusGuard:
+
+    def _run(self, media_doc, releases=None, expected_status='__omit__', update_with_retry_result='write'):
+        """Persisting FakeDB (mirrors TestMarkFailedAndResearch._run below):
+        the mutator's write is actually kept on `fake_db.stored`, rather than
+        handed back and discarded, so a test can assert the stored status
+        was -- or was not -- changed. A non-persisting fake would let a
+        guard that never checks anything still look like it "left the
+        status untouched", because nothing was ever recorded as touched.
+        """
+        plugin = MediaPlugin.__new__(MediaPlugin)
+        releases = releases if releases is not None else []
+
+        release_status_calls = []
+
+        class FakeDB:
+            def __init__(self):
+                self.stored = dict(media_doc)
+
+            def update_with_retry(self, mutator, doc_id, retries=3):
+                assert doc_id == media_doc['_id']
+                doc = dict(self.stored)
+                if mutator(doc) is False:
+                    return None
+                if update_with_retry_result == 'conflict':
+                    raise ConflictError(doc_id)
+                self.stored = doc
+                return doc
+
+        fake_db = FakeDB()
+
+        def fake_fire_event(event, *args, **kwargs):
+            if event == 'release.for_media':
+                assert args[0] == media_doc['_id']
+                return [dict(r) for r in releases]
+            if event == 'release.update_status':
+                release_status_calls.append((args[0], kwargs.get('status')))
+                return True
+            raise AssertionError('Unexpected fireEvent call: %r' % (event,))
+
+        with (
+            patch('couchpotato.core.media._base.media.main.get_db', return_value=fake_db),
+            patch('couchpotato.core.media._base.media.main.fireEvent', side_effect=fake_fire_event),
+        ):
+            if expected_status == '__omit__':
+                result = plugin.markDone(media_doc['_id'])
+            else:
+                result = plugin.markDone(media_doc['_id'], expected_status=expected_status)
+
+        return result, release_status_calls, fake_db
+
+    def test_matching_expected_status_succeeds(self):
+        movie = {'_id': 'movie-1', 'status': 'downloaded'}
+        releases = [{'_id': 'release-1', 'status': 'downloaded'}]
+
+        result, release_status_calls, fake_db = self._run(movie, releases, expected_status='downloaded')
+
+        assert result == {'success': True}
+        assert fake_db.stored['status'] == 'done'
+        assert release_status_calls == [('release-1', 'done')]
+
+    def test_stale_expected_status_performs_no_write_and_leaves_status_untouched(self):
+        """The card was rendered showing 'active' and sent
+        expected_status='active', but the movie has since moved on (another
+        tab, another device, a concurrent status transition) to 'downloaded'
+        by the time this call is actually applied. The guard must catch that
+        atomically against the freshly re-read doc -- no movie write, no
+        release completed, stored status left exactly as it actually is.
+
+        Revert-proof: with no guard (today's code), this call unconditionally
+        sets status to 'done' and completes the landed release, so both the
+        stored-status and release-calls assertions below fail against
+        unmodified production code.
+        """
+        movie = {'_id': 'movie-1', 'status': 'downloaded'}
+        releases = [{'_id': 'release-1', 'status': 'downloaded'}]
+
+        result, release_status_calls, fake_db = self._run(movie, releases, expected_status='active')
+
+        assert result['success'] is False
+        assert fake_db.stored['status'] == 'downloaded', "a stale mismatch must not write"
+        assert release_status_calls == [], "no release may be completed if the movie write didn't land"
+
+    def test_omitted_expected_status_still_succeeds_unconditionally(self):
+        """Pins the pre-existing callers (and any future caller that never
+        passes expected_status): behaviour is exactly as today, regardless of
+        the movie's actual stored status."""
+        movie = {'_id': 'movie-1', 'status': 'active'}
+
+        result, _, fake_db = self._run(movie)
+
+        assert result == {'success': True}
+        assert fake_db.stored['status'] == 'done'
+
+    def test_active_movie_marked_done_with_matching_expected_status_still_succeeds(self):
+        """The FEAT-001 case, and the one that matters most (see the spec's
+        AMENDED note above the class docstring). Not optional: a guard wired
+        as a status allowlist instead of optimistic concurrency passes every
+        other test in this class while failing only this one, which is
+        exactly the shape of mistake the spec's AMENDED note is warning
+        about -- so this is the test that actually distinguishes the two
+        implementations from each other.
+        """
+        movie = {'_id': 'movie-1', 'status': 'active'}
+
+        result, _, fake_db = self._run(movie, expected_status='active')
+
+        assert result == {'success': True}
+        assert fake_db.stored['status'] == 'done'
+
+
 # --- MovieSearcher: "Mark Failed & re-search" -------------------------------
 
 class TestMarkFailedAndResearch:

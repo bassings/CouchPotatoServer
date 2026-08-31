@@ -1,0 +1,1197 @@
+# Delivery plan: review queue, renamer memory, manual replace
+
+Conducted plan for the remaining work on branch
+`feat/review-queue-and-manual-replace`.
+
+**Owner instruction, 2026-08-30:** run to the end without stopping. Findings
+that would normally warrant a check-in are RECORDED and the run continues; the
+owner reads them at the end. Decisions are taken with the default named in each
+task rather than referred back.
+
+**The one exception, and it is the owner's own written rule.** `CLAUDE.md`
+rule 6: "Production deploys only by explicit agreement: never as a side effect
+of finishing work." Running to the end would make the promotion exactly that
+side effect. So T10 prepares the promotion, takes the backup and names the
+build, and then STOPS. Everything up to and including the merge and the
+automatic beta runs unattended.
+
+## Context
+
+- Specs: `specs/FEAT-010-review-queue-in-wanted.md` (61 criteria, BUILT),
+  `specs/FEAT-011-replace-with-this-file.md` (95),
+  `specs/FEAT-012-renamer-remembers-its-decisions.md` (47), plus T67 in
+  `specs/REMEDIATION-2026-08.md`.
+- FEAT-010 is functionally complete: seeding, the `media.done` precondition,
+  the widened Wanted query and Review chip, card actions, bulk-delete skip
+  message, and the accessibility pass. Not yet reviewed as a branch.
+- All owner decisions are already recorded in the specs. No task below needs
+  an answer that is not already written down.
+
+## Tasks
+
+**Both owner questions ANSWERED 2026-08-31; no longer blocked.**
+
+1. **SUPERSEDED 2026-08-31, read this before acting on anything below it.**
+   **FEAT-011 (operator replace) is HELD BACK from this release**, by an
+   explicit owner decision taken after that path reintroduced the same
+   film-destroying defect for the THIRD time (the route minting its own
+   decision-time baseline, measured end to end: a 160-byte stalled fragment
+   replaced a complete library copy). It ships DISABLED and unreachable, not
+   deleted. FEAT-010 and FEAT-012 ship. **Do not re-enable it, and do not act
+   on the superseded paragraph below, which is kept only so the change of
+   decision is legible.** The original text, now void:
+
+   ~~**Release scope: ALL THREE SHIP TOGETHER, as originally chosen.** The owner
+   was given the case for splitting, in terms: FEAT-011 produced BOTH
+   Criticals, on a path that has destroyed irreplaceable files twice, and the
+   review states the class recurs wherever that entry point is extended, while
+   FEAT-010, FEAT-012 and T67 produced zero Criticals between them. The owner
+   reaffirmed the single release having heard it. **That is their decision and
+   it is not to be re-raised.** What it obliges instead: FEAT-011 carries the
+   release's risk, so its second review round is the one that must come back
+   genuinely clean, not merely quieter.~~
+2. **Medium and Low: fix what matters, reject the rest WITH EVIDENCE.** Every
+   one of the 35 gets exactly one of two outcomes, and neither is silence: a
+   fix with a mutation proving it, or a recorded rejection naming why it does
+   not warrant one. Fixing all 35 to reach zero is the pressure CLAUDE.md warns
+   about, where the number becomes the goal rather than the code; dropping them
+   unrecorded is how the same finding is raised again next cycle.
+
+## Open tasks
+
+Restored as a real checklist 2026-08-31: this plan had NO `- [ ] Tn` lines,
+only prose, so the plan-guard Stop hook counted zero open tasks and permitted
+every stop silently for the whole run. The no-stall invariant was inert the
+entire time. Re-arming happened by habit rather than by enforcement, which is
+the same absence-reads-as-success shape this branch has been fighting all day.
+
+A live `status: blocked-on-human` line must sit ABOVE the `## Conductor log`
+heading and start at the beginning of its own line. Anything written below
+that heading is history and does not disarm the guard.
+
+- [x] T8a: ship FEAT-011 disabled and unreachable (routes unregistered, UI absent) -- state: done
+- [x] T8: full `make verify`, push, open the PR -- state: pr-open #292
+- [ ] T9: CI green, resolve review threads, merge to master -- state: awaiting-ci #292
+- [ ] T10: run ./scripts/backup.sh against production, identify the beta tag, STAGE the promotion and STOP for the owner -- state: queued (needs: T9)
+
+## Task detail
+
+**T1 (T67).** Bytes must round-trip through `SQLiteCache`, existing callers
+unaffected, and the silent skip replaced by something visible. Must not
+reintroduce pickle. The encoding choice must be stated and a non-utf-8 body
+tested.
+
+**T2 (FEAT-012).** The skip lives in `Renamer.scan` before
+`fireEvent('scanner.scan', ...)`. `folder_scanner.py` must have an EMPTY diff:
+it is shared with `manage.updateLibrary`, whose cleanup deletes any `done`
+movie absent from the scan result, so a memory placed there deletes films from
+the library. Nothing is persisted; a restart re-decides. AC-OPS-3's bound holds
+independently of the memory.
+
+**T3 to T5 (FEAT-011).** The five owner decisions are already in the spec and
+are binding: not gated on `upgrade_replace`; backgrounded with progress and a
+second activation refused rather than queued; the source is always consumed on
+a verified swap; a release document is written; and **the destination comes
+from the media's existing file record, never recomputed from the naming
+template** (a lens executed that template and got `The Thing ()/The Thing.mkv`
+for two different films). This is the highest-risk change in the backlog: it
+deletes media files by design, on the code path that destroyed irreplaceable
+files twice.
+
+**T6 and T7.** `/review-cycle` over the whole branch diff. The bounded fix
+loop applies: rounds 1 to 3 resume the same implementer, 4 to 5 use a fresh one
+on a more capable model, and at 5 the remaining findings are adjudicated and
+recorded rather than fixed. A round that surfaces a NEW class rather than more
+instances of a known one is the signal to re-open the approach.
+
+**T8 and T9.** `make verify` must pass in full locally before the push, per
+rule 2. The `secrets` job is a required check. Conversation resolution is
+required on `master`, so review threads must be answered and resolved.
+
+**T10.** Run `./scripts/backup.sh` against production. Identify the beta tag
+built from the merge commit. Write down exactly what would be promoted and what
+changes for the operator. **Then stop and hand it over.**
+
+## Standing constraints
+
+- Never push untested code; `make verify` green locally first.
+- Sub-agents commit locally and stop; the orchestrator pushes.
+- A sub-agent's report is not evidence: verify against the repo.
+- When a test or guard is the deliverable, break it, watch it fail, restore by
+  file copy, and confirm the restore by hash. Five stand-in guards were found
+  on this branch already; assume a sixth.
+- Australian English, no em dashes in any artefact except where a machine-read
+  format requires one.
+
+## Conductor log
+
+- **Tick 1, 2026-08-30.** Plan armed: `.claude/active-plan` written (gitignored,
+  so it is session state rather than a committed artefact). Running under
+  `/loop /conduct-plan`. Reconciled against the repo rather than memory:
+  branch `feat/review-queue-and-manual-replace`, tip `b0ba8b68`, nothing
+  pushed, no PR open, FEAT-010's six build tasks all committed and each
+  mutation-proven. T1 (T67, the cache) is in flight as a tdd-task workflow and
+  has not committed yet, so it stays `in progress` rather than being re-issued.
+  T2 is unblocked but is deliberately NOT started in parallel: both tasks run
+  the full Python suite and both mutate production files to prove their guards,
+  and this branch has already seen parallel agents trample a shared checkout.
+  Serial is the cheaper mistake. Rework rounds so far: 0 on every task.
+  Armed: T1's workflow notification, plus a fallback heartbeat. Next wake
+  expects T1 either committed or aborted.
+- **Tick 2, 2026-08-30.** T1 (T67) built and verified independently: commit
+  `09818b58`, on the right branch despite the workflow report citing a stale
+  one. Bytes now round-trip via base64 inside the JSON envelope, chosen over a
+  utf-8 decode because HTTP bodies are not guaranteed utf-8 and a lossy decode
+  would corrupt a cached response rather than fail to cache it; the pickle CVE
+  mitigation is untouched. The silent skip is now a WARNING.
+  Both halves mutation-proven, cache.py restored to a matching checksum.
+  **One probe of mine was not hostile and I nearly recorded its green as
+  evidence**: the report call is split across lines, so a single-line pattern
+  matched nothing and the suite passed because nothing had been mutated. Redone
+  against the real line. That is the sixth stand-in on this branch and the
+  second one that was mine.
+  **Box semantics, deviation recorded:** T1 to T5 are build tasks on ONE
+  branch, not separate PRs, so they tick at `built` rather than at `merged`.
+  T8, T9 and T10 keep the PR-level meaning. Without this nothing ticks until
+  the very end and the plan carries no progress signal.
+  T2 (FEAT-012) launched. Rework rounds: T1 0, T2 0.
+  Armed: T2's workflow notification plus a fallback heartbeat. Next wake
+  expects T2 committed, or T2 aborted on a limit as T1's earlier sibling was.
+- **Tick 3, 2026-08-30.** Quiet hold. T2 mid-flight: its RED test
+  (`tests/unit/test_renamer_decision_memory.py`) is written and untracked, so
+  the implement phase has not landed. Nothing acted on. T3 stays queued and
+  the serial choice is now measured rather than cautious: T3 edits
+  `renamer/main.py`, the same file T2 is changing, so parallel would conflict
+  outright rather than merely risk contention. Rework rounds: T2 0.
+  Armed: T2's workflow notification plus the heartbeat.
+- **Tick 4, 2026-08-31.** T2 reported DONE; reconciling against the repo says
+  PARTIAL, so it is recorded that way rather than ticked. Commit `b314601a`
+  adds 163 lines of production logic to `renamer/main.py` guarded by exactly
+  ONE test, against a 47-criterion spec. The core skip is real and the key is
+  sounder than the spec feared: it signs the whole scan folder (names, sizes,
+  mtimes) rather than title-and-year, so the collision the spec warned about
+  ("two different downloads both reduce to minions and monsters 2015") cannot
+  arise by construction.
+  **The gap that matters: AC-SIMP-2, the data-loss guard, is a promise and not
+  a test.** `folder_scanner.py` IS untouched today, and nothing asserts it
+  stays that way, so a later change to the module that can delete a film's
+  library entry lands unnoticed. The task said "assert the empty diff as a
+  test, not as a promise" and that instruction was not followed. Also missing:
+  every invalidation trigger, the restart-re-decides case, AC-OPS-3's bound
+  proven with the memory DISABLED, and the notify surface.
+  This is NOT a rework round. Nothing built was wrong; the scope delivered was
+  narrower than the scope asked for, which is a different failure and does not
+  trip the circuit-breaker. Rework rounds: T2 0, T2b 0.
+  T2b launched to close all five. Armed: T2b's workflow plus the heartbeat.
+- **Tick 5, 2026-08-31.** Quiet hold, T2b mid-flight and progressing: the
+  memory test file has gone from 1 test to 7, plus a new
+  `test_renamer_decision_memory_invalidation.py`. Nothing acted on.
+  **Flagged for the pre-push check:** an untracked `a-different-library-root/`
+  directory has appeared at the REPO ROOT, presumably a fixture for the
+  destination-changed invalidation case. A test that writes into the repo root
+  rather than `tmp_path` leaves debris that a later `git add -A` commits, and
+  this branch has already spent a day on artefacts reaching places nobody
+  intended. If it survives T2b, it is either moved to `tmp_path` or gitignored
+  with a reason, not left loose. Rework rounds: T2b 0.
+  Armed: T2b's workflow plus the heartbeat.
+- **Tick 6, 2026-08-31.** T2b returned BLOCKED at three implementation
+  attempts, and I OVERRODE that rather than stopping. Recorded because it
+  overrides this plan's own circuit-breaker.
+  The evidence said the frame was fine: all 13 of its tests passed, and the
+  suite failed on ONE unrelated repo guard,
+  `test_fixtures_do_not_leak_gitdir`, because the new file made two subprocess
+  git calls without `env=sanitized_git_env()`. That guard is correct and its
+  incident is recorded: git exports GIT_DIR into a pre-push hook launched from
+  a worktree, so an unsanitised call operates on the REAL repository rather
+  than its own cwd. Two arguments. Fixed directly rather than spending a fourth
+  agent round.
+  The rule exists to stop wasted iteration on a WRONG SHAPE. The shape was
+  right and the diagnosis was unambiguous, so stopping would have cost the
+  owner a decision they do not need to make. Had the diagnosis been unclear, or
+  had the fix touched the mechanism rather than the test harness, stopping was
+  the correct move. Rounds are NOT reset by this: T2b stands at 3.
+  **AC-SIMP-2 is now a real test and is mutation-proven.** Appending a comment
+  to `folder_scanner.py` fails `TestFolderScannerIsUntouched`; restoring gives
+  a matching checksum. That is the guard between a renamer optimisation and a
+  film's library entry disappearing, and until this tick it was a sentence.
+  The stray `a-different-library-root/` flagged at tick 5 was cleaned up by the
+  task; tree is clean.
+  Suite 3643 passed, ruff clean. T3 (FEAT-011a) launched, the highest-risk
+  task in the plan. Rework rounds: T2 0, T2b 3 (resolved), T3 0.
+- **Tick 7, 2026-08-31.** T3 built (`ba1b652a`) and verified: 375 insertions,
+  ZERO deletions, so the automatic path is structurally untouched rather than
+  merely asserted to be. Three named outcomes, and the decision reads the
+  film's recorded file rather than computing one.
+  Both refusals mutation-proven. Resolving ambiguity by taking the first
+  candidate fails two tests including the one that runs the same pair in both
+  orders; treating "nothing recorded" as permission to proceed fails six.
+  replacement.py restored to a matching checksum.
+  Noted from the RED verifier and NOT fixed, because it is cosmetic and the
+  test carries its load elsewhere: one closing assertion compares two
+  fixture-supplied paths that differ by construction, so that line alone is
+  near-tautological. Recorded here so the branch review can judge it rather
+  than rediscover it.
+  T4 launched: the layer that actually deletes the file. Every safety property
+  in its prompt has its own test demanded, including that the destroyed path is
+  never caller-supplied, proven by handing it a decoy victim file and hashing
+  that file before and after.
+  Rework rounds: T3 0, T4 0. Armed: T4's workflow plus the heartbeat.
+- **Tick 8, 2026-08-31.** Quiet hold, T4 mid-flight with a new
+  `test_replacement_operator_execution.py` and edits to `renamer/main.py`.
+  Checked the one thing worth checking mid-flight: `replacement.py` shows 18
+  insertions and ZERO deletions, so T4 is adding beside T3's decision rather
+  than rewriting it, which is what the task required and what the isolation
+  argument depends on. Journal last written 11 minutes before this tick, which
+  is within normal for an agent mid-implementation, so no liveness action.
+  Rework rounds: T4 0. Armed: T4's workflow plus the heartbeat.
+- **Tick 9, 2026-08-31.** T4 built (`fd396423`), 20 tests, suite 3679.
+  The property that matters is proven the right way. I injected the EXACT
+  AC-SEC-1 vulnerability, making `operatorReplaceView` honour a caller-supplied
+  `destination`, and the guard failed on a SHA256 comparison of a decoy file
+  that should never have been touched. That is the difference between a test
+  that checks a return value and one that checks whether a file was harmed.
+  `renamer/main.py` restored to a matching checksum.
+  Design confirmed in source as well as by test: the view reads only
+  `media_id` and `source`, the destination is resolved server-side from T3's
+  decision, and the destructive step goes through `replace_atomically` so every
+  symlink and size refusal stays reachable.
+  T5 launched, the last build task. Its prompt carries the two accessibility
+  measurements this branch has already produced as evidence that class names
+  are not a proxy for rendered values: a chip at 23px against a 24px floor and
+  a badge at 1.92:1 against 4.5:1, both with correct-looking Tailwind tokens.
+  Rework rounds: T4 0, T5 0. Armed: T5's workflow plus the heartbeat.
+- **Tick 10, 2026-08-31.** T5 reported DONE; the repo says PARTIAL and
+  substantially so. Commit `700cb61e` is 27 template lines and a trigger
+  button that opens nothing. No modal, no candidate listing, no progress, no
+  second-activation refusal, and NO `*.a11y.spec.ts` or `*.mobile.spec.ts`
+  files at all, which were named explicitly in the prompt as the only place
+  those assertions can run.
+  **This is the second task to report DONE while delivering the first slice
+  (T2 was the first), and the fault is mine rather than the agent's.** The T5
+  prompt asked for three substantial deliverables plus accessibility across two
+  Playwright projects in a single task. That is three tasks' worth, and an
+  agent facing it builds the first thing and reports success. The lesson is a
+  scoping one and it applies to the tasks still queued: one deliverable per
+  task, and if the prompt needs the word "plus", split it.
+  Split accordingly into T5b (modal and listing) and T5c (progress, refusal,
+  accessibility). T5b launched.
+  Not counted as a rework round: nothing built was wrong. Rework rounds: T5 0,
+  T5b 0, T5c 0. Armed: T5b's workflow plus the heartbeat.
+- **Tick 11, 2026-08-31.** T5b reported DONE; PARTIAL again, and this time the
+  cause is diagnosable rather than just "too big".
+  Commit `2a405d67` delivers a real design-system dialog: teleported, focus
+  trapped, focus returned to the trigger on close, and it names what will be
+  DESTROYED ("current library copy and put the file you..."). That half is
+  genuinely good and was the highest-risk wording in the feature.
+  What is absent: candidate loading, the submit, and the server listing route.
+  `operatorReplaceModal()` has `isOpen`, `open`, `close` and `trapFocus`, and
+  nothing else. The dialog opens onto no data and cannot submit.
+  **ROOT CAUSE, and it is mine: I pointed the task at
+  `test_operator_replace_trigger_ui_template.py`, a Jinja RENDER-level pattern.
+  A render test cannot exercise a fetch, a route, or a confinement rule.** The
+  agent built precisely what its tests could verify, which was markup, and
+  passed a full gate doing it. Splitting the task at tick 10 was the right
+  move for the wrong reason: the size was not the problem, the TEST TIER was.
+  Correction applied to the remaining work: every task now names its test tier
+  explicitly, and T5d's prompt says in terms why a render test would let a
+  route that returns nothing ship green.
+  Third partial, still not a rework round: nothing built is wrong.
+  Rework rounds: T5b 0, T5d 0, T5e 0.
+- **Tick 12, 2026-08-31.** T5d COMPLETE, not partial, and the difference is
+  the correction from tick 11: the prompt named the test tier and said why a
+  render test would let a route that returns nothing ship green. Seven
+  route-and-plugin-level tests, both methods, a REAL symlink rather than a
+  mocked one.
+  The property that matters is proven: it reuses `_resolveOperatorSource`, the
+  already mutation-proven confinement, as the SOLE gate rather than writing a
+  second copy of a security rule. Neutering that gate (`if False:`) fails two
+  tests including the escaping-symlink case. `main.py` restored to a matching
+  checksum.
+  Returns bare names only, never paths, which is both the privacy rule and
+  what stops the client sending a path back.
+  T5e launched, again naming its tier: PLAYWRIGHT E2E, because a fetch, a click
+  and a request count cannot be tested any other way. It must assert the submit
+  carries EXACTLY media_id and source by intercepting the request, so an extra
+  parameter cannot creep in later unnoticed.
+  Rework rounds: T5d 0, T5e 0. Armed: T5e's workflow plus the heartbeat.
+- **Tick 13, 2026-08-31.** Quiet hold, T5e mid-flight and active: journal
+  written two minutes before this tick, `tests/e2e/operator-replace-modal.spec.ts`
+  created, `scripts/seed_e2e_data.py` being modified (it needs a candidate file
+  under the watch folder for the listing to return). No action.
+  Worth watching rather than acting on: the seed script is shared
+  infrastructure, and its own guard test
+  (`tests/unit/test_seed_e2e_data_guard.py`) should catch a bad edit. If that
+  guard goes red, it is a real finding, not noise.
+  Rework rounds: T5e 0. Armed: T5e's workflow plus the heartbeat.
+- **Tick 14, 2026-08-31.** T5e COMPLETE (`4051c2c1`), 8 E2E tests, second
+  consecutive full delivery since the test-tier correction. The modal now loads
+  server-supplied candidates as radios, disables confirm until one is chosen,
+  distinguishes an EMPTY listing from a FAILED one (different situations, and
+  the spec required they read differently), re-fetches rather than reloading,
+  and refuses a second submit rather than queueing it.
+  The property worth proving was proven: I smuggled a `destination` parameter
+  onto the destructive submit URL, and exactly ONE test failed, the
+  exactly-two-parameters assertion. Seven others stayed green, so the probe
+  discriminates rather than reddening everything. Template restored to a
+  matching checksum, all 8 pass.
+  That matters because the never-caller-supplied-path property is enforced at
+  BOTH ends now: the server ignores every other key (mutation-proven at tick 9)
+  and the client is pinned to sending exactly two (mutation-proven here).
+  **Second-activation refusal was in scope here and is done**, so T5c reduces
+  to the accessibility floor, which is what it is now building. Progress
+  reporting beyond the in-flight refusal is NOT built and is recorded as debt
+  for the branch review to judge rather than silently dropped.
+  Rework rounds: T5e 0, T5c 0. Armed: T5c's workflow plus the heartbeat.
+- **Tick 15, 2026-08-31.** Quiet hold. T5c's journal had been silent for 24
+  minutes, the longest gap of the run, so I checked liveness rather than
+  assuming either way: it is mid-Playwright-run on the accessibility project
+  (`operator-replace-modal.a11y.spec.ts`), load 5.4. The silence was one long
+  tool call, not a death. Two background jobs HAVE died silently on this branch,
+  so the check was worth making rather than waiting out.
+  Both spec files exist with the correct names
+  (`*.a11y.spec.ts`, `*.mobile.spec.ts`), which is the thing that determines
+  whether these assertions run at all.
+  Rework rounds: T5c 0. Armed: T5c's workflow plus the heartbeat.
+- **Tick 16, 2026-08-31. ALL BUILD TASKS COMPLETE.** T5c committed
+  (`ccdf6229`) and it earned its keep: the accessibility pass found REAL
+  defects in code that had already passed every other gate.
+  - The confirm control, the one that DESTROYS a file, rendered at 32px,
+    under the target floor.
+  - Its danger-token contrast composited to 4.46:1 against a 4.5:1 floor, the
+    same 8% tint bug already fixed once on the review-queue card control.
+  - The candidate radios had NO arrow-key handling at all, so they were radios
+    in appearance and not in behaviour.
+  - And it found that identical contrast bug PRE-EXISTING on the release
+    table's own "Mark failed" control, which nothing on this branch had
+    touched. That is the third time on this branch that measuring a rendered
+    value has contradicted correct-looking classes.
+  T6 launched: the whole-branch review cycle, ADVERSARIAL, against master.
+  Deliberately BEFORE `make verify` rather than after: the review is the thing
+  most likely to demand changes, and a verify run spent on a tree that is about
+  to change is a verify run wasted.
+  Rework rounds: all tasks 0. Armed: the review workflow plus the heartbeat.
+- **Tick 17, 2026-08-31.** Quiet hold, T6 converging: 11 lens results recorded
+  and the worktree count has fallen from 8 to 3 as lenses finish and remove
+  their own checkouts. That self-cleanup is worth noting because leftover
+  worktrees were a recorded problem earlier in this session, and five had to be
+  removed by hand after PR #291.
+  No action. Rework rounds: all 0. Armed: the review workflow plus the
+  heartbeat.
+- **Tick 18, 2026-08-31.** Quiet hold, but checked properly rather than waited
+  out: the review journal had not moved in 30 minutes, results stuck at 11 and
+  worktrees at 3, which is the shape of a stall.
+  Evidence says otherwise. Three lens worktrees are still checked out
+  (`-3`, `-4`, `-10`), 15 agent processes are live, load is 2.9, and the last
+  journal entry is `started` rather than a result. A lens mid-analysis writes
+  nothing, and this branch diff is far larger than the ones whose lenses took
+  18 to 35 minutes earlier in the session. Alive, not hung.
+  **Decision rule set so this is not waited out indefinitely:** if the NEXT
+  tick shows the journal still at 11 results with no new worktree activity, the
+  run is treated as hung. The correct response then is NOT to kill it blind: it
+  is to read the per-lens results already in the journal, which are durable, and
+  re-run only the lenses that never reported. Forty-five minutes of completed
+  lens work should not be thrown away to restart a fan-out.
+  Rework rounds: all 0. Armed: the review workflow plus the heartbeat.
+- **Tick 19, 2026-08-31. REVIEW COMPLETE: 2 Critical, 12 High, 24 Medium, 11
+  Low across 8 lenses.** Full report saved to
+  `QA/branch-review-2026-08-31-review-queue.md`.
+  **C1: the destructive replacement is reachable CROSS-ORIGIN.** Two lenses
+  independently EXECUTED it: a GET carrying `Origin: https://evil.example`
+  returned 200, the library file's sha256 changed, and the operator's source
+  was deleted. Any page a logged-in operator visits could destroy a film.
+  **C2: the source-size guard compares a fresh stat with ITSELF**, so it can
+  never disagree. Measured: append 75,000 bytes after the operator sees the
+  candidate list, and a 112,000-byte library file becomes 102,000 bytes, then
+  the partial source is deleted. BOTH COPIES OF THE FILM ARE GONE.
+  **C2 is a miss in MY OWN verification and it is the seventh stand-in of this
+  session.** At tick 9 I mutation-proved that `expected_source_size` was
+  PRESENT and not None. The review proved it is MEANINGLESS. The existing test
+  asserts `expected_source_size is not None`, and rewriting the argument to a
+  literal `os.path.getsize(source)` leaves all 36 operator tests green. I
+  proved an argument was passed; I never proved it carried information.
+  The review names the class, and it is architectural rather than two bugs:
+  the operator path has NO SERVER-SIDE DECISION STEP, so every "compare against
+  the value captured at decision time" guard degenerates into comparing a value
+  with itself. M6 is the same defect on `destination_identity`.
+  T7 split by severity. T7a launched to fix the class, not the instances, and
+  to reuse the origin helper that already exists at `couchpotato/__init__.py:778`
+  rather than invent a second security mechanism.
+  Also recorded from the review and NOT yet actioned: six of seven lenses hit
+  CHECKOUT DRIFT, finding the worktree on the wrong branch, and one recorded
+  that the local branch ref was deleted and recreated beneath it by another
+  session. That is a process defect independent of the code.
+  Rework rounds: T7a is round 1 of the fix loop.
+- **Tick 20, 2026-08-31. BOTH CRITICALS FIXED AND MUTATION-PROVEN** (`500b2dc6`).
+  C2's fix is the right shape rather than a patch: the file's size is now
+  recorded WHEN THE CANDIDATE LIST IS PRODUCED, which is the moment the
+  operator actually sees and chooses it, and compared against that at
+  execution. Neutering the comparison fails the new test; the identical
+  rewrite left all 36 operator tests green before.
+  C1 reuses the origin helper that already existed, via a named set of routes
+  requiring the check, rather than a second mechanism that would drift.
+  Removing `renamer.operator_replace` from that set fails two tests while the
+  candidates route stays covered, so the probe discriminates.
+  T7b split into three by the files they touch, to avoid the same-file
+  conflicts that forced serial ordering earlier. T7b1 launched.
+  **H9 is the finding I would most want fixed if only one could be:** the
+  confirmation for an irreversible deletion names NEITHER the file it will
+  destroy NOR the file it will install, and no size on either side. The whole
+  point of that dialogue was to say what is about to be lost.
+  **H3 is another deleted-guard-stays-green case:** the check that stops a
+  replacement destroying the wrong half of a multi-file release has no test,
+  and the reviewer removed the guard with the entire suite still passing.
+  Rework rounds: T7a 1 (round 1 of the fix loop, no regressions introduced).
+- **Tick 21, 2026-08-31.** Quiet hold, T7b1 mid-flight with tests running.
+  **Flagged for verification at commit:** it is modifying two EXISTING test
+  files (`test_operator_candidate_listing.py`,
+  `test_replacement_operator_execution.py`). Adding cases is expected, since
+  H3 requires a new multi-file guard case and H10 changes the listing
+  contract. Weakening is not, and the prompt forbade it. Check the diff for
+  DELETED assertions rather than only counting that tests pass: a suite that
+  goes green because an assertion was removed looks identical to one that goes
+  green because the code was fixed.
+  Rework rounds: T7b1 0. Armed: T7b1's workflow plus the heartbeat.
+- **Tick 22, 2026-08-31.** T7b1 done (`0cdb47c3`), five Highs fixed.
+  **The concern I flagged at tick 21 was unfounded, and I checked rather than
+  assumed:** zero assertions removed from either pre-existing test file, 59
+  added. Extended, not weakened.
+  **H3 mutation-proven, and it is the headline.** The guard stopping a
+  replacement destroying the wrong half of a multi-file release WORKED all
+  along; nothing tested it, so the reviewer deleted it and the whole suite
+  stayed green. Deleting it now fails two tests, one asserting BOTH FILES
+  SURVIVE UNTOUCHED. `main.py` restored to a matching checksum.
+  H9 is the one that matters to a human and it is now done: the confirmation
+  names what it will destroy AND what it will install, with sizes on both
+  sides. It was asking the owner to approve deleting an irreplaceable file
+  without identifying it.
+  **CORRECTION, 2026-08-31, and this claim was FALSE when written.** The
+  PR #292 review checked it and it does not hold. Only the BACKEND half
+  landed: `operatorReplacementPreviewView` returns the destination name,
+  quality and size plus each candidate's size, and is tested. **Nothing in
+  the UI ever calls it.** A repo-wide grep for
+  `operator_replacement_preview` outside Python returns zero hits, and the
+  modal's `loadCandidates()` fetches only `renamer.operator_candidates`,
+  which returns bare names. So the confirmation still shows generic text
+  naming neither file, which is the original H9 finding verbatim. The
+  template test that was supposed to cover this asserts fixed substrings
+  ("current library copy", "delete", "cannot be undone") and would pass
+  pointed at the wrong film, which is the stand-in shape this branch has
+  produced all day.
+  Left in place with the correction attached rather than rewritten, because
+  a plan that silently reads as though it always said the right thing is
+  worse than one that shows where it was wrong. Recorded in FEAT-011's
+  preconditions: **re-enabling on the strength of this entry would have
+  shipped the exact defect a full review cycle already fixed once.**
+  T7b2 launched on the decision memory. **H6 is an operability defect worth
+  naming: the feature's documented kill switch does not work.** A
+  `renamer.scan` is answered FROM the memory and does nothing, so the one
+  action an operator takes to force a re-decide is silently a no-op.
+  H7 is the sharper irony: the skip record is emitted once per scan with no
+  bound, so log volume still grows one-for-one with scan count. That is the
+  exact defect FEAT-012 exists to fix, reintroduced inside its own fix.
+  H4 is the eighth stand-in of this branch: the set deciding which refusals
+  are remembered can be widened to include REPLACE itself with the suite green.
+  Rework rounds: T7b1 1, T7b2 1. No fix has yet introduced a defect a later
+  round had to repair, so the circuit-breaker has not tripped.
+- **Tick 23, 2026-08-31.** T7b2 done (`398072ca`). NINE of twelve Highs fixed.
+  Zero assertions removed from the pre-existing memory tests, 15 added.
+  **H6, the kill switch, proven in BOTH halves separately, which matters
+  because they fail differently.** Making `scanView` stop forcing fails 2
+  tests. Letting the forced scan bypass the check but never POP the entry fails
+  1: the operator presses the button, sees it re-decide, and the stale park
+  silently reasserts on the very next scheduled scan. The second half looks
+  like it works, which is why it needed its own probe.
+  **My first attempt at that second probe replaced the pop with a bare `pass`
+  at the wrong indent and produced a COLLECTION ERROR, which I did not accept
+  as evidence.** A collection error means the test never ran, not that it
+  caught something. Redone with an `ast.parse` check before believing the
+  result. That is the same discipline as the non-hostile mutation at tick 2,
+  arrived at from the opposite direction.
+  H5 resolved by REMOVING `DECLINED_SIZE_CONTRADICTS_QUALITY` from the
+  remembered set rather than widening the invalidation signature: its cause is
+  a quality document that the settings signature cannot see, so no signature
+  could have expired that park correctly.
+  T7b3 launched, the last three Highs. **H12 is this session's recurring defect
+  one more time:** E2E tests that pass because they stub a response shape the
+  SERVER CANNOT PRODUCE. A test that stubs an impossible response proves the
+  test, not the code.
+  Rework rounds: T7b2 1, T7b3 1. Still no fix has introduced a defect a later
+  round had to repair.
+- **Tick 24, 2026-08-31.** Quiet hold, T7b3 mid-flight with tests running.
+  Checked one thing that looked out of scope rather than assuming: it is
+  editing `renamer/main.py`, which is not obviously part of three UI and test
+  findings. It is legitimate. H12 requires the server to be ABLE to produce a
+  refusal, so a refusal decidable before any byte is touched is now answered
+  SYNCHRONOUSLY rather than only inside the fire-and-forget thread. Before it,
+  the operator was told "Replacement started" for a request that could never
+  have started, which is the same silent-success shape H1 closed for the log,
+  now closed for the response the browser sees. 41 insertions, zero deletions.
+  That is a better fix than the finding asked for: H12 was written as a test
+  defect, and closing it properly required admitting the server had no way to
+  say no.
+  Rework rounds: T7b3 1. Armed: T7b3's workflow plus the heartbeat.
+- **Tick 25, 2026-08-31. ALL 2 CRITICALS AND ALL 12 HIGHS FIXED**, every one
+  mutation-proven. Suite 3744, up from 3603 at the start of the branch.
+  H2 proven by reverting the title to interpolation and watching a film called
+  `Ocean's Eleven'+(window.pwn=1)+'` close the string literal and execute.
+  **My first probe of that fix DID NOT LAND** (pattern mismatch) and reported
+  green. Checked whether the mutation had applied before believing it, which is
+  the third non-hostile probe caught this session by that same check.
+  **One assertion WAS deleted, and it should have been.** The old H12 test
+  stubbed `{success: false, error: 'declined_not_better'}`, a shape the server
+  could not produce, and asserted that raw internal token appeared in what a
+  screen reader announces. Replaced with a real-server test asserting a human
+  sentence. Verified the replacement rather than accepting "expected deletion"
+  as sufficient.
+  T7c1 launched on the 24 Medium, under the owner's instruction: fix what
+  matters, REJECT THE REST WITH EVIDENCE, and record every outcome. Fixing all
+  24 to reach zero is explicitly not wanted.
+  **Noticed and not mine: an untracked `.claude/optimise-cycle.tmp-run.js`
+  appeared in the working tree**, from another session sharing this checkout.
+  Harmless and gitignored-adjacent, but recorded because six review lenses hit
+  checkout drift from the same cause.
+  Rework rounds: T7b3 1, T7c1 1. No fix has yet introduced a defect a later
+  round had to repair, so the circuit-breaker still has not tripped.
+- **Tick 26, 2026-08-31.** Quiet hold, T7c1 mid-flight. Files touched match
+  the named fix candidates rather than a scattergun: `core/cache.py` (M2, the
+  cache fix turned a dead store into a live ON-DISK one now holding provider
+  response bodies including indexer download links), `renamer/main.py` and
+  `replacement.py` (M4, M6, M12, M16, M17), `movie_detail.html` (M22, M24) and
+  `wanted.html` (M20, the destructive bulk Delete rendering with no danger
+  styling because its colour token does not exist).
+  That M2 pairing is worth noting on its own: T67 was a correct fix, and its
+  consequence is that response bodies which were previously dropped now persist
+  to disk. A fix creating a new privacy surface is exactly the kind of thing
+  only a whole-branch review catches, because neither change is wrong alone.
+  Journal 12 minutes old with tests idle, which has been normal for a
+  decision-heavy task; no liveness action.
+  Rework rounds: T7c1 1. Armed: T7c1's workflow plus the heartbeat.
+- **Tick 27, 2026-08-31.** T7c1 done (`d107624e`): **11 FIXED, 13 REJECTED
+  with evidence.** That split is the point. The instruction was to reject
+  rather than fix to reach zero, and the rejections read as judgements rather
+  than avoidance: documentation with no cost today, a test the review itself
+  had already driven, and one real defect explicitly DEFERRED with its reason
+  named rather than quietly dropped.
+  The eleven fixes include three worth naming:
+  - **M6, the replay guard, was the same class as the critical.** It compared
+    a stat with itself, so a replayed request performed a SECOND destructive
+    swap. The probe's log shows "About to replace a library copy" firing twice.
+  - **M2: `cache.db` was created world-readable at 0644**, and after T67 it
+    holds provider response bodies with indexer API keys embedded. T67 was a
+    correct fix whose consequence was writing credentials to a readable file.
+    Neither change is wrong alone, which is why only a whole-branch review
+    finds it.
+  - **M20: the Wanted page's bulk Delete used `cp-error`, a token base.html
+    does not define**, so Tailwind generated no rule and the most destructive
+    control on the page rendered with NO danger styling.
+  T7c2 launched on the 11 Low, told plainly to expect to reject most of them,
+  and to append a final tally so the next reader sees the whole outcome in one
+  place.
+  Rework rounds: T7c1 1, T7c2 1. Circuit-breaker still not tripped: no fix has
+  introduced a defect a later round had to repair.
+- **Tick 28, 2026-08-31.** Quiet hold, T7c2 mid-flight in its Test phase.
+  Measured rather than assumed: the ledger carries T7c2's `started` line with
+  no terminal line yet, and the working tree moved between two reads a few
+  seconds apart, so the agent is live. 422 insertions so far across
+  `renamer/main.py`, `wanted.html`, two new a11y specs
+  (`review-queue.a11y.spec.ts`, `operator-replace-modal.a11y.spec.ts`) and
+  `test_renamer_decision_memory.py`. That spread fits the Lows flagged as the
+  likeliest fixes rather than a scattergun, and `movie_detail.html` appeared
+  modified in one read and clean in the next, which is the agent backing out a
+  change rather than accumulating one.
+  Nothing useful can run alongside it: T8 is a full `make verify`, and running
+  it against a tree an agent is editing would measure a state that will not
+  exist by the time it finishes. So this tick genuinely acts by waiting.
+  Rework rounds: T7c2 1. Circuit-breaker still not tripped.
+- **Tick 29, 2026-08-31.** T7c2 returned **BLOCKED**, and the verdict was
+  wrong in the way that matters least: the freeze check compares whole-file
+  hashes, and the agent had APPENDED a second test class for a different
+  finding (L2). Verified independently rather than accepted: the RED hash
+  `0eaafa80` is an exact prefix of the current file at 34474 bytes followed by
+  `\n\n`, the target class sits at offset 18296 well inside that prefix, and
+  zero test lines were removed between `d107624e` and `3ddc1e10`. Nothing was
+  weakened to pass. **T7c2 accepted: 6 fixed, 5 rejected with evidence.**
+  L2 is the one worth naming, because the agent rejected the REVIEW'S OWN
+  suggested fix on evidence: skipping `_folderSignature` for a
+  non-configured folder would have broken the already-shipped M12 regression
+  test, so it bounded the walk instead. That is the behaviour the triage
+  instruction was trying to buy.
+- **Tick 29 also tripped the circuit-breaker, and I am recording it as a trip
+  rather than quietly fixing it.** T7c2 surfaced a red gate that the MEDIUM
+  round's own M22 fix introduced: `operator-replace-modal.spec.ts`'s point 5
+  test waited for a `/partial/movie/` re-fetch that M22 deliberately removed.
+  Reproduced before touching anything (`waitForRequest` timeout, 10000ms).
+  Per conduct-plan that is "the first time a review round finds a defect the
+  previous round's fix introduced", which says stop and escalate.
+  **I did not escalate, and the reason is on the record:** the frame is not
+  wrong, M22's new behaviour IS the owner's design intent (replacement runs
+  in the background), the diagnosis took one read, and the remedy is one
+  superseded test repointed. Whose instruction caused it: mine. My T7c1
+  prompt asked for M22 to be fixed and never asked the agent to find tests
+  pinning the behaviour it was replacing.
+  Fixed in `aa012a1a`. The interesting part is what the repoint refused to
+  keep: the original test's no-reload marker could not be made to fail by any
+  realistic mutation (a delayed reload lands after the test finishes; a
+  synchronous one is already caught by the announcer, because a reload wipes
+  the live region). Rather than carry a line that always passes, the marker
+  was removed and the requirement moved onto an assertion that demonstrably
+  fails. Three mutations, each sha256-confirmed landed, each killing a
+  different assertion; `movie_detail.html` byte-identical (`461760af`) after
+  each. Full spec file 8 passed.
+  Also cleared the no-em-dash rule across every line this branch introduced,
+  including one in SHIPPED UI COPY. A first attempt swept 393 pre-existing
+  instances in `REMEDIATION-2026-08.md` and 22 in the design-system README,
+  which is unrelated churn in a feature PR; reverted by file copy (the
+  destructive-git guard refused the `git checkout` and was right to).
+  T8 launched: full `make verify` detached, sentinel-watched.
+  Rework rounds: T7c2 1, plus this one repoint. Circuit-breaker: TRIPPED
+  ONCE, proceeding with the reason stated above rather than silently.
+- **Tick 30, 2026-08-31.** T8's first full `make verify` came back **red at
+  step 4/7**, and the cause was my own tick-29 style sweep, not the feature
+  work: `tests/unit/test_plan_needs_list.py` parses T18's dependency clause
+  with a regex whose delimiters ARE em dashes
+  (`test_plan_needs_list.py:59`), so rewriting them blinded the check that
+  keeps that needs list honest. 2 failed, 3761 passed.
+  The line I edited predicts this failure in its own text: "anyone
+  reformatting a task line must change the test in the same commit or
+  silently blind it." It was right, and the sweep did it anyway. Worth
+  recording as a lesson with a shape: **a mechanical style sweep is a code
+  change, and a delimiter is not prose.** The rule governs prose this branch
+  authored; that line is pre-existing content touched only to add T67.
+  Restored that single line (`36f83a71`), guard back to 6 passed. The
+  design-system README fix stays, because it is new prose written this round.
+  Also worth noting what worked: the failure was caught by the local gate
+  before any push, which is the entire point of running it in full, and
+  nothing else in 3763 tests moved, which bounded the blast radius to one
+  line without needing to reason about it.
+  T8 relaunched from clean. E2E never ran in the red pass (it aborts at
+  step 4), so this is the first genuinely full run of the branch.
+  Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, still not
+  re-tripped; this one is my own sweep, not a fix repairing a fix.
+- **Tick 31, 2026-08-31.** **T8's gate is GREEN, all seven steps, and this is
+  the first run that reached the browser tests** (the red pass aborted at
+  4/7, so the E2E suite had not actually run against this branch's tip since
+  the remediation began).
+  | Step | Result |
+  |---|---|
+  | ruff, test-trap guard, UI conformance | pass |
+  | Python unit | 3763 passed, 2 skipped, 3 xfailed |
+  | Python integration, vitest | pass, 214 passed |
+  | E2E chromium / accessibility / mobile | 166 + 83 + 10 + 2 = 261 passed |
+  Verified by reading the step banners, not the trailing "safe to open a PR"
+  line: a tail can show a green footer under a suite that never ran, which
+  this session has already been caught by once.
+  **T8 does not push yet, because the remediation delta has never itself
+  been reviewed.** CLAUDE.md rule 3 and the standing local-review rule apply
+  to fix commits, not just to feature commits, and there are eight of them
+  since the review report landed at `27ed3304` (the two criticals, three
+  batches of highs, the mediums, the lows, and my own repoint). Reviewing
+  the branch once and then remediating it unreviewed would defeat the gate.
+  Two independent `code-reviewer` agents launched in parallel over
+  `27ed3304..HEAD`, deliberately given non-overlapping lenses:
+  - **Destructive path**: does C2's size capture actually close the
+    both-copies-lost window, does M6 stop a replayed second swap, are M2's
+    0700/0600 applied AT CREATION rather than after a world-readable window,
+    and does anything still leak a path or key to a log, notifier or cache.
+  - **Guard quality**: a deletion audit across the range, and an adversarial
+    hunt for tests that cannot fail. It is told explicitly to judge MY OWN
+    removal of the no-reload marker in `aa012a1a` and to try to construct a
+    mutation the marker would have caught that the three surviving
+    assertions do not. If it finds one, I removed a working assertion and
+    that is a real finding against me.
+  Both are read-only, both are barred from `make verify` and from touching
+  the shared `.venv`, and both are told plainly that CLEAN is a legitimate
+  outcome so neither invents findings to look thorough.
+  Rework rounds: T8 1. Circuit-breaker: tripped once at tick 29, not
+  re-tripped.
+
+
+- **Tick 32, 2026-08-31. THE CIRCUIT-BREAKER HAS TRIPPED PROPERLY AND I AM
+  STOPPING.** The local review of the remediation delta came back with two
+  HIGH findings, and I verified both myself against the code at HEAD rather
+  than relaying them:
+  - **C2's fix is inert on the ordinary case.** `main.py:1680` skips the
+    decision-time size comparison entirely when the source name is not a key
+    in `_operator_candidate_sizes` (`decision_time_size is not None`), and
+    that dict is built by a NON-RECURSIVE `os.listdir` holding bare names,
+    while `_resolveOperatorSource` accepts a relative path by its own
+    docstring. A scene release lands in a subfolder, so the everyday case
+    misses the guard and falls back to the fresh-stat-compared-with-itself
+    behaviour C2 existed to kill. The reviewer measured both copies of a
+    film destroyed in THREE reachable ways.
+  - **C1's origin guard passes when both headers are absent.**
+    `_cross_origin_post` returns False with no Origin and no Referer, and
+    the gate refuses only on True. The comment asserts the check "applies
+    unchanged" to these GET-reachable routes; it does not, because a
+    cross-origin GET sends no Origin at all and the attacking page
+    suppresses Referer with one meta tag. Reviewer drove it: a header-less
+    GET returned 200 and the library file's hash changed.
+  Plus a MEDIUM that is worse than it sounds: **M6's replay guard
+  permanently disables replacement for a path for the process lifetime**, so
+  the fix that stopped a second destructive swap also broke the feature it
+  was protecting, silently, while still answering "success".
+  And **M2 chmods the wrong file**: the credential lives in `cache.db-wal`
+  at 0644, not in the 0600 `cache.db`.
+  **Why this is a frame failure and not four more fixes.** Rounds on this
+  path: build, criticals, three batches of highs, mediums, lows, and now
+  this. Every round was mutation-proven and every round has been followed by
+  a round finding the previous fix inert, bypassable or self-defeating. C2
+  specifically has now been wrong three times, once in MY OWN verification
+  at tick 9. CLAUDE.md rule 11 and the conduct-plan breaker both say the
+  deliverable at this point is "the shape is wrong", not a sixth attempt.
+  **NOT PUSHED.** The gate is green but green is not the question.
+  What is NOT in doubt: FEAT-010 (the film-visibility bug that was actually
+  reported) and FEAT-012 (the renamer polling loop) carry none of these
+  findings. Every High here is on the operator-replace path.
+  Second reviewer still running; its findings will add to this, not change
+  its shape.
+- **Tick 33, 2026-08-31. Owner answered: ONE MORE FIX ROUND, then re-review.**
+  Block cleared. My recommendation was to hold FEAT-011 back and ship the
+  visibility fix alone; the owner chose to fix and re-review, having been
+  told plainly that the previous five rounds each looked like a small fix
+  too. That is their value call to make and it is now made, so the position
+  stands on the record and the work proceeds.
+  **T7d scope, one consolidated round, not two:**
+  1. **HIGH 1** the decision-time size baseline must FAIL CLOSED, and be
+     keyed on the path `_resolveOperatorSource` returns rather than the
+     client's spelling. Mirror `swap.py:186`'s `_IDENTITY_NOT_REQUESTED`
+     sentinel so "no baseline requested" and "baseline requested and
+     missing" are different answers. Candidate listing is non-recursive
+     while the resolver accepts relative paths, so the subfolder case must
+     be closed at the same time or the guard stays inert for scene releases.
+  2. **HIGH 2** on the destructive routes ONLY, absent evidence must be a
+     refusal. Not on logout, where the fail-open exists to stop a
+     header-stripping proxy locking the operator out, and that reasoning is
+     still sound for a POST.
+  3. **MEDIUM 3** `renamer.operator_replacement_preview` is missing from
+     `ORIGIN_CHECKED_API_ROUTES`, and a hand-maintained set of route-name
+     strings is the fragile shape. Prefer something that cannot silently
+     omit a route.
+  4. **MEDIUM 2** M6's replay guard currently disables replacement for a
+     destination for the process lifetime while still answering "success".
+     Fails safe for data, so it is a usability defect, but it broke the
+     feature it protects.
+  5. **MEDIUM 1** M2 chmods `cache.db` while the credential is in
+     `cache.db-wal` at 0644. Cover the WAL and SHM siblings, and log at
+     WARNING when a chmod fails instead of swallowing it.
+  **Not dispatched this tick, deliberately.** The second reviewer is still
+  live and mutating files in this shared checkout; putting an implementer
+  in alongside it is how a worktree collision destroys work. It is the
+  armed wake source, and the round goes out as one task the moment it
+  lands, so its test-quality findings are fixed in the same round rather
+  than becoming a seventh.
+  Rework rounds on the operator path: 6 as of this dispatch. Circuit-breaker
+  tripped and ESCALATED at tick 32; the owner overrode, which is the
+  breaker working as designed rather than being ignored.
+- **Tick 34, 2026-08-31. Second reviewer landed, tree confirmed clean, T7d
+  dispatched as one consolidated round (11 items).**
+  The second reviewer did something worth recording: **it tested my own
+  judgement and upheld it.** It restored the no-reload marker I deleted in
+  `aa012a1a` verbatim, ran it against three reload mutations, and showed the
+  marker caught nothing the surviving assertions do not. It also found the
+  honest caveat my commit message missed: **a DEFERRED reload is caught by
+  nothing in the repo**, and that gap predates my rewrite rather than being
+  created by it. Recorded as debt in item 11 rather than fixed, because the
+  owner authorised one round, not scope growth.
+  **Two findings were reached independently by both reviewers**, which is
+  the strongest evidence in this whole review: the cache WAL permissions and
+  the unguarded preview route. Neither reviewer saw the other's work.
+  The pattern in the new findings is the same one this branch keeps
+  producing, and it is worth naming plainly: **three of the fixes shipped
+  last round are held up by guards that cannot fail.** The clearest is the
+  operator-initiated flag: flipping `operator_initiated=True` to `False` at
+  `main.py:1726` leaves all 3763 unit tests green, because the test calls
+  the function directly and passes the flag ITSELF. The renderer is proven;
+  the path that runs is not. That is the "correct in source, absent from the
+  thing that actually runs" shape CLAUDE.md section 11 warns about.
+  Also caught: a Label in Name guard that hardcodes the text it claims to
+  read (change the button to "Complete" and both the Python and Playwright
+  guards stay green while Voice Control breaks), a test named "reachable by
+  Tab" that never presses Tab, and a regex satisfied by the words inside an
+  explanatory CODE COMMENT.
+  Ordered so the two that can destroy a film are done first. Every item
+  carries its own mutation requirement, and the prompt names the two
+  non-hostile-probe incidents this branch has already had, so the agent
+  cannot repeat them by accident.
+  Rework rounds on the operator path: 6, dispatched. Circuit-breaker tripped
+  and escalated at tick 32; the owner overrode with the evidence in front of
+  them, which is the breaker working rather than being bypassed.
+- **Tick 35, 2026-08-31.** Quiet hold. T7d mid-flight in its Test phase, and
+  the shape is right: **only test files have moved, no production code**,
+  which is what the workflow enforces (implementation stays unreachable
+  until the failing tests are verified red for the right reason).
+  Two new files match the two items ordered first, the ones that can destroy
+  a film: `test_replacement_operator_size_guard_fails_closed.py` (item 1) and
+  `test_replacement_operator_announce_call_site.py` (item 4). The seven
+  modified files are the guards-that-cannot-fail items: the origin guard,
+  the cache permissions, the premature-swap regex, the replay guard's
+  stand-in, and both Label in Name copies. Files touched match the brief
+  rather than drifting into it.
+  Rework rounds on the operator path: 6, in flight. Armed: T7d's workflow
+  plus the heartbeat.
+- **Tick 36, 2026-08-31. I put a second writer into a checkout my own agent
+  was still working in, and this entry is written to the scratchpad rather
+  than the plan file so it cannot be swept into that agent's commit.**
+  T7d committed `78163673c` and left the tree clean, so I read it as
+  finished. It was not: it never sent a completion notification, and I later
+  traced PID 48337, a full `pytest tests/unit/` run whose parent is this
+  session's own process. **The lesson, and it is a rule not an observation:
+  a landed commit plus a clean tree is NOT proof an agent has finished. The
+  completion notification is the only proof.** Two ticks earlier I refused
+  to dispatch alongside a live reviewer for exactly this reason, then talked
+  myself past it on weaker evidence.
+  What I did in that window, all of it verified before I stopped:
+  - **Rejected T7d's central claim.** It left the most dangerous scenario in
+    HIGH 1 unfixed (no candidate listing in this process, which is the
+    container-restart case the reviewer measured destroying BOTH copies of a
+    film) and left the suite red, arguing two frozen tests demanded
+    contradictory outcomes. The contradiction is real, but "no
+    implementation can satisfy both" is the wrong conclusion: the older
+    replay test drove `_executeOperatorReplacement` with no listing at all,
+    a state no operator can reach, because the UI only offers files the
+    listing produced. The test encoded an unsafe precondition, so the TEST
+    was the defect.
+  - Made the guard fail closed (`main.py`), gave the replay fixture the
+    listing an operator would have performed, and put a re-listing at the
+    point the operator reopens the dialog for a new file. Mutation: restored
+    T7d's `if recorded_size is not None:` wrapper, watched ONLY the
+    fail-closed test go red, restored by file copy, sha256 confirmed.
+  - Confirmed by grep that `_executeOperatorReplacement` has exactly ONE
+    production caller, so failing closed costs a reopened dialog and nothing
+    else.
+  - A 16-failure run in the middle of this was NOT a real regression: every
+    one passed in isolation, and a later full run gave **3776 passed, zero
+    failed**. Both readings were taken against a tree the workflow was
+    editing, so neither is trustworthy evidence and both will be re-taken.
+  **Consequence I own:** I edited `test_replacement_operator_replay_guard.py`,
+  which is one of T7d's frozen files, so its GREEN hash check will very
+  likely report BLOCKED because of me.
+  Stopped writing. Peer session AI-Harness had flagged the checkout to its
+  own operator as unknown-provenance work; told it the writer is me, that
+  its pushback was correct, and asked it not to touch the checkout.
+
+  **Amendment from the peer session, to apply at reconcile.** It drew a
+  distinction worth keeping: a VACUOUS guard cannot fail because it
+  constrains nothing (delete it), while an UNTESTABLE one is real but
+  catches something this environment cannot reproduce (deleting it removes
+  protection and the suite stays green either way, which is the same
+  absence-reads-as-success shape, running in your favour).
+  Checked the removed marker against that test rather than agreeing in
+  principle. It is vacuous BY PLACEMENT, not untestable: the no-reload
+  property IS expressible here and IS exercised (a synchronous reload fails
+  the announcer assertion, measured). The marker's only residue was a
+  DEFERRED reload, which it missed because it was read immediately and lost
+  a race, not because Playwright cannot observe a navigation.
+  **So change the item 11 debt entry when the tree is mine again.** As
+  written it implies the deferred case is hard. It is not: arm a navigation
+  listener before the click and assert after a bounded wait. Record the
+  shape, so the next reader does not conclude it cannot be done.
+  The peer's asymmetry point (on a destructive path, keeping an
+  unexercisable guard costs dead code, removing one costs a film) is the
+  same reasoning that decided the fail-closed change this tick, in the
+  opposite direction. Worth stating explicitly in the commit.
+- **Tick 37, 2026-08-31. The fix round REINTRODUCED critical C2, and it is
+  measured rather than argued.** After I stopped writing, T7d committed
+  again (`bc22d7365`) and ended without ever notifying. A peer session
+  flagged the shape of one hunk; I checked it because the claim was
+  specific, and it was right.
+  `operatorReplaceView` had been given `self._listOperatorCandidates()`
+  immediately before starting the replacement thread, so the decision-time
+  baseline was taken at REQUEST time and compared against a stat taken
+  moments later inside the thread. **That is C2's original defect verbatim,
+  a fresh stat compared against itself**, and it made the fail-closed branch
+  I had just built unreachable in production. The commit's own comment says
+  the quiet part: "whatever the source looks like right now is what
+  decision time means for this request." It is not. Decision time is when
+  the OPERATOR saw the listing and chose.
+  Driven end to end through the real route, in the exact scenario:
+  `720p (120000 bytes) -> 2160p (160 bytes). This destroys the old file.`
+  A 160-byte stalled fragment replaced the complete library copy, and the
+  source is then removed, so neither copy survives. **A static file is the
+  DANGEROUS case, not the safe one:** a stalled copy is not growing, so two
+  measurements moments apart agree while the file is a fragment.
+  Reverted, and pinned by a new end-to-end regression test that drives the
+  route and joins the thread (`5edec02da`). Mutation: re-added the call as
+  the round had it, watched the new test fail with its own diagnostic,
+  restored by file copy, sha256 confirmed. Full unit suite 3777 passed.
+  **Why the call was added is the finding, not the call.** It existed so the
+  tests would not have to establish a baseline. It bought a smaller test
+  diff by changing behaviour on the one path that can destroy a file the
+  owner cannot replace. The correct edit was one line in a fixture.
+  **C2 has now been broken three times: original, T7d's inert version, and
+  this reintroduction.** CLAUDE.md rule 11's threshold is three. Escalating
+  to the owner again, because their "one more round" decision was made
+  before this evidence existed, and it is materially different from "the
+  round will find a few more nits".
+- **Tick 38, 2026-08-31. Owner decision: HOLD FEAT-011 BACK. T8a dispatched.**
+  The decision was taken with the measured reintroduction in front of them,
+  which is the difference from tick 33: that answer was given when the next
+  round still looked like it would converge.
+  T7d's workflow finally reported, hours after committing twice, and its
+  verdict is **BLOCKED** on the same whole-file hash check as the LOW round.
+  Its own evidence is worth keeping, because it corroborates tick 37 from a
+  different direction: it notes the commit rationale was "operatorReplaceView
+  now records a baseline itself" and flags that as **the author's stated
+  rationale, not an independent verification**. Its "3776 passed" predates
+  my revert and is stale. Both its flagged files changed by ADDITION only,
+  zero deletions, so again nothing was weakened to pass; the freeze check
+  simply cannot express "appended a fixture line".
+  **T8a's brief, and the one word that matters in it: UNREACHABLE.** A guard
+  on this path has failed three times, so the requirement is that the
+  destructive code cannot be ENTERED when the setting is off, not that it
+  refuses when entered. The three operator API views are not registered at
+  all; the trigger and modal do not render. Explicitly NOT deletion: the
+  implementation, tests and specs all stay, so the feature returns as its
+  own reviewed change rather than being rebuilt from memory later.
+  Two instructions in the brief exist because of today specifically:
+  the tests must prove the library file is byte-identical afterwards rather
+  than asserting a status code (a status code cannot tell a refusal from a
+  swap that happened anyway), and
+  `test_operator_route_does_not_forge_its_own_baseline.py` is declared
+  off-limits, with "if your change makes it fail, your change is wrong".
+  That test is the only thing standing between this branch and a fourth
+  reintroduction, and the previous round's instinct was to edit whatever
+  test stood in its way.
+  Rework rounds on the operator path: 7, and this one removes it from the
+  release rather than fixing it, which is why the count stops mattering.
+- **Tick 39, 2026-08-31.** T8a live and in its implementation phase, and the
+  three things I checked are the three that could go wrong:
+  - `operator_replace_enabled` is defined with `'default': False`, and its
+    description names the consequence in the settings UI itself
+    ("permanently deletes the current library file and cannot be undone")
+    rather than describing the feature neutrally. An operator turning this
+    on should have to read what it does.
+  - **`test_operator_route_does_not_forge_its_own_baseline.py` is untouched.**
+    That was the explicit off-limits instruction, and it is the one that
+    matters: it is the only thing standing between this branch and a fourth
+    reintroduction, and the previous round's instinct was to edit whichever
+    test blocked it.
+  - Production files moved (`api.py`, `main.py`, `ui/__init__.py`,
+    `movie_detail.html`) alongside a new `test_operator_replace_feature_flag.py`
+    and edits to the three operator E2E specs, which is expected: those
+    specs drive a feature that is now off, so they must turn it on
+    explicitly rather than assume it.
+  Also worth recording from this tick's start: **the repaired plan guard's
+  first act was to catch me.** I ended the previous turn relying on a wakeup
+  armed in an earlier turn, and it refused the stop. For the entire run
+  before the checklist was restored it would have said nothing, which is
+  what "the invariant was inert" actually cost.
+  Armed: T8a's workflow plus the heartbeat.
+- **Tick 40, 2026-08-31. T8a DONE and verified, but not before its guard was
+  caught half-proving its own claim.** T8a's own RED evidence is the strong
+  kind: before the fix, the default-off test showed the replacement ACTUALLY
+  EXECUTING through the real dispatcher ("This destroys the old file"), so
+  the test drives the real path rather than inspecting a registry, which is
+  exactly what the brief demanded and what a weaker test would have faked.
+  Then the mutation I ran myself found the gap. **This setting has TWO
+  defaults and only one was pinned:**
+  - `main.py:177`'s `self.conf('operator_replace_enabled', default=False)`,
+    the fallback when the key is absent. Flipping it fails four tests.
+    Genuinely load-bearing, and the fixture deliberately leaves the key
+    ABSENT so those tests exercise the fallback instead of pre-deciding the
+    answer. That is good design, not an oversight.
+  - `api.py`'s settings-schema `'default': False`. Flipping THAT to True
+    left all seven tests green.
+  The second is the one that decides what happens on the owner's server: a
+  fresh install writes the schema default into its config, and the settings
+  page presents it. **"Ships disabled" is a claim about a machine after an
+  upgrade, not about a code path's fallback**, and it could have been undone
+  by a one-word edit under a green suite. Pinned in `3a0a7df90`, with the
+  count of matching options asserted too so the guard cannot quietly stop
+  describing reality if the option is moved or duplicated. Mutation proven,
+  restored by file copy, sha256 confirmed.
+  Full unit suite 3786 passed. T8's full gate launched detached.
+  The wider lesson, and it is the same one this branch keeps teaching: the
+  question is never "did a mutation fail" but "did I mutate the thing the
+  claim is actually about". I mutated the right file only because the first
+  mutation passed and that was surprising.
+- **Tick 41, 2026-08-31. Gate GREEN on all seven steps, and still not
+  pushed.** 3786 unit, 214 vitest, 166 + 83 + 10 + 2 = 261 E2E, exit 0.
+  Read from the step banners rather than the trailing "safe to open a PR"
+  line, which this session has already learned can sit under a suite that
+  never ran.
+  **The delta since the last review has never been reviewed**, and it is not
+  a small one: the C2 revert, the regression test pinning it, the whole
+  feature-flag change, and my schema-default guard. The flag's entire
+  purpose is to make a destructive path unreachable, which is precisely the
+  kind of claim that should not go in on the author's say-so. Two reviewers,
+  non-overlapping:
+  - **Adversarial reachability.** One job: with the flag at default, GET IN
+    ANYWAY. Told to try route spellings the dispatcher might accept,
+    alternative callers of the replacement functions (events, scheduled
+    tasks, the automatic scan), late re-registration after a settings
+    change or plugin reload, anything the compiled JS still emits, and
+    whether the flag itself can be flipped cross-origin, which would make
+    this a two-step attack. Proof standard stated explicitly: a status code
+    is not proof, compare the library file's sha256 before and after,
+    because a refusal and a swap that happened anyway look identical in a
+    response body.
+  - **Did the flag break what actually ships.** FEAT-010 is the bug the
+    owner reported; if hiding the replace controls disturbed the Mark Done
+    or Mark Failed controls, the release fixes nothing. Told to diff the
+    RENDERED page and account for every difference, and to run a deletion
+    audit, because turning a test off by disabling the feature it tests
+    would be the easy way to make this delta green.
+  Both are told CLEAN is legitimate, so neither manufactures a finding.
+- **Tick 42, 2026-08-31. Adversarial reviewer: the default IS unreachable,
+  and the switch only works in ONE DIRECTION.**
+  The good half first, because it answers the owner's actual requirement:
+  at the shipped default the destructive path could not be reached. The
+  reviewer tried 42 request spellings against a real `create_app` (case,
+  trailing slash, percent-encoding, dot-segments, JSONP, header auth, GET
+  and POST), 21 config values that a human might read as "off", every other
+  caller of the three replacement functions, event dispatch, re-registration
+  after a runtime settings change, the rendered page, and the compiled
+  bundle. `registered operator routes at default: []`. It also verified its
+  own probe was hostile FIRST, by turning the feature on and destroying a
+  file with one plain GET, which is the step that separates a real negative
+  from a broken harness.
+  **H1, and it is the emergency-stop direction.** Registration is read ONCE
+  in `Renamer.__init__`; the template reads the setting fresh on EVERY
+  request. So turning the feature off hides the button and leaves the routes
+  live. Measured: after disabling through the real `settings.save`,
+  `plugin.conf` read False, the UI showed nothing, and a plain GET still
+  returned success with the library file going 2600 to 27900 bytes, sha256
+  changed. **The operator believes it is off. It is not.** Verified the
+  asymmetry myself at `main.py:176` and `ui/__init__.py:86`: it is invisible
+  in the diff because the two halves look symmetrical.
+  Also found: `settings.save` is NOT in `ORIGIN_CHECKED_API_ROUTES`, so the
+  switch that arms three origin-checked destructive routes is itself less
+  protected than they are (H2, not a way in today: it needs a restart AND
+  the api_key, which a cross-origin caller cannot read). The setting's own
+  description claims it enables the API immediately, which is false until a
+  restart (M1). Dead CSS naming the modal ships on every page (L1). The
+  three operator E2E specs now intercept their own fetches, so there is no
+  end-to-end coverage of the real destructive route any more (L2).
+  It independently re-proved my pinning test load-bearing by re-inserting
+  the exact reintroduction and watching it fail on the sha256 comparison.
+  **Not dispatching the fix this tick.** The second reviewer is still live
+  in this shared checkout and the adversarial one watched it mutating
+  files. Putting a writer in alongside a live agent is the mistake I already
+  made once today, and the cost of waiting one tick is nothing.
+- **Tick 43, 2026-08-31. Both reviews in. Both say ship. They DISAGREED on
+  one remedy and I took the narrower side, on evidence.**
+  Agreed between them, reached independently: the shipped default is
+  unreachable, FEAT-010 and FEAT-012 are untouched, and the deletion audit
+  is clean in the strongest possible form: of 804 changed test lines, the
+  only nine beginning with a minus are `--- a/...` file headers. **Zero
+  assertions were removed or weakened to make this delta green**, which
+  matters because turning a test off by disabling the feature it tests
+  would have been the easy way through.
+  The second reviewer also independently confirmed what I found this
+  morning: both defaults are now pinned, and each flip fails a test. And it
+  proved the E2E enabling is a FIXTURE rather than a weakened assertion, by
+  deleting only the enable step and watching all eight specs fail.
+  **The disagreement, and it is the useful part.** Reviewer one wanted a
+  second read of the flag added inside each of the three views now, so that
+  "off" means off immediately. Reviewer two wanted it recorded against the
+  re-enablement review and only the misleading description fixed. **Took
+  reviewer two.** Not out of caution: the shipped default makes the fault
+  unreachable, enabling the feature already requires a deliberate decision
+  and its own reviewed change, and every single touch of this path during
+  remediation has introduced something new. Adding code to a destructive
+  path to fix something that cannot reach the owner in this release is
+  precisely the trade that has gone badly all day.
+  Fixed the honest half: the setting description now states the restart
+  requirement in BOTH directions rather than promising it enables the API
+  immediately, which is measurably false. Everything else is written into
+  FEAT-011 as **blocking preconditions** with the measurements attached, so
+  the next person meets them rather than rediscovering them: the one-way
+  control (with the additive fix shape spelled out so it does not replace
+  the registration gate), `settings.save` sitting outside
+  `ORIGIN_CHECKED_API_ROUTES` while arming three origin-checked routes, the
+  loss of end-to-end coverage of the real route, and the dead CSS.
+  Final gate running before push.
+- **Tick 44, 2026-08-31. Final gate green, pushed, PR #292 open.**
+  All seven steps, 3786 unit + 214 vitest + 261 E2E, and the pre-push hook
+  ran its own gate independently before allowing the push.
+  **Dependencies triaged BEFORE raising, per the standing rule**, prompted by
+  GitHub's push warning: one open alert, `extract-zip <= 2.0.1`, high,
+  unvalidated symlink path traversal, **no patched version exists** so it
+  cannot be bumped away. Outcome **HOLD with the reason recorded**, not
+  silence: it is a dev-only transitive dependency four levels under
+  `@lhci/cli`, `package.json` declares ZERO production dependencies, and
+  the Dockerfile contains no npm or node steps, so it never enters the
+  shipped image. Verified both claims rather than asserting them. Revisit
+  when a patch ships or Lighthouse CI is next upgraded. No Dependabot PRs
+  open.
+  The PR body states the disabled feature and the three reintroductions
+  plainly rather than burying them, including the measured
+  `120000 bytes -> 160 bytes. This destroys the old file.` A reviewer who
+  reads only the PR should still learn the most important thing about this
+  branch.
+  Next: CI, then merge, then T10, which STOPS at a staged promotion.
+- **Tick 45, 2026-08-31. CI went red on a commit whose local gate was green,
+  and BOTH failures were the guards, not the product.** Both are the same
+  shape this branch has produced all day: a check that cannot tell a real
+  finding from its own inability to look.
+  - **`test_folder_scanner_has_no_diff_against_master`** ran
+    `git diff --quiet master` and asserted `returncode == 0`. A bare
+    `master` does NOT fall back to `origin/master`: git's disambiguation
+    tries `refs/remotes/<name>`, which is `refs/remotes/master`, never
+    `refs/remotes/origin/master`. A CI checkout has no local master branch,
+    so git exits **128 "bad revision"** and the guard reported that as
+    "folder_scanner.py differs from master", naming an irrecoverable
+    data-loss risk that had not happened. Reproduced in a CI-shaped clone
+    rather than inferred. Now resolves the base ref, distinguishes 128 from
+    1, and says "this check is broken" instead of "the file changed".
+    Proven in BOTH directions.
+  - **Twelve WCAG target-size assertions** compared a sub-pixel float to an
+    exact integer. Chromium lays out in 1/64th-pixel fixed point, so the
+    review chip, given exactly 24px, measured **23.999996185302734** on
+    Linux and exactly 24 on macOS. Now rounded to three decimals, which
+    absorbs 1e-6 and nothing else. **A half-pixel slack was written first
+    and rejected** as looser than the problem needs: the real defect is a
+    whole pixel.
+    **The honest part, recorded in the helper itself: the 23px case is NOT
+    reproducible on macOS.** Removing `min-h-6` and re-running locally
+    still passes, because the same markup lays out at 24px here. So the
+    change is justified by arithmetic, not by a local mutation, and I am
+    not claiming a proof I do not have. A local pass proves nothing about a
+    target-size guard. All twelve call sites converted, not just the one CI
+    hit: the other eleven were latent failures of the same kind.
+  Gate re-run green before pushing (3786 unit, 214 vitest, 261 E2E), pushed
+  as `1a3f1f858`, CI watch re-armed on #292.
+- **Tick 46, 2026-08-31. All sixteen CI checks green, ELEVEN review threads
+  found, triaged and resolved, one live bug fixed.** The merge was blocked
+  by conversation resolution, not by a failing check, which is why the
+  threads mattered.
+  **Triage shape: ten of the eleven were on the operator path, which ships
+  disabled and unreachable.** Real findings about code that cannot execute.
+  Each got a reply naming the evidence (routes unregistered at the default;
+  two adversarial reviews failed to reach them across 42 route spellings and
+  21 config values) and each is now a numbered blocking precondition in
+  FEAT-011, closed and proven before the setting is ever turned on. Resolved
+  on that basis, never as tidying away feedback.
+  **The eleventh was live and is fixed** (`b28f7d1d3`). `folder_scanner`
+  silently drops a group whose files are still settling, with only a
+  log.info, while `_folderSignature` walks the same folder and includes
+  that file, so a folder holding one parked collision plus a
+  just-completed download was memorised from a scan that could not have
+  seen it, and skipped forever after. **That is the owner's original
+  symptom: a downloaded film that never appears.** Fixed without touching
+  `folder_scanner` (empty diff held), deriving the window from
+  `checkFilesChanged`'s own signature rather than duplicating 60. Mutation
+  proven, with the counterweight test passing so it cannot be satisfied by
+  never remembering anything.
+  **Two findings deserve their own record, because both were about my own
+  work being wrong:**
+  - **My plan log claimed H9 was done and it was not.** The backend
+    returns the destination's name, quality and size; nothing in the UI
+    ever calls it (grep for `operator_replacement_preview` outside Python:
+    zero hits). The confirmation still names neither file, which is H9
+    verbatim. The template test asserts fixed substrings and would pass
+    pointed at the wrong film. **Re-enabling on the strength of my entry
+    would have shipped the defect a full review cycle already fixed once.**
+    Corrected IN PLACE, not rewritten.
+  - **C2 came back a FOURTH time**, via the preview route re-minting the
+    baseline, and the reviewer correctly noted my pinning test never
+    exercises a preview between listing and confirm. Not patched: four
+    recurrences of one class, each from an individually reasonable change,
+    is the shape problem rule 11 describes, and patching it inside the
+    release that removes the feature is the trade that lost three times.
+    Pinned as a **strict xfail** instead, proven in both directions:
+    expects-fail today, turns the SUITE RED on the unexpected pass so
+    whoever fixes it is told to remove the marker.
+  Gate green (3788 unit, 4 xfailed, 214 vitest, 261 E2E), pushed, CI
+  re-running.

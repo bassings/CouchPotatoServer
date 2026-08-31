@@ -1,6 +1,8 @@
 """Main Renamer class combining all mixin functionality."""
 import hashlib
+import inspect
 import os
+import threading
 import time
 import traceback
 import uuid
@@ -11,19 +13,34 @@ from couchpotato.core.helpers.variable import sp, symlink
 from couchpotato.core.logger import CPLog, log_suppressed, without_paths
 from couchpotato.core.media_lock import media_lock
 from couchpotato.core.plugins.renamer.replacement import (
+    DECLINED_MULTI_FILE_GROUP,
     DECLINED_OUTSIDE_LIBRARY,
+    DECLINED_SETTING_OFF,
     DECLINED_SIZE_CONTRADICTS_QUALITY,
     DECLINED_SOURCE_CHANGED,
     DECLINED_UNVERIFIED_IDENTITY,
+    OPERATOR_DECLINED_AMBIGUOUS_FILE,
+    OPERATOR_REFUSED_ALREADY_REPLACED,
+    OPERATOR_REFUSED_ALREADY_RUNNING,
+    OPERATOR_REFUSED_ERROR,
+    OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
+    OPERATOR_REPLACE,
     REPLACE,
+    decide_operator_replacement,
 )
-from couchpotato.core.plugins.renamer.swap import identity_of, replace_atomically
+from couchpotato.core.plugins.renamer.swap import (
+    REFUSED_NO_SOURCE,
+    REFUSED_SOURCE_CHANGED,
+    identity_of,
+    replace_atomically,
+)
 from couchpotato.core.plugins.base import Plugin
 from couchpotato.core.plugins.renamer.cleanup import CleanupMixin
 from couchpotato.core.plugins.renamer.extractor import ExtractorMixin
 from couchpotato.core.plugins.renamer.mover import MoverMixin
 from couchpotato.core.plugins.renamer.namer import NamerMixin
 from couchpotato.core.plugins.renamer.scanner import ScannerMixin
+from couchpotato.core.plugins.scanner.file_detector import FileDetectorMixin
 
 log = CPLog(__name__)
 
@@ -35,6 +52,123 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
     checking_snatched = False
     _warned_dead_setting = False
 
+    #: Settings that feed the replacement decision. A remembered decision is
+    #: reused only when every one of these reads exactly as it did when the
+    #: entry was recorded (AC-QA-7): turning `upgrade_replace` on,
+    #: retargeting the library, or editing a naming template forces a
+    #: re-decide with no restart needed.
+    DECISION_MEMORY_SETTINGS = ('upgrade_replace', 'to', 'folder_name', 'file_name')
+
+    #: Only a refusal whose cause CANNOT change without a file or a setting
+    #: change is worth remembering (AC-QA-9). `declined_error`,
+    #: `declined_incomplete_evidence` and every outcome `decide_replacement`
+    #: derives from a release document are deliberately absent: those can
+    #: flip on a transient read failure or a release document being edited,
+    #: with neither the source file nor a setting moving at all -- and a
+    #: memory that outlives its cause is worse than the loop it replaces.
+    #:
+    #: H5 (branch review 2026-08-31). `declined_size_contradicts_quality` is
+    #: absent for the same reason: its cause is a quality document's
+    #: `size_min`/`size_max`, read through `fireEvent('quality.single', ...)`
+    #: at decision time, not a `config.ini` key -- so `DECISION_MEMORY_SETTINGS`
+    #: cannot see it change. Two fixes were on the table: fold the quality
+    #: band into the recorded signature, or stop remembering the outcome.
+    #: Folding it in would still miss `DECLINED_UNVERIFIED_IDENTITY`, which
+    #: has the identical shape against `identity_source` (see the same
+    #: finding's "Recurrence" note), so widening the signature buys nothing
+    #: durable without auditing every database-backed outcome. Dropping the
+    #: one member that is proven affected is the smaller, safer fix: the
+    #: worst case is this refusal is re-decided every scan, which is exactly
+    #: what happened before this feature existed and is merely the DEFAULT
+    #: behaviour reasserting itself for one outcome, not a new failure mode.
+    REMEMBER_ELIGIBLE_OUTCOMES = frozenset({
+        DECLINED_SETTING_OFF,
+        DECLINED_UNVERIFIED_IDENTITY,
+        DECLINED_MULTI_FILE_GROUP,
+        DECLINED_OUTSIDE_LIBRARY,
+    })
+
+    #: H7 (branch review 2026-08-31) / AC-OPS-3. The "already decided and
+    #: unchanged" skip record is emitted by every scan that hits the
+    #: memory, so left unbounded it grows one for one with scan count --
+    #: exactly the flood this feature exists to stop, reintroduced by the
+    #: fix itself. Bounded through `log_suppressed`, the same mechanism
+    #: already used for the collision WARNING a few hundred lines below.
+    DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS = 3600
+
+    #: H10 (branch review 2026-08-31). The extensions the scanner already
+    #: recognises as a movie file (`FileDetectorMixin.extensions['movie']`),
+    #: reused here rather than a second list -- so a stray `.srt`, `.nfo`,
+    #: `.txt` or `.part` sitting beside a real download in the watch folder
+    #: is never offered as a candidate an operator could fat-finger over the
+    #: top of the library copy.
+    OPERATOR_CANDIDATE_EXTENSIONS = frozenset(FileDetectorMixin.extensions['movie'])
+
+    #: H10. Stated cap on how many candidate names one listing response
+    #: returns. `total_found` in the response always carries the TRUE count
+    #: found before this cap is applied, so a folder holding more than this
+    #: never drops entries silently -- the caller is told, not merely handed
+    #: a shorter list.
+    OPERATOR_CANDIDATE_LIST_CAP = 200
+
+    #: M12 (branch review 2026-08-31). `_decision_memory` is keyed on
+    #: `scan_folder`, which `scanView` passes straight through from a
+    #: caller-supplied `base_folder` with no validation and no connection to
+    #: whether the scan was targeted -- so an unbounded store grows one
+    #: entry per distinct value an API caller chooses to send, in a
+    #: container designed to run for months. Eviction order is LRU on
+    #: last-write (see `_rememberDecision`): the entry written longest ago
+    #: is the one dropped when the cap is exceeded.
+    DECISION_MEMORY_MAX_ENTRIES = 200
+
+    #: M12. `_notified_parked` is keyed on (media_id, outcome) and, before
+    #: this cap, was never pruned even after the group was gone from the
+    #: folder -- so a stale entry permanently suppressed the notify signal
+    #: for that pair. Same eviction order as the decision memory.
+    NOTIFIED_PARKED_MAX_ENTRIES = 200
+
+    #: M6 (branch review 2026-08-31, round two on T7d item 6).
+    #: `_operator_replaced_identities` remembers the destination identity
+    #: captured immediately after each successful operator replacement, so
+    #: a stale replay can be told apart from a genuine new one. Keyed on
+    #: `(destination, source)`, not on `destination` alone -- otherwise a
+    #: genuinely later, distinct replacement of the same film (a different
+    #: source) is refused forever too, since nothing else touches the file
+    #: between the first swap and the second, unrelated one. Same
+    #: unbounded-growth shape as the two stores above if left uncapped, so
+    #: it gets the same cap and eviction order (oldest write dropped
+    #: first).
+    OPERATOR_REPLAY_GUARD_MAX_ENTRIES = 200
+
+    #: L2 (branch review 2026-08-31). `scanView` passes a caller-supplied
+    #: `base_folder` straight through to `scan()`, which hands it to
+    #: `_folderSignature` unconditionally -- an authenticated caller can ask
+    #: for `base_folder=/` and make the container `os.walk` and `os.stat`
+    #: the entire mounted filesystem, materialising one tuple per file in
+    #: RAM, before any other check runs. M12's cap on `_decision_memory`
+    #: bounds how many DISTINCT folders get remembered, but does nothing
+    #: about the cost of walking any ONE of them, so a caller-supplied
+    #: `base_folder` still needs its own bound. `_folderSignature` already
+    #: fails open (returns None) on anything it cannot fully measure, which
+    #: is exactly the right answer for "too big to fingerprint cheaply"
+    #: too: an oversized folder is simply never remembered, so it re-decides
+    #: every scan rather than being cached, the same fallback a permission
+    #: error already gets. The cap is generous for the folder this feature
+    #: actually targets (one download-client watch folder) and small next
+    #: to a filesystem root.
+    FOLDER_SIGNATURE_MAX_ENTRIES = 20000
+
+    #: P1 (branch review 2026-08-31). `folder_scanner.py:183-188`
+    #: (`checkFilesChanged`) silently drops any group whose files are
+    #: still settling, using this many seconds as its window
+    #: (`unchanged_for`'s default, couchpotato/core/plugins/base.py:352).
+    #: Read straight from that default rather than repeated here as a
+    #: second literal 60, so `_folderHasSettlingFiles` below cannot drift
+    #: out of sync with the window `checkFilesChanged` actually applies.
+    SETTLING_WINDOW_SECONDS = inspect.signature(
+        Plugin.checkFilesChanged
+    ).parameters['unchanged_for'].default
+
     def __init__(self):
 
         addApiView('renamer.scan', self.scanView, docs={
@@ -45,6 +179,47 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             },
             'return': {'type': 'object: {"success": true}'},
         })
+
+        # T8a. FEAT-011's operator replace path is gated OFF at the root:
+        # with `operator_replace_enabled` at its default, these three views
+        # are never registered, so an unknown route name is the only thing a
+        # request can reach -- not a refusal inside the handler, which has
+        # now failed to hold three times. See
+        # specs/FEAT-011-replace-with-this-file.md's "Shipped disabled" note.
+        if self.conf('operator_replace_enabled', default=False):
+            addApiView('renamer.operator_replace', self.operatorReplaceView, docs={
+                'desc': 'Replace the library copy of a film with a file the '
+                        'operator placed by hand under the configured download '
+                        'folder. Backgrounded; poll notifications for the outcome.',
+                'params': {
+                    'media_id': {'desc': 'The media whose library copy is being replaced'},
+                    'source': {'desc': 'Name of a file already listed under the configured from-folder'},
+                },
+                'return': {'type': 'object: {"success": true}'},
+            })
+
+            addApiView('renamer.operator_candidates', self.operatorCandidatesView, docs={
+                'desc': 'List the file names available under the configured '
+                        'download folder for an operator to choose from as a '
+                        'replacement source. Names only, never paths.',
+                'return': {'type': 'object: {"success": true, "candidates": [...]}'},
+            })
+
+            addApiView(
+                'renamer.operator_replacement_preview',
+                self.operatorReplacementPreviewView,
+                docs={
+                    'desc': 'Read-only preview of an operator replacement: the '
+                            'basename, quality label and byte size of the '
+                            'library file that would be destroyed, plus the '
+                            'basename and byte size of each candidate that '
+                            'could replace it. Never a path.',
+                    'params': {
+                        'media_id': {'desc': 'The media whose replacement is being previewed'},
+                    },
+                    'return': {'type': 'object: {"success": true, "destination": ..., "candidates": [...]}'},
+                },
+            )
 
         addEvent('renamer.scan', self.scan)
         addEvent('renamer.check_snatched', self.checkSnatched)
@@ -62,18 +237,222 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                   hours=force_every)
 
     def scanView(self, **kwargs):
-        """API handler for renamer.scan."""
+        """API handler for renamer.scan.
+
+        H6 (branch review 2026-08-31) / AC-QA-10, AC-DATA-12, AC-OPS-10.
+        This is the ONLY entry point an operator has to ask the renamer to
+        look again -- a scheduled scan reaches `scan()` directly, through
+        `checkSnatched` or the `renamer.force_scan` cron, never through this
+        view. So every call through here is, by construction, the operator
+        asking again, and must always re-decide: `operator_forced=True` is
+        passed through unconditionally, not only when `media_folder` is set.
+        """
         base_folder = kwargs.get('base_folder')
         media_folder = kwargs.get('media_folder')
 
         fireEvent('renamer.scan', base_folder=base_folder,
-                  media_folder=media_folder, async_call=True)
+                  media_folder=media_folder, operator_forced=True,
+                  async_call=True)
 
         return {
             'success': True
         }
 
-    def scan(self, base_folder=None, media_folder=None, release_download=None, async_call=False):
+    def _folderSignature(self, scan_folder):
+        """A cheap fingerprint of what is actually on disk under
+        `scan_folder`: every file's path relative to it, its size and its
+        mtime in nanoseconds. No identity resolution, no TMDB lookup, no RAR
+        inspection -- just what `os.walk` and `os.stat` already know, which
+        is what binding decision 1 means by "a cheap read of names, sizes
+        and mtimes".
+
+        `None` means the folder could not be walked in full, which fails
+        open: an unmeasurable folder (a permission error, a NAS mount
+        dropping mid-walk, a file that vanished between the walk and the
+        stat) is never treated as unchanged, so it forces a re-decide rather
+        than a silent, permanent skip (AC-QA-14).
+
+        L2 (branch review 2026-08-31): `scan_folder` can be a caller-
+        supplied `base_folder`, with no restriction on where it points, so
+        this walk stops and fails open the moment it has seen more than
+        `FOLDER_SIGNATURE_MAX_ENTRIES` files -- rather than walking and
+        `stat`-ing an arbitrarily large tree (a filesystem root, a NAS
+        mount) to completion before deciding the result is too large to be
+        the "cheap fingerprint" this method promises. Same fail-open
+        semantics as every other case here: too big to fingerprint cheaply
+        is treated exactly like unreadable or vanished, never like
+        unchanged.
+        """
+        entries = []
+        try:
+            for root, _dirs, files in os.walk(scan_folder):
+                for name in files:
+                    if len(entries) >= self.FOLDER_SIGNATURE_MAX_ENTRIES:
+                        return None
+                    full = os.path.join(root, name)
+                    try:
+                        stat_result = os.stat(full)
+                    except OSError:
+                        return None
+                    entries.append((
+                        os.path.relpath(full, scan_folder),
+                        stat_result.st_size,
+                        stat_result.st_mtime_ns,
+                    ))
+        except OSError:
+            return None
+        return frozenset(entries)
+
+    def _folderHasSettlingFiles(self, scan_folder):
+        """True when any file under `scan_folder` has an mtime inside the
+        same settling window `checkFilesChanged` uses
+        (`SETTLING_WINDOW_SECONDS`, mirroring `unchanged_for`'s default in
+        `checkFilesChanged`, couchpotato/core/plugins/base.py:352) -- i.e.
+        the file could still be mid-write by a download client.
+
+        This exists because `folder_scanner.py:183-188` silently drops any
+        group `checkFilesChanged` flags as too new: the group is simply
+        absent from `scanner.scan`'s result, logged only at INFO. That
+        file cannot be touched here (`TestFolderScannerIsUntouched` pins
+        an empty diff against master -- it is shared with
+        `manage.updateLibrary`, whose cleanup deletes any 'done' movie
+        absent from the scan result), so the renamer has to notice a
+        settling file for itself, straight off the filesystem, rather than
+        trusting that the scan it just ran saw everything under
+        `scan_folder`.
+
+        Bounded exactly like `_folderSignature`, against the same
+        `FOLDER_SIGNATURE_MAX_ENTRIES` cap, and fails open the same way an
+        unmeasurable folder does there -- but "open" means the opposite
+        conclusion here. `_folderSignature` fails open to `None`, which
+        forces a re-decide. This fails open to `True`, which blocks
+        recording the decision: the cost of not remembering is a repeated
+        scan, the cost of wrongly remembering is a film that is never
+        processed.
+        """
+        now = time.time()
+        seen = 0
+        try:
+            for root, _dirs, files in os.walk(scan_folder):
+                for name in files:
+                    if seen >= self.FOLDER_SIGNATURE_MAX_ENTRIES:
+                        return True
+                    seen += 1
+                    full = os.path.join(root, name)
+                    try:
+                        mtime = os.path.getmtime(full)
+                    except OSError:
+                        return True
+                    if mtime > now - self.SETTLING_WINDOW_SECONDS:
+                        return True
+        except OSError:
+            return True
+        return False
+
+    def _settingsSignature(self):
+        """A snapshot of the settings that feed the replacement decision,
+        compared the same way `_folderSignature` compares the filesystem
+        (AC-QA-7)."""
+        return tuple(self.conf(key) for key in self.DECISION_MEMORY_SETTINGS)
+
+    @staticmethod
+    def _destinationSignature(paths):
+        """A cheap fingerprint of the destination paths a remembered
+        decision was recorded against: whether each one exists, and if so
+        its size and mtime. `_folderSignature` only ever walks the
+        DOWNLOADS folder, so a change on the library side -- the operator
+        deleting the stale file that was blocking a park, or replacing it
+        in place -- is otherwise invisible to the memory (AC-QA-6). A path
+        that cannot be stat-ed is recorded as `(path, None, None)` rather
+        than skipped, so "missing" and "present with these bytes" are never
+        confused with each other.
+        """
+        entries = []
+        for path in paths:
+            try:
+                stat_result = os.stat(path)
+            except OSError:
+                entries.append((path, None, None))
+            else:
+                entries.append((path, stat_result.st_size, stat_result.st_mtime_ns))
+        # Sorted so the comparison does not depend on dict/set ordering --
+        # `paths` is built from `rename_files.items()`, whose order is not a
+        # contract worth relying on here. Safe to sort tuples of mixed
+        # None/int in the trailing positions because every leading `path`
+        # is unique, so comparison never falls through to them.
+        return tuple(sorted(entries))
+
+    def _notifyParked(self, group, outcome):
+        """Binding decision 3: entering a parked state fires exactly one
+        `fireEvent('notify', ...)`, using the existing durable notification
+        document and the existing `notification.list` API -- no new route,
+        template or setting. So a parked film is discoverable without
+        reading the log, which is what AC-OPS-4's bounded restatement means
+        an operator will not be doing in real time.
+
+        Deduplicated on `(media id, outcome)` for the life of the process:
+        process-local only, like the rest of this memory (AC-SIMP-5), never
+        written through `get_db()` or `Env` itself. Re-entering the SAME
+        parked state on a later scan -- whether because the memory skipped
+        the folder outright, or because it was invalidated and re-decided
+        onto the same outcome -- fires nothing further (AC-OPS-5); a
+        DIFFERENT outcome for the same media is a new park and notifies
+        again.
+        """
+        media_id = (group.get('media') or {}).get('_id')
+        key = (media_id, outcome)
+
+        # M12 (branch review 2026-08-31): a plain dict rather than a set,
+        # because bounding this store needs an INSERTION ORDER to evict by
+        # -- a `set` gives none. Membership (`key in ...`) and dedup work
+        # identically either way; only eviction needed the change.
+        if getattr(self, '_notified_parked', None) is None:
+            self._notified_parked = {}
+        if key in self._notified_parked:
+            return
+        self._notified_parked[key] = True
+        if len(self._notified_parked) > self.NOTIFIED_PARKED_MAX_ENTRIES:
+            self._notified_parked.pop(next(iter(self._notified_parked)))
+
+        from couchpotato.core.helpers.variable import getTitle
+        library = (group.get('media') or {}).get('info', {})
+        # L1 (branch review 2026-08-31): `group.get('dirname')` used to sit
+        # in this fallback chain. That is the raw scene-release folder name
+        # read straight off the operator's download folder, and it fires
+        # exactly when the group could not be identified, which is the
+        # common case for a park rather than an edge case. A resolved
+        # title is an accepted design decision (AC-SEC-8); a
+        # filesystem-derived folder name is a different thing nobody
+        # chose, so it must never substitute for one.
+        media_title = getTitle(library) or 'an unidentified download'
+
+        # No absolute path in the message (AC-SEC-8): `media_title` and
+        # `outcome` are both TMDB/decision metadata, never a filesystem
+        # path, matching the WARNING record this restates.
+        fireEvent(
+            'notify',
+            message='"%s" is parked and needs a look: %s' % (media_title, outcome),
+            data={'media_id': media_id, 'outcome': outcome},
+        )
+
+    def _rememberDecision(self, scan_folder, entry):
+        """Write `scan_folder`'s decision-memory entry, bounded to
+        `DECISION_MEMORY_MAX_ENTRIES` (M12, branch review 2026-08-31 /
+        AC-OPS-12).
+
+        Eviction order is LRU on last-write: popping the key before
+        re-inserting it moves an existing entry to the end of the
+        (insertion-order-preserving) dict, so the entry evicted when the
+        cap is exceeded is always the one written longest ago, never a
+        folder that was just re-decided.
+        """
+        self._decision_memory.pop(scan_folder, None)
+        self._decision_memory[scan_folder] = entry
+        while len(self._decision_memory) > self.DECISION_MEMORY_MAX_ENTRIES:
+            self._decision_memory.pop(next(iter(self._decision_memory)))
+
+    def scan(self, base_folder=None, media_folder=None, release_download=None,
+             async_call=False, operator_forced=False):
         """Scan the from-folder and rename/move completed downloads.
 
         Args:
@@ -81,6 +460,13 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             media_folder: Specific media subfolder to process
             release_download: Specific release download dict to process
             async_call: Whether this was called asynchronously
+            operator_forced: H6 (branch review 2026-08-31) / AC-QA-10. Set
+                by `scanView()` for every operator-triggered call. Bypasses
+                the memory check for this scan AND pops any remembered
+                entry for `scan_folder`, so the one API call an operator has
+                always re-decides, and the NEXT scheduled scan does too
+                rather than answering from an entry the operator's forced
+                scan bypassed but left standing.
         """
         # Check-and-set must be atomic, or two threads can both pass the
         # check before either sets the flag. The lock is only held for this
@@ -112,25 +498,160 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             self._warned_no_tool = False
             scan_folder = base_folder or sp(self.conf('from'))
 
+            # Lazily created rather than in __init__: process-local only
+            # (AC-SIMP-5, AC-SEC-5) -- plain state on the instance, nothing
+            # persisted, nothing surviving a restart. Keyed on the folder
+            # actually scanned, never written to disk or the database.
+            if getattr(self, '_decision_memory', None) is None:
+                self._decision_memory = {}
+
             try:
                 if not os.path.isdir(scan_folder):
                     log.warning('Scan folder %s does not exist', scan_folder)
                     return
+
+                # A targeted scan -- a specific media_folder, or one carrying
+                # a release_download -- is an operator asking about ONE
+                # group, not a verdict on the whole folder. It must never be
+                # answered from a memory keyed on the folder as a whole, and
+                # must never overwrite that memory either: doing so would let
+                # one targeted call evict every other group's remembered
+                # decision (AC-OPS-12).
+                targeted = media_folder is not None or release_download is not None
+
+                if operator_forced:
+                    # H6 (branch review 2026-08-31) / AC-QA-10, AC-DATA-12.
+                    # Popped here, unconditionally, rather than merely
+                    # bypassed below: a targeted forced call already
+                    # reached `_processGroup` again before this fix, but
+                    # left the entry standing, so the very next SCHEDULED
+                    # scan (no operator_forced, not targeted) was answered
+                    # from the same stale memory the operator thought
+                    # they had just cleared. Popping here closes that,
+                    # whether this call is targeted or not.
+                    self._decision_memory.pop(scan_folder, None)
+
+                current_signature = self._folderSignature(scan_folder)
+                current_settings = self._settingsSignature()
+
+                if not targeted and not operator_forced:
+                    remembered = self._decision_memory.get(scan_folder)
+                    if (
+                        remembered is not None
+                        and current_signature is not None
+                        and remembered['source_signature'] == current_signature
+                        and remembered['settings_signature'] == current_settings
+                        and self._destinationSignature(remembered['destination_paths'])
+                            == remembered['destination_signature']
+                    ):
+                        # Nothing on disk or in the settings that feed the
+                        # decision has changed since every group here was
+                        # last fully decided -- skip the folder walk AND the
+                        # identity resolution inside
+                        # fireEvent('scanner.scan', ...) entirely, rather
+                        # than only skipping the log line that follows it.
+                        # This is the cost the production incident paid
+                        # roughly 1,100 times: a full rescan and a live TMDB
+                        # search for a decision that could not have changed.
+                        # D8: no path at INFO, matching every other record in
+                        # this file -- the count and the fact that nothing
+                        # changed is all an operator needs here.
+                        #
+                        # H7: bounded by `log_suppressed`, keyed per scan
+                        # folder, or this record grows one for one with
+                        # scan count -- the exact flood AC-OPS-3 exists to
+                        # stop, reintroduced by this record on its own.
+                        log_suppressed(
+                            log.info,
+                            'renamer_memory_skip:%s' % scan_folder,
+                            'Renamer: %d group(s) already decided and '
+                            'unchanged; skipping the scan',
+                            remembered['group_count'],
+                            window=self.DECISION_MEMORY_SKIP_LOG_WINDOW_SECONDS,
+                        )
+                        log.debug('The unchanged scan folder was: %s', scan_folder)
+                        return
 
                 groups = fireEvent('scanner.scan', folder=scan_folder,
                                   simple=not bool(release_download),
                                   single=True) or {}
 
                 log.info('Renamer found %d groups to process in %s', len(groups), scan_folder)
+
+                # True only while every group seen this scan is safely
+                # parkable -- a REPLACE, a plain move, a raised exception, or
+                # any outcome outside REMEMBER_ELIGIBLE_OUTCOMES turns it off
+                # for the rest of this scan, so one unresolved group cannot
+                # let the whole folder be remembered as settled.
+                all_remember_eligible = bool(groups)
+                # Destination paths behind every group this scan decided to
+                # park, so the NEXT scan can cheaply re-stat exactly those
+                # paths and notice a deleted or replaced library file before
+                # it ever trusts the memory (AC-QA-6). Only ever populated
+                # from a fully eligible group -- see below -- because the
+                # memory is keyed on the whole folder, not per group.
+                destination_paths = []
                 for group_identifier, group in groups.items():
                     if self.shuttingDown():
+                        all_remember_eligible = False
                         break
 
                     try:
-                        self._processGroup(group, media_folder, release_download)
+                        outcomes = self._processGroup(group, media_folder, release_download)
                     except Exception:
                         log.error('Error processing group %s: %s',
                                  group_identifier, traceback.format_exc())
+                        all_remember_eligible = False
+                        continue
+
+                    if not outcomes:
+                        all_remember_eligible = False
+                        continue
+
+                    group_eligible = True
+                    for outcome, dst in outcomes:
+                        if outcome in self.REMEMBER_ELIGIBLE_OUTCOMES:
+                            # Binding decision 3: the film is discoverable
+                            # through notification.list the moment it is
+                            # parked, without reading the log. Fires at most
+                            # once per (media, outcome) for the life of the
+                            # process -- deduplicated inside the method --
+                            # so repeated scans of an unchanged park, and
+                            # repeated re-decides that land on the same
+                            # outcome, never re-fire it.
+                            self._notifyParked(group, outcome)
+                        else:
+                            group_eligible = False
+                    if group_eligible:
+                        destination_paths.extend(dst for _outcome, dst in outcomes)
+                    else:
+                        all_remember_eligible = False
+
+                if not targeted:
+                    if (
+                        all_remember_eligible
+                        and current_signature is not None
+                        and not self._folderHasSettlingFiles(scan_folder)
+                    ):
+                        destination_paths = tuple(sorted(set(destination_paths)))
+                        self._rememberDecision(scan_folder, {
+                            'source_signature': current_signature,
+                            'settings_signature': current_settings,
+                            'destination_paths': destination_paths,
+                            'destination_signature': self._destinationSignature(destination_paths),
+                            'group_count': len(groups),
+                        })
+                    else:
+                        # Something this scan was not safely parkable, the
+                        # folder could not be fingerprinted, or a file
+                        # under it is still inside the settling window --
+                        # this scan cannot have seen everything
+                        # folder_scanner would eventually report for it
+                        # (folder_scanner.py:183-188 silently drops a
+                        # settling group). Forget any earlier memory for
+                        # it rather than risk vouching for a folder that no
+                        # longer matches what was recorded.
+                        self._decision_memory.pop(scan_folder, None)
 
             except Exception:
                 log.error('Failed during renamer scan: %s', traceback.format_exc())
@@ -174,11 +695,23 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         """
         skipped = False
         moved_any = False
+        # One `(outcome, dst)` entry per (src, dst) pair handled below, in
+        # the order they are processed. `scan()` reads this back to decide
+        # whether the group's decision is safe to remember (AC-QA-9): only
+        # when it is non-empty and every outcome is one of
+        # `REMEMBER_ELIGIBLE_OUTCOMES`, and it reads `dst` off the eligible
+        # entries to know which library paths a remembered park depends on
+        # (AC-QA-6). `outcome=None` marks a pair that was not a DECLINED_*
+        # refusal at all -- a missing source, an ordinary move, or a failed
+        # move -- and, like `REPLACE` itself, always makes the whole group
+        # ineligible to remember.
+        outcomes = []
 
         for src, dst in rename_files.items():
             if not os.path.exists(src):
                 log.warning('Source file does not exist: %s', src)
                 skipped = True
+                outcomes.append((None, dst))
                 continue
 
             if os.path.exists(dst):
@@ -290,6 +823,7 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                             src, dst, (group.get('media') or {}).get('_id'),
                         )
                         moved_any = True
+                        outcomes.append((REPLACE, dst))
                         continue
                     # The swap refused or failed. The library file is intact
                     # and a complete copy of the download survives -- swap.py
@@ -312,34 +846,59 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 # that ships and rotates unattended, so it names the media and
                 # the decision. DEBUG is the level somebody turns on while
                 # actually diagnosing a collision, and it gets the path.
-                log.warning(
+                #
+                # AC-OPS-3: bounded by `log_suppressed` independently of the
+                # memory above. FEAT-009B already required this exact bound
+                # once (its AC-OPS-6) and shipped unmet -- measured at 40
+                # records for 20 calls, growing linearly -- because the bound
+                # was proven only on a path that happened to go through
+                # `log_suppressed` elsewhere. This method is also reachable
+                # through a TARGETED scan, which per D8 never touches the
+                # memory at all, so the backstop has to hold on its own.
+                media_id = (group.get('media') or {}).get('_id')
+                log_suppressed(
+                    log.warning,
+                    'renamer_collision:%s:%s' % (media_id, outcome),
                     'Destination already exists, keeping it: media %s '
                     '(upgrade decision: %s)',
-                    (group.get('media') or {}).get('_id'), outcome,
+                    media_id, outcome,
                 )
                 log.debug('The collided destination was: %s', dst)
                 skipped = True
+                outcomes.append((outcome, dst))
                 continue
 
             try:
                 self.moveFile(src, dst, use_default = True)
                 log.info('Moved: %s -> %s', os.path.basename(src), dst)
                 moved_any = True
+                outcomes.append((None, dst))
             except Exception as e:
                 log.error('Failed to move %s: %s', src, e)
                 skipped = True
+                outcomes.append((None, dst))
 
         # Never delete the source folder when anything was left behind. This is
         # the data-loss half: previously a skipped move was followed by cleanup,
         # so the file the user had just downloaded was skipped AND destroyed.
         if skipped:
-            log.info('Leaving source folder in place: not every file was moved')
-            return
+            # DEBUG, not INFO: the WARNING above (or the "source file does
+            # not exist" / "failed to move" record for whichever pair
+            # skipped) already names the reason at a level that ships and
+            # rotates unattended. Restating "not every file was moved" at
+            # INFO on every one of those calls was the other half of the
+            # AC-OPS-3 baseline (40 records for 20 calls: 20 WARNING plus 20
+            # of this line), and it carries no information the caller does
+            # not already have.
+            log.debug('Leaving source folder in place: not every file was moved')
+            return outcomes
 
         if moved_any and self.conf('cleanup', default = True):
             source_folder = group.get('parentdir')
             if source_folder and os.path.isdir(source_folder):
                 self.deleteFolder(source_folder)
+
+        return outcomes
 
     @staticmethod
     def _rankViaEvent(quality):
@@ -635,7 +1194,8 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
             return None
         return actual
 
-    def _announceImminentReplacement(self, source, destination, superseded, group):
+    def _announceImminentReplacement(self, source, destination, superseded,
+                                      group, operator_initiated=False):
         """AC-OPS-2: one WARNING in the last moment before the file is gone.
 
         A crash immediately after `os.replace` leaves the old copy destroyed
@@ -646,11 +1206,21 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         D8: media and rungs, never paths. Sizes are numbers, which say a great
         deal about whether the swap was sane and nothing about the operator's
         filesystem.
+
+        M17 (branch review 2026-08-31): `operator_initiated` distinguishes a
+        human-requested replacement from the automatic upgrade path. Both
+        call sites shared this one record with no marker, so the only
+        thing that can explain a destroyed library file afterwards could
+        not say whether a person asked for it or the upgrade logic decided
+        on its own -- the first question anyone diagnosing it asks.
         """
         incoming = (group.get('meta_data') or {}).get('quality') or {}
+        origin = 'an OPERATOR-requested' if operator_initiated else 'an automatic'
         log.warning(
-            'About to replace a library copy: media %s, %s (%s bytes) -> '
-            '%s (%s bytes), superseding release %s. This destroys the old file.',
+            'About to replace a library copy (%s replacement): media %s, '
+            '%s (%s bytes) -> %s (%s bytes), superseding release %s. This '
+            'destroys the old file.',
+            origin,
             (group.get('media') or {}).get('_id'),
             (superseded or {}).get('quality'),
             self._sizeOrNone(destination),
@@ -851,6 +1421,676 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                 'that document is corrected.', superseded.get('_id'),
             )
 
+    # ------------------------------------------------------------------
+    # FEAT-011: the operator-initiated replacement. A SEPARATE entry point
+    # from the automatic path above, sharing only the mechanical safety
+    # net (the atomic swap, the re-entrancy guard, the library-containment
+    # check) and never `decide_replacement` or `_identityIsAsserted` --
+    # the operator naming a specific film and a specific file IS the
+    # identity assertion (spec owner decision 1). `upgrade_replace` and
+    # the quality comparison are deliberately never consulted here.
+    # ------------------------------------------------------------------
+
+    #: Marks a release document as claiming a file the OPERATOR placed by
+    #: hand, distinct from every `identity_source` `folder_scanner
+    #: .determineMedia` can produce (`ASSERTED_IDENTITY_SOURCES` above). An
+    #: explicit, different marker, not one of those four, so a later read
+    #: can tell an operator-authored release apart from one the automatic
+    #: path derived.
+    OPERATOR_IDENTITY_SOURCE = 'operator_placed'
+
+    def operatorCandidatesView(self, **kwargs):
+        """API-facing entry point for the candidate listing.
+
+        Reads nothing from `kwargs` (AC-SIMP-8): the candidate list is
+        derived server-side from `conf('from')` alone, never from a
+        client-supplied directory.
+
+        H10: capped at `OPERATOR_CANDIDATE_LIST_CAP`, with `total_found`
+        carrying the TRUE count so nothing is dropped silently, and `reason`
+        naming which of five situations produced the result -- 'ok',
+        'empty', 'not_configured', 'folder_missing' or 'folder_unreadable'
+        -- so the picker can tell "nothing here" apart from "I could not
+        look", which the design's five states require (AC-DESIGN-3).
+        """
+        candidates, reason, total_found = self._listOperatorCandidatesWithReason()
+        cap = self.OPERATOR_CANDIDATE_LIST_CAP
+        return {
+            'success': True,
+            'candidates': candidates[:cap],
+            'total_found': total_found,
+            'reason': reason,
+        }
+
+    def operatorReplaceView(self, **kwargs):
+        """API-facing entry point for an operator's replacement.
+
+        Reads only `media_id` and `source` out of `kwargs` -- every other
+        key is ignored, so a request carrying `destination`, `dst`, `to`,
+        `path`, `media_folder` or `base_folder` cannot redirect the
+        destructive step anywhere (AC-SEC-1). The destination is always
+        resolved server-side, inside `_executeOperatorReplacement`, from
+        the media's own release records.
+
+        Runs the real work on a background thread rather than inline
+        (spec owner decision 2): the prompting case is a 20.3 GB copy
+        across NAS mounts, and answering synchronously would hold the
+        request open for minutes. The thread is kept at
+        `self._operator_thread` purely so a test can join it
+        deterministically -- nothing else may depend on that attribute.
+        """
+        media_id = kwargs.get('media_id')
+        source = kwargs.get('source')
+
+        # H12 (branch review 2026-08-31): a refusal that can be decided
+        # before a single byte is touched is answered synchronously,
+        # here, rather than only inside the fire-and-forget thread below.
+        # `_resolveOperatorSource` does no destructive I/O (realpath
+        # calls only), so this costs nothing, and without it the operator
+        # is told "Replacement started" even on a request that could
+        # never have started -- the exact silent-success shape H1 closed
+        # for the log; this closes it for the response the browser
+        # actually reads.
+        if self._resolveOperatorSource(source) is None:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, media_id,
+            )
+            return {
+                'success': False,
+                'error': self._operatorOutcomeMessage(
+                    OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER,
+                ),
+            }
+
+        # T7e round four, and the reason this call is NOT here. A previous
+        # round added `self._listOperatorCandidates()` at this point so the
+        # route would always have a baseline and the tests would not need
+        # to establish one. Measured effect: it reintroduced critical C2
+        # verbatim. The baseline was then taken at REQUEST time and
+        # compared against a stat taken moments later inside the thread,
+        # which is a fresh stat compared against itself, and it made the
+        # "refuse when nothing knows what the operator saw" branch
+        # unreachable in production.
+        #
+        # Driven end to end through this route: a stalled 160-byte partial
+        # replaced a complete 120000-byte library copy, and the plugin's
+        # own warning recorded it as "120000 bytes -> 160 bytes. This
+        # destroys the old file." Pinned by
+        # tests/unit/test_operator_route_does_not_forge_its_own_baseline.py
+        #
+        # Decision time is when the OPERATOR saw the listing and chose from
+        # it. It is not when their request arrived. A baseline this route
+        # mints for itself carries no information about that choice.
+
+        thread = threading.Thread(
+            target=self._executeOperatorReplacement,
+            args=(media_id, source),
+        )
+        thread.daemon = True
+        self._operator_thread = thread
+        thread.start()
+
+        return {'success': True}
+
+    def operatorReplacementPreviewView(self, **kwargs):
+        """API-facing entry point for the confirmation preview (H9).
+
+        Reads only `media_id` out of `kwargs`. Read-only: safe to call on
+        every render of the picker, never reaches `replace_atomically`.
+        """
+        media_id = kwargs.get('media_id')
+        preview = self._operatorReplacementPreview(media_id)
+        return {
+            'success': True,
+            'destination': preview['destination'],
+            'candidates': preview['candidates'],
+        }
+
+    def _operatorReplacementPreview(self, media_id):
+        """Read-only lookup for the confirmation an operator sees before an
+        irreversible replacement (H9, AC-DESIGN-7, AC-QA-12, AC-PROD-3).
+
+        The confirmation this feeds names neither the file it will destroy
+        nor the one it will install today -- an operator approves destroying
+        an irreplaceable file with nothing identifying it. This resolves the
+        destination the SAME way `_runOperatorReplacement` does (through
+        `decide_operator_replacement` over `release.for_media`), but touches
+        no file beyond `os.path.getsize` and never reaches
+        `replace_atomically`, so it is safe to call on every render.
+
+        `destination` is `None` whenever there is no single completed
+        release to replace -- no releases at all, more than one, or one
+        recording more than one movie file (AC-QA-5's ambiguous-file guard,
+        H3) -- because the picker has nothing safe to confirm against in
+        that case, exactly as the destructive path itself refuses it.
+
+        Basenames only, never a path (CLAUDE.md's security floor): the
+        watch folder and the library folder never appear anywhere in the
+        result.
+        """
+        releases = fireEvent(
+            'release.for_media', media_id, require_complete=True, single=True,
+        ) or []
+        outcome, existing_release = decide_operator_replacement(releases)
+
+        destination = None
+        if outcome == OPERATOR_REPLACE:
+            movie_files = (existing_release.get('files') or {}).get('movie') or []
+            if len(movie_files) == 1:
+                dest_path = sp(movie_files[0])
+                try:
+                    size = os.path.getsize(dest_path)
+                except OSError:
+                    size = None
+                if size is not None:
+                    destination = {
+                        'name': os.path.basename(dest_path),
+                        'quality': existing_release.get('quality'),
+                        'size': size,
+                    }
+
+        # T7d item 1 (round two on C2): `_operator_candidate_sizes` is now
+        # keyed by the RESOLVED path `_resolveOperatorSource` returns, not
+        # by the bare name -- so the lookup here goes through the same
+        # resolver rather than indexing the dict by `name` directly.
+        candidate_names = self._listOperatorCandidates()
+        sizes = getattr(self, '_operator_candidate_sizes', None) or {}
+        candidates = []
+        for name in candidate_names:
+            resolved = self._resolveOperatorSource(name)
+            if resolved in sizes:
+                candidates.append({'name': name, 'size': sizes[resolved]})
+
+        return {'destination': destination, 'candidates': candidates}
+
+    def _executeOperatorReplacement(self, media_id, source_name):
+        """Act on an operator's decision to replace a film's library copy.
+
+        Synchronous worker for `operatorReplaceView`. `source_name` is a
+        bare name (or relative path) chosen from a listing already
+        produced under `conf('from')` -- never a full path supplied by a
+        caller. Returns `(outcome, destination_or_None)`; `destination` is
+        non-None only when `outcome` is `OPERATOR_REPLACE`.
+
+        Holds the SAME re-entrancy guard `scan()` uses above (AC-ARCH-7):
+        the check-and-set is atomic under `media_lock('renamer-scan')` and
+        held only for that instant, so a second operator activation, or a
+        scan, running at the same time is refused promptly rather than
+        queued behind the first -- a per-route lock would queue it, which
+        is the exact trap the spec calls out.
+        """
+        with media_lock('renamer-scan'):
+            if self.renaming_started:
+                self._logOperatorOutcome(OPERATOR_REFUSED_ALREADY_RUNNING, media_id)
+                return OPERATOR_REFUSED_ALREADY_RUNNING, None
+            self.renaming_started = True
+
+        try:
+            return self._runOperatorReplacement(media_id, source_name)
+        except Exception:
+            # H8 (branch review 2026-08-31): with no guard here an
+            # exception raised anywhere below propagates out of the bare
+            # `threading.Thread` target that runs this in production, and
+            # threading's default excepthook prints it to stderr only --
+            # never through CPLog, never through PrivacyFilter, never
+            # reaching the rotating log file the operator actually reads.
+            # Caught, logged with the full traceback (matching the
+            # existing pattern at `scan()`'s own outer handler), and
+            # turned into a named outcome rather than left to raise.
+            log.error(
+                'Operator replacement for media %s failed: %s',
+                media_id, traceback.format_exc(),
+            )
+            return OPERATOR_REFUSED_ERROR, None
+        finally:
+            with media_lock('renamer-scan'):
+                self.renaming_started = False
+
+    @staticmethod
+    def _logOperatorOutcome(outcome, media_id, release_id=None):
+        """H1 (branch review 2026-08-31): the ONLY way an operator or an
+        administrator can ever learn how a replacement went is the log --
+        `operatorReplaceView` answers success before any work starts and
+        the worker's return value is read by nothing else. One record at
+        INFO or above per terminal outcome, always naming the outcome
+        constant EXACTLY (not a paraphrase, so a later rename of the
+        constant without updating a log string is caught by
+        `TestEveryTerminalOutcomeIsLoggedAtInfoOrAbove` rather than
+        shipping silent again) and the media id, plus the release id when
+        one is already known.
+
+        D8 / AC-SEC-11: media and release ids only, never a filesystem
+        path -- matching the convention `main.py:296-311` already
+        establishes for the automatic path.
+        """
+        if release_id:
+            log.info(
+                'Operator replacement outcome %s for media %s (release %s)',
+                outcome, media_id, release_id,
+            )
+        else:
+            log.info(
+                'Operator replacement outcome %s for media %s',
+                outcome, media_id,
+            )
+
+    @staticmethod
+    def _operatorOutcomeMessage(outcome):
+        """A sentence an operator can read, never the raw outcome constant
+        (AC-DESIGN-10, H12 branch review 2026-08-31): a bare token like
+        `operator_refused_source_outside_watch_folder` means nothing to
+        someone who did not write this file.
+
+        Scoped today to the one outcome `operatorReplaceView`'s own
+        synchronous pre-check can return. The full outcome-to-sentence
+        table covering every constant the backgrounded path can return
+        (`replacement.py`, `swap.py`) is the rest of AC-DESIGN-10 and is
+        tracked separately; this is not a substitute for it.
+        """
+        if outcome == OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER:
+            return (
+                'No download folder is configured, or the chosen file '
+                'could not be found there. Check the renamer settings and '
+                'try again.'
+            )
+        return 'The replacement could not be started.'
+
+    def _runOperatorReplacement(self, media_id, source_name):
+        """The actual work, unguarded -- always called through
+        `_executeOperatorReplacement`, never directly."""
+        source = self._resolveOperatorSource(source_name)
+        if source is None:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, media_id,
+            )
+            return OPERATOR_REFUSED_SOURCE_OUTSIDE_WATCH_FOLDER, None
+
+        releases = fireEvent(
+            'release.for_media', media_id, require_complete=True, single=True,
+        ) or []
+        outcome, existing_release = decide_operator_replacement(releases)
+        if outcome != OPERATOR_REPLACE:
+            self._logOperatorOutcome(outcome, media_id)
+            return outcome, None
+
+        # The destination is the release's OWN recorded file, exactly as
+        # it stands -- never recomputed from the naming template (spec's
+        # fifth, derived decision). More than one recorded file is the
+        # same "do not guess" shape as an ambiguous release: replacing one
+        # of several risks destroying a file the operator did not choose.
+        movie_files = (existing_release.get('files') or {}).get('movie') or []
+        if len(movie_files) != 1:
+            self._logOperatorOutcome(
+                OPERATOR_DECLINED_AMBIGUOUS_FILE, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return OPERATOR_DECLINED_AMBIGUOUS_FILE, None
+        destination = sp(movie_files[0])
+
+        # M6 (branch review 2026-08-31): refuse a REPLAY against a
+        # destination this same plugin instance already replaced, before
+        # anything below it does. `replace_atomically`'s own
+        # `destination_identity` check cannot catch this -- both the value
+        # captured just above and the value re-checked inside it are taken
+        # AFTER an earlier successful call already finished, so on a second
+        # call they agree with each other regardless of what happened
+        # before. Refused only when the destination still looks EXACTLY as
+        # it did the instant our own prior replacement finished; anything a
+        # third party has touched since is a different situation, and this
+        # check has nothing to say about it.
+        #
+        # T7d item 6 (round two on M6): keyed on `(destination, source)`,
+        # not on `destination` alone. After a successful swap nothing else
+        # touches the file, so the destination's identity never again
+        # disagrees with the recorded value -- keying on the destination
+        # alone therefore refused every LATER, genuinely distinct
+        # replacement of the same film forever, on a process that stays up
+        # for a long time between restarts. Scoping the record to the
+        # SOURCE that produced it means a stale retry of the exact same
+        # request (same destination, same source) is still refused, while a
+        # deliberate later replacement from a different source is a
+        # different request and is not.
+        replayed = getattr(self, '_operator_replaced_identities', None) or {}
+        previous_identity = replayed.get((destination, source))
+        if previous_identity is not None and identity_of(destination) == previous_identity:
+            self._logOperatorOutcome(
+                OPERATOR_REFUSED_ALREADY_REPLACED, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return OPERATOR_REFUSED_ALREADY_REPLACED, None
+
+        # AC-SEC-3: checked against `conf('to')` alone, via the SAME method
+        # the automatic path uses -- no request-supplied folder is ever
+        # consulted.
+        if not self._destinationIsInsideTheLibrary(destination):
+            self._logOperatorOutcome(
+                DECLINED_OUTSIDE_LIBRARY, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return DECLINED_OUTSIDE_LIBRARY, None
+
+        # C2: refuse against the size recorded when the operator's
+        # candidate listing was produced, not against a second stat of
+        # THIS SAME file taken microseconds later -- two fresh
+        # measurements of one file can never disagree, whatever it has
+        # done since the operator actually looked at it. Same shape as
+        # the automatic path's `_sourceStillMatchesTheScan`: the figure
+        # compared against comes from an earlier, independent point in
+        # time.
+        #
+        # T7e (round three on C2). Both "this plugin instance has never
+        # produced a candidate listing" and "a listing exists but holds no
+        # entry for THIS source" are the SAME answer here: there is nothing
+        # in this process that can say the file still matches what the
+        # operator was shown, so neither may proceed. T7d treated the first
+        # as "no baseline was requested" and allowed it, which left the
+        # exact scenario the review measured destroying both copies of a
+        # film: the container restarts while the operator has the modal
+        # open, they click Confirm, the size dict is empty, and a source
+        # still being copied installs truncated over the complete library
+        # copy before the partial is deleted.
+        #
+        # `_executeOperatorReplacement` has ONE production caller (the
+        # thread started by `operatorReplaceView`), and the operator can
+        # only submit a source the listing offered them, so refusing costs
+        # a reopened dialog and nothing else.
+        #
+        # Keyed on the RESOLVED path (`source`, from `_resolveOperatorSource`
+        # above), not on `source_name` -- a caller respelling the same file
+        # (`./incoming.mkv` vs `incoming.mkv`) must still find the entry
+        # `_listOperatorCandidatesWithReason` recorded for it.
+        try:
+            expected_source_size = os.path.getsize(source)
+        except OSError:
+            self._logOperatorOutcome(
+                REFUSED_NO_SOURCE, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return REFUSED_NO_SOURCE, None
+
+        recorded_size = getattr(self, '_operator_candidate_sizes', None) or {}
+        decision_time_size = recorded_size.get(source)
+        if decision_time_size is None or decision_time_size != expected_source_size:
+            self._logOperatorOutcome(
+                REFUSED_SOURCE_CHANGED, media_id,
+                release_id=existing_release.get('_id'),
+            )
+            return REFUSED_SOURCE_CHANGED, None
+
+        incoming_quality = fireEvent(
+            'quality.guess', files=[source],
+            size=expected_source_size / 1024 / 1024, single=True,
+        ) or {}
+
+        media_doc = fireEvent('media.get', media_id, single=True) or {}
+        group = {
+            'media': {'_id': media_id},
+            'identifier': media_doc.get('identifier') or media_id,
+            'meta_data': {'quality': incoming_quality},
+            'files': {'movie': [destination]},
+            'identity_source': self.OPERATOR_IDENTITY_SOURCE,
+        }
+
+        # M4 (branch review 2026-08-31): the automatic path's own destination
+        # collision branch reports an abandoned `.cp-upgrade-*.part` before
+        # doing filesystem work (`:572` above); the operator path reached
+        # the same destructive step without ever calling it. A process
+        # killed between staging and the atomic swap on an OPERATOR
+        # replacement left a full-size staged copy with nothing to say it
+        # was there -- on the prompting 20.3 GB case, a silently consumed
+        # 20 GB under a hidden name the scanner ignores.
+        self._reportStaleStagingFiles(os.path.dirname(destination))
+
+        # AC-SEC-4: the ONLY route to the destructive step, with a
+        # measured, non-None `expected_source_size` and a
+        # `destination_identity` from `swap.identity_of` -- so
+        # `refused_source_is_symlink`, `refused_destination_is_symlink`,
+        # `refused_same_file`, `refused_source_changed` and
+        # `failed_destination_changed` all stay reachable here exactly as
+        # they are on the automatic path.
+        ok, reason = replace_atomically(
+            source, destination,
+            expected_source_size=expected_source_size,
+            destination_identity=identity_of(destination),
+            about_to_replace=lambda: self._announceImminentReplacement(
+                source, destination, existing_release, group,
+                operator_initiated=True,
+            ),
+        )
+        if not ok:
+            self._logOperatorOutcome(
+                reason, media_id, release_id=existing_release.get('_id'),
+            )
+            return reason, None
+
+        # M6: record the destination's identity now, right after the swap
+        # that has just verified it, so a LATER stale replay against this
+        # same destination is refused by the check above instead of
+        # performing a second destructive swap. Recorded here rather than
+        # only after bookkeeping/disposal below, because both of those are
+        # best-effort and the library file is already the thing a replay
+        # must not be allowed to touch again regardless of what happens to
+        # either.
+        #
+        # T7d item 6: keyed on `(destination, source)` -- see the check
+        # above for why the destination alone is not scoped narrowly
+        # enough.
+        if getattr(self, '_operator_replaced_identities', None) is None:
+            self._operator_replaced_identities = {}
+        self._operator_replaced_identities.pop((destination, source), None)
+        self._operator_replaced_identities[(destination, source)] = identity_of(destination)
+        while len(self._operator_replaced_identities) > self.OPERATOR_REPLAY_GUARD_MAX_ENTRIES:
+            self._operator_replaced_identities.pop(
+                next(iter(self._operator_replaced_identities)),
+            )
+
+        # Bookkeeping BEFORE disposal, and the order is not free -- the
+        # same reasoning `_moveRenamedFiles` documents above for the
+        # automatic path applies here unchanged: both are best-effort, and
+        # a kill between them must leave the RECOVERABLE half-finished
+        # state, which is the download still on disk with the database
+        # already accounting for the swap that already happened, not the
+        # download gone with nothing recording it.
+        #
+        # `release.add` first: without a release claiming the placed file
+        # at its detected quality the media is permanently
+        # `declined_no_owner` on every later decision (owner decision 4).
+        fireEvent('release.add', group, single=True)
+        self._supersedeRelease(existing_release, group, destination)
+
+        # Owner decision 3: the operator's source is ALWAYS consumed now,
+        # whatever `default_file_action` says -- only after the swap has
+        # verified, never before.
+        self._disposeOfOperatorSource(source, media_id)
+
+        self._logOperatorOutcome(
+            OPERATOR_REPLACE, media_id, release_id=existing_release.get('_id'),
+        )
+        return OPERATOR_REPLACE, destination
+
+    def _resolveOperatorSource(self, source_name):
+        """Resolve the operator's chosen SOURCE name to a path confined to
+        the configured watch folder, or None.
+
+        AC-SEC-2. `os.path.realpath` on both the folder and the candidate,
+        re-derived HERE rather than trusted from a name a caller echoes
+        back, and refused -- never clamped -- when it lands outside. A
+        relative traversal, an absolute path elsewhere on disk, a name
+        containing a NUL byte and a symlink whose target escapes the
+        folder all reach this refusal, proven the way
+        `softchroot.chroot2abs` is proven
+        (`couchpotato/core/softchroot.py:167-205`): the caller learns
+        nothing about which hostile shape it was.
+
+        The path returned is the LEXICAL join, not the realpath: a source
+        that is itself a symlink, whose target still resolves inside the
+        folder, is handed back as the symlink so that
+        `replace_atomically`'s own `REFUSED_SOURCE_IS_SYMLINK` check still
+        sees it as one rather than as the regular file it points at.
+        """
+        watch = self.conf('from')
+        if not watch or not source_name:
+            return None
+        try:
+            root = os.path.realpath(sp(watch))
+            lexical = os.path.normpath(os.path.join(root, source_name))
+            resolved = os.path.realpath(lexical)
+        except (OSError, ValueError):
+            # ValueError: a NUL byte in the name. OSError: a component that
+            # cannot be resolved. Both are refusals, not exceptions to
+            # propagate to a caller.
+            return None
+        if resolved != root and not resolved.startswith(root + os.path.sep):
+            return None
+        return lexical
+
+    def _listOperatorCandidates(self):
+        """List the file names under `conf('from')` an operator may pick
+        as a replacement source.
+
+        Thin wrapper over `_listOperatorCandidatesWithReason` for the
+        callers that only want the names -- `_operatorReplacementPreview`
+        and the plugin-level tests that assert directly on the returned
+        list. See that method for the full contract.
+        """
+        candidates, _reason, _total_found = self._listOperatorCandidatesWithReason()
+        return candidates
+
+    def _listOperatorCandidatesWithReason(self):
+        """As `_listOperatorCandidates`, but also reports WHY an empty
+        result is empty (H10, AC-QA-14, AC-DESIGN-3).
+
+        The bare list threw that distinction away: 'not configured', 'the
+        folder is missing', 'the folder cannot be read' and 'the folder is
+        genuinely empty' all produced the identical `[]`, and the picker
+        has a separate rendered state for each with a different remedy --
+        the operator needs to know whether to check settings, check the
+        mount, or simply that there is nothing to pick from.
+
+        Returns `(candidates, reason, total_found)`, where `reason` is one
+        of `'ok'`, `'empty'`, `'not_configured'`, `'folder_missing'` or
+        `'folder_unreadable'`, and `total_found` is the TRUE count of
+        matching candidates before any cap the caller applies -- so a
+        truncated response can still say how many were really there.
+
+        Filters to `OPERATOR_CANDIDATE_EXTENSIONS` (H10): the same movie
+        extensions the scanner already recognises, so a stray `.srt`,
+        `.nfo`, `.txt` or `.part` sitting beside a real download is never
+        offered as something the operator could fat-finger over the
+        library copy.
+
+        Reuses `_resolveOperatorSource` (AC-SEC-2) as the SOLE confinement
+        check -- an entry is offered only when that method does not
+        refuse it, so a symlink whose target resolves outside the watch
+        folder is excluded exactly as the execution path already refuses
+        it, with no second copy of the confinement rule to drift out of
+        step with the first.
+
+        Returns bare names only, never a path (AC-SIMP-8): the caller
+        hands one of these names straight back as `source`, and a path
+        would both leak the watch folder's location and give the client
+        something to tamper with.
+
+        An entry that cannot be inspected (a permission error, a race
+        with something else touching the folder) is excluded rather than
+        aborting the whole listing -- a production watch folder holds
+        files the operator does not fully control. Only a raised
+        `os.listdir` on the folder ITSELF is 'folder_unreadable'; one bad
+        entry inside a folder that could be listed is silently dropped, as
+        before.
+
+        Also the operator's decision moment for C2: each offered entry's
+        size is recorded on `self._operator_candidate_sizes`, keyed by the
+        same bare name returned here, so `_runOperatorReplacement` can
+        later refuse a source that grew or shrank since this listing was
+        produced instead of comparing a fresh stat against itself.
+        """
+        watch = self.conf('from')
+        if not watch:
+            return [], 'not_configured', 0
+
+        watch = sp(watch)
+        if not os.path.isdir(watch):
+            return [], 'folder_missing', 0
+
+        try:
+            entries = os.listdir(watch)
+        except OSError as error:
+            log.warning(
+                'Could not read the configured download folder for the '
+                'operator replacement picker: %s', self._withoutPaths(error),
+            )
+            return [], 'folder_unreadable', 0
+
+        candidates = []
+        sizes = {}
+        for name in entries:
+            try:
+                if not os.path.isfile(os.path.join(watch, name)):
+                    continue
+            except OSError:
+                continue
+            extension = os.path.splitext(name)[1].lstrip('.').lower()
+            if extension not in self.OPERATOR_CANDIDATE_EXTENSIONS:
+                continue
+            resolved = self._resolveOperatorSource(name)
+            if resolved is None:
+                continue
+            try:
+                size = os.path.getsize(resolved)
+            except OSError:
+                continue
+            candidates.append(name)
+            # T7d item 1 (round two on C2): keyed on the RESOLVED path, not
+            # on `name` (the client's spelling) -- a respelling of the same
+            # source that still resolves to this path (`./incoming.mkv` vs
+            # `incoming.mkv`) must still find this entry.
+            sizes[resolved] = size
+
+        self._operator_candidate_sizes = sizes
+
+        if not candidates:
+            return [], 'empty', 0
+
+        return candidates, 'ok', len(candidates)
+
+    def _disposeOfOperatorSource(self, source, media_id=None):
+        """Owner decision 3: the operator's source is ALWAYS removed after
+        a verified swap, whatever `default_file_action` says.
+
+        `_disposeOfSourceAfterReplacement` above leaves the source in
+        place on `copy` and `link`, which is correct for the AUTOMATIC
+        path -- but here it is exactly the trap the spec calls out: the
+        next scan finds the operator's file again and repeats the refusal
+        FEAT-012 exists to end, on exactly the setting values that cause
+        it. The library already holds a verified complete copy at this
+        point, so nothing is lost by removing the one left in the watch
+        folder.
+
+        Best-effort, same as the automatic path's equivalent: the swap has
+        already succeeded, and nothing that happens to the download now
+        can justify raising through a completed replacement.
+        """
+        try:
+            os.remove(source)
+        except OSError as error:
+            log.warning(
+                'Replaced the library copy for media %s, but could not '
+                'remove the operator-placed source from the watch folder '
+                'afterwards: %s', media_id, self._withoutPaths(error),
+            )
+        else:
+            # M16 (branch review 2026-08-31): the only log call in this
+            # method used to be in the except branch, so the ordinary case
+            # -- a successful removal -- was completely silent. A file the
+            # operator placed by hand disappears from their download
+            # folder, unconditionally overriding default_file_action, and
+            # nothing said this feature was what removed it.
+            log.info(
+                'Replaced the library copy for media %s and removed the '
+                'operator-placed source from the watch folder.', media_id,
+            )
+
     def _warnAboutTheDeadSetting(self):
         """Tell an operator ONCE that `remove_lower_quality_copies` is inert.
 
@@ -901,8 +2141,6 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
         from couchpotato.core.plugins.renamer.replacement import (
             DECLINED_ERROR,
             DECLINED_INCOMPLETE_EVIDENCE,
-            DECLINED_MULTI_FILE_GROUP,
-            DECLINED_SETTING_OFF,
             decide_replacement,
         )
 
@@ -1094,4 +2332,4 @@ class Renamer(Plugin, ScannerMixin, MoverMixin, NamerMixin, ExtractorMixin, Clea
                         log.error('Failed to create folder %s: %s', dst_dir, e)
                         return
 
-        self._moveRenamedFiles(rename_files, group)
+        return self._moveRenamedFiles(rename_files, group)

@@ -639,11 +639,24 @@ class MediaPlugin(MediaBase):
             'success': True,
         }
 
-    def markDone(self, id = None, **kwargs):
+    def markDone(self, id = None, expected_status = None, **kwargs):
 
         db = get_db()
 
         def _mark_done(media):
+            # Optional optimistic-concurrency guard (AC-SEC-7,
+            # specs/FEAT-010-review-queue-in-wanted.md): a caller that
+            # rendered a card showing a particular status can pass it back
+            # as expected_status, and the write is skipped if the freshly
+            # re-read doc has since moved on. Evaluated inside the mutator
+            # so the check is atomic against that re-read, mirroring
+            # MovieSearcher._reset_if_downloaded (searcher.py). This is
+            # NOT a status allowlist -- any expected_status is accepted,
+            # including 'active', so FEAT-001's "Mark Done from active"
+            # path keeps working. When expected_status is omitted the
+            # write always proceeds, matching every pre-existing caller.
+            if expected_status is not None and media.get('status') != expected_status:
+                return False
             media['status'] = 'done'
 
         # Read-modify-write on the same doc other concurrent viewers /
@@ -652,7 +665,7 @@ class MediaPlugin(MediaBase):
         # update can't silently drop someone else's concurrent change to
         # this media doc (identical hotspot to markWatched/markUnwatched).
         try:
-            db.update_with_retry(_mark_done, id)
+            updated = db.update_with_retry(_mark_done, id)
         except (RecordNotFound, RecordDeleted, KeyError):
             return {'success': False, 'error': 'Media not found'}
         except ConflictError:
@@ -661,6 +674,11 @@ class MediaPlugin(MediaBase):
         except Exception:
             log.error('Unexpected error marking media %s done: %s', id, traceback.format_exc())
             return {'success': False, 'error': 'Database error'}
+
+        # The mutator returned False (expected_status mismatch): no write
+        # happened, so report failure without touching the landed release.
+        if not updated:
+            return {'success': False, 'error': 'Media status changed, refresh and try again'}
 
         # Workflow Phase 3 "Mark Done" (specs/DOWNLOADED-REVIEW-WORKFLOW.md):
         # a movie in the 'downloaded' review gate has a landed-but-not-yet-

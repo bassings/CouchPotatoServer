@@ -312,6 +312,7 @@
                  is gated behind confirm() like the movie-level action. -->
             <button @click="if(confirm('Mark this release as failed? This excludes it from future searches and cannot be undone.')) { markingReleaseFailed['{{ r_id }}'] = true; fetch(CP.apiBase + '/release.failed/?id={{ r_id }}').then(r => r.json()).then(d => { if(d.success) { toast('Release marked failed', 'success'); setTimeout(() => location.reload(), 900); } else { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); } }).catch(() => { markingReleaseFailed['{{ r_id }}'] = false; toast('Failed to mark release as failed', 'error'); }); }"
                     class="px-2 py-1 rounded text-[9px] font-medium bg-cp-danger/10 text-cp-danger hover:bg-cp-danger/20 transition-colors disabled:opacity-50 inline-flex items-center gap-1"
+                    data-testid="release-mark-failed"
                     :disabled="markingReleaseFailed['{{ r_id }}']"
                     title="Mark this release as failed (exclude it from future searches)">
               <svg aria-hidden="true" class="w-3 h-3 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="m9.75 9.75 4.5 4.5m0-4.5-4.5 4.5M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/></svg>
