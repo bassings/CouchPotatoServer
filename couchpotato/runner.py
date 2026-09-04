@@ -295,6 +295,59 @@ def _open_or_create_database(db, data_dir, base_path):
     return False
 
 
+#: Property-store marker (Env.prop, couchpotato/environment.py:79 -- the
+#: existing `property` document table, no schema change) recording that the
+#: one-time orphan cleanup migration below has completed.
+ORPHAN_CLEANUP_MARKER = 'migration.clean_orphans.applied'
+
+
+def _run_orphan_cleanup(db, log):
+    """Run the orphaned-movie cleanup ONCE, gated on the property marker
+    ORPHAN_CLEANUP_MARKER, instead of on every boot (BUG-017: an
+    unconditional call deleted a real library entry, "Passengers"
+    (tt1355644), on a routine production restart).
+
+    Deliberately does not touch couchpotato/core/migration/clean_orphans.py
+    itself (AC-SIMP-6): the classification logic there is separate, known-
+    imperfect, recorded debt, and keeping this change to the gate alone
+    means a behaviour change in the cleanup can never be confused with the
+    gate that decides whether it runs.
+
+    Env.prop(ORPHAN_CLEANUP_MARKER) cannot tell "marker never set" apart
+    from "the property store could not be read": Settings.getProperty()
+    swallows any read failure other than a corrupt document into a debug
+    log and returns None either way (couchpotato/core/settings.py:818). We
+    deliberately treat both cases the same as "not yet applied" and attempt
+    the run. That is safe specifically because this is a one-time
+    migration sharing the same database as the cleanup itself: if the
+    store really were unreadable, clean_orphaned_movies(db) reads from
+    that same db and would itself raise, which is caught below and leaves
+    the marker unset for a retry on the next boot (AC-DATA-3) rather than
+    deleting anything. The alternative, treating "unreadable" as "already
+    applied" and skipping, would risk permanently skipping a genuine
+    first-ever run on a store that is merely having a transient problem.
+    """
+    from couchpotato.environment import Env
+
+    if Env.prop(ORPHAN_CLEANUP_MARKER):
+        log.info('Orphan cleanup skipped: already applied.')
+        return
+
+    try:
+        from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
+        n_orphans = clean_orphaned_movies(db)
+        # Mark applied only once the scan has actually completed -- a scan
+        # that finds nothing to remove has still run and must not be
+        # retried on every future boot (AC-DATA-2).
+        Env.prop(ORPHAN_CLEANUP_MARKER, value='true')
+        log.info('Orphan cleanup ran: removed %d orphaned movie entries with no metadata.', n_orphans)
+    except Exception as e:
+        # Marker deliberately NOT set here -- a failed run must be free to
+        # retry on the next start rather than being silently skipped
+        # forever (AC-DATA-3).
+        log.warning('Orphan cleanup skipped: %s', e)
+
+
 def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=None, desktop=None):
 
     try:
@@ -472,14 +525,10 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.info('Starting server on port %(port)s', config)
     except Exception:
         pass
-    # Clean orphaned movie entries (Py2 migration: dead IMDB IDs with no metadata)
-    try:
-        from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
-        n_orphans = clean_orphaned_movies(db)
-        if n_orphans:
-            log.info('Removed %d orphaned movie entries with no metadata.', n_orphans)
-    except Exception as e:
-        log.warning('Orphan cleanup skipped: %s', e)
+    # Clean orphaned movie entries -- one-time migration, gated so it runs
+    # once per install rather than on every boot (BUG-017: an unconditional
+    # call deleted a real library entry on a routine production restart).
+    _run_orphan_cleanup(db, log)
 
     # Fix release quality values (detect from name instead of searched quality)
     try:
