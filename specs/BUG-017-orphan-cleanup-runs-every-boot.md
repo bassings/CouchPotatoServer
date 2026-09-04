@@ -66,14 +66,38 @@ Gate the cleanup so it runs once and records that it has run. Nothing else.
   risk and is recorded as debt below rather than bundled here.
 - **The other two boot-time routines.** `fix_release_quality` (which reports
   "Found 1268 releases to check" on every start) and `fix_profile_quality_order`
-  have the same shape. They are not destructive, so they are noise and waste
-  rather than risk. Recorded as debt.
+  run on every boot with no gate, but they are not the same shape as each
+  other. Measured: `fix_profile_quality_order` is not destructive and is
+  noise and waste, as originally stated. `fix_release_quality` OVERWRITES
+  `quality` and `is_3d` on release documents on every boot whenever the
+  guessed quality disagrees with the stored one
+  (`fix_release_quality.py:81-85`), so a quality corrected by hand is
+  silently reverted on the next restart. It converges within a boot and the
+  value is derived metadata rather than a user record, so it sits in the
+  "expensive to redo" tier of this project's data-risk ranking rather than
+  "gone forever" -- but it is a low-severity overwrite to gate next, not
+  mere noise. Recorded as debt, restated below.
 - **Restoring the Passengers record.** Operational, done by hand from the
   verified backup after this ships, deliberately in that order so the final
   ungated run cannot delete it again.
 - **A schema change.** The property store
   (`Env.prop`, `couchpotato/environment.py:79`, backed by `property` documents,
   1,139 already present in production) is the existing mechanism.
+
+## Pre-deploy (required)
+
+Production has never carried `migration.clean_orphans.applied`. Before this
+release reaches production, the marker MUST be written to the production
+database first, so the deploy itself is not one more ungated run of the
+cleanup on a database that has never had one. See
+`docs/development-process.md` for the read-only query that checks the
+marker's current state, and how to set it.
+
+**Standing operational rule:** the marker lives inside `couchpotato.db` as an
+ordinary `property` document, not a separate file, so any restore of that
+database -- including the disaster-recovery restore already documented for
+this project -- resets it. A restored database runs the cleanup once more on
+its next boot, gated exactly as if it were a fresh install.
 
 ## Acceptance criteria
 
@@ -84,8 +108,15 @@ Gate the cleanup so it runs once and records that it has run. Nothing else.
 - **AC-DATA-2:** The marker is set after a completed run, including a run that
   removed nothing. A migration that finds nothing is still a migration that has
   run.
-- **AC-DATA-3:** The marker is NOT set when the cleanup raises. A failed
-  migration must be allowed to retry rather than being silently skipped forever.
+- **AC-DATA-3:** The marker is NOT set when an exception escapes the run --
+  either the marker write itself raising, or (rare) an exception escaping
+  `clean_orphaned_movies`. This only covers exceptions that actually escape:
+  `clean_orphaned_movies` almost never lets one, because its own scan loop
+  catches `Exception` internally, logs a warning on its own logger, and
+  returns 0 (recorded as debt item 6 below). A failed migration must be
+  allowed to retry rather than being silently skipped forever; in practice
+  the retry is delivered by the marker write failing, not by the cleanup
+  call failing.
 - **AC-QA-4:** A test proves the guard is load-bearing: with the marker absent
   the orphan-shaped record is removed, with it present the same record survives.
   Both directions, same fixture, so the test cannot pass vacuously.
@@ -104,10 +135,20 @@ Gate the cleanup so it runs once and records that it has run. Nothing else.
    document pointing at a deleted media id, and the same is true of any earlier
    deletion.
 3. `fix_release_quality` and `fix_profile_quality_order` scan the whole library
-   on every boot with no gate.
+   on every boot with no gate. `fix_profile_quality_order` is noise;
+   `fix_release_quality` also OVERWRITES `quality` and `is_3d` on release
+   documents whenever the guessed quality disagrees with the stored one
+   (`fix_release_quality.py:81-85`), silently reverting a hand-corrected
+   quality on the next restart -- a low-severity overwrite to gate next,
+   not mere noise.
 4. Log retention on the production host is roughly two days, so it cannot be
    established whether this routine deleted anything before 2026-09-04.
 5. Eleven film folders in the managed movie roots are referenced by no library
    record. Cause unknown and NOT attributed to this defect. Worth an audit on
    its own merits; one of them, Moana (2026), is on disk while the library is
    still actively searching for it.
+6. A scan that fails completely inside `clean_orphaned_movies` is caught by
+   its own `except Exception` (`clean_orphans.py:66-70`), logged as a warning
+   on ITS OWN logger, and returns 0 -- which this gate then records as a
+   completed migration that removed nothing. A failed scan is currently
+   indistinguishable from a genuinely clean one.

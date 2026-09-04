@@ -486,6 +486,51 @@ otherwise the next `docker compose pull` silently re-deploys the broken image.
 > ⚠️ `config.bak/` under `/var/lib/plexmediaserver/CouchPotato/` must **never**
 > be deleted, by a backup script or by hand. It is not a scratch directory.
 
+### One-time boot migration markers
+
+`couchpotato/runner.py` gates a small number of one-time migrations behind
+a property-store marker so they run once, not on every boot (BUG-017:
+`clean_orphaned_movies` ran unconditionally and deleted a real library
+entry, "Passengers", on a routine restart). The marker is an ordinary
+`property` document, the same mechanism `Env.prop` already uses for
+everything else -- no separate schema or file.
+
+For the orphan cleanup specifically, the marker is
+`migration.clean_orphans.applied`, and it must be written to production
+BEFORE this release is deployed there (see the spec's "Pre-deploy" section,
+`specs/BUG-017-orphan-cleanup-runs-every-boot.md`), because production has
+never carried it.
+
+**Checking the marker from the host** (read-only, does not touch the running
+server):
+
+```bash
+sqlite3 -readonly \
+  /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db \
+  "SELECT count(*), group_concat(json_extract(data,'\$.value'))
+     FROM documents
+    WHERE _t='property'
+      AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
+```
+
+- `1|true` -- the marker is set; the cleanup has run and will not run again.
+- `0|` -- still armed; the cleanup will run on the next boot.
+- anything else -- more than one property row for the same identifier, which
+  should not happen; investigate rather than assume either state.
+
+`-readonly` matters: without it, sqlite3 takes a write lock on a database a
+live server may also be writing to. The database is in WAL mode, so query
+the live file in place with its `-wal` sidecar present rather than copying
+just the `.db` file on its own.
+
+**Standing operational rule:** the marker lives inside `couchpotato.db`, so
+any restore of that database -- including the DB restore in the Rollback
+section above -- resets it. A restored database runs every gated one-time
+migration again on its next boot, exactly as a fresh install would. This is
+expected, not a bug, and is why the gate is safe to have at all: a restore
+should be indistinguishable from a fresh database as far as these
+migrations are concerned.
+
 ### Backups
 
 `scripts/backup.sh` snapshots the SQLite DB (via `sqlite3 .backup`, or Python's

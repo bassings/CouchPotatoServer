@@ -318,34 +318,75 @@ def _run_orphan_cleanup(db, log):
     swallows any read failure other than a corrupt document into a debug
     log and returns None either way (couchpotato/core/settings.py:818). We
     deliberately treat both cases the same as "not yet applied" and attempt
-    the run. That is safe specifically because this is a one-time
-    migration sharing the same database as the cleanup itself: if the
-    store really were unreadable, clean_orphaned_movies(db) reads from
-    that same db and would itself raise, which is caught below and leaves
-    the marker unset for a retry on the next boot (AC-DATA-3) rather than
-    deleting anything. The alternative, treating "unreadable" as "already
-    applied" and skipping, would risk permanently skipping a genuine
-    first-ever run on a store that is merely having a transient problem.
+    the run. That choice is NOT justified by either of the two claims an
+    earlier version of this docstring made, both measured and disproved in
+    fix round one:
+
+    - It is NOT true that an unreadable property store implies
+      clean_orphaned_movies(db) would also raise. Driven directly: a marker
+      document present with its `value` field missing reads back as None
+      (property store "unreadable" by this function's own test) while the
+      media table reads just fine -- a property read and a media read are
+      different reads over the same db -- and the cleanup then ran and
+      deleted for real. The gate fails open on that path by design, not by
+      accident.
+    - It is NOT true that clean_orphaned_movies(db) can be relied on to
+      raise when its scan fails. Its own scan loop catches `Exception`,
+      logs a warning on ITS OWN logger, and returns 0
+      (couchpotato/core/migration/clean_orphans.py:66-70) -- a scan that
+      failed completely is recorded here as a successful migration that
+      "removed 0", and the marker gets set.
+
+    Fail-open is still the right default for a one-time migration, but the
+    real reason is narrower than either claim above: it is the MARKER WRITE
+    itself raising, not clean_orphaned_movies raising, that delivers the
+    retry (AC-DATA-3). A property store too broken to durably record the
+    marker is also too broken to have recorded a false "already applied",
+    so the next boot tries again. The alternative, treating "unreadable" as
+    "already applied" and skipping, would risk permanently skipping a
+    genuine first-ever run on a store that is merely having a transient
+    problem.
     """
     from couchpotato.environment import Env
 
-    if Env.prop(ORPHAN_CLEANUP_MARKER):
-        log.info('Orphan cleanup skipped: already applied.')
-        return
-
     try:
+        try:
+            already_applied = Env.prop(ORPHAN_CLEANUP_MARKER)
+        except Exception:
+            # A failed READ of the marker itself is treated the same as
+            # "not yet applied" (see docstring above), not as the run's
+            # overall failure -- so the migration still gets attempted
+            # rather than merely failing without crashing. Nested rather
+            # than left to the outer except so this specific failure can't
+            # be confused with clean_orphaned_movies() or the marker WRITE
+            # failing below, which the outer except's retry semantics are
+            # about.
+            already_applied = None
+
+        if already_applied:
+            log.info('Orphan cleanup skipped: already applied.')
+            return
+
         from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
         n_orphans = clean_orphaned_movies(db)
+        # Logged BEFORE the marker write below, not after: a marker write
+        # that itself fails (locked or read-only database, disk full,
+        # another writer) must still leave an accurate count of what was
+        # just deleted in the log, rather than the only line on this
+        # logger reading "skipped" on a boot that destroyed real records.
+        log.info('Orphan cleanup ran: removed %d orphaned movie entries with no metadata.', n_orphans)
         # Mark applied only once the scan has actually completed -- a scan
         # that finds nothing to remove has still run and must not be
         # retried on every future boot (AC-DATA-2).
         Env.prop(ORPHAN_CLEANUP_MARKER, value='true')
-        log.info('Orphan cleanup ran: removed %d orphaned movie entries with no metadata.', n_orphans)
     except Exception as e:
         # Marker deliberately NOT set here -- a failed run must be free to
         # retry on the next start rather than being silently skipped
-        # forever (AC-DATA-3).
-        log.warning('Orphan cleanup skipped: %s', e)
+        # forever (AC-DATA-3). Worded so this can never be confused with
+        # the "already applied" INFO line above: that line means finished
+        # and good, this one means armed and will retry, and they used to
+        # share the "Orphan cleanup skipped" prefix.
+        log.warning('Orphan cleanup did not complete, will retry on next start: %s', e)
 
 
 def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=None, desktop=None):

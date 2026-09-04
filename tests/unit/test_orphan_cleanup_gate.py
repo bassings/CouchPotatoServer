@@ -211,13 +211,122 @@ class TestMarkerNotSetWhenCleanupRaises:
         )
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
         assert any('orphan' in r.getMessage().lower() for r in warnings), (
-            'the existing "Orphan cleanup skipped: ..." warning must still '
-            'fire on failure -- only the marker write is newly conditional'
+            'the existing "Orphan cleanup did not complete, will retry on '
+            'next start: ..." warning must still fire on failure -- only '
+            'the marker write is newly conditional'
+        )
+
+
+class TestMarkerWriteFailureStillLogsTheCount:
+    """Regression test for fix round one, FIX 1.
+
+    A reviewer of commit 312f2472f measured this against the code as it
+    shipped: `_run_orphan_cleanup` wrote the marker BEFORE logging the
+    removed count, so a marker write that raised (locked or read-only
+    database, disk full, another writer) meant the count line was never
+    reached -- the ONLY line on the runner logger read "Orphan cleanup
+    skipped", indistinguishable from a no-op skip, on a boot that had just
+    deleted real records. Measured on that reviewer's fixture: three
+    records destroyed, log said skipped.
+
+    The fix moves the count log above the marker write, so a failed marker
+    write now produces BOTH the count line and the failure line.
+    """
+
+    def test_a_failed_marker_write_still_logs_the_removed_count(self, env, caplog):
+        env.db.insert(_orphan_doc('tt5555555'))
+        log = CPLog(RUNNER_LOGGER)
+
+        original_prop = Env.prop
+
+        def prop_that_fails_only_on_write(identifier, value=None, default=None):
+            if value is None:
+                return original_prop(identifier, default=default)
+            raise OSError('database is locked')
+
+        with patch('couchpotato.environment.Env.prop', side_effect=prop_that_fails_only_on_write):
+            with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER):
+                _run_orphan_cleanup(env.db, log)  # must not raise out of here
+
+        messages = [r.getMessage().lower() for r in caplog.records]
+        assert any('orphan cleanup ran: removed 1' in m for m in messages), (
+            'the count of what was actually removed must be logged even '
+            'when the marker write that follows it fails -- otherwise a '
+            'boot that destroyed real records logs only "skipped" (FIX 1)'
+        )
+        assert any('did not complete' in m or 'will retry' in m for m in messages), (
+            'the marker-write failure itself must ALSO be logged, so an '
+            'operator sees both what happened and that it will retry (FIX 1)'
+        )
+        assert Env.prop(ORPHAN_MARKER) is None, (
+            'a failed marker write must leave the marker unset so the next '
+            'boot retries the migration'
+        )
+
+
+class TestMarkerReadFailureDoesNotAbortBoot:
+    """Regression test for fix round one, FIX 5.
+
+    `Env.prop(ORPHAN_CLEANUP_MARKER)` (the read) used to sit OUTSIDE the
+    try/except in `_run_orphan_cleanup`. `Settings.getProperty` calls
+    `self.log.debug(...)` on its miss path, and `self.log` is None until
+    `Settings.setFile()` has run -- not reachable via CouchPotato.py's real
+    boot order today, but a read that raised there would propagate straight
+    out of `_run_orphan_cleanup` and abort startup, unlike every other
+    property-store failure this function already tolerates.
+
+    The fix moves the read inside the try (nested, so its own failure is
+    treated as "not yet applied" rather than as the run's overall failure),
+    preserving the documented fail-open intent: an unreadable marker must
+    still let the migration attempt to run, not merely fail without
+    crashing.
+    """
+
+    def test_marker_read_raising_does_not_abort_the_boot_and_the_run_still_happens(self, env, caplog):
+        orphan = env.db.insert(_orphan_doc('tt9999999'))
+        log = CPLog(RUNNER_LOGGER)
+
+        original_prop = Env.prop
+
+        def prop_that_fails_only_on_read(identifier, value=None, default=None):
+            if value is None:
+                raise AttributeError("'NoneType' object has no attribute 'debug'")
+            return original_prop(identifier, value=value, default=default)
+
+        with patch('couchpotato.environment.Env.prop', side_effect=prop_that_fails_only_on_read):
+            with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER):
+                _run_orphan_cleanup(env.db, log)  # must not raise out of here
+
+        # The real assertion: the migration still ATTEMPTED and COMPLETED
+        # the run despite the unreadable marker, rather than merely failing
+        # without crashing -- so the seeded orphan was actually removed and
+        # the marker ends up set via the (unpatched) write.
+        with pytest.raises(KeyError):
+            env.db.get('id', orphan['_id'])
+        assert Env.prop(ORPHAN_MARKER), (
+            'a marker READ failure must be treated as "not yet applied" and '
+            'the migration must still run to completion and set the marker '
+            '-- not merely swallow the exception and skip the run (FIX 5)'
         )
 
 
 class TestStartupLogDistinguishesSkipFromRun:
-    """AC-OPS-5."""
+    """AC-OPS-5.
+
+    Updated for fix round one, FIX 2: a reviewer found that
+    `grep "Orphan cleanup skipped"` matched two log lines with opposite
+    meanings -- the finished-and-good "already applied" INFO line, and the
+    armed-and-will-retry failure WARNING line, which used to share the same
+    "skipped" prefix. The failure line is now worded "Orphan cleanup did
+    not complete, will retry on next start: %s" so the two states are
+    distinguishable by text alone, not only by log level.
+
+    The "ran" assertion below is also tightened: a reviewer flagged the
+    original `'ran' in m or 'removed' in m` as a substring-on-prose smell
+    that could match a log line that merely mentions those words rather
+    than the real success message. It now checks the actual message
+    prefix.
+    """
 
     def test_startup_log_distinguishes_skip_from_run(self, env, caplog):
         """Drives the real startup path twice on the same db, same as
@@ -239,13 +348,16 @@ class TestStartupLogDistinguishesSkipFromRun:
             _run_orphan_cleanup(env.db, log)
         skip_messages = [r.getMessage().lower() for r in caplog.records]
 
-        assert any('ran' in m or 'removed' in m for m in run_messages), (
-            'the run that actually cleaned the database must say so (AC-OPS-5)'
+        assert any('orphan cleanup ran: removed' in m for m in run_messages), (
+            'the run that actually cleaned the database must log the exact '
+            '"ran: removed N" line, not merely something that happens to '
+            'contain "ran" or "removed" (AC-OPS-5)'
         )
-        assert any('skip' in m and 'applied' in m for m in skip_messages), (
+        assert any('orphan cleanup skipped: already applied' in m for m in skip_messages), (
             'the run that was skipped because the marker is already applied '
-            'must say so, using words an operator can distinguish from the '
-            '"ran" line above (AC-OPS-5)'
+            'must say so with the exact "skipped: already applied" wording, '
+            'which is now the ONLY meaning that prefix carries in this '
+            'logger -- the failure path no longer shares it (AC-OPS-5, FIX 2)'
         )
 
 
