@@ -1,20 +1,15 @@
 # BUG-018: the scanner files every remake under the original
 
-**Status:** agreed
-**Reported:** 2026-09-06, found while auditing library-to-disk mismatches
+**Status:** agreed, REDESIGNED 2026-09-06 after the first design was shown to be
+dangerous
 **Severity:** wrong data, recoverable. No file is touched; the library record is
 wrong.
 
 ## What happens
 
-Seven media records in the production library hold files from more than one
-film. Measured:
-
-    records holding files from more than one folder : 9
-      same year, so a genuine duplicate copy        : 2
-      DIFFERENT years, so distinct films merged     : 7
-
-The seven:
+Seven media records in production hold files from two distinct films. The
+second film therefore has no record of its own: CouchPotato believes it already
+owns it, so it never appears and is never searched for.
 
     Harry Potter Deathly Hallows Part 1  <- Part 1 (2010) and Part 2 (2011)
     Hunger Games Mockingjay Part 1       <- Part 1 (2014) and Part 2 (2015)
@@ -24,86 +19,95 @@ The seven:
     Mulan                                <- 1998 and 2020
     Mean Girls                           <- 2004 and 2024
 
-The consequence is not a wrong file playing. It is that the second film has no
-library record: CouchPotato believes it already owns it, so it never appears and
-is never searched for. The original is the record that survives, so a user
-looking for their 1994 Lion King finds a record pointing at the 2019 remake.
-
 ## Root cause
 
-`couchpotato/core/plugins/scanner/folder_scanner.py`, `determineMedia`, has five
-identification routes. The first four are assertions: an imdb id from the
-download, a CP tag, an NFO, an id in the filename. The fifth is a fuzzy search
-and the module's own docstring calls it a guess, which is why the renamer
-refuses to delete a destination file on a `search` identity.
+`couchpotato/core/plugins/scanner/folder_scanner.py`, `determineMedia`, fifth
+fallback. It builds a query containing the year, asks for ONE result, and takes
+it. The provider does not rank on year. Measured against the live provider:
 
-That fifth route, at roughly line 459:
+    "Mulan 2020"      -> 0. Mulan 1998          1. Mulan 2020
+    "Aladdin 2019"    -> 0. Aladdin 1992        1. Aladdin 2019
+    "Mean Girls 2024" -> 0. Mean Girls 2004     1. Mean Girls 2024
+    "Lion King 2019"  -> 0. The Lion King 1994  1. The Lion King 2019
 
-    name_year = self.getReleaseNameYear(...)
-    if name_year.get('name') and name_year.get('year'):
-        search_q = '%(name)s %(year)s' % name_year
-        movie = fireEvent('movie.search', q=search_q, merge=True, limit=1)
-        ...
-        if len(movie) > 0:
-            imdb_id = movie[0].get('imdb')
+The correct film is position 1 every time. `limit=1` guarantees it is never
+seen. The parsed year is already in hand and already in the query; it is simply
+never used to choose between results.
 
-It builds a query containing the year, asks for exactly ONE result, and takes
-it. The search does not rank on year, so a remake's query returns the original
-first.
+## Why the FIRST design was withdrawn, and this matters more than the fix
 
-Measured against the live provider:
+The first version of this spec said: when the year is known and no candidate
+matches it, REFUSE to identify the file, on the reasoning that an unidentified
+file is visible as missing while a wrongly identified one is invisible.
 
-    search "Mulan 2020"       -> 0. Mulan 1998        1. Mulan 2020
-    search "Aladdin 2019"     -> 0. Aladdin 1992      1. Aladdin 2019
-    search "Mean Girls 2024"  -> 0. Mean Girls 2004   1. Mean Girls 2024
-    search "Lion King 2019"   -> 0. The Lion King 1994  1. The Lion King 2019
+That reasoning is correct in isolation and catastrophic in this system.
 
-**The correct film is position 1 in every case.** The parsed year is already in
-hand and already in the query; it is simply never used to choose between the
-results. `limit=1` guarantees the right answer is never even seen.
+`manage.updateLibrary` deletes every terminal movie absent from the scan result,
+with `delete_from='all'`: the media document, every release document, the
+library entry, watch state, tags, profile and review state. It infers "this
+movie is gone" from "this scan did not find it". A refused file produces no
+identifier, so it is absent from `added_identifiers`, so a film owned ONLY as a
+remake, a 2024 Mean Girls with no 2004 copy, would be deleted outright by the
+next nightly scan.
 
-Sequels are not affected the same way: "Beetlejuice 2 2024" and "Hunger Games
-Mockingjay Part 2 2015" both return the correct film first. The seven merged
-records include two sequel cases that arrived by a different route, so fixing
-this will not by itself explain those two.
+The implementation built the refusal exactly as specified. It was caught by
+`tests/unit/test_renamer_decision_memory.py::TestFolderScannerIsUntouched`,
+which freezes this module against master precisely because it feeds that
+cleanup. The freeze did its job: it is a stop-and-think device, and the thinking
+changed the design.
+
+## The invariant this change must preserve
+
+**The scan must never produce fewer identifiers than it does today.** This
+change may only alter WHICH identifier the fallback returns, never WHETHER one
+is returned. Any design that can return None where the current code returns an
+id is a data-loss design in this system, regardless of how correct it looks in
+isolation.
 
 ## Scope
 
-The fifth fallback in `determineMedia` only. Raise the result limit, choose the
-candidate whose year matches the parsed year, and refuse rather than guess when
-none does.
+The fifth fallback in `determineMedia` only, plus the freeze test, which must be
+replaced by a guard on the invariant above rather than deleted.
 
 ## Not in scope
 
-- The first four identification routes. They are assertions and they are fine.
-- Splitting the seven existing records. Separate, and deliberately AFTER this,
-  because a cleanup before the fix would be re-merged by the next daily scan.
+- The first four identification routes. They are assertions and are fine.
+- The cleanup in `manage.updateLibrary`. It is already hardened once
+  (`library_fully_scanned`) and rewriting its inference is its own change.
+- Splitting the seven merged records. Deliberately after this.
 - The two sequel cases, whose cause is not established.
-- Ranking or scoring beyond the year.
 
 ## Acceptance criteria
 
 - **AC-DATA-1:** When the parsed year is known and a candidate's year matches
-  it, that candidate is chosen, even when it is not first. Proven with the four
-  measured cases above, driven through the real function.
-- **AC-DATA-2:** When the parsed year is known and NO candidate matches it, the
-  scanner refuses to identify the file rather than taking the first result. A
-  wrong record is worse than an unidentified file, because an unidentified file
-  is visible as missing while a wrong one is invisible.
-- **AC-DATA-3:** When the parsed year is unknown, behaviour is unchanged. This
-  fix must not make previously identifiable files unidentifiable.
-- **AC-OPS-4:** A refusal under AC-DATA-2 is logged with the filename, the
-  parsed year, and the years that were offered, so an operator can see why a
-  file was skipped. A silent skip reproduces the invisibility this bug is about.
+  within tolerance, that candidate is chosen even when it is not first. Proven
+  with the four measured cases, driven through the real function.
+- **AC-DATA-2 (REPLACES the withdrawn refusal):** When the parsed year is known
+  and NO candidate matches, the fallback returns the FIRST candidate, exactly as
+  today. It must never return None in a case where the current code returns an
+  id. This is the safety property; it is not negotiable and it is the reason the
+  first design was withdrawn.
+- **AC-DATA-3:** When the parsed year is unknown, behaviour is unchanged.
+- **AC-OPS-4:** Choosing a candidate whose year disagrees with the parsed year
+  is logged at warning level with the filename, the parsed year and the years
+  offered. The operator can then see a bad guess without the guess being
+  destructive.
 - **AC-QA-5:** A guard fails if the fallback takes a candidate whose year
-  disagrees with the parsed year. Proven by restoring the `limit=1`
+  disagrees when a matching one was available. Proven by restoring the
   take-the-first behaviour and watching it fail on the Mulan case.
-- **AC-SIMP-6:** Confined to that one fallback block. The other four routes are
-  untouched.
+- **AC-QA-6:** A guard proves the invariant directly: for every input where the
+  pre-change code produced an identifier, the changed code also produces one.
+  Drive both, do not reason about it.
+- **AC-QA-7:** `TestFolderScannerIsUntouched` is replaced, not deleted. The
+  freeze was a proxy for "this module must not reduce the scan result"; the
+  replacement must assert that property, and must fail if a change reintroduces
+  a path returning None where an id was returned before.
+- **AC-SIMP-8:** Confined to that one fallback and its guard. The other four
+  routes are untouched.
 
 ## Recorded debt
 
-1. The two sequel merges (Deathly Hallows, Mockingjay) have a different and
-   unestablished cause.
-2. Five films are on disk with no record at all; two of them return nothing from
-   the provider and may not be addable by lookup.
+1. The two sequel merges have a different, unestablished cause.
+2. Five films are on disk with no record; two return nothing from the provider.
+3. `manage.updateLibrary`'s "absent means deleted" inference remains a
+   single-point data-loss risk, mitigated but not removed.
