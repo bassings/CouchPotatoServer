@@ -167,13 +167,26 @@ def find_static_id_in_loop_violations(path):
     defect than the missing label it would "fix" -- every iteration renders
     the same id, so the DOM ends up with duplicates. Fields in a loop must use
     a bound `:id` (unique per iteration, e.g. from the loop item), not a
-    static one."""
+    static one.
+
+    Deduped by element identity (round 2 review, C4): `soup.find_all` on an
+    OUTER `<template x-for>` also walks any INNER one nested inside it (the
+    real shape at wizard.html:297/:311, a tracker loop containing a
+    per-tracker field loop), and the outer `for loop in ...` here visits the
+    inner loop a second time as its own top-level match -- so one real
+    static-id defect was reported twice, not once. `seen` tracks which
+    elements have already been checked, by object identity, across every
+    loop level."""
     text = _strip_jinja_comments(path.read_text())
     soup = BeautifulSoup(text, 'html.parser')
 
     violations = []
+    seen = set()
     for loop in soup.find_all('template', attrs={'x-for': True}):
         for el in loop.find_all(list(FIELD_TAGS) + ['label']):
+            if id(el) in seen:
+                continue
+            seen.add(id(el))
             if el.get('id'):
                 violations.append(
                     '%s: %s inside an x-for loop has a static id -- this '
@@ -277,6 +290,40 @@ def test_the_loop_checker_flags_a_static_id_inside_x_for():
     finally:
         bad_path.unlink()
         good_path.unlink()
+
+
+def test_the_loop_checker_does_not_double_count_a_nested_loop():
+    """Round 2 review (C4): `find_all('template', attrs={'x-for': True})`
+    matches BOTH the outer and the inner loop in wizard.html's real shape (a
+    tracker loop containing a per-tracker field loop, wizard.html:297/:311).
+    Walking the outer loop's subtree with `find_all` also walks the inner
+    loop's elements, and the inner loop is then walked a second time as its
+    own top-level match -- so one real static-id defect was reported twice,
+    which would have doubled every count a caller relied on. Two distinct
+    violations (one label, one input) must be reported as exactly two, not
+    four."""
+    nested_bad = (
+        '<template x-for="tracker in trackers" :key="tracker.id">'
+        '<div>'
+        '<template x-for="field in tracker.fields" :key="field.name">'
+        '<div><label for="field-id">X</label><input id="field-id"></div>'
+        '</template>'
+        '</div>'
+        '</template>'
+    )
+    import tempfile
+    with tempfile.NamedTemporaryFile('w', suffix='.html', delete=False) as f:
+        f.write(nested_bad)
+        nested_path = Path(f.name)
+
+    try:
+        violations = find_static_id_in_loop_violations(nested_path)
+        assert len(violations) == 2, (
+            'one static-id label and one static-id input inside a nested '
+            'x-for must be reported once each, not once per loop level they '
+            'sit inside -- got %r' % violations)
+    finally:
+        nested_path.unlink()
 
 
 # --- the guard, run against the real templates -------------------------------

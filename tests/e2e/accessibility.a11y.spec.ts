@@ -91,9 +91,127 @@ async function checkToggleA11y(page: any, pageName: string) {
 // exercise whether label association actually holds once axe can see the
 // step at all. These rules are exactly the ones a missing or duplicated
 // accessible name trips.
-async function checkFieldNameA11y(page: any, pageName: string) {
+//
+// Round 2 (both A11Y-001 reviews found the same three holes in this
+// function, so it is rewritten rather than patched):
+//
+// A1 -- axe's `label` rule accepts a `placeholder` as an accessible name.
+// 41 of the wizard's 63 fields carry one. Demonstrated: removing the `for`
+// from wizard-renamer-from (Library step, which HAS a placeholder) left this
+// whole function green; removing it from wizard-dl-qbittorrent-password (the
+// one visited field with no placeholder) correctly went red. So axe alone
+// had teeth on roughly one field in twenty. `assertFieldNamesAreReal` below
+// is a DOM-level check that does not have that blind spot: it reads each
+// visible field's actual label/aria text and rejects it when that text is
+// merely the placeholder axe would have accepted.
+//
+// A2 -- `duplicate-id` and `duplicate-id-active` are BOTH `enabled: false`
+// in the installed axe-core (4.13.0; verified via
+// `axe._audit.rules.find(r => r.id === '...').enabled`), so neither can ever
+// report anything here -- dropped. The real case this was meant to catch
+// (two visible fields sharing an id) surfaces as `incomplete`, not
+// `violations`, which the old code never inspected either way;
+// `assertFieldNamesAreReal` checks id uniqueness directly instead.
+// `select-name` and `aria-input-field-name` are also dropped: this page has
+// zero `<select>` elements and zero roles either rule applies to (verified:
+// `grep -c '<select' wizard.html` is 0, and no `role="textbox|combobox|
+// searchbox|spinbutton|slider"` appears anywhere in it), so both rules
+// described a check that could never run. `duplicate-id-aria` stays; it IS
+// enabled and covers ARIA-referential duplicate ids axe's own way.
+async function assertFieldNamesAreReal(page: any, pageName: string, minFields: number) {
+  const scan = await page.evaluate(() => {
+    const isVisible = (el: Element) => {
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' ||
+          parseFloat(style.opacity || '1') === 0) return false;
+      const rect = (el as HTMLElement).getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
+
+    const fields = Array.from(document.querySelectorAll('input, textarea, select'))
+      .filter((el) => (el as HTMLInputElement).type !== 'hidden')
+      .filter(isVisible) as (HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement)[];
+
+    const idCounts = new Map<string, number>();
+    for (const field of fields) {
+      const id = field.getAttribute('id');
+      if (id) idCounts.set(id, (idCounts.get(id) || 0) + 1);
+    }
+
+    const problems: string[] = [];
+
+    for (const field of fields) {
+      const id = field.getAttribute('id');
+      const describe = () =>
+        `<${field.tagName.toLowerCase()} id=${JSON.stringify(id)} ` +
+        `x-model=${JSON.stringify(field.getAttribute('x-model'))} ` +
+        `placeholder=${JSON.stringify((field as HTMLInputElement).placeholder || null)}>`;
+
+      if (id && (idCounts.get(id) || 0) > 1) {
+        problems.push(`${describe()}: id ${JSON.stringify(id)} is shared by ${idCounts.get(id)} visible elements (AC-A11Y-2)`);
+      }
+
+      const labelsFor = id ? Array.from(document.querySelectorAll(`label[for="${CSS.escape(id)}"]`)) : [];
+      if (labelsFor.length > 1) {
+        problems.push(`${describe()}: ${labelsFor.length} <label for> elements point at it, expected exactly 1`);
+      }
+
+      const ariaLabel = (field.getAttribute('aria-label') || '').trim();
+      const labelledbyIds = (field.getAttribute('aria-labelledby') || '').trim();
+      const labelledbyText = labelledbyIds
+        ? labelledbyIds.split(/\s+/).map((refId) => document.getElementById(refId)?.textContent?.trim() || '').join(' ').trim()
+        : '';
+
+      const accessibleName = labelsFor.length === 1
+        ? (labelsFor[0].textContent || '').trim()
+        : (ariaLabel || labelledbyText);
+
+      if (!accessibleName) {
+        problems.push(`${describe()}: no label[for], aria-label or aria-labelledby resolved to a non-empty name`);
+        continue;
+      }
+
+      // A1: the accessible name must not be merely the placeholder -- a
+      // sighted user already sees the placeholder disappear on input, so a
+      // screen reader user told only "Indexer URL (e.g. ...)" once typing
+      // starts has lost the one cue they had.
+      const placeholder = ((field as HTMLInputElement).placeholder || '').trim();
+      if (placeholder && accessibleName === placeholder) {
+        problems.push(`${describe()}: accessible name is identical to its own placeholder ("${placeholder}")`);
+      }
+    }
+
+    return { problems, checked: fields.length };
+  });
+
+  // A5: a coverage floor. Without this, a scan that silently degrades to
+  // examining zero fields (a broken selector, a step that failed to render,
+  // a navigation click that landed on the wrong step) still reports zero
+  // problems and reads as clean.
+  expect(
+    scan.checked,
+    `${pageName}: expected at least ${minFields} visible field(s) to examine, found ${scan.checked} -- ` +
+    `the scan may be looking at the wrong step, or nothing rendered`,
+  ).toBeGreaterThanOrEqual(minFields);
+
+  expect(
+    scan.problems,
+    `${pageName}: field accessible-name problem(s):\n${scan.problems.join('\n')}`,
+  ).toEqual([]);
+}
+
+async function checkFieldNameA11y(page: any, pageName: string, minFields: number) {
+  await assertFieldNamesAreReal(page, pageName, minFields);
+
+  // axe as a second opinion for anything the DOM check above does not
+  // cover -- e.g. aria-labelledby pointing at a missing id, which
+  // assertFieldNamesAreReal treats as an empty name (still a real failure)
+  // but axe's `label` rule names more precisely. `button-name` is included
+  // here too: B3 added two icon-only buttons that only render once a
+  // second Newznab entry / the directory browser is opened, both of which
+  // this test now does before scanning the relevant step.
   const results = await new AxeBuilder({ page })
-    .withRules(['label', 'aria-input-field-name', 'select-name', 'duplicate-id', 'duplicate-id-aria', 'duplicate-id-active'])
+    .withRules(['label', 'duplicate-id-aria', 'button-name'])
     .analyze();
 
   if (results.violations.length > 0) {
@@ -108,6 +226,20 @@ async function checkFieldNameA11y(page: any, pageName: string) {
     results.violations.length,
     `Found field-name a11y violations on ${pageName}: ${results.violations.map(v => v.id).join(', ')}`
   ).toBe(0);
+}
+
+// A3: a step-arrival assertion. Blocking the wizard from advancing to the
+// intended step must fail the corresponding scan loudly, rather than the
+// scan silently re-examining whichever step is actually showing (every step
+// but Welcome shares the same DOM structure enough that a stray field count
+// alone would not always catch this). Checks BOTH the step's own heading and
+// one field unique to that step, because `x-show` toggles the wrapping div's
+// visibility, but a heading alone would still pass if the wizard were stuck
+// one step behind (every step after Welcome renders inside a similarly
+// shaped card).
+async function assertWizardStepShowing(page: any, headingText: string | RegExp, knownFieldSelector: string) {
+  await expect(page.getByRole('heading', { name: headingText })).toBeVisible();
+  await expect(page.locator(knownFieldSelector).first()).toBeVisible();
 }
 
 test.describe('Accessibility', () => {
@@ -299,7 +431,13 @@ test.describe('Accessibility', () => {
     // Step 2: Security -- username/password.
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.waitForTimeout(300);
-    await checkFieldNameA11y(page, 'Setup Wizard (Security)');
+    // A3: assert the wizard actually reached this step before scanning it --
+    // demonstrated to matter: blocking `nextStep()` from advancing left the
+    // Welcome step showing while this scan ran unaware, and reported clean.
+    await assertWizardStepShowing(page, 'Server Security', '#wizard-username');
+    // A5: floor measured directly against this markup -- 2 fields
+    // (username, password).
+    await checkFieldNameA11y(page, 'Setup Wizard (Security)', 2);
 
     // Security -> Providers (Skip, no credentials needed for this scan).
     await page.getByRole('button', { name: 'Skip' }).click();
@@ -317,7 +455,39 @@ test.describe('Accessibility', () => {
     await page.waitForTimeout(300);
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
     await page.waitForTimeout(300);
-    await checkFieldNameA11y(page, 'Setup Wizard (Providers)');
+    await assertWizardStepShowing(page, 'Where to Search', '#wizard-jackett-url');
+    // A5: floor measured directly -- 7 fields (2 Newznab entry, 2 Jackett,
+    // 3 PassThePopcorn), before B1's second indexer entry below adds 2 more.
+    await checkFieldNameA11y(page, 'Setup Wizard (Providers)', 7);
+
+    // B2 regression coverage: PassThePopcorn's "Username" is grouped by
+    // tracker name so a second enabled tracker's own "Username" is
+    // distinguishable the same way the Usenet/Torrent client groups are
+    // checked further below.
+    await expect(
+      page.getByRole('group', { name: 'PassThePopcorn' }).getByLabel('Username'),
+    ).toBeVisible();
+
+    // B1/B3 regression coverage: add a second Newznab indexer entry so the
+    // `x-for`-bound aria-labels (B1) and the per-row remove button (B3) both
+    // render a second time, then re-scan. Two DISTINCT accessible names are
+    // asserted directly (not just "no violation") because axe's `label` rule
+    // is satisfied by two fields both named "Newznab indexer URL" -- it
+    // checks presence, not uniqueness -- so only a direct read of the two
+    // names can catch the static-aria-label regression B1 fixed.
+    await page.getByRole('button', { name: '+ Add another indexer' }).click();
+    await page.waitForTimeout(300);
+    const indexerUrlInputs = page.getByLabel(/Newznab indexer URL \d+/);
+    await expect(indexerUrlInputs).toHaveCount(2);
+    const firstName = await indexerUrlInputs.nth(0).getAttribute('aria-label');
+    const secondName = await indexerUrlInputs.nth(1).getAttribute('aria-label');
+    expect(
+      firstName,
+      'two Newznab indexer rows must not share one accessible name',
+    ).not.toBe(secondName);
+    const removeButtons = page.getByRole('button', { name: /^Remove indexer \d+$/ });
+    await expect(removeButtons).toHaveCount(2);
+    await checkFieldNameA11y(page, 'Setup Wizard (Providers, two indexers)', 9);
 
     // Step 4: Downloader -- pick one client from each list so
     // getDownloaderFields()'s x-html-injected markup actually renders, and
@@ -328,12 +498,48 @@ test.describe('Accessibility', () => {
     await page.getByRole('button', { name: 'qBittorrent' }).click();
     await page.getByRole('switch', { name: 'Enable Black Hole' }).click();
     await page.waitForTimeout(300);
-    await checkFieldNameA11y(page, 'Setup Wizard (Downloader)');
+    await assertWizardStepShowing(page, 'Download Clients', '#wizard-dl-sabnzbd-host');
+    // A5: floor measured directly -- 8 fields (3 SABnzbd, 3 qBittorrent, 2
+    // Black Hole).
+    await checkFieldNameA11y(page, 'Setup Wizard (Downloader)', 8);
+
+    // B2 regression coverage: with one Usenet client (SABnzbd) and one
+    // Torrent client (qBittorrent) both configured, "Host" is the visible
+    // label on two different fields. Distinguishing them is the GROUP each
+    // sits in (aria-labelledby the section heading), not the field's own
+    // name -- getByRole('group', ...) is the direct way to prove that
+    // grouping is real rather than decorative.
+    await expect(
+      page.getByRole('group', { name: 'Usenet Client' }).getByLabel('Host'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('group', { name: 'Torrent Client' }).getByLabel('Host'),
+    ).toBeVisible();
 
     // Step 5: Library -- renamer fields, on by default.
     await page.getByRole('button', { name: 'Continue' }).click();
     await page.waitForTimeout(500);
-    await checkFieldNameA11y(page, 'Setup Wizard (Library)');
+    await assertWizardStepShowing(page, 'Movie Library', '#wizard-renamer-from');
+    // A5: floor measured directly -- 4 fields (download folder, movie
+    // library, folder naming, file naming).
+    await checkFieldNameA11y(page, 'Setup Wizard (Library)', 4);
+
+    // B3 regression coverage: the directory browser's close button is the
+    // only visible way to dismiss it and is icon-only. It only exists in the
+    // DOM once opened, so open it here rather than relying on a full-page
+    // scan that would never have found it hidden behind `x-show`.
+    await page.getByRole('button', { name: 'Browse' }).first().click();
+    const closeBrowser = page.getByRole('button', { name: 'Close directory browser' });
+    await expect(closeBrowser).toBeVisible();
+    const browserResults = await new AxeBuilder({ page })
+      .include('.fixed.inset-0.z-50')
+      .withRules(['button-name'])
+      .analyze();
+    expect(
+      browserResults.violations.map(v => v.nodes.map(n => n.html).join('; ')),
+      'directory browser button(s) with no accessible name',
+    ).toEqual([]);
+    await closeBrowser.click();
   });
 
   test('Setup Wizard provider toggles are accessible and keyboard-operable', async ({ page }) => {

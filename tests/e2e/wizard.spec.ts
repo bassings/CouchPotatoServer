@@ -345,12 +345,22 @@ test.describe('Wizard: a refused save must not read as success', () => {
  * the bound pair is the one AC-A11Y-2 warns is easy to get wrong -- a static
  * id there would collide across iterations, but only a real click proves the
  * pairing that ships actually resolves to a single field, not zero or many.
+ *
+ * A11Y-001 round 2 (review A4): a focus-only assertion cannot catch a WRONG
+ * pairing, only a MISSING one. Swapping the `for` values on the Security
+ * step's two labels still focuses A field on click -- just the wrong one --
+ * so `toBeFocused()` alone stayed green while `wizard-username` announced
+ * "Password" and vice versa. `toHaveAccessibleName` below pins the label
+ * text against the field it actually names, which the swap breaks.
  */
 test.describe('Wizard: clicking a label focuses its field (AC-A11Y-3)', () => {
   test('the Security step labels focus their inputs', async ({ page }) => {
     await page.goto('/wizard/');
     await page.getByRole('button', { name: /Continue/i }).click();
     await expect(page.locator('#wizard-username')).toBeVisible({ timeout: 5000 });
+
+    await expect(page.locator('#wizard-username')).toHaveAccessibleName('Username');
+    await expect(page.locator('#wizard-password')).toHaveAccessibleName('Password');
 
     await page.locator('label[for="wizard-username"]').click();
     await expect(page.locator('#wizard-username')).toBeFocused();
@@ -375,6 +385,8 @@ test.describe('Wizard: clicking a label focuses its field (AC-A11Y-3)', () => {
     const label = page.locator('label[for="wizard-tracker-passthepopcorn-username"]');
     const field = page.locator('#wizard-tracker-passthepopcorn-username');
     await expect(field).toBeVisible({ timeout: 5000 });
+
+    await expect(field).toHaveAccessibleName('Username');
 
     await label.click();
     await expect(field).toBeFocused();

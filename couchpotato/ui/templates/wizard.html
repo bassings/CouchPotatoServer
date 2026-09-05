@@ -162,12 +162,13 @@
             <div x-show="formData.newznab.enabled" x-transition class="space-y-3">
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
-                  <input type="text" aria-label="Newznab indexer URL" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'" 
+                  <input type="text" :aria-label="'Newznab indexer URL ' + (idx + 1)" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'"
                          x-model="entry.host"
                          class="flex-[2] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <input type="password" aria-label="Newznab API key" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
+                  <input type="password" :aria-label="'Newznab API key ' + (idx + 1)" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="formData.newznab.entries.splice(idx, 1)" x-show="formData.newznab.entries.length > 1"
+                          :aria-label="'Remove indexer ' + (idx + 1)"
                           class="text-cp-muted hover:text-cp-danger transition-colors">
                     <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
                   </button>
@@ -307,7 +308,7 @@
                     {% set toggle_label_expr = "'Enable ' + tracker.name" %}
                     {% include "partials/settings/toggle.html" %}
                   </div>
-                  <div x-show="tracker.enabled" x-transition class="grid grid-cols-2 gap-2 mt-3">
+                  <div x-show="tracker.enabled" x-transition class="grid grid-cols-2 gap-2 mt-3" role="group" :aria-label="tracker.name">
                     <template x-for="field in tracker.fields" :key="field.name">
                       <div :class="field.full ? 'col-span-2' : ''">
                         <label :for="'wizard-tracker-' + tracker.id + '-' + field.name" class="block text-[10px] text-cp-muted mb-1" x-text="field.label"></label>
@@ -352,8 +353,8 @@
         </div>
         
         <!-- Usenet Client Section -->
-        <div x-show="formData.searchType === 'usenet' || formData.searchType === 'both'" class="mb-6">
-          <h3 class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
+        <div x-show="formData.searchType === 'usenet' || formData.searchType === 'both'" class="mb-6" role="group" aria-labelledby="wizard-usenet-client-heading">
+          <h3 id="wizard-usenet-client-heading" class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3"/></svg>
             Usenet Client
           </h3>
@@ -377,8 +378,8 @@
         </div>
 
         <!-- Torrent Client Section -->
-        <div x-show="formData.searchType === 'torrents' || formData.searchType === 'both'" class="mb-6">
-          <h3 class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
+        <div x-show="formData.searchType === 'torrents' || formData.searchType === 'both'" class="mb-6" role="group" aria-labelledby="wizard-torrent-client-heading">
+          <h3 id="wizard-torrent-client-heading" class="text-sm font-medium text-cp-accent mb-3 flex items-center gap-2">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.5"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 7.5h-.75A2.25 2.25 0 004.5 9.75v7.5a2.25 2.25 0 002.25 2.25h7.5a2.25 2.25 0 002.25-2.25v-7.5a2.25 2.25 0 00-2.25-2.25h-.75m-6 3.75l3 3m0 0l3-3m-3 3V1.5m6 9h.75a2.25 2.25 0 012.25 2.25v7.5a2.25 2.25 0 01-2.25 2.25h-7.5a2.25 2.25 0 01-2.25-2.25v-.75"/></svg>
             Torrent Client
           </h3>
@@ -887,7 +888,7 @@
       <div class="bg-cp-card rounded-xl border border-white/[0.05] w-full max-w-lg mx-4 max-h-[80vh] flex flex-col">
         <div class="px-4 py-3 border-b border-white/[0.04] flex items-center justify-between">
           <h3 class="text-sm font-medium">Browse Folders</h3>
-          <button @click="browserOpen = false" class="text-cp-muted hover:text-cp-text">
+          <button @click="browserOpen = false" aria-label="Close directory browser" class="text-cp-muted hover:text-cp-text">
             <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12"/></svg>
           </button>
         </div>
