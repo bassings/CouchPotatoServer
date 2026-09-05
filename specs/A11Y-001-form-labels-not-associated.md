@@ -45,7 +45,7 @@ is part of this change.
   `partials/settings/provider_card.html` (1 of 1),
   `partials/settings/profiles.html` (2 of 7), `partials/settings/logs_tab.html`
   (1 of 2), `logs.html` (1 of 2). **Correction: all eight were found already
-  compliant when the guard below was written against them (see below) — this
+  compliant when the guard below was written against them (see below), this
   bullet lists where the guard runs, not where a diff was needed.**
 - A guard that fails when a label or field is added without an association.
 - An E2E scan that walks the wizard's steps rather than only its first.
@@ -76,7 +76,7 @@ is part of this change.
   Proven by removing a label association on a LATER step and watching the E2E
   scan fail. **Correction (round 2 review): this held for only about one field
   in twenty.** axe's `label` rule accepts a `placeholder` as an accessible
-  name, and 41 of the wizard's 63 fields carry one — so the scan only had
+  name, and 41 of the wizard's 63 fields carry one, so the scan only had
   teeth on the roughly one-in-twenty field with no placeholder. Fixed by
   replacing the axe-only scan with a DOM-level check
   (`assertFieldNamesAreReal` in `tests/e2e/accessibility.a11y.spec.ts`) that
@@ -106,13 +106,13 @@ is part of this change.
   that assertion fail when the grouping markup is removed.
 - **AC-A11Y-8** (round 2 review, B3): every icon-only button (no visible text
   content) has a non-empty accessible name. Proven with axe's `button-name`
-  rule run against a scan that actually renders the button — the remove-row
+  rule run against a scan that actually renders the button, the remove-row
   button (only visible with 2+ entries) and the directory browser's close
   button (only visible once opened) are both exercised for this, not left to
   a scan that never visits the state they render in.
 - **AC-A11Y-9** (round 2 review, A4): a label names the field it is actually
   paired with, not merely *a* field. `toBeFocused()` alone cannot tell a
-  correct `for`/`id` pairing from a swapped one — both move focus somewhere.
+  correct `for`/`id` pairing from a swapped one, both move focus somewhere.
   Proven with `toHaveAccessibleName` asserting the exact expected text, and by
   swapping the Security step's `for` values and watching it fail while the
   focus-only assertion stayed green.
@@ -139,11 +139,11 @@ is part of this change.
    Left in place for this change (not deleted) because it is out of scope for
    an accessibility fix; removing it is separate cleanup work.
 
-## Round 2 correction (review, this fix cycle)
+## Round 2 correction (from review, this fix cycle)
 
 Two independent reviews of the first commit (ed2bea7c4) confirmed the shipped
-wizard markup was correct — including the JavaScript-injected fields, all 63
-of them, zero duplicate ids, zero dangling `for` — but found the guards this
+wizard markup was correct, including the JavaScript-injected fields, all 63
+of them, zero duplicate ids, zero dangling `for`, but found the guards this
 spec's ACs describe were weaker than claimed, plus real gaps in three
 templates and in this spec. The guard fixes are recorded against the ACs
 above (AC-QA-5, AC-A11Y-7/8/9); the counting corrections are:
@@ -152,14 +152,14 @@ above (AC-QA-5, AC-A11Y-7/8/9); the counting corrections are:
   via the same `find_accessible_name_violations` parse this spec's guard
   uses: 39 fields live in `wizard.html`'s own markup (26 of them inside the
   dead block above) and 24 more are injected by `getDownloaderFields()`'s
-  JS template-literal strings — 39 + 24 = 63, minus the 26 dead ones = 37
+  JS template-literal strings, 39 + 24 = 63, minus the 26 dead ones = 37
   reachable. The user-facing win this change delivers is 37 fields properly
   named, not 63.
 - **The eight non-wizard Scope templates needed no diff.** Every field in
   `movie_cards.html`, `field_types.html`, `combined_basics_card.html`,
   `header.html`, `provider_card.html`, `profiles.html`, `logs_tab.html` and
   `logs.html` was already named by a wrapping `<label>` or an `aria-label`
-  before this change — confirmed by running the guard against each and
+  before this change, confirmed by running the guard against each and
   finding zero violations with no edits made. Two of them
   (`header.html`, `provider_card.html`) contain no interactive field at all,
   so their parametrised guard run asserts on an empty list; that is a
