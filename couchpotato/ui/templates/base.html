@@ -200,6 +200,18 @@ tailwind.config = {
      for exactly this reason: 4.92:1 on the page background, 4.33:1 on the
      lightest card surface. */
   :root.light :focus-visible { outline-color: #0e7490; }
+  /* A11Y-002: dark is the default theme (html.dark above) but had no rule at
+     this specificity, so Tailwind's `focus:outline-none` (0,2,0, `outline: 2px
+     solid transparent`) beat the base rule above (0,1,0) on every control
+     carrying it and painted the ring transparent. `:root.dark` is NOT used
+     here: toggleTheme() only ever adds/removes `.light` and never removes
+     `.dark`, so both classes sit on <html> together in the light theme --
+     a `:root.dark` selector would match there too and, tying the light rule's
+     specificity (0,3,0 each), win on source order and repaint the ring
+     #35c5f4 in the light theme. `:not(.light)` is exclusive with the light
+     rule by construction, so there is no tie to win. #35c5f4 is the colour
+     the base rule above already intended (9.40:1 per that comment). */
+  :root:not(.light) :focus-visible { outline-color: #35c5f4; }
   :focus:not(:focus-visible) { outline: none; }
   
   /* A11Y: Skip link styles (A11Y-003) */
