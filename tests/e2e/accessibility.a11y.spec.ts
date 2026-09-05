@@ -784,6 +784,211 @@ test.describe('Accessibility', () => {
     ).toBe(true);
   });
 
+  /*
+   * A11Y-002: the ring itself, not merely its presence.
+   *
+   * Every check above this point, checkA11y's page-wide axe sweeps included,
+   * only asserts that AN outline exists. It does: base.html's `:focus-visible`
+   * rule sets one on every element. Tailwind's `focus:outline-none` utility
+   * compiles to `outline: 2px solid transparent` at specificity 0,2,0, against
+   * base.html's 0,1,0, so on any control carrying that utility Tailwind wins
+   * the colour and the outline paints fully transparent. `:focus-visible`
+   * still matches, `outline-style` is still `solid`, only the paint is gone --
+   * exactly the shape no "outline is present" check can catch.
+   *
+   * `:root.light :focus-visible { outline-color: #0e7490 }` (base.html) wins
+   * the colour back in the light theme by accident, at specificity 0,3,0.
+   * There is no `:root.dark` equivalent, and dark is the default theme
+   * (base.html's `<html class="dark">`), so this test is expected to fail in
+   * the dark iteration only, and pass already in the light one -- proving the
+   * light theme is genuinely fine rather than the assertion being vacuous in
+   * both directions.
+   *
+   * #wizard-username is used (not the two FOCUS_INDICATOR_PROBE controls
+   * above) because it actually carries `focus:outline-none`
+   * (wizard.html:100); `#filter-movies` and the Add-movie search input use
+   * `focus-visible:outline-*` utilities instead and never exercise this bug.
+   *
+   * Real focus, verified rather than assumed (HAZARD 2): a mouse `.click()`
+   * on a text `<input>` in Chromium still satisfies `:focus-visible` -- typing
+   * is expected next, so the UA treats it like keyboard focus regardless of
+   * pointer origin -- but that is asserted explicitly with
+   * `el.matches(':focus-visible')` BEFORE any style is read, so a click that
+   * landed without it (a future engine change, a disabled/covered element)
+   * fails loudly here instead of silently reading a stale outline.
+   *
+   * Alpha, not string (HAZARD 3): the colour is read as `rgba(...)` and only
+   * the alpha channel is asserted against zero, never the string, because a
+   * `solid` `outline-style` with a colour computes to a real rgba() string in
+   * every engine regardless of whether that colour is paintable.
+   *
+   * Background (HAZARD 4): `outline-offset: 2px` paints the ring outside the
+   * input's own border box, over whatever surrounds it. Neither the input nor
+   * its wrapping `<div>`s carry a background of their own -- the nearest
+   * opaque ancestor is the wizard card (`bg-cp-card`), so that, not the
+   * input's own fill or the page body, is the surface contrast is measured
+   * against. Found by walking up the real DOM rather than assumed, so this
+   * keeps working if the markup grows another wrapper.
+   */
+  for (const theme of ['dark', 'light'] as const) {
+    test(`the wizard username field's focus ring is visible in the ${theme} theme`, async ({ page }) => {
+      await page.addInitScript((t) => {
+        localStorage.setItem('cp-theme', t);
+      }, theme);
+
+      await page.goto('/wizard/');
+      await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(1000);
+
+      // Pin the theme really took effect, same guard the toast contrast test
+      // uses, so a broken theme pipeline reds this loudly rather than
+      // quietly scanning the wrong theme under the right test name.
+      await expect
+        .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
+        .toBe(theme === 'light');
+
+      // Welcome -> Server Security, the same step-advance
+      // navigateWizardToProviders/the wizard a11y test above use.
+      await page.getByRole('button', { name: 'Continue' }).click();
+      await page.waitForTimeout(300);
+      await assertWizardStepShowing(page, 'Server Security', '#wizard-username');
+
+      const input = page.locator('#wizard-username');
+      await input.click();
+
+      const measured = await input.evaluate((el: HTMLElement) => {
+        const isFocusVisible = el.matches(':focus-visible');
+        const outlineColor = window.getComputedStyle(el).outlineColor;
+        const outlineStyle = window.getComputedStyle(el).outlineStyle;
+
+        const parseColor = (s: string) => {
+          const m = s.match(/rgba?\(([^)]+)\)/);
+          if (!m) return null;
+          const parts = m[1].split(',').map((p) => parseFloat(p.trim()));
+          return { r: parts[0], g: parts[1], b: parts[2], a: parts.length > 3 ? parts[3] : 1 };
+        };
+
+        const luminance = (c: { r: number; g: number; b: number }) => {
+          const chan = (v: number) => {
+            const s = v / 255;
+            return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+          };
+          return 0.2126 * chan(c.r) + 0.7152 * chan(c.g) + 0.0722 * chan(c.b);
+        };
+
+        // The surface under the ring, composited. Three things this has to get
+        // right, each of which was wrong in an earlier version of this helper
+        // and each of which was caught by review rather than by running it.
+        //
+        // 1. START AT THE PARENT, not at `el`. `outline-offset: 2px` paints the
+        //    ring OUTSIDE the element's border box, and an element's own
+        //    background is clipped to that box, so the element's own fill is
+        //    never under its own ring. Starting at `el` produces a false PASS,
+        //    demonstrated: a control with an opaque dark fill sitting on a
+        //    #35c5f4 parent has no visible ring at all and measured 9.67:1.
+        //    It also produces a false FAIL on the wizard's Continue button,
+        //    whose fill is the ring colour: 1.00:1 for a ring you can plainly
+        //    see.
+        // 2. COMPOSITE the layers rather than taking the first with any colour
+        //    in it. The fields are `bg-white/[0.03]` over `bg-cp-card`, so
+        //    reading the first layer raw treats a 3 per cent white veil as
+        //    solid WHITE and measured the ring at 2.01:1, failing a fix that
+        //    was correct.
+        // 3. If the walk reaches the top without ever finding an opaque layer,
+        //    THROW. Seeding the composite from a faint layer as though it were
+        //    solid paint reported 10.44:1 for a ring measuring about 2:1 on a
+        //    white canvas. Not reachable while `body` carries an opaque
+        //    background, which it does, but a guard must not guess.
+        //
+        // Known limit, stated rather than implied: this walks DOM ancestry,
+        // which is not paint order. An absolutely positioned sibling, such as
+        // the gradient overlays at partials/movie_detail.html:56-57, can be
+        // the real backdrop and this will step past it. Valid only for
+        // elements whose backdrop comes from their own ancestors.
+        let node: HTMLElement | null = el.parentElement;
+        const layers: { r: number; g: number; b: number; a: number }[] = [];
+        let bg: { r: number; g: number; b: number } | null = null;
+        let bgOwner = '';
+        let foundOpaque = false;
+        while (node) {
+          const c = parseColor(window.getComputedStyle(node).backgroundColor);
+          if (c && c.a > 0) {
+            if (!bgOwner) {
+              bgOwner = node.id ? `#${node.id}` : (node.className.toString().split(/\s+/)[0] || node.tagName);
+            }
+            layers.push(c);
+            if (c.a >= 1) {
+              foundOpaque = true;
+              break;
+            }
+          }
+          node = node.parentElement;
+        }
+        if (!foundOpaque) {
+          throw new Error(
+            `no opaque backdrop found above ${el.id ? '#' + el.id : el.tagName}; ` +
+            'the contrast below the ring cannot be computed, so this check cannot report a verdict',
+          );
+        }
+        // Composite bottom-up: the last layer collected is the lowest, and it
+        // is opaque, so it seeds the stack.
+        for (let i = layers.length - 1; i >= 0; i--) {
+          const c = layers[i];
+          bg = bg === null
+            ? { r: c.r, g: c.g, b: c.b }
+            : {
+                r: c.a * c.r + (1 - c.a) * bg.r,
+                g: c.a * c.g + (1 - c.a) * bg.g,
+                b: c.a * c.b + (1 - c.a) * bg.b,
+              };
+        }
+
+        const ring = parseColor(outlineColor);
+        const contrast = ring && bg
+          ? (() => {
+              const l1 = luminance(ring);
+              const l2 = luminance(bg);
+              return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+            })()
+          : null;
+
+        return {
+          isFocusVisible,
+          outlineStyle,
+          outlineColor,
+          ringAlpha: ring ? ring.a : null,
+          bgOwner,
+          contrast,
+        };
+      });
+
+      expect(
+        measured.isFocusVisible,
+        `#wizard-username did not match :focus-visible after a click in the ` +
+        `${theme} theme (outline-style computed as ${measured.outlineStyle}) ` +
+        `-- the probe below would prove nothing about a real keyboard user`,
+      ).toBe(true);
+
+      // AC-A11Y-1: not transparent, in BOTH themes.
+      expect(
+        measured.ringAlpha,
+        `${theme} theme: computed outline-color on #wizard-username is ` +
+        `${measured.outlineColor} (alpha ${measured.ringAlpha}) -- present ` +
+        `and invisible, exactly the shape "an outline exists" checks miss`,
+      ).toBeGreaterThan(0);
+
+      // AC-A11Y-2: at least 3:1 against the surface it actually sits on,
+      // computed with the WCAG formula rather than compared to a hex literal
+      // so a future palette change must fail this too.
+      expect(
+        measured.contrast,
+        `${theme} theme: focus ring ${measured.outlineColor} against ` +
+        `${measured.bgOwner}'s background measures ` +
+        `${measured.contrast?.toFixed(2)}:1, below the WCAG 1.4.11 floor of 3:1`,
+      ).toBeGreaterThanOrEqual(3);
+    });
+  }
+
   test('Images should have alt text', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
