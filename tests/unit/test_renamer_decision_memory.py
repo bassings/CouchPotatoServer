@@ -27,7 +27,6 @@ identical scans of one unchanged group currently ask the scanner five times.
 """
 import logging
 import os
-import subprocess
 import time
 
 import pytest
@@ -47,18 +46,8 @@ from couchpotato.core.plugins.renamer.replacement import (
     DECLINED_UNVERIFIED_IDENTITY,
     REPLACE,
 )
-from tests.unit.conftest import sanitized_git_env
-
-# env=sanitized_git_env() on every git call here, enforced by
-# tests/unit/test_fixtures_do_not_leak_gitdir.py and not optional: git exports
-# GIT_DIR into a pre-push hook launched from a worktree, so an unsanitised
-# call operates on the REAL repository rather than its own cwd. That is a
-# recorded incident in this repo, not a hypothetical.
-REPO_ROOT = subprocess.run(
-    ['git', 'rev-parse', '--show-toplevel'],
-    capture_output=True, text=True, check=True,
-    env=sanitized_git_env(),
-).stdout.strip()
+import couchpotato.core.plugins.scanner.folder_scanner as folder_scanner_module
+from couchpotato.core.plugins.scanner.folder_scanner import FolderScannerMixin
 
 
 @pytest.fixture(autouse=True)
@@ -221,81 +210,105 @@ class TestAnUnchangedDeclinedGroupIsNotRescanned:
         )
 
 
-class TestFolderScannerIsUntouched:
-    """AC-SIMP-2 / binding decision 1 -- the data-loss guard.
+class TestFolderScannerNeverReducesTheScanResult:
+    """AC-QA-7 (BUG-018) -- replaces the withdrawn `TestFolderScannerIsUntouched`.
 
     `folder_scanner.py` is shared with `manage.updateLibrary`, whose cleanup
     at `manage.py:274-275` deletes any 'done' movie absent from the scan
     result: the media document, its releases, watch history, tags, profile
-    and review state, with no backup taken automatically. Nothing about the
-    renamer's memory may ever change what that shared scanner returns.
+    and review state, with no backup taken automatically. The class this
+    replaces asserted an empty `git diff` against master as a PROXY for
+    "this module must never start feeding that cleanup a false negative" --
+    a proxy that only worked as long as nothing legitimate ever needed to
+    change the module. BUG-018 does need to change it (the year-
+    disambiguation fix for the fifth identification fallback), so the freeze
+    is retired in favour of the property it always stood in for.
 
-    This is a structural guard, not a missing-behaviour test: the diff is
-    genuinely empty right now, so this assertion PASSES today, by design.
-    Its value is as a tripwire for a LATER change, and CLAUDE.md's guard
-    doctrine (search "load-bearing") requires proving a guard by breaking
-    the thing it protects and watching the guard fail -- which means
-    editing `folder_scanner.py`, even transiently. That mutate-observe-
-    restore proof is deliberately NOT done in this step: this step writes
-    tests only and touches no production file. The proof belongs to the
-    step that commits this test.
+    The property: a group the pre-BUG-018 fallback could identify must still
+    come out identified afterwards, even when the identifier it returns
+    names a DIFFERENT film -- WHICH film is exactly what BUG-018 is allowed
+    to change. Returning nothing at all, where the old code returned
+    something, is what would starve `manage.updateLibrary` into believing a
+    still-owned film is gone.
     """
 
-    def test_folder_scanner_has_no_diff_against_master(self):
-        # The base ref is resolved rather than named, because a bare
-        # `master` does NOT fall back to `origin/master`: git's
-        # disambiguation tries refs/remotes/<name>, which is
-        # refs/remotes/master, never refs/remotes/origin/master. A CI
-        # checkout has no local master branch, so `git diff master` exits
-        # 128 "bad revision" there while passing on a developer's machine.
-        # Measured on this branch: CI reported this guard as "folder_scanner
-        # differs from master" when git had not managed to look at all.
-        #
-        # That is the defect this guard exists to prevent, turned on itself:
-        # it could not tell "the protected file changed" from "I could not
-        # check". Those now have different outcomes and different messages.
-        base = None
-        for candidate in ('origin/master', 'master'):
-            probe = subprocess.run(
-                ['git', 'rev-parse', '--verify', '--quiet', candidate],
-                cwd=REPO_ROOT, env=sanitized_git_env(), capture_output=True,
-            )
-            if probe.returncode == 0:
-                base = candidate
-                break
+    @staticmethod
+    def _pre_bug_018_selection(candidates):
+        """The fallback's selection before BUG-018:
+        `fireEvent('movie.search', ..., limit=1)`, then `movie[0]`, nothing
+        else read from the result. Kept as a plain function of the
+        candidate list rather than imported from production, because
+        production is exactly what this guards -- importing the (now
+        fixed) selection would compare it with itself and could never
+        fail."""
+        if not candidates:
+            return None
+        return candidates[0].get('imdb')
 
-        assert base is not None, (
-            'neither origin/master nor master resolves in this checkout, so '
-            'this guard cannot compare folder_scanner.py against the base at '
-            'all. Failing rather than passing: an unverifiable data-loss '
-            'guard must not report success. Fetch the base ref (CI uses '
-            'fetch-depth: 0) and re-run.'
+    @pytest.fixture
+    def bug018_scanner(self, monkeypatch):
+        plugin = FolderScannerMixin()
+        monkeypatch.setattr(
+            folder_scanner_module, 'get_db',
+            lambda: (_ for _ in ()).throw(RuntimeError('no db in this test')),
+        )
+        monkeypatch.setattr(type(plugin), 'getCPImdb', lambda _s, _f: None, raising=False)
+        monkeypatch.setattr(folder_scanner_module, 'getImdb', lambda path, check_inside=False: None)
+        return plugin
+
+    @pytest.mark.parametrize('candidates', [
+        pytest.param(
+            [{'imdb': 'tt0120762', 'year': 1998}, {'imdb': 'tt3480796', 'year': 2020}],
+            id='remake_ordered_before_the_correct_film',
+        ),
+        pytest.param(
+            [{'imdb': 'tt0058331', 'year': 1975}],
+            id='single_candidate_whose_year_does_not_match',
+        ),
+        pytest.param(
+            [{'imdb': 'ttNOYEARFIELD'}],
+            id='candidate_with_no_year_field_at_all',
+        ),
+    ])
+    def test_a_group_the_old_code_could_identify_is_still_identified(
+        self, bug018_scanner, monkeypatch, candidates,
+    ):
+        name_year = {'name': 'Some Movie', 'year': 2020}
+        search_q = '%(name)s %(year)s' % name_year
+
+        def _fire(event, *args, **kwargs):
+            if event == 'movie.search':
+                return list(candidates) if kwargs.get('q') == search_q else []
+            return None
+
+        monkeypatch.setattr(folder_scanner_module, 'fireEvent', _fire)
+        monkeypatch.setattr(
+            type(bug018_scanner), 'getReleaseNameYear',
+            lambda _s, i, file_name=None: dict(name_year), raising=False,
         )
 
-        result = subprocess.run(
-            ['git', 'diff', '--quiet', base, '--',
-             'couchpotato/core/plugins/scanner/folder_scanner.py'],
-            cwd=REPO_ROOT,
-            env=sanitized_git_env(),
+        group = {
+            'files': {'movie': ['/dl/Some.Movie.2020.mkv'], 'nfo': []},
+            'identifiers': ['Some Movie 2020'],
+            'is_dvd': False,
+        }
+
+        pre = self._pre_bug_018_selection(candidates)
+        assert pre is not None, (
+            'test setup error: the reference selection found nothing in %r '
+            'to compare against' % candidates
         )
 
-        # `git diff --quiet` exits 0 for no difference and 1 for a
-        # difference. Anything else is git failing, which is not the same
-        # finding and must not be reported as one.
-        assert result.returncode in (0, 1), (
-            'git could not compare folder_scanner.py against %s (exit %d). '
-            'This is a broken check, not a detected change: fix the checkout '
-            'rather than reading this as a diff.' % (base, result.returncode)
-        )
+        result = bug018_scanner.determineMedia(group)
 
-        assert result.returncode == 0, (
-            'couchpotato/core/plugins/scanner/folder_scanner.py differs '
-            'from %s. This module is shared with manage.updateLibrary, '
-            'whose cleanup deletes any "done" movie absent from the scan '
-            'result -- the one irrecoverable loss AC-SIMP-2 exists to '
-            'prevent. Run `git diff %s -- '
-            'couchpotato/core/plugins/scanner/folder_scanner.py` to see '
-            'what changed.' % (base, base)
+        assert result.get('identifier') is not None, (
+            'the pre-BUG-018 selection would have identified this group as '
+            '%r, but the current fallback returned no identifier at all. '
+            'manage.updateLibrary deletes any "done" movie absent from the '
+            'scan result -- this is exactly the data-loss shape BUG-018\'s '
+            'first, withdrawn design built, and the empty-diff guard it '
+            'replaced would not have caught it once folder_scanner.py was '
+            'allowed to change at all.' % pre
         )
 
 

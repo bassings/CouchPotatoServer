@@ -15,6 +15,21 @@ from guessit import guessit as guess_movie_info
 
 log = CPLog(__name__)
 
+# BUG-018: the fifth `determineMedia` fallback used to ask the search
+# provider for exactly one result and take it, so a remake sorted ahead of
+# its original (both measured cases were only two results deep) was never
+# even offered as an alternative. 5 gives enough headroom to see past a
+# remake pair without an unbounded fetch.
+SEARCH_YEAR_DISAMBIGUATION_LIMIT = 5
+
+# A provider's release year can legitimately differ from the year parsed out
+# of a filename by one (region release dates, festival versus wide release).
+# 0 would treat every honest off-by-one provider year as a non-match and
+# always fall back to the first result; anything above 1 starts risking the
+# very remake collisions this bug is about -- the closest of the four
+# measured remake pairs is still 7 years apart.
+SEARCH_YEAR_TOLERANCE = 1
+
 
 class FolderScannerMixin:
     """Mixin providing directory scanning, file grouping, and identifier creation."""
@@ -459,15 +474,24 @@ class FolderScannerMixin:
                     name_year = self.getReleaseNameYear(identifier, file_name=filename if not group['is_dvd'] else None)
                     if name_year.get('name') and name_year.get('year'):
                         search_q = '%(name)s %(year)s' % name_year
-                        movie = fireEvent('movie.search', q=search_q, merge=True, limit=1)
+                        movie = fireEvent('movie.search', q=search_q, merge=True,
+                                           limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT)
+                        parsed_year = name_year.get('year')
 
                         if len(movie) == 0 and name_year.get('other') and name_year['other'].get('name') and name_year['other'].get('year'):
                             search_q2 = '%(name)s %(year)s' % name_year.get('other')
                             if search_q2 != search_q:
-                                movie = fireEvent('movie.search', q=search_q2, merge=True, limit=1)
+                                movie = fireEvent('movie.search', q=search_q2, merge=True,
+                                                   limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT)
+                                # The "other" query carries its own parsed
+                                # year (a differently-parsed title can imply
+                                # a different year) -- match against that,
+                                # not the primary query's.
+                                parsed_year = name_year['other'].get('year')
 
                         if len(movie) > 0:
-                            imdb_id = movie[0].get('imdb')
+                            chosen = self.pickSearchYearMatch(movie, parsed_year, filename)
+                            imdb_id = chosen.get('imdb')
                             # A GUESS, not an assertion: the best match for a
                             # parsed title and year. Recorded as such so the
                             # destructive path can refuse it.
@@ -492,6 +516,45 @@ class FolderScannerMixin:
         log.error('No imdb_id found for %s. Add a NFO file with IMDB id or add the year to the filename.',
                   group['identifiers'])
         return {}
+
+    def pickSearchYearMatch(self, candidates, parsed_year, filename):
+        """BUG-018: choose which search result to trust as the identity.
+
+        The provider does not rank on year, so it routinely returns a
+        remake's original release ahead of the film actually named in the
+        filename (measured live: Mulan 2020, Aladdin 2019, Mean Girls 2024
+        and Lion King 2019 were all in second place). Prefer whichever
+        candidate's year is within `SEARCH_YEAR_TOLERANCE` of the parsed
+        year, regardless of position.
+
+        `candidates` is assumed non-empty; the caller only reaches here
+        after checking `len(movie) > 0`. When nothing matches, the FIRST
+        candidate is returned -- exactly what the pre-BUG-018 code always
+        returned. This is the safety property the withdrawn first design
+        broke: returning `None` here, where the old code returned an id,
+        makes `manage.updateLibrary` believe a still-owned film is gone and
+        delete it. A mismatched guess is logged so the operator can see it;
+        it is never refused.
+        """
+        for candidate in candidates:
+            year = candidate.get('year')
+            if year is None:
+                continue
+            try:
+                if abs(int(year) - int(parsed_year)) <= SEARCH_YEAR_TOLERANCE:
+                    return candidate
+            except (TypeError, ValueError):
+                continue
+
+        first = candidates[0]
+        log.warning(
+            'No search result for "%s" matched the parsed year %s within '
+            'tolerance (years offered: %s) -- taking the first result %s. '
+            'This guess is not destructive on its own, but is worth '
+            'checking.',
+            filename, parsed_year, [c.get('year') for c in candidates], first.get('imdb'),
+        )
+        return first
 
     def getCPImdb(self, string):
         try:
