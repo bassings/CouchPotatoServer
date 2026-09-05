@@ -70,7 +70,17 @@ _JINJA_COMMENT = re.compile(r'{#.*?#}', re.S)
 #: A JS template-literal string, inside a <script> block, that contains form
 #: markup -- see the getDownloaderFields() note above.
 _JS_HTML_STRING = re.compile(r'`([^`]*<(?:input|label|select|textarea)[^`]*)`', re.S)
-_SCRIPT_BLOCK = re.compile(r'<script\b[^>]*>(.*?)</script>', re.S)
+#: Script bodies are extracted with the HTML parser, NOT a regex. CodeQL's
+#: py/bad-tag-filter flagged the regex form on PR 301 and was right about the
+#: code even though the severity does not apply here (this parses the
+#: project's own templates, there is no untrusted input). A regex
+#: `</script>` matcher misses `</script >` and `</SCRIPT>`, and a missed
+#: closing tag means the fields inside that block are never checked, which is
+#: a blind spot in the one guard whose whole job is not to have any.
+def _script_bodies(html_text):
+    """Every <script> element's text, via the parser rather than a pattern."""
+    soup = BeautifulSoup(html_text, 'html.parser')
+    return [script.string or script.get_text() or '' for script in soup.find_all('script')]
 
 
 def _strip_jinja_comments(text):
@@ -146,7 +156,7 @@ def _fragment_violations(fragment_html, source):
 
 def _script_fragment_violations(html_text, filename):
     violations = []
-    for script_idx, script in enumerate(_SCRIPT_BLOCK.findall(html_text)):
+    for script_idx, script in enumerate(_script_bodies(html_text)):
         for string_idx, match in enumerate(_JS_HTML_STRING.finditer(script)):
             source = '%s (script %d, template string %d)' % (filename, script_idx, string_idx)
             violations.extend(_fragment_violations(match.group(1), source))
