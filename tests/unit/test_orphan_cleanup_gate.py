@@ -264,25 +264,38 @@ class TestMarkerWriteFailureStillLogsTheCount:
         )
 
 
-class TestMarkerReadFailureDoesNotAbortBoot:
-    """Regression test for fix round one, FIX 5.
+class TestMarkerReadFailureDoesNotRunTheCleanup:
+    """Regression test for fix round two, FIX A -- supersedes round one's
+    FIX 5, which is now the bug.
 
-    `Env.prop(ORPHAN_CLEANUP_MARKER)` (the read) used to sit OUTSIDE the
-    try/except in `_run_orphan_cleanup`. `Settings.getProperty` calls
-    `self.log.debug(...)` on its miss path, and `self.log` is None until
-    `Settings.setFile()` has run -- not reachable via CouchPotato.py's real
-    boot order today, but a read that raised there would propagate straight
-    out of `_run_orphan_cleanup` and abort startup, unlike every other
-    property-store failure this function already tolerates.
+    Round one wrapped the marker READ in its own nested try/except so a
+    read failure was treated as "not yet applied" and the migration still
+    ran to completion. Round two's adversarial review measured the actual
+    cost of that: with the marker genuinely already set (a completed
+    migration) and the read raising anyway, the nested except swallowed
+    the read failure so completely that nothing downstream could tell it
+    had happened. The cleanup ran a SECOND time, for real, with no warning
+    logged at any level -- a completed destructive migration silently ran
+    again.
 
-    The fix moves the read inside the try (nested, so its own failure is
-    treated as "not yet applied" rather than as the run's overall failure),
-    preserving the documented fail-open intent: an unreadable marker must
-    still let the migration attempt to run, not merely fail without
-    crashing.
+    The nested try/except is deleted. The marker read now sits directly
+    inside the outer try, so a read failure is caught by the SAME handler
+    that already handles a failed `clean_orphaned_movies()` call or a
+    failed marker write: it logs the "did not complete, will retry"
+    warning, does NOT run the cleanup, and leaves the marker unset so the
+    next boot retries. This is a genuine behaviour change from round one:
+    a marker read failure now fails SAFE (nothing runs) rather than fail
+    OPEN (the migration runs regardless of the marker's real state).
     """
 
-    def test_marker_read_raising_does_not_abort_the_boot_and_the_run_still_happens(self, env, caplog):
+    def test_marker_read_raising_prevents_a_second_destructive_run(self, env, caplog):
+        """Matches the scenario the round-two review measured directly:
+        the marker is genuinely already applied, and the read raises
+        anyway. Proves the cleanup is not invoked a second time and a
+        warning is logged, where round one's code deleted the record and
+        logged nothing.
+        """
+        Env.prop(ORPHAN_MARKER, value='true')
         orphan = env.db.insert(_orphan_doc('tt9999999'))
         log = CPLog(RUNNER_LOGGER)
 
@@ -293,20 +306,59 @@ class TestMarkerReadFailureDoesNotAbortBoot:
                 raise AttributeError("'NoneType' object has no attribute 'debug'")
             return original_prop(identifier, value=value, default=default)
 
-        with patch('couchpotato.environment.Env.prop', side_effect=prop_that_fails_only_on_read):
-            with caplog.at_level(logging.INFO, logger=RUNNER_LOGGER):
-                _run_orphan_cleanup(env.db, log)  # must not raise out of here
+        with patch(
+            'couchpotato.core.migration.clean_orphans.clean_orphaned_movies'
+        ) as mock_clean:
+            with patch('couchpotato.environment.Env.prop', side_effect=prop_that_fails_only_on_read):
+                with caplog.at_level(logging.WARNING, logger=RUNNER_LOGGER):
+                    _run_orphan_cleanup(env.db, log)  # must not raise out of here
 
-        # The real assertion: the migration still ATTEMPTED and COMPLETED
-        # the run despite the unreadable marker, rather than merely failing
-        # without crashing -- so the seeded orphan was actually removed and
-        # the marker ends up set via the (unpatched) write.
-        with pytest.raises(KeyError):
-            env.db.get('id', orphan['_id'])
-        assert Env.prop(ORPHAN_MARKER), (
-            'a marker READ failure must be treated as "not yet applied" and '
-            'the migration must still run to completion and set the marker '
-            '-- not merely swallow the exception and skip the run (FIX 5)'
+        mock_clean.assert_not_called()
+        survivor = env.db.get('id', orphan['_id'])
+        assert survivor['identifiers']['imdb'] == 'tt9999999', (
+            'a marker read failure must not let a completed migration run '
+            'a second time'
+        )
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert any(
+            'did not complete' in m.lower() or 'will retry' in m.lower()
+            for m in warnings
+        ), (
+            'a marker read failure must be logged as a warning -- silently '
+            'running the migration again with no warning at any level is '
+            'exactly the defect this fix removes'
+        )
+
+    def test_marker_read_raising_leaves_the_marker_unset_when_never_applied(self, env, caplog):
+        """The other direction: an install that has never run the
+        migration, whose read also fails. The marker must stay unset (so
+        the next boot retries) and the cleanup must not run blind.
+        """
+        orphan = env.db.insert(_orphan_doc('tt9999998'))
+        assert Env.prop(ORPHAN_MARKER) is None
+        log = CPLog(RUNNER_LOGGER)
+
+        original_prop = Env.prop
+
+        def prop_that_fails_only_on_read(identifier, value=None, default=None):
+            if value is None:
+                raise AttributeError("'NoneType' object has no attribute 'debug'")
+            return original_prop(identifier, value=value, default=default)
+
+        with patch(
+            'couchpotato.core.migration.clean_orphans.clean_orphaned_movies'
+        ) as mock_clean:
+            with patch('couchpotato.environment.Env.prop', side_effect=prop_that_fails_only_on_read):
+                with caplog.at_level(logging.WARNING, logger=RUNNER_LOGGER):
+                    _run_orphan_cleanup(env.db, log)  # must not raise out of here
+
+        mock_clean.assert_not_called()
+        survivor = env.db.get('id', orphan['_id'])
+        assert survivor['identifiers']['imdb'] == 'tt9999998'
+        assert Env.prop(ORPHAN_MARKER) is None, (
+            'a marker read failure on a never-applied install must leave '
+            'the marker unset so the next boot retries, not run the '
+            'migration blind and not silently skip it forever either'
         )
 
 

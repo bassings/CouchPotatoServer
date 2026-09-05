@@ -501,27 +501,100 @@ BEFORE this release is deployed there (see the spec's "Pre-deploy" section,
 `specs/BUG-017-orphan-cleanup-runs-every-boot.md`), because production has
 never carried it.
 
-**Checking the marker from the host** (read-only, does not touch the running
-server):
+**Checking the marker from the host.** The database is in WAL (write-ahead
+log) mode, which changes which command is safe depending on whether the
+container is up. The two states need two different commands; the same one
+does not work for both, measured directly against real
+`SQLiteAdapter`-created databases in each state:
 
-```bash
-sqlite3 -readonly \
-  /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db \
-  "SELECT count(*), group_concat(json_extract(data,'\$.value'))
-     FROM documents
-    WHERE _t='property'
-      AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
-```
+- **Container RUNNING** (the live process holds the database open, and its
+  `-wal`/`-shm` sidecar files are present next to `couchpotato.db`):
+
+  ```bash
+  sqlite3 -readonly \
+    /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db \
+    "SELECT count(*), group_concat(json_extract(data,'\$.value'))
+       FROM documents
+      WHERE _t='property'
+        AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
+  ```
+
+  `-readonly` matters here: without it, sqlite3 takes a write lock on a
+  database the live server may also be writing to.
+
+- **Container STOPPED** (the usual state around a promotion, and the state
+  the command above was never checked against): `-readonly` fails outright
+  with `Error: in prepare, unable to open database file (14)`. A WAL-mode
+  database cannot be opened read-only unless sqlite3 can also access its
+  shared-memory file, and a cleanly stopped container has usually
+  checkpointed and removed the `-shm`/`-wal` sidecars, so there is nothing
+  for `-readonly` to attach to. Dropping `-readonly` instead "works" in the
+  sense that it returns the right row, but it creates `-wal` and `-shm`
+  sidecar files next to the live database as a side effect of opening it
+  for writing, which is exactly the workaround the running-container case
+  above warns against. Use the `immutable` URI query parameter instead,
+  which reads a WAL-mode database without ever trying to write to it or
+  create sidecar files:
+
+  ```bash
+  sqlite3 "file:/var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db?immutable=1" \
+    "SELECT count(*), group_concat(json_extract(data,'\$.value'))
+       FROM documents
+      WHERE _t='property'
+        AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
+  ```
+
+  `immutable=1` only gives a correct answer when nothing else has the file
+  open: it skips WAL-awareness entirely and reads the base file as-is, so
+  pointed at a database a live process is still writing to it can return a
+  stale or plain wrong answer (measured: it reported the `documents` table
+  did not exist at all, because the schema and every row were still sitting
+  in the WAL, not yet checkpointed into the base file). Use it only once the
+  container is confirmed stopped.
+
+Both forms return the same result shape:
 
 - `1|true` -- the marker is set; the cleanup has run and will not run again.
 - `0|` -- still armed; the cleanup will run on the next boot.
 - anything else -- more than one property row for the same identifier, which
   should not happen; investigate rather than assume either state.
 
-`-readonly` matters: without it, sqlite3 takes a write lock on a database a
-live server may also be writing to. The database is in WAL mode, so query
-the live file in place with its `-wal` sidecar present rather than copying
-just the `.db` file on its own.
+**Setting the marker (container STOPPED).** The spec's "Pre-deploy" section
+requires the marker to be written to production before this release ships
+there, since production has never carried it. There is no running instance
+to ask to write it, so it has to be inserted by hand as an ordinary
+`property` document, shaped exactly the way `Settings.setProperty`
+(`couchpotato/core/settings.py:834-850`) would have written it -- checked
+by inserting via the real adapter into a throwaway database and reading the
+row back, not assumed:
+
+```bash
+sqlite3 /var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db <<'SQL'
+INSERT INTO documents (_id, _rev, _t, data, created_at, updated_at)
+VALUES (
+  lower(hex(randomblob(16))),
+  lower(hex(randomblob(4))),
+  'property',
+  '{"_t": "property", "identifier": "migration.clean_orphans.applied", "value": "true"}',
+  (julianday('now') - 2440587.5) * 86400.0,
+  (julianday('now') - 2440587.5) * 86400.0
+);
+SQL
+```
+
+`_id` (32 lowercase hex characters) and `_rev` (8 lowercase hex characters)
+match the shape `SQLiteAdapter.insert()` generates via `uuid.uuid4().hex`
+and `uuid.uuid4().hex[:8]`; `randomblob`/`hex`/`lower` reproduce that shape
+without needing Python on the host. `created_at`/`updated_at` match the
+adapter's `time.time()` float epoch via the julian-day conversion, which
+works on any sqlite3 build rather than depending on a newer
+`unixepoch(...,'subsec')` that an older host `sqlite3` may not have. Verify
+immediately with the read-only check above (`immutable=1` form, container
+still stopped) and confirm it reads `1|true` before starting the
+container. This was verified end to end against a real adapter-created
+database: the row above, inserted this exact way into an otherwise-fresh
+database, read back through the real `Env.prop('migration.clean_orphans.applied')`
+call (not just the raw SQL check) as the string `'true'`.
 
 **Standing operational rule:** the marker lives inside `couchpotato.db`, so
 any restore of that database -- including the DB restore in the Rollback

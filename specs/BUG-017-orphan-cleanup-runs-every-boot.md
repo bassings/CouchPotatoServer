@@ -125,6 +125,21 @@ its next boot, gated exactly as if it were a fresh install.
 - **AC-SIMP-6:** The change is confined to `couchpotato/runner.py` and its
   tests. `clean_orphans.py` itself is not edited, so the gate cannot be confused
   with a behaviour change in the cleanup.
+- **AC-DATA-7:** (fix round two, FIX A) An exception that escapes the marker
+  READ (`Env.prop(ORPHAN_CLEANUP_MARKER)`) leaves the marker unset, logs the
+  same "did not complete, will retry on next start" warning as any other
+  failure in this function, and does NOT run `clean_orphaned_movies`. This
+  supersedes fix round one's nested try/except, which treated a read failure
+  as "not yet applied" and ran the cleanup anyway -- measured, against a
+  marker that was genuinely already set, to run a completed destructive
+  migration a second time with no warning logged at any level.
+- **AC-QA-8:** (removal criterion, phrased to fail if it is not really gone)
+  The nested try/except that used to sit around the marker read in
+  `couchpotato/runner.py` is gone, and a marker read that raises results in
+  zero records deleted and a warning logged, proven by driving
+  `_run_orphan_cleanup` directly with the read patched to raise.
+- **AC-QA-9:** (removal criterion) `test_docstring_mention_is_not_miscounted_as_a_call`
+  no longer exists in `tests/unit/test_orphan_cleanup_call_site_guard.py`.
 
 ## Recorded debt, not fixed here
 
@@ -152,3 +167,18 @@ its next boot, gated exactly as if it were a fresh install.
    on ITS OWN logger, and returns 0 -- which this gate then records as a
    completed migration that removed nothing. A failed scan is currently
    indistinguishable from a genuinely clean one.
+7. `Settings.getProperty` (`couchpotato/core/settings.py:818`) swallows most
+   read failures (any `db.get` exception other than a corrupt document) into
+   a debug log and returns `None`, indistinguishable here from "never set".
+   `_run_orphan_cleanup` cannot tell the two apart and still fails open on
+   that path: it attempts the run. Fix round two (FIX A) closed the narrower
+   case where the read raises and escapes `getProperty` entirely; this wider,
+   swallowed case is untouched.
+8. A failed marker WRITE does not always raise. `Settings.setProperty`
+   (`couchpotato/core/settings.py:834-850`) wraps its `db.update` in a bare
+   `except Exception:` and falls back to `db.insert` on any failure at all.
+   Measured: with `db.update` raising `ConflictError`,
+   `Env.prop(MARKER, value='true')` raised NOTHING, produced a second
+   `property` row for the same identifier, and the marker still read back
+   `None` afterwards. The same hazard is already documented for the session
+   secret at `couchpotato/runner.py` around line 596.
