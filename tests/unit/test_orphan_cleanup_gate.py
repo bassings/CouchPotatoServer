@@ -294,9 +294,17 @@ class TestMarkerReadFailureDoesNotRunTheCleanup:
         anyway. Proves the cleanup is not invoked a second time and a
         warning is logged, where round one's code deleted the record and
         logged nothing.
+
+        `clean_orphaned_movies` is mocked out here (unlike AC-QA-4's
+        real, unmocked double-direction test), so `mock_clean.assert_not_called()`
+        is the ONLY assertion that can actually fail this test -- a record
+        survival check would be illustrative at best: the mock cannot
+        delete anything regardless of whether the gate did its job, so it
+        would pass even with the gate removed entirely (fourth review,
+        item 6b). Dropped rather than kept as decoration, per this
+        project's repeated experience with assertions that cannot fail.
         """
         Env.prop(ORPHAN_MARKER, value='true')
-        orphan = env.db.insert(_orphan_doc('tt9999999'))
         log = CPLog(RUNNER_LOGGER)
 
         original_prop = Env.prop
@@ -314,11 +322,6 @@ class TestMarkerReadFailureDoesNotRunTheCleanup:
                     _run_orphan_cleanup(env.db, log)  # must not raise out of here
 
         mock_clean.assert_not_called()
-        survivor = env.db.get('id', orphan['_id'])
-        assert survivor['identifiers']['imdb'] == 'tt9999999', (
-            'a marker read failure must not let a completed migration run '
-            'a second time'
-        )
         warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
         assert any(
             'did not complete' in m.lower() or 'will retry' in m.lower()
@@ -410,6 +413,47 @@ class TestStartupLogDistinguishesSkipFromRun:
             'must say so with the exact "skipped: already applied" wording, '
             'which is now the ONLY meaning that prefix carries in this '
             'logger -- the failure path no longer shares it (AC-OPS-5, FIX 2)'
+        )
+
+
+class TestFailureWarningNeverSharesTheSkippedPrefix:
+    """Fourth review, item 2. FIX 2 above separated the two log messages
+    that used to share the prefix "Orphan cleanup skipped" -- the benign
+    INFO ("already applied.") and the WARNING that means the migration is
+    still armed and will retry. Nothing before this test actually GUARDED
+    that separation: the existing failure-path assertions
+    (`'did not complete' in m or 'will retry' in m`) are satisfied by
+    either wording, so a reviewer who reworded the failure warning back to
+    'Orphan cleanup skipped: did not complete, will retry on next start:
+    %s' -- restoring the exact defect FIX 2 fixed -- left the entire unit
+    suite green, because nothing anywhere was asserting on the ABSENCE of
+    "skipped" from that specific message.
+
+    This test closes that gap directly: it drives a real failure and
+    asserts the resulting warning does not contain the string "Orphan
+    cleanup skipped", so a regression is caught here rather than needing a
+    human to notice the reworded string in a diff.
+    """
+
+    def test_the_failure_warning_does_not_contain_the_word_skipped(self, env, caplog):
+        env.db.insert(_orphan_doc('tt6666666'))
+        log = CPLog(RUNNER_LOGGER)
+
+        with patch(
+            'couchpotato.core.migration.clean_orphans.clean_orphaned_movies',
+            side_effect=RuntimeError('boom'),
+        ):
+            with caplog.at_level(logging.WARNING, logger=RUNNER_LOGGER):
+                _run_orphan_cleanup(env.db, log)  # must not raise out of here
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+        assert warnings, 'expected a warning to be logged when the cleanup raises'
+        assert not any('Orphan cleanup skipped' in m for m in warnings), (
+            'the FAILURE warning must never contain "Orphan cleanup skipped" '
+            '-- that prefix means finished-and-good in the INFO line above, '
+            'and a failure warning that shares it is indistinguishable from '
+            'a benign skip by anyone grepping the log for it (the exact '
+            'defect FIX 2 removed)'
         )
 
 

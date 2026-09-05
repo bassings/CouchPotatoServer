@@ -31,12 +31,12 @@ Fix round two, FIX C: `_real_calls_to` originally matched only the bare
 name `clean_orphaned_movies`. A reviewer measured that renaming the import
 at the bypass site (`from couchpotato.core.migration.clean_orphans import
 clean_orphaned_movies as _oc`, then `_oc(db)` planted beside the gate)
-made the bypass invisible to this guard -- it passed, and so did the
-entire unit suite, 3797 tests, the identical count that currently reads as
-clean. `_real_calls_to` now also resolves any local name the real function
-is imported under via `from couchpotato.core.migration.clean_orphans
-import clean_orphaned_movies as <alias>` and counts calls to that name
-too.
+made the bypass invisible to this guard -- it passed, and so did every
+other test in the unit suite, none of which asserts anything about this
+call site either. `_real_calls_to` now also resolves any local name the
+real function is imported under via `from
+couchpotato.core.migration.clean_orphans import clean_orphaned_movies as
+<alias>` and counts calls to that name too.
 
 Scope of what this guard catches, so nobody later mistakes it for more
 than it is: a second call under the ORIGINAL bare name, a call via
@@ -147,14 +147,75 @@ class TestExactlyOneRealCallSiteInsideTheGate:
         )
 
 
+class TestGuardedModuleNameMatchesRunnerPysRealImport:
+    """Fourth review, item 5. `GUARDED_MODULE_NAME` above is a hand-typed
+    constant with nothing tying it to what `runner.py` actually imports.
+
+    Measured two mutations against the real `runner.py`, module path
+    changed there alone, `GUARDED_MODULE_NAME` left untouched:
+
+    - A plain module move that still calls the function under its bare
+      name does NOT by itself defeat
+      `TestExactlyOneRealCallSiteInsideTheGate` above -- `_local_names_bound_to`
+      always seeds `local_names` with the bare `func_name` regardless of
+      which module matched, so the existing call is still found. But
+      `GUARDED_MODULE_NAME` is now asserting something false about the
+      codebase, and nothing was checking that until this test.
+    - Combine the same module move with the call site's own import
+      following it under an alias (`from <new module> import
+      clean_orphaned_movies as _oc`, then `_oc(db)`) -- the exact shape
+      FIX C added alias detection for -- and `_local_names_bound_to`'s
+      alias branch never matches, because it filters on
+      `node.module == GUARDED_MODULE_NAME`, the now-stale path. Only the
+      bare name stays in scope, the aliased call becomes invisible to
+      `_real_calls_to`, and `TestExactlyOneRealCallSiteInsideTheGate` fails
+      with "found 0 calls in runner.py" -- which reads as "the gate itself
+      is gone" when the real defect is a stale module name reopening
+      exactly the bypass FIX C was meant to close.
+
+    This test ties the constant to reality directly, so a module move
+    fails loudly and specifically here, in front of both scenarios above,
+    rather than the first one going unnoticed and the second one surfacing
+    as a confusing, differently-worded failure two tests away.
+    """
+
+    def test_guarded_module_name_matches_the_real_import_in_runner_py(self):
+        _source, tree = _parse_runner()
+
+        real_import_modules = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+            if alias.name == GUARDED_CALL_NAME
+        }
+
+        assert real_import_modules, (
+            'runner.py contains no "from <module> import %s" statement at '
+            'all -- either the import has changed shape entirely, or the '
+            'function is no longer imported by name' % GUARDED_CALL_NAME
+        )
+        assert real_import_modules == {GUARDED_MODULE_NAME}, (
+            'GUARDED_MODULE_NAME (%r) does not match the module(s) '
+            'runner.py actually imports %s from (%s) -- update the '
+            'constant, or this guard is silently checking the wrong '
+            'module and will stop seeing real calls if the import ever '
+            'moves again' % (
+                GUARDED_MODULE_NAME, GUARDED_CALL_NAME,
+                ', '.join(sorted(real_import_modules)),
+            )
+        )
+
+
 class TestRealCallsToDetectsAnAliasedImport:
     """FIX C, fix round two. `_real_calls_to` used to match only the bare
     name `clean_orphaned_movies`, so a bypass imported under a different
     local name (`from couchpotato.core.migration.clean_orphans import
     clean_orphaned_movies as _oc`, then `_oc(db)` planted beside the gate)
     was invisible to it. A reviewer measured that exact shape passing both
-    this guard and the entire unit suite, 3797 tests, the identical count
-    that currently reads as clean.
+    this guard and the rest of the unit suite untouched -- nothing else in
+    the suite asserts on this call site, so a bypass under an alias was
+    completely invisible, not merely unlikely to be noticed.
 
     This test does not mutate the real runner.py -- it parses a small
     synthetic module string that reproduces the aliased-bypass shape, so

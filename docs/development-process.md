@@ -522,35 +522,63 @@ does not work for both, measured directly against real
   `-readonly` matters here: without it, sqlite3 takes a write lock on a
   database the live server may also be writing to.
 
-- **Container STOPPED** (the usual state around a promotion, and the state
-  the command above was never checked against): `-readonly` fails outright
-  with `Error: in prepare, unable to open database file (14)`. A WAL-mode
-  database cannot be opened read-only unless sqlite3 can also access its
-  shared-memory file, and a cleanly stopped container has usually
-  checkpointed and removed the `-shm`/`-wal` sidecars, so there is nothing
-  for `-readonly` to attach to. Dropping `-readonly` instead "works" in the
-  sense that it returns the right row, but it creates `-wal` and `-shm`
-  sidecar files next to the live database as a side effect of opening it
-  for writing, which is exactly the workaround the running-container case
-  above warns against. Use the `immutable` URI query parameter instead,
-  which reads a WAL-mode database without ever trying to write to it or
-  create sidecar files:
+- **Container STOPPED** (the usual state around a promotion): **list the
+  directory first**, and check the size of `couchpotato.db-wal` beside
+  `couchpotato.db`, before trusting either command below. That size is the
+  one precondition that actually decides which command gives the right
+  answer, and unlike "is anything else holding the file open" (the
+  precondition this section used to state), it is observable just by
+  listing the directory, and it is correct -- measured below.
 
-  ```bash
-  sqlite3 "file:/var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db?immutable=1" \
-    "SELECT count(*), group_concat(json_extract(data,'\$.value'))
-       FROM documents
-      WHERE _t='property'
-        AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
-  ```
+  - **No `couchpotato.db-wal` file, or one present at 0 bytes.** The
+    write-ahead log has been fully folded back ("checkpointed") into the
+    main database file, so the base file already holds the whole truth. A
+    clean container stop does this automatically. `-readonly` fails
+    outright here with `Error: in prepare, unable to open database file
+    (14)`: a WAL-mode database cannot be opened read-only unless sqlite3
+    can also access its shared-memory file, and there is none live to
+    attach to. Dropping `-readonly` instead "works" in the sense that it
+    returns the right row, but it creates `-wal` and `-shm` sidecar files
+    next to the live database as a side effect of opening it for writing,
+    which is exactly the workaround the running-container case above warns
+    against. Use the `immutable` URI query parameter instead, which reads a
+    WAL-mode database without ever trying to write to it or create sidecar
+    files:
 
-  `immutable=1` only gives a correct answer when nothing else has the file
-  open: it skips WAL-awareness entirely and reads the base file as-is, so
-  pointed at a database a live process is still writing to it can return a
-  stale or plain wrong answer (measured: it reported the `documents` table
-  did not exist at all, because the schema and every row were still sitting
-  in the WAL, not yet checkpointed into the base file). Use it only once the
-  container is confirmed stopped.
+    ```bash
+    sqlite3 "file:/var/lib/plexmediaserver/CouchPotato/config/data/database_v2/couchpotato.db?immutable=1" \
+      "SELECT count(*), group_concat(json_extract(data,'\$.value'))
+         FROM documents
+        WHERE _t='property'
+          AND json_extract(data,'\$.identifier')='migration.clean_orphans.applied';"
+    ```
+
+  - **`couchpotato.db-wal` present at a nonzero size.** The write-ahead log
+    still holds committed data the base file does not have yet -- either
+    the container is actually running, or it stopped without finishing a
+    checkpoint (killed, crashed, host power loss). `immutable=1` is
+    UNTRUSTWORTHY in this state: it skips WAL-awareness entirely and reads
+    only the base file, so committed rows still sitting in the WAL are
+    invisible to it.
+
+    This section used to say `immutable=1` "only gives a correct answer
+    when nothing else has the file open" -- measured false. A real
+    `SQLiteAdapter`-created database, with the marker written through the
+    real `Env.prop` code path and the process then killed with `SIGKILL`
+    (so nothing was left holding the file open), still left a nonzero
+    `couchpotato.db-wal` behind, and `immutable=1` against it read the
+    marker as `0|` -- "still armed" in the table below -- when the true,
+    WAL-aware state was `1|true`, already applied. Acting on that wrong
+    `0|` by following the "Setting the marker" procedure below would insert
+    a SECOND marker row onto a database that already had one. Against an
+    emptier database the same gap read even worse: `immutable=1` reported
+    the `documents` table did not exist at all, because the schema itself
+    was still only in the WAL.
+
+    Do not reach for another one-shot flag here. The safe move is to start
+    the container and use the `-readonly` form from the "container
+    RUNNING" case above, which is WAL-aware and correct regardless of
+    whether the log has been checkpointed.
 
 Both forms return the same result shape:
 
@@ -595,6 +623,15 @@ container. This was verified end to end against a real adapter-created
 database: the row above, inserted this exact way into an otherwise-fresh
 database, read back through the real `Env.prop('migration.clean_orphans.applied')`
 call (not just the raw SQL check) as the string `'true'`.
+
+This INSERT itself leaves a zero-byte `couchpotato.db-wal` and a 32 KB
+`couchpotato.db-shm` sitting beside the database (measured) -- the same
+sidecar residue the running-container case above warns the write-mode
+workaround away from. That residue is harmless here: the `-wal` is empty,
+so the "no `couchpotato.db-wal`, or one present at 0 bytes" case above
+still applies, and `docker-entrypoint.sh:14` chowns `/config` and `/data`
+on every container start, so ownership left behind by an interactive root
+`sqlite3` session cannot lock the container out.
 
 **Standing operational rule:** the marker lives inside `couchpotato.db`, so
 any restore of that database -- including the DB restore in the Rollback

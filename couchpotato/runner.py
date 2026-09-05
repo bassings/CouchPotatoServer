@@ -350,11 +350,16 @@ def _run_orphan_cleanup(db, log):
     on any failure at all -- measured with `db.update` raising
     `ConflictError`, `Env.prop(MARKER, value='true')` raised NOTHING,
     produced a second `property` row for the same identifier, and the
-    marker still read back None afterwards. The same hazard, a failed
-    property write that does not raise and instead leaves duplicate rows,
-    is already documented in this file at the session-secret creation
-    below (see the comment at line 596 onward); it is not restated in full
-    here.
+    marker still read back None afterwards. This is a DIFFERENT mechanism
+    from the duplicate-row hazard documented at the session secret's
+    creation in `runCouchPotato` below: that one is a race between
+    concurrent first-time creates on a property store with no uniqueness
+    constraint on `identifier`. Here there is only one writer, and the
+    duplicate row comes from `setProperty`'s own silent fallback to
+    `db.insert` on any `db.update` failure, not from concurrency. Both end
+    up as duplicate rows in the same table for the same underlying reason,
+    no uniqueness constraint on `identifier`, but by different mechanisms,
+    so fixing one does not fix the other.
 
     Also NOT reliable: clean_orphaned_movies(db) raising when its scan
     fails. Its own scan loop catches `Exception`, logs a warning on ITS OWN
