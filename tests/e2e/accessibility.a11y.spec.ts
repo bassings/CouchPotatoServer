@@ -83,6 +83,33 @@ async function checkToggleA11y(page: any, pageName: string) {
   ).toBe(0);
 }
 
+// A11Y-001, AC-QA-4/AC-QA-5: scoped the same way checkToggleA11y is above,
+// and for the same reason. The wizard's later steps have pre-existing,
+// unrelated findings this task does not own (e.g. color-contrast on the
+// search-type hint text, tracked separately, not in A11Y-001's scope) --
+// a full checkA11y sweep on those steps would fail on THOSE and never
+// exercise whether label association actually holds once axe can see the
+// step at all. These rules are exactly the ones a missing or duplicated
+// accessible name trips.
+async function checkFieldNameA11y(page: any, pageName: string) {
+  const results = await new AxeBuilder({ page })
+    .withRules(['label', 'aria-input-field-name', 'select-name', 'duplicate-id', 'duplicate-id-aria', 'duplicate-id-active'])
+    .analyze();
+
+  if (results.violations.length > 0) {
+    console.log(`Field-name a11y violations on ${pageName}:`);
+    results.violations.forEach(violation => {
+      console.log(`  - ${violation.id}: ${violation.description}`);
+      violation.nodes.forEach(node => console.log(`    ${node.html}`));
+    });
+  }
+
+  expect(
+    results.violations.length,
+    `Found field-name a11y violations on ${pageName}: ${results.violations.map(v => v.id).join(', ')}`
+  ).toBe(0);
+}
+
 test.describe('Accessibility', () => {
   test('Wanted page should be accessible', async ({ page }) => {
     await page.goto('/');
@@ -253,7 +280,60 @@ test.describe('Accessibility', () => {
     // toggle switches at a non-canonical size (w-10 h-5) and without
     // role="switch"/:aria-checked/aria-label, which axe's aria-required-attr /
     // aria-allowed-attr rules would catch on any toggle actually in view.
-    await checkA11y(page, 'Setup Wizard');
+    await checkA11y(page, 'Setup Wizard (Welcome)');
+
+    // AC-QA-5 (A11Y-001): every step below this point used to go unscanned.
+    // The wizard is `x-show`-gated per step, so axe -- which correctly
+    // ignores hidden elements -- only ever saw the Welcome step above.
+    // specs/A11Y-001-form-labels-not-associated.md measured the gap this
+    // left: 118 SonarQube findings against 0 from axe, because SonarQube
+    // reads template source and axe reads the rendered DOM at a moment most
+    // of that source was not visible. Walk the real flow, the same shape
+    // navigateWizardToProviders above uses, and scan each step once its
+    // fields are actually visible -- opening the nested toggles too, so the
+    // fields that only render once a section is enabled (Newznab entries,
+    // Jackett credentials, a private tracker's fields, the chosen
+    // downloader's fields) are in the DOM when the scan runs, not skipped
+    // the same way the Welcome-only scan skipped everything below it.
+
+    // Step 2: Security -- username/password.
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(300);
+    await checkFieldNameA11y(page, 'Setup Wizard (Security)');
+
+    // Security -> Providers (Skip, no credentials needed for this scan).
+    await page.getByRole('button', { name: 'Skip' }).click();
+    await page.waitForTimeout(300);
+
+    // Step 3: Providers -- "Both" renders usenet and torrent sections
+    // together; enabling Newznab and Jackett reveals their credential
+    // fields, and expanding + enabling one private tracker reveals the
+    // `x-for` field loop (AC-A11Y-2's bound-id case).
+    await page.getByRole('button', { name: /^Both/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
+    await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
+    await page.getByRole('button', { name: /Private Trackers/ }).click();
+    await page.waitForTimeout(300);
+    await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
+    await page.waitForTimeout(300);
+    await checkFieldNameA11y(page, 'Setup Wizard (Providers)');
+
+    // Step 4: Downloader -- pick one client from each list so
+    // getDownloaderFields()'s x-html-injected markup actually renders, and
+    // enable Black Hole for its own folder fields.
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(500);
+    await page.getByRole('button', { name: 'SABnzbd' }).click();
+    await page.getByRole('button', { name: 'qBittorrent' }).click();
+    await page.getByRole('switch', { name: 'Enable Black Hole' }).click();
+    await page.waitForTimeout(300);
+    await checkFieldNameA11y(page, 'Setup Wizard (Downloader)');
+
+    // Step 5: Library -- renamer fields, on by default.
+    await page.getByRole('button', { name: 'Continue' }).click();
+    await page.waitForTimeout(500);
+    await checkFieldNameA11y(page, 'Setup Wizard (Library)');
   });
 
   test('Setup Wizard provider toggles are accessible and keyboard-operable', async ({ page }) => {

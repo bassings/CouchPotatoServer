@@ -78,3 +78,14 @@ is part of this change.
 
 1. `Web:S6819`, 39 findings, ARIA roles used where a semantic element exists.
 2. The remaining SonarQube backlog, sequenced and not batched.
+3. Colour contrast on the Providers step's search-type hint text (light
+   theme): "NZB indexers", "Torrent trackers" and "Maximum coverage" at
+   2.34:1 against a 4.5:1 requirement (axe `color-contrast`, serious).
+   Surfaced by AC-QA-5's extended E2E scan reaching the Providers step for
+   the first time; a different defect (WCAG 1.4.3) to the one this change
+   fixes, so it is recorded rather than fixed here. The wizard's later-step
+   scan in `tests/e2e/accessibility.a11y.spec.ts` is scoped to
+   `checkFieldNameA11y` (label/accessible-name rules only) rather than the
+   full `checkA11y`, for the same reason `checkToggleA11y` already is: an
+   unrelated pre-existing finding on a step must not mask the specific
+   regression that step's check exists to catch.

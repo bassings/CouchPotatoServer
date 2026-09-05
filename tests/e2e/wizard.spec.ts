@@ -48,11 +48,13 @@ test.describe('Wizard: a refused save must not read as success', () => {
       timeout: 10000,
     });
     await page.getByRole('button', { name: /Continue/i }).click();
-    // The security step's inputs carry no name or id -- they are Alpine
-    // `x-model` bindings -- so they are addressed by type + placeholder.
-    // An earlier draft used input[name="username"], matched nothing, and every
-    // test failed for a reason unrelated to what they assert. The control test
-    // below is what exposed that: it should PASS before any fix.
+    // The security step's inputs are Alpine `x-model` bindings and carry no
+    // `name`, so they are addressed by type + placeholder here rather than by
+    // name. (A11Y-001 later gave them ids for label association, but not
+    // names, so this locator still holds.) An earlier draft used
+    // input[name="username"], matched nothing, and every test failed for a
+    // reason unrelated to what they assert. The control test below is what
+    // exposed that: it should PASS before any fix.
     await expect(SECURITY_USERNAME(page)).toBeVisible({ timeout: 5000 });
   }
 
@@ -329,5 +331,52 @@ test.describe('Wizard: a refused save must not read as success', () => {
       page.locator('body'),
       'a successful save failed to advance the wizard',
     ).toContainText('Where to Search', { timeout: 5000, useInnerText: true });
+  });
+});
+
+/**
+ * A11Y-001, AC-A11Y-3: clicking a label must move focus to its field.
+ *
+ * This is the user-visible behaviour the for/id association actually buys --
+ * unlike the markup itself, it is directly observable, and it is the native
+ * browser behaviour for an explicit for/id pair, not something the app's own
+ * JS has to implement. Covers both the static case (Security step) and the
+ * bound-id case inside an `x-for` loop (a private tracker's fields), since
+ * the bound pair is the one AC-A11Y-2 warns is easy to get wrong -- a static
+ * id there would collide across iterations, but only a real click proves the
+ * pairing that ships actually resolves to a single field, not zero or many.
+ */
+test.describe('Wizard: clicking a label focuses its field (AC-A11Y-3)', () => {
+  test('the Security step labels focus their inputs', async ({ page }) => {
+    await page.goto('/wizard/');
+    await page.getByRole('button', { name: /Continue/i }).click();
+    await expect(page.locator('#wizard-username')).toBeVisible({ timeout: 5000 });
+
+    await page.locator('label[for="wizard-username"]').click();
+    await expect(page.locator('#wizard-username')).toBeFocused();
+
+    await page.locator('label[for="wizard-password"]').click();
+    await expect(page.locator('#wizard-password')).toBeFocused();
+  });
+
+  test('a private tracker field label, with its bound :for/:id, focuses its input', async ({
+    page,
+  }) => {
+    await page.goto('/wizard/');
+    await page.getByRole('button', { name: /Continue/i }).click(); // Welcome -> Security
+    await page.getByRole('button', { name: /^Skip$/i }).click(); // Security -> Providers
+    await page.getByRole('button', { name: /^Torrents/ }).click();
+    await page.getByRole('button', { name: /Private Trackers/ }).click();
+    await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
+
+    // Bound to `'wizard-tracker-' + tracker.id + '-' + field.name`; PassThePopcorn's
+    // id is 'passthepopcorn' and its first field is 'username' -- see
+    // setupWizard()'s privateTrackers data.
+    const label = page.locator('label[for="wizard-tracker-passthepopcorn-username"]');
+    const field = page.locator('#wizard-tracker-passthepopcorn-username');
+    await expect(field).toBeVisible({ timeout: 5000 });
+
+    await label.click();
+    await expect(field).toBeFocused();
   });
 });

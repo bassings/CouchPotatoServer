@@ -95,13 +95,13 @@
         
         <div class="space-y-4">
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">Username</label>
-            <input type="text" x-model="formData.username" placeholder="Leave empty to skip"
+            <label for="wizard-username" class="block text-xs text-cp-muted mb-1.5">Username</label>
+            <input id="wizard-username" type="text" x-model="formData.username" placeholder="Leave empty to skip"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
           </div>
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">Password</label>
-            <input type="password" x-model="formData.password" placeholder="Leave empty to skip"
+            <label for="wizard-password" class="block text-xs text-cp-muted mb-1.5">Password</label>
+            <input id="wizard-password" type="password" x-model="formData.password" placeholder="Leave empty to skip"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
           </div>
         </div>
@@ -162,10 +162,10 @@
             <div x-show="formData.newznab.enabled" x-transition class="space-y-3">
               <template x-for="(entry, idx) in formData.newznab.entries" :key="idx">
                 <div class="flex gap-2 items-center">
-                  <input type="text" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'" 
+                  <input type="text" aria-label="Newznab indexer URL" :placeholder="'Indexer URL (e.g. https://api.nzbgeek.info)'" 
                          x-model="entry.host"
                          class="flex-[2] bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
-                  <input type="password" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
+                  <input type="password" aria-label="Newznab API key" placeholder="API Key" x-model="entry.api_key" autocomplete="new-password"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="formData.newznab.entries.splice(idx, 1)" x-show="formData.newznab.entries.length > 1"
                           class="text-cp-muted hover:text-cp-danger transition-colors">
@@ -259,13 +259,13 @@
               </div>
               <div x-show="formData.torrentpotato.enabled" x-transition class="space-y-3">
                 <div>
-                  <label class="block text-xs text-cp-muted mb-1">Jackett URL</label>
-                  <input type="text" x-model="formData.torrentpotato.jackett_url" placeholder="http://localhost:9117"
+                  <label for="wizard-jackett-url" class="block text-xs text-cp-muted mb-1">Jackett URL</label>
+                  <input id="wizard-jackett-url" type="text" x-model="formData.torrentpotato.jackett_url" placeholder="http://localhost:9117"
                          class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                 </div>
                 <div>
-                  <label class="block text-xs text-cp-muted mb-1">Jackett API Key</label>
-                  <input type="password" x-model="formData.torrentpotato.jackett_api_key" placeholder="Your Jackett API key"
+                  <label for="wizard-jackett-api-key" class="block text-xs text-cp-muted mb-1">Jackett API Key</label>
+                  <input id="wizard-jackett-api-key" type="password" x-model="formData.torrentpotato.jackett_api_key" placeholder="Your Jackett API key"
                          class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                 </div>
                 <button @click="syncJackett()" :disabled="jackettSyncing"
@@ -310,7 +310,7 @@
                   <div x-show="tracker.enabled" x-transition class="grid grid-cols-2 gap-2 mt-3">
                     <template x-for="field in tracker.fields" :key="field.name">
                       <div :class="field.full ? 'col-span-2' : ''">
-                        <label class="block text-[10px] text-cp-muted mb-1" x-text="field.label"></label>
+                        <label :for="'wizard-tracker-' + tracker.id + '-' + field.name" class="block text-[10px] text-cp-muted mb-1" x-text="field.label"></label>
                         {#- autocomplete="new-password" for the same reason as the
                             direct credential inputs: these render as
                             type="password" for every tracker's `password` and
@@ -330,7 +330,7 @@
                             for tracker usernames" has found the cause, and the
                             fix is to move the attribute into the field data,
                             not to drop it. -#}
-                        <input :type="field.type || 'text'" x-model="formData.privateTrackers[tracker.id][field.name]"
+                        <input :id="'wizard-tracker-' + tracker.id + '-' + field.name" :type="field.type || 'text'" x-model="formData.privateTrackers[tracker.id][field.name]"
                                autocomplete="new-password"
                                :placeholder="field.placeholder || ''"
                                class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-1.5 text-xs focus:outline-none focus:border-cp-accent/30">
@@ -421,17 +421,17 @@
             </div>
             <div x-show="formData.blackholeEnabled" x-transition class="space-y-3">
               <div>
-                <label class="block text-xs text-cp-muted mb-1">NZB Watch Folder</label>
+                <label for="wizard-blackhole-nzb-dir" class="block text-xs text-cp-muted mb-1">NZB Watch Folder</label>
                 <div class="flex gap-2">
-                  <input type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch"
+                  <input id="wizard-blackhole-nzb-dir" type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="browseDirectory('blackhole_nzb')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
               </div>
               <div>
-                <label class="block text-xs text-cp-muted mb-1">Torrent Watch Folder</label>
+                <label for="wizard-blackhole-torrent-dir" class="block text-xs text-cp-muted mb-1">Torrent Watch Folder</label>
                 <div class="flex gap-2">
-                  <input type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch"
+                  <input id="wizard-blackhole-torrent-dir" type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch"
                          class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   <button @click="browseDirectory('blackhole_torrent')" class="px-3 py-2 rounded-md text-xs bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors">Browse</button>
                 </div>
@@ -458,18 +458,18 @@
               <template x-if="formData.downloader === 'sabnzbd'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080"
+                    <label for="wizard-legacy-sabnzbd-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-sabnzbd-host" type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">API Key</label>
-                    <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="new-password" placeholder="Your SABnzbd API key"
+                    <label for="wizard-legacy-sabnzbd-api-key" class="block text-xs text-cp-muted mb-1">API Key</label>
+                    <input id="wizard-legacy-sabnzbd-api-key" type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="new-password" placeholder="Your SABnzbd API key"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Category (optional)</label>
-                    <input type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies"
+                    <label for="wizard-legacy-sabnzbd-category" class="block text-xs text-cp-muted mb-1">Category (optional)</label>
+                    <input id="wizard-legacy-sabnzbd-category" type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                 </div>
@@ -479,19 +479,19 @@
               <template x-if="formData.downloader === 'nzbget'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789"
+                    <label for="wizard-legacy-nzbget-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-nzbget-host" type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username</label>
-                      <input type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget"
+                      <label for="wizard-legacy-nzbget-username" class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input id="wizard-legacy-nzbget-username" type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password</label>
-                      <input type="password" x-model="formData.downloaderConfig.nzbget.password"
+                      <label for="wizard-legacy-nzbget-password" class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input id="wizard-legacy-nzbget-password" type="password" x-model="formData.downloaderConfig.nzbget.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -502,19 +502,19 @@
               <template x-if="formData.downloader === 'qbittorrent'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080"
+                    <label for="wizard-legacy-qbittorrent-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-qbittorrent-host" type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username</label>
-                      <input type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin"
+                      <label for="wizard-legacy-qbittorrent-username" class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input id="wizard-legacy-qbittorrent-username" type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password</label>
-                      <input type="password" x-model="formData.downloaderConfig.qbittorrent.password"
+                      <label for="wizard-legacy-qbittorrent-password" class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input id="wizard-legacy-qbittorrent-password" type="password" x-model="formData.downloaderConfig.qbittorrent.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -525,19 +525,19 @@
               <template x-if="formData.downloader === 'transmission'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091"
+                    <label for="wizard-legacy-transmission-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-transmission-host" type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
-                      <input type="text" x-model="formData.downloaderConfig.transmission.username"
+                      <label for="wizard-legacy-transmission-username" class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+                      <input id="wizard-legacy-transmission-username" type="text" x-model="formData.downloaderConfig.transmission.username"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
-                      <input type="password" x-model="formData.downloaderConfig.transmission.password"
+                      <label for="wizard-legacy-transmission-password" class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+                      <input id="wizard-legacy-transmission-password" type="password" x-model="formData.downloaderConfig.transmission.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -548,13 +548,13 @@
               <template x-if="formData.downloader === 'deluge'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112"
+                    <label for="wizard-legacy-deluge-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-deluge-host" type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Password</label>
-                    <input type="password" x-model="formData.downloaderConfig.deluge.password"
+                    <label for="wizard-legacy-deluge-password" class="block text-xs text-cp-muted mb-1">Password</label>
+                    <input id="wizard-legacy-deluge-password" type="password" x-model="formData.downloaderConfig.deluge.password"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                 </div>
@@ -564,19 +564,19 @@
               <template x-if="formData.downloader === 'rtorrent'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
-                    <input type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2"
+                    <label for="wizard-legacy-rtorrent-host" class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
+                    <input id="wizard-legacy-rtorrent-host" type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
-                      <input type="text" x-model="formData.downloaderConfig.rtorrent.username"
+                      <label for="wizard-legacy-rtorrent-username" class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+                      <input id="wizard-legacy-rtorrent-username" type="text" x-model="formData.downloaderConfig.rtorrent.username"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
-                      <input type="password" x-model="formData.downloaderConfig.rtorrent.password"
+                      <label for="wizard-legacy-rtorrent-password" class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+                      <input id="wizard-legacy-rtorrent-password" type="password" x-model="formData.downloaderConfig.rtorrent.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -587,19 +587,19 @@
               <template x-if="formData.downloader === 'utorrent'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui"
+                    <label for="wizard-legacy-utorrent-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-utorrent-host" type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username</label>
-                      <input type="text" x-model="formData.downloaderConfig.utorrent.username"
+                      <label for="wizard-legacy-utorrent-username" class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input id="wizard-legacy-utorrent-username" type="text" x-model="formData.downloaderConfig.utorrent.username"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password</label>
-                      <input type="password" x-model="formData.downloaderConfig.utorrent.password"
+                      <label for="wizard-legacy-utorrent-password" class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input id="wizard-legacy-utorrent-password" type="password" x-model="formData.downloaderConfig.utorrent.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -610,13 +610,13 @@
               <template x-if="formData.downloader === 'blackhole'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">NZB Directory</label>
-                    <input type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch/folder"
+                    <label for="wizard-legacy-blackhole-nzb-dir" class="block text-xs text-cp-muted mb-1">NZB Directory</label>
+                    <input id="wizard-legacy-blackhole-nzb-dir" type="text" x-model="formData.downloaderConfig.blackhole.nzb_directory" placeholder="/path/to/nzb/watch/folder"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Torrent Directory</label>
-                    <input type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch/folder"
+                    <label for="wizard-legacy-blackhole-torrent-dir" class="block text-xs text-cp-muted mb-1">Torrent Directory</label>
+                    <input id="wizard-legacy-blackhole-torrent-dir" type="text" x-model="formData.downloaderConfig.blackhole.torrent_directory" placeholder="/path/to/torrent/watch/folder"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                 </div>
@@ -626,19 +626,19 @@
               <template x-if="formData.downloader === 'synology'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">Host</label>
-                    <input type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000"
+                    <label for="wizard-legacy-synology-host" class="block text-xs text-cp-muted mb-1">Host</label>
+                    <input id="wizard-legacy-synology-host" type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                   <div class="grid grid-cols-2 gap-3">
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Username</label>
-                      <input type="text" x-model="formData.downloaderConfig.synology.username"
+                      <label for="wizard-legacy-synology-username" class="block text-xs text-cp-muted mb-1">Username</label>
+                      <input id="wizard-legacy-synology-username" type="text" x-model="formData.downloaderConfig.synology.username"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                     <div>
-                      <label class="block text-xs text-cp-muted mb-1">Password</label>
-                      <input type="password" x-model="formData.downloaderConfig.synology.password"
+                      <label for="wizard-legacy-synology-password" class="block text-xs text-cp-muted mb-1">Password</label>
+                      <input id="wizard-legacy-synology-password" type="password" x-model="formData.downloaderConfig.synology.password"
                              class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                     </div>
                   </div>
@@ -649,8 +649,8 @@
               <template x-if="formData.downloader === 'putio'">
                 <div class="space-y-3">
                   <div>
-                    <label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
-                    <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="new-password" placeholder="Your Put.io OAuth token"
+                    <label for="wizard-legacy-putio-oauth-token" class="block text-xs text-cp-muted mb-1">OAuth Token</label>
+                    <input id="wizard-legacy-putio-oauth-token" type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="new-password" placeholder="Your Put.io OAuth token"
                            class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30">
                   </div>
                 </div>
@@ -697,9 +697,9 @@
 
         <div x-show="formData.renamer.enabled" x-transition class="space-y-4">
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">Download Folder</label>
+            <label for="wizard-renamer-from" class="block text-xs text-cp-muted mb-1.5">Download Folder</label>
             <div class="flex gap-2">
-              <input type="text" x-model="formData.renamer.from" placeholder="/path/to/downloads/complete"
+              <input id="wizard-renamer-from" type="text" x-model="formData.renamer.from" placeholder="/path/to/downloads/complete"
                      class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
               <button @click="browseDirectory('renamer_from')" type="button"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
@@ -710,9 +710,9 @@
           </div>
           
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">Movie Library</label>
+            <label for="wizard-renamer-to" class="block text-xs text-cp-muted mb-1.5">Movie Library</label>
             <div class="flex gap-2">
-              <input type="text" x-model="formData.renamer.to" placeholder="/path/to/movies"
+              <input id="wizard-renamer-to" type="text" x-model="formData.renamer.to" placeholder="/path/to/movies"
                      class="flex-1 bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
               <button @click="browseDirectory('renamer_to')" type="button"
                       class="px-4 py-2 rounded-md text-sm bg-white/[0.04] text-cp-muted hover:text-cp-text hover:bg-white/[0.06] transition-colors shrink-0">
@@ -723,15 +723,15 @@
           </div>
 
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">Folder Naming</label>
-            <input type="text" x-model="formData.renamer.folder_name" placeholder="<namethe> (<year>)"
+            <label for="wizard-renamer-folder-name" class="block text-xs text-cp-muted mb-1.5">Folder Naming</label>
+            <input id="wizard-renamer-folder-name" type="text" x-model="formData.renamer.folder_name" placeholder="<namethe> (<year>)"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
             <p class="text-[10px] text-cp-muted mt-1">Example: <span class="text-cp-text">The Dark Knight (2008)</span></p>
           </div>
 
           <div>
-            <label class="block text-xs text-cp-muted mb-1.5">File Naming</label>
-            <input type="text" x-model="formData.renamer.file_name" placeholder="<thename><cd>.<ext>"
+            <label for="wizard-renamer-file-name" class="block text-xs text-cp-muted mb-1.5">File Naming</label>
+            <input id="wizard-renamer-file-name" type="text" x-model="formData.renamer.file_name" placeholder="<thename><cd>.<ext>"
                    class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-4 py-2.5 text-sm focus:outline-none focus:border-cp-accent/30">
             <p class="text-[10px] text-cp-muted mt-1">Example: <span class="text-cp-text">The Dark Knight.mkv</span></p>
           </div>
@@ -1415,74 +1415,74 @@ function setupWizard() {
     getDownloaderFields(id) {
       const configs = {
         sabnzbd: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-          <div><label class="block text-xs text-cp-muted mb-1">API Key</label>
-          <input type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="new-password" placeholder="Your SABnzbd API key" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-          <div><label class="block text-xs text-cp-muted mb-1">Category (optional)</label>
-          <input type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
+          <div><label for="wizard-dl-sabnzbd-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-sabnzbd-host" type="text" x-model="formData.downloaderConfig.sabnzbd.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-sabnzbd-api-key" class="block text-xs text-cp-muted mb-1">API Key</label>
+          <input id="wizard-dl-sabnzbd-api-key" type="password" x-model="formData.downloaderConfig.sabnzbd.api_key" autocomplete="new-password" placeholder="Your SABnzbd API key" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-sabnzbd-category" class="block text-xs text-cp-muted mb-1">Category (optional)</label>
+          <input id="wizard-dl-sabnzbd-category" type="text" x-model="formData.downloaderConfig.sabnzbd.category" placeholder="movies" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
         nzbget: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-nzbget-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-nzbget-host" type="text" x-model="formData.downloaderConfig.nzbget.host" placeholder="http://localhost:6789" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
-            <input type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
-            <input type="password" x-model="formData.downloaderConfig.nzbget.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-nzbget-username" class="block text-xs text-cp-muted mb-1">Username</label>
+            <input id="wizard-dl-nzbget-username" type="text" x-model="formData.downloaderConfig.nzbget.username" placeholder="nzbget" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-nzbget-password" class="block text-xs text-cp-muted mb-1">Password</label>
+            <input id="wizard-dl-nzbget-password" type="password" x-model="formData.downloaderConfig.nzbget.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         qbittorrent: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-qbittorrent-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-qbittorrent-host" type="text" x-model="formData.downloaderConfig.qbittorrent.host" placeholder="http://localhost:8080" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
-            <input type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
-            <input type="password" x-model="formData.downloaderConfig.qbittorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-qbittorrent-username" class="block text-xs text-cp-muted mb-1">Username</label>
+            <input id="wizard-dl-qbittorrent-username" type="text" x-model="formData.downloaderConfig.qbittorrent.username" placeholder="admin" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-qbittorrent-password" class="block text-xs text-cp-muted mb-1">Password</label>
+            <input id="wizard-dl-qbittorrent-password" type="password" x-model="formData.downloaderConfig.qbittorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         transmission: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-transmission-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-transmission-host" type="text" x-model="formData.downloaderConfig.transmission.host" placeholder="http://localhost:9091" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
-            <input type="text" x-model="formData.downloaderConfig.transmission.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
-            <input type="password" x-model="formData.downloaderConfig.transmission.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-transmission-username" class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+            <input id="wizard-dl-transmission-username" type="text" x-model="formData.downloaderConfig.transmission.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-transmission-password" class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+            <input id="wizard-dl-transmission-password" type="password" x-model="formData.downloaderConfig.transmission.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         deluge: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-          <div><label class="block text-xs text-cp-muted mb-1">Password</label>
-          <input type="password" x-model="formData.downloaderConfig.deluge.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
+          <div><label for="wizard-dl-deluge-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-deluge-host" type="text" x-model="formData.downloaderConfig.deluge.host" placeholder="http://localhost:8112" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-deluge-password" class="block text-xs text-cp-muted mb-1">Password</label>
+          <input id="wizard-dl-deluge-password" type="password" x-model="formData.downloaderConfig.deluge.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`,
         rtorrent: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
-          <input type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-rtorrent-host" class="block text-xs text-cp-muted mb-1">Host (SCGI/RPC URL)</label>
+          <input id="wizard-dl-rtorrent-host" type="text" x-model="formData.downloaderConfig.rtorrent.host" placeholder="scgi://localhost:5000 or http://localhost/RPC2" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username (optional)</label>
-            <input type="text" x-model="formData.downloaderConfig.rtorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password (optional)</label>
-            <input type="password" x-model="formData.downloaderConfig.rtorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-rtorrent-username" class="block text-xs text-cp-muted mb-1">Username (optional)</label>
+            <input id="wizard-dl-rtorrent-username" type="text" x-model="formData.downloaderConfig.rtorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-rtorrent-password" class="block text-xs text-cp-muted mb-1">Password (optional)</label>
+            <input id="wizard-dl-rtorrent-password" type="password" x-model="formData.downloaderConfig.rtorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         utorrent: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-utorrent-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-utorrent-host" type="text" x-model="formData.downloaderConfig.utorrent.host" placeholder="http://localhost:8080/gui" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
-            <input type="text" x-model="formData.downloaderConfig.utorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
-            <input type="password" x-model="formData.downloaderConfig.utorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-utorrent-username" class="block text-xs text-cp-muted mb-1">Username</label>
+            <input id="wizard-dl-utorrent-username" type="text" x-model="formData.downloaderConfig.utorrent.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-utorrent-password" class="block text-xs text-cp-muted mb-1">Password</label>
+            <input id="wizard-dl-utorrent-password" type="password" x-model="formData.downloaderConfig.utorrent.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         synology: `
-          <div><label class="block text-xs text-cp-muted mb-1">Host</label>
-          <input type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+          <div><label for="wizard-dl-synology-host" class="block text-xs text-cp-muted mb-1">Host</label>
+          <input id="wizard-dl-synology-host" type="text" x-model="formData.downloaderConfig.synology.host" placeholder="http://diskstation:5000" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           <div class="grid grid-cols-2 gap-3">
-            <div><label class="block text-xs text-cp-muted mb-1">Username</label>
-            <input type="text" x-model="formData.downloaderConfig.synology.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
-            <div><label class="block text-xs text-cp-muted mb-1">Password</label>
-            <input type="password" x-model="formData.downloaderConfig.synology.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-synology-username" class="block text-xs text-cp-muted mb-1">Username</label>
+            <input id="wizard-dl-synology-username" type="text" x-model="formData.downloaderConfig.synology.username" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
+            <div><label for="wizard-dl-synology-password" class="block text-xs text-cp-muted mb-1">Password</label>
+            <input id="wizard-dl-synology-password" type="password" x-model="formData.downloaderConfig.synology.password" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>
           </div>`,
         putio: `
-          <div><label class="block text-xs text-cp-muted mb-1">OAuth Token</label>
-          <input type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="new-password" placeholder="Your Put.io OAuth token" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`
+          <div><label for="wizard-dl-putio-oauth-token" class="block text-xs text-cp-muted mb-1">OAuth Token</label>
+          <input id="wizard-dl-putio-oauth-token" type="password" x-model="formData.downloaderConfig.putio.oauth_token" autocomplete="new-password" placeholder="Your Put.io OAuth token" class="w-full bg-white/[0.03] border border-white/[0.06] rounded-md px-3 py-2 text-xs focus:outline-none focus:border-cp-accent/30"></div>`
       };
       return configs[id] || '';
     },
