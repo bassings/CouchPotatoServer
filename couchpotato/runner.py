@@ -295,6 +295,110 @@ def _open_or_create_database(db, data_dir, base_path):
     return False
 
 
+#: Property-store marker (Env.prop, couchpotato/environment.py:79 -- the
+#: existing `property` document table, no schema change) recording that the
+#: one-time orphan cleanup migration below has completed.
+ORPHAN_CLEANUP_MARKER = 'migration.clean_orphans.applied'
+
+
+def _run_orphan_cleanup(db, log):
+    """Run the orphaned-movie cleanup ONCE, gated on the property marker
+    ORPHAN_CLEANUP_MARKER, instead of on every boot (BUG-017: an
+    unconditional call deleted a real library entry, "Passengers"
+    (tt1355644), on a routine production restart).
+
+    Deliberately does not touch couchpotato/core/migration/clean_orphans.py
+    itself (AC-SIMP-6): the classification logic there is separate, known-
+    imperfect, recorded debt, and keeping this change to the gate alone
+    means a behaviour change in the cleanup can never be confused with the
+    gate that decides whether it runs.
+
+    This function has two different behaviours for "the marker could not
+    be read", and they must not be confused with each other:
+
+    - An exception that ESCAPES Settings.getProperty (for example
+      `self.log.debug(...)` itself raising on the miss path, because
+      `self.log` is None until `Settings.setFile()` has run) now fails
+      SAFE. It propagates up through Env.prop into the try block below,
+      the single except clause at the bottom of this function catches it,
+      logs the "did not complete, will retry" warning, and the cleanup is
+      NOT run. The marker stays unset and the next boot retries (AC-DATA-3,
+      fix round two FIX A). Round one instead wrapped this read in its own
+      nested try/except that treated the failure as "not yet applied" and
+      ran the cleanup anyway; measured against a marker that was genuinely
+      already set, that ran a completed destructive migration a second
+      time with no warning logged at any level. The nested try/except is
+      gone.
+    - A read failure that Settings.getProperty SWALLOWS INTERNALLY (any
+      `db.get` exception other than a corrupt document,
+      couchpotato/core/settings.py:818) still returns None from
+      Env.prop, indistinguishable here from "never set". This function
+      cannot tell that apart, so it still fails OPEN on that path and
+      attempts the run: a marker document present with its `value` field
+      missing reads back as None while the media table reads just fine --
+      a property read and a media read are different reads over the same
+      db -- and the cleanup then runs and deletes for real. This residual
+      fail-open path is real, is not touched by this fix, and is recorded
+      as debt below rather than argued away.
+
+    A completed run's marker WRITE (Env.prop(ORPHAN_CLEANUP_MARKER,
+    value='true') below) failing is what actually delivers most retries in
+    practice (AC-DATA-3): if it raises, this function's except clause
+    catches it and leaves the marker unset. But a raise is not guaranteed.
+    `Settings.setProperty` (couchpotato/core/settings.py:834-850) wraps its
+    `db.update` in a bare `except Exception:` and falls back to `db.insert`
+    on any failure at all -- measured with `db.update` raising
+    `ConflictError`, `Env.prop(MARKER, value='true')` raised NOTHING,
+    produced a second `property` row for the same identifier, and the
+    marker still read back None afterwards. This is a DIFFERENT mechanism
+    from the duplicate-row hazard documented at the session secret's
+    creation in `runCouchPotato` below: that one is a race between
+    concurrent first-time creates on a property store with no uniqueness
+    constraint on `identifier`. Here there is only one writer, and the
+    duplicate row comes from `setProperty`'s own silent fallback to
+    `db.insert` on any `db.update` failure, not from concurrency. Both end
+    up as duplicate rows in the same table for the same underlying reason,
+    no uniqueness constraint on `identifier`, but by different mechanisms,
+    so fixing one does not fix the other.
+
+    Also NOT reliable: clean_orphaned_movies(db) raising when its scan
+    fails. Its own scan loop catches `Exception`, logs a warning on ITS OWN
+    logger, and returns 0 (couchpotato/core/migration/clean_orphans.py:
+    66-70) -- a scan that failed completely is recorded here as a
+    successful migration that "removed 0", and the marker gets set
+    (recorded as debt below).
+    """
+    from couchpotato.environment import Env
+
+    try:
+        already_applied = Env.prop(ORPHAN_CLEANUP_MARKER)
+
+        if already_applied:
+            log.info('Orphan cleanup skipped: already applied.')
+            return
+
+        from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
+        n_orphans = clean_orphaned_movies(db)
+        # Logged BEFORE the marker write below, not after: a marker write
+        # that itself fails (locked or read-only database, disk full,
+        # another writer) must still leave an accurate count of what was
+        # just deleted in the log, rather than the only line on this
+        # logger reading "skipped" on a boot that destroyed real records.
+        log.info('Orphan cleanup ran: removed %d orphaned movie entries with no metadata.', n_orphans)
+        # Mark applied only once the scan has actually completed -- a scan
+        # that finds nothing to remove has still run and must not be
+        # retried on every future boot (AC-DATA-2).
+        Env.prop(ORPHAN_CLEANUP_MARKER, value='true')
+    except Exception as e:
+        # Marker deliberately NOT set here -- a failed run must be free to
+        # retry on the next start rather than being silently skipped
+        # forever (AC-DATA-3). Worded so this can never be confused with
+        # the "already applied" INFO line above: that line means finished
+        # and good, this one means armed and will retry, and they used to
+        # share the "Orphan cleanup skipped" prefix.
+        log.warning('Orphan cleanup did not complete, will retry on next start: %s', e)
+
+
 def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=None, desktop=None):
 
     try:
@@ -472,14 +576,10 @@ def runCouchPotato(options, base_path, args, data_dir=None, log_dir=None, Env=No
         log.info('Starting server on port %(port)s', config)
     except Exception:
         pass
-    # Clean orphaned movie entries (Py2 migration: dead IMDB IDs with no metadata)
-    try:
-        from couchpotato.core.migration.clean_orphans import clean_orphaned_movies
-        n_orphans = clean_orphaned_movies(db)
-        if n_orphans:
-            log.info('Removed %d orphaned movie entries with no metadata.', n_orphans)
-    except Exception as e:
-        log.warning('Orphan cleanup skipped: %s', e)
+    # Clean orphaned movie entries -- one-time migration, gated so it runs
+    # once per install rather than on every boot (BUG-017: an unconditional
+    # call deleted a real library entry on a routine production restart).
+    _run_orphan_cleanup(db, log)
 
     # Fix release quality values (detect from name instead of searched quality)
     try:
