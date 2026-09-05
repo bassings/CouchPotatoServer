@@ -876,22 +876,40 @@ test.describe('Accessibility', () => {
           return 0.2126 * chan(c.r) + 0.7152 * chan(c.g) + 0.0722 * chan(c.b);
         };
 
-        // Walk up collecting every background layer until an OPAQUE one, then
-        // composite them back down. The surface the ring is painted over is
-        // the composite, not the first layer with any colour in it.
+        // The surface under the ring, composited. Three things this has to get
+        // right, each of which was wrong in an earlier version of this helper
+        // and each of which was caught by review rather than by running it.
         //
-        // The earlier version stopped at the first layer with `a > 0` and used
-        // its raw rgb as though it were solid. This app's fields are
-        // `bg-white/[0.03]`, i.e. rgba(255,255,255,0.03) over a near-black
-        // page, so that read the surface as WHITE and measured the ring at
-        // 2.01:1 against it. Composited properly the same surface is
-        // rgb(17,17,22) and the ring measures 9.36:1. The bug was in this
-        // maths, not in the CSS under test: a guard that fails for the wrong
-        // reason is as useless as one that passes for the wrong reason.
-        let node: HTMLElement | null = el;
+        // 1. START AT THE PARENT, not at `el`. `outline-offset: 2px` paints the
+        //    ring OUTSIDE the element's border box, and an element's own
+        //    background is clipped to that box, so the element's own fill is
+        //    never under its own ring. Starting at `el` produces a false PASS,
+        //    demonstrated: a control with an opaque dark fill sitting on a
+        //    #35c5f4 parent has no visible ring at all and measured 9.67:1.
+        //    It also produces a false FAIL on the wizard's Continue button,
+        //    whose fill is the ring colour: 1.00:1 for a ring you can plainly
+        //    see.
+        // 2. COMPOSITE the layers rather than taking the first with any colour
+        //    in it. The fields are `bg-white/[0.03]` over `bg-cp-card`, so
+        //    reading the first layer raw treats a 3 per cent white veil as
+        //    solid WHITE and measured the ring at 2.01:1, failing a fix that
+        //    was correct.
+        // 3. If the walk reaches the top without ever finding an opaque layer,
+        //    THROW. Seeding the composite from a faint layer as though it were
+        //    solid paint reported 10.44:1 for a ring measuring about 2:1 on a
+        //    white canvas. Not reachable while `body` carries an opaque
+        //    background, which it does, but a guard must not guess.
+        //
+        // Known limit, stated rather than implied: this walks DOM ancestry,
+        // which is not paint order. An absolutely positioned sibling, such as
+        // the gradient overlays at partials/movie_detail.html:56-57, can be
+        // the real backdrop and this will step past it. Valid only for
+        // elements whose backdrop comes from their own ancestors.
+        let node: HTMLElement | null = el.parentElement;
         const layers: { r: number; g: number; b: number; a: number }[] = [];
         let bg: { r: number; g: number; b: number } | null = null;
         let bgOwner = '';
+        let foundOpaque = false;
         while (node) {
           const c = parseColor(window.getComputedStyle(node).backgroundColor);
           if (c && c.a > 0) {
@@ -899,11 +917,21 @@ test.describe('Accessibility', () => {
               bgOwner = node.id ? `#${node.id}` : (node.className.toString().split(/\s+/)[0] || node.tagName);
             }
             layers.push(c);
-            if (c.a >= 1) break;
+            if (c.a >= 1) {
+              foundOpaque = true;
+              break;
+            }
           }
           node = node.parentElement;
         }
-        // Composite bottom-up: the last layer collected is the lowest.
+        if (!foundOpaque) {
+          throw new Error(
+            `no opaque backdrop found above ${el.id ? '#' + el.id : el.tagName}; ` +
+            'the contrast below the ring cannot be computed, so this check cannot report a verdict',
+          );
+        }
+        // Composite bottom-up: the last layer collected is the lowest, and it
+        // is opaque, so it seeds the stack.
         for (let i = layers.length - 1; i >= 0; i--) {
           const c = layers[i];
           bg = bg === null
