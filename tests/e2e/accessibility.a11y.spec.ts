@@ -453,19 +453,28 @@ test.describe('Accessibility', () => {
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
     await page.getByRole('button', { name: /Private Trackers/ }).click();
     await page.waitForTimeout(300);
+    // TWO trackers enabled, not one: a single enabled tracker cannot prove
+    // B2's fix, because a static id/for pair inside the field loop would
+    // never collide with itself -- it only collides once a second tracker's
+    // identically-named "Username"/"Passkey" fields are ALSO visible.
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
+    await page.getByRole('switch', { name: 'Enable HDBits' }).click();
     await page.waitForTimeout(300);
     await assertWizardStepShowing(page, 'Where to Search', '#wizard-jackett-url');
-    // A5: floor measured directly -- 7 fields (2 Newznab entry, 2 Jackett,
-    // 3 PassThePopcorn), before B1's second indexer entry below adds 2 more.
-    await checkFieldNameA11y(page, 'Setup Wizard (Providers)', 7);
+    // A5: floor measured directly -- 9 fields (2 Newznab entry, 2 Jackett,
+    // 3 PassThePopcorn, 2 HDBits), before B1's second indexer entry below
+    // adds 2 more.
+    await checkFieldNameA11y(page, 'Setup Wizard (Providers)', 9);
 
-    // B2 regression coverage: PassThePopcorn's "Username" is grouped by
-    // tracker name so a second enabled tracker's own "Username" is
-    // distinguishable the same way the Usenet/Torrent client groups are
-    // checked further below.
+    // B2 regression coverage: PassThePopcorn's and HDBits' "Username" fields
+    // are identically named but grouped by tracker name, so assistive tech
+    // can tell them apart the same way the Usenet/Torrent client groups
+    // (checked further below) disambiguate two "Host" fields.
     await expect(
       page.getByRole('group', { name: 'PassThePopcorn' }).getByLabel('Username'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('group', { name: 'HDBits' }).getByLabel('Username'),
     ).toBeVisible();
 
     // B1/B3 regression coverage: add a second Newznab indexer entry so the
@@ -487,7 +496,7 @@ test.describe('Accessibility', () => {
     ).not.toBe(secondName);
     const removeButtons = page.getByRole('button', { name: /^Remove indexer \d+$/ });
     await expect(removeButtons).toHaveCount(2);
-    await checkFieldNameA11y(page, 'Setup Wizard (Providers, two indexers)', 9);
+    await checkFieldNameA11y(page, 'Setup Wizard (Providers, two indexers)', 11);
 
     // Step 4: Downloader -- pick one client from each list so
     // getDownloaderFields()'s x-html-injected markup actually renders, and
