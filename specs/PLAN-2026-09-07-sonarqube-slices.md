@@ -27,8 +27,8 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
 
 ## Tasks
 
-- [x] T1: `typescript:S2925` fixed waits, in the two files already touched (32
-      of 80), state: merged as #305 pending
+- [ ] T1: `typescript:S2925` fixed waits, in the two files already touched (32
+      of 80), state: awaiting-ci #305
 - [ ] T2: assess and fix `javascript:S1121`, assignments inside sub-expressions
       (57). Genuinely error-prone; expect mostly fix, state: queued
 - [ ] T3: assess and fix `python:S9073`, composite assertions in tests (59).
@@ -56,3 +56,15 @@ the RULE, not the file: one judgement per pattern rather than per occurrence.
       dismissed and deliberately left open, state: queued (needs: T8)
 
 ## Conductor log
+
+- Tick 1, 2026-09-07. First invocation, running under /loop dynamic pacing.
+  Armed `.claude/active-plan`. Reconciled by measurement rather than memory:
+  T1 is PR #305, MERGEABLE, 5 checks pending, none failed, so its state is
+  awaiting-ci, not merged as the plan file had optimistically recorded.
+  Corrected. Plan file itself raised as #306 (docs only). T2 has no `needs:`
+  edge so it is started this tick rather than waiting on T1. Fix rounds on
+  any task so far: 0. Deliberately NOT fanning out beyond one implementation
+  track: this machine is 2.4 GB into swap with five Claude sessions and a
+  3.9 GB VM resident, and concurrent E2E suites already destroyed two runs
+  today. Armed: CI watches on #305 and #306, and the T2 implementer. Next
+  wake expects #305 and #306 green and T2 reporting an assessment.
