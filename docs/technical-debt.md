@@ -140,6 +140,38 @@ result. Getting it wrong the other way files a bug against working code.
 - **The legacy `/old` UI's `movie.js` reads `info.release_date`** for display
   and has therefore always shown nothing. Harmless — that stack is
   unreachable (`/old/*` redirects) — but it goes away with UI-CLEANUP.
+- **SonarQube `javascript:S1121` (assignment inside a sub-expression), 57
+  findings across 12 legacy `/old`-UI static files: LEFT OPEN, RECORDED, not
+  fixed.** Every finding is the one shape: `self.foo = new Element(...)`
+  (or a `BlockMenu`/other component instance) used as an argument inside a
+  MooTools `.adopt()`/`.grab()`/`.inject()` chain, so a single line both
+  builds a DOM node and stores a reference to it for later use. None sit in
+  an `if`/`while` condition, so the hazard the rule exists for, an
+  assignment misread as a comparison, does not apply; the real, lesser cost
+  is that the side effect on `self.*` is easy to skim past inside a builder
+  argument list.
+  Files: `movie/_base/static/{list,search,details,movie}.js`,
+  `_base/search/static/search.js`, `plugins/{profile,category,quality,
+  log}/static/*.js`, `movie/charts/static/charts.js`,
+  `movie/providers/automation/trakt/static/trakt.js`,
+  `downloaders/putio/static/putio.js`.
+  Confirmed dead code before deciding, not assumed: `clientscript.py` (the
+  only thing that ever compiled or served these files) was deleted by
+  UI-CLEANUP-02 (`specs/UI-MIGRATION.md`), and a repo-wide grep for each
+  filename's `static/<name>.js` path turns up no Python route, template or
+  build config reference; the only hit was a stale, gitignored 2024 cache
+  file (`.config/data/cache/minified/head.js`) predating that cleanup.
+  Not dismissed, because the code smell is real; not fixed, because a
+  57-site mechanical rewrite across 12 files has zero test coverage to prove
+  against (no unit or e2e spec touches this legacy MooTools layer, and this
+  task's own bar is "prove no behaviour change by the existing tests") and
+  zero production benefit, since nothing loads these files any more. They
+  are kept only as a porting reference for the still-open UI-MIGRATION.md
+  backlog items (Trakt+Put.io OAuth, log pagination, and others). The
+  proportionate fix is the one `specs/UI-MIGRATION.md` already tracks:
+  delete the whole file once its port lands, not restyle it first. Expires
+  when UI-MIGRATION.md's "no references to `/old` or the legacy stack
+  remain" acceptance criterion is checked off.
 - **Review + implement Dependabot dependency PRs** — keep the dependency
   update PRs Dependabot opens triaged and merged (bump, verify CI, `--admin`
   merge if they predate a CI change — see Lessons Learned #7); don't let them
