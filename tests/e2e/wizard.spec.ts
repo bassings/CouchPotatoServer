@@ -58,6 +58,55 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await expect(SECURITY_USERNAME(page)).toBeVisible({ timeout: 5000 });
   }
 
+  /** The header's current-step label, e.g. "Providers" or "Done". */
+  const stepLabel = (page: any) => page.locator('[x-text="steps[currentStep]"]');
+
+  /**
+   * Outcome point for the wizard's Continue/Finish Setup button after a
+   * click, used by the "walk forward N steps" loops below.
+   *
+   * This used to poll the button for "enabled or gone" -- a proxy for
+   * `nextStep()`'s async save having resolved. Under load that proxy went
+   * stale before the thing it stood in for: five isolated runs of this file
+   * passed and it still timed out under the full suite, because a slower
+   * machine can leave the button visible-and-enabled for a moment that
+   * outlasts the poll's budget even though the save itself is done. The
+   * fix is to stop watching the button and watch the state `nextStep()`
+   * itself changes.
+   *
+   * `nextStep()` has exactly two outcomes (see its try/catch at
+   * wizard.html:1148 onward): the save resolves and `currentStep++` runs,
+   * or it throws and `toast()` writes the failure message -- `saving` is
+   * reset to false on both paths, which is why the old button-based signal
+   * could not tell them apart. Waiting on `steps[currentStep]` and the
+   * toast directly discriminates the two real outcomes instead of a shared
+   * side effect of both.
+   *
+   * `steps[currentStep]` lives in the progress header (wizard.html:28),
+   * outside the `x-show="currentStep < 5"` footer that hides the button --
+   * so, unlike the button, it keeps reporting correctly on the final
+   * Library -> summary transition without any step-specific branch: the
+   * label simply reads "Done" there the same way it reads "Providers" or
+   * "Library" on every earlier step. One signal, no special case.
+   */
+  async function waitForWizardStepOutcome(page: any, beforeStepName: string | null): Promise<void> {
+    const toast = page.locator('[x-text="message"]');
+    await expect
+      .poll(
+        async () => {
+          const [stepText, toastVisible] = await Promise.all([
+            stepLabel(page).textContent().catch(() => null),
+            toast.isVisible().catch(() => false),
+          ]);
+          if (stepText !== beforeStepName) return 'advanced';
+          if (toastVisible) return 'refused';
+          return 'pending';
+        },
+        { timeout: 5000 },
+      )
+      .not.toBe('pending');
+  }
+
   test('a refused password save is reported to the operator', async ({ page }) => {
     await refuseEverySave(page);
     await gotoSecurityStep(page);
@@ -84,8 +133,8 @@ test.describe('Wizard: a refused save must not read as success', () => {
      * on a NON-event, so it succeeded at its first poll, at t~0, before the
      * async advance had happened. The locator was groping at the right idea --
      * `useInnerText` to dodge hidden steps' markup -- but the missing piece
-     * was a bounded settle, which asserting that something must NOT happen
-     * always needs.
+     * was a settle point that actually corresponds to the async work
+     * finishing, which asserting that something must NOT happen always needs.
      *
      * `[x-text="steps[currentStep]"]` is unique in the template and unaffected
      * by hidden markup, so it discriminates where `body` could not.
@@ -93,6 +142,13 @@ test.describe('Wizard: a refused save must not read as success', () => {
      * This is the security-relevant half of the task: does a refused PASSWORD
      * save leave the operator on the Security step, or strand them further in
      * with no credential stored.
+     *
+     * The settle point is the failure toast, not a fixed sleep. `toast()` in
+     * `nextStep()`'s catch block is written by the exact branch that skips
+     * `this.currentStep++` -- `saveCurrentStep()` throws before that line is
+     * reached, in the same synchronous try block, so observing the toast
+     * PROVES currentStep was never incremented on this cycle, rather than
+     * hoping a guessed duration was long enough.
      */
     await refuseEverySave(page);
     await gotoSecurityStep(page);
@@ -101,9 +157,7 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /Continue/i }).click();
 
-    // Bounded settle: this asserts a non-event, so it must outlive the advance
-    // it is claiming did not happen.
-    await page.waitForTimeout(1500);
+    await expect(page.locator('[x-text="message"]')).toBeVisible({ timeout: 5000 });
 
     await expect(
       page.locator('[x-text="steps[currentStep]"]'),
@@ -201,12 +255,14 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /^Skip$/i }).click();
 
-    // Walk to the summary step.
+    // Walk to the summary step. See waitForWizardStepOutcome above for why
+    // this waits on the step label rather than the button.
     for (let i = 0; i < 4; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
+      const beforeStep = await stepLabel(page).textContent();
       await next.click();
-      await page.waitForTimeout(300);
+      await waitForWizardStepOutcome(page, beforeStep);
     }
 
     // Scoped to the Authentication row itself. Asserting on `body` was too
@@ -249,16 +305,18 @@ test.describe('Wizard: a refused save must not read as success', () => {
 
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /Continue/i }).click();   // really saves
-    await page.waitForTimeout(500);
+    await expect(page.getByRole('button', { name: /Continue/i })).toBeEnabled();
     await page.getByRole('button', { name: /Back/i }).click();
     await expect(SECURITY_PASSWORD(page)).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: /^Skip$/i }).click();
 
+    // Same outcome point as the loop above.
     for (let i = 0; i < 4; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
+      const beforeStep = await stepLabel(page).textContent();
       await next.click();
-      await page.waitForTimeout(300);
+      await waitForWizardStepOutcome(page, beforeStep);
     }
 
     await expect(
@@ -295,12 +353,14 @@ test.describe('Wizard: a refused save must not read as success', () => {
     });
     await gotoSecurityStep(page);
 
-    // Walk forward until the renamer save is attempted and refused.
+    // Walk forward until the renamer save is attempted and refused. Same
+    // outcome point as the loops above.
     for (let i = 0; i < 5; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
+      const beforeStep = await stepLabel(page).textContent();
       await next.click();
-      await page.waitForTimeout(400);
+      await waitForWizardStepOutcome(page, beforeStep);
       const msg = await page.locator('[x-text="message"]').textContent().catch(() => '');
       if (msg && /fail|refus|error/i.test(msg)) break;
     }

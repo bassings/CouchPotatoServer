@@ -246,16 +246,21 @@ test.describe('Accessibility', () => {
   test('Wanted page should be accessible', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000); // Wait for htmx to load content
-    
+    // #movie-count starts empty and is only populated once the grid's htmx
+    // load has swapped in and filterMovies() has run on it (wanted.html) --
+    // real content-loaded signal rather than a guessed duration.
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
+
     await checkA11y(page, 'Wanted');
   });
 
   test('Available page should be accessible', async ({ page }) => {
     await page.goto('/available/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
-    
+    // /available/ redirects to /wanted?filter=available and renders the
+    // same wanted.html grid, so the same readiness signal applies.
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
+
     await checkA11y(page, 'Available');
   });
 
@@ -270,15 +275,21 @@ test.describe('Accessibility', () => {
   test('Add Movie page should be accessible', async ({ page }) => {
     await page.goto('/add/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
-    
+    // Nothing loads via htmx on this page until a search is typed, so the
+    // real readiness signal is the search field the test's own scan
+    // depends on being there.
+    await expect(page.locator('#movie-search')).toBeVisible();
+
     await checkA11y(page, 'Add Movie');
   });
 
   test('Settings page should be accessible', async ({ page }) => {
     await page.goto('/settings/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000); // Settings takes longer to load
+    // Settings loads via Alpine's own `loading` flag, not htmx -- the tabs
+    // are gated behind `x-show="!loading"`, so waiting for them is the real
+    // signal settings finished loading.
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
 
     await checkA11y(page, 'Settings');
   });
@@ -302,7 +313,7 @@ test.describe('Accessibility', () => {
 
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000); // Wait for htmx to load content
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Pin that dark theme really took effect -- load-bearing, not decorative:
     // a broken theme pipeline must red this test loudly rather than silently
@@ -315,7 +326,7 @@ test.describe('Accessibility', () => {
 
     await page.goto('/settings/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(2000); // Settings takes longer to load
+    await expect(page.getByRole('tablist', { name: 'Settings categories' })).toBeVisible();
 
     await expect
       .poll(() => page.evaluate(() => document.documentElement.classList.contains('light')))
@@ -386,27 +397,27 @@ test.describe('Accessibility', () => {
   async function navigateWizardToProviders(page: any, searchType: 'Usenet' | 'Torrents' | 'Both' = 'Both') {
     await page.goto('/wizard/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(500);
+    await expect(page.getByRole('button', { name: 'Continue' })).toBeVisible();
 
     // Step 1: Welcome -> Continue
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByRole('heading', { name: 'Server Security' })).toBeVisible();
 
     // Step 2: Security -> Skip (no credentials needed for this check)
     await page.getByRole('button', { name: 'Skip' }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
     // Step 3: Providers -> choose a search type so the provider toggles render.
     // Each source button's accessible name is "<Type> <hint>" (e.g. "Both
     // Maximum coverage"), so match on a name starting with the type.
     await page.getByRole('button', { name: new RegExp('^' + searchType) }).click();
-    await page.waitForTimeout(300);
+    await expect(page.locator('button[role="switch"]:visible').first()).toBeVisible();
   }
 
   test('Setup Wizard page should be accessible', async ({ page }) => {
     await page.goto('/wizard/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
 
     // Regression guard for UI-CONFORM-01: the wizard used to render its 8
     // toggle switches at a non-canonical size (w-10 h-5) and without
@@ -430,7 +441,6 @@ test.describe('Accessibility', () => {
 
     // Step 2: Security -- username/password.
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(300);
     // A3: assert the wizard actually reached this step before scanning it --
     // demonstrated to matter: blocking `nextStep()` from advancing left the
     // Welcome step showing while this scan ran unaware, and reported clean.
@@ -441,25 +451,33 @@ test.describe('Accessibility', () => {
 
     // Security -> Providers (Skip, no credentials needed for this scan).
     await page.getByRole('button', { name: 'Skip' }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByRole('heading', { name: 'Where to Search' })).toBeVisible();
 
     // Step 3: Providers -- "Both" renders usenet and torrent sections
     // together; enabling Newznab and Jackett reveals their credential
     // fields, and expanding + enabling one private tracker reveals the
     // `x-for` field loop (AC-A11Y-2's bound-id case).
     await page.getByRole('button', { name: /^Both/ }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByRole('switch', { name: 'Enable Newznab Indexers' })).toBeVisible();
     await page.getByRole('switch', { name: 'Enable Newznab Indexers' }).click();
     await page.getByRole('switch', { name: 'Enable Jackett / TorrentPotato' }).click();
     await page.getByRole('button', { name: /Private Trackers/ }).click();
-    await page.waitForTimeout(300);
+    await expect(page.getByRole('switch', { name: 'Enable PassThePopcorn' })).toBeVisible();
     // TWO trackers enabled, not one: a single enabled tracker cannot prove
     // B2's fix, because a static id/for pair inside the field loop would
     // never collide with itself -- it only collides once a second tracker's
     // identically-named "Username"/"Passkey" fields are ALSO visible.
     await page.getByRole('switch', { name: 'Enable PassThePopcorn' }).click();
     await page.getByRole('switch', { name: 'Enable HDBits' }).click();
-    await page.waitForTimeout(300);
+    // Both trackers' field groups must be rendered before the scan below
+    // counts fields against them -- assertFieldNamesAreReal reads the DOM
+    // once, with no retry, so this has to be a real wait, not a guess.
+    await expect(
+      page.getByRole('group', { name: 'PassThePopcorn' }).getByLabel('Username'),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('group', { name: 'HDBits' }).getByLabel('Username'),
+    ).toBeVisible();
     await assertWizardStepShowing(page, 'Where to Search', '#wizard-jackett-url');
     // A5: floor measured directly -- 9 fields (2 Newznab entry, 2 Jackett,
     // 3 PassThePopcorn, 2 HDBits), before B1's second indexer entry below
@@ -485,7 +503,6 @@ test.describe('Accessibility', () => {
     // checks presence, not uniqueness -- so only a direct read of the two
     // names can catch the static-aria-label regression B1 fixed.
     await page.getByRole('button', { name: '+ Add another indexer' }).click();
-    await page.waitForTimeout(300);
     const indexerUrlInputs = page.getByLabel(/Newznab indexer URL \d+/);
     await expect(indexerUrlInputs).toHaveCount(2);
     const firstName = await indexerUrlInputs.nth(0).getAttribute('aria-label');
@@ -502,11 +519,13 @@ test.describe('Accessibility', () => {
     // getDownloaderFields()'s x-html-injected markup actually renders, and
     // enable Black Hole for its own folder fields.
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(500);
+    await expect(page.getByRole('heading', { name: 'Download Clients' })).toBeVisible();
     await page.getByRole('button', { name: 'SABnzbd' }).click();
     await page.getByRole('button', { name: 'qBittorrent' }).click();
     await page.getByRole('switch', { name: 'Enable Black Hole' }).click();
-    await page.waitForTimeout(300);
+    // Black Hole's own folder fields render behind `x-show="blackholeEnabled"`
+    // -- wait for the field the scan below counts before it runs.
+    await expect(page.locator('#wizard-blackhole-nzb-dir')).toBeVisible();
     await assertWizardStepShowing(page, 'Download Clients', '#wizard-dl-sabnzbd-host');
     // A5: floor measured directly -- 8 fields (3 SABnzbd, 3 qBittorrent, 2
     // Black Hole).
@@ -527,7 +546,6 @@ test.describe('Accessibility', () => {
 
     // Step 5: Library -- renamer fields, on by default.
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(500);
     await assertWizardStepShowing(page, 'Movie Library', '#wizard-renamer-from');
     // A5: floor measured directly -- 4 fields (download folder, movie
     // library, folder naming, file naming).
@@ -588,7 +606,6 @@ test.describe('Accessibility', () => {
     // Step 3: Providers -> Continue to Downloader (saves the providers step
     // for real against the local test server).
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(500);
 
     // Black Hole toggle is always visible on the Downloader step.
     const blackholeToggle = page.getByRole('switch', { name: 'Enable Black Hole' });
@@ -600,7 +617,6 @@ test.describe('Accessibility', () => {
 
     // Step 4: Downloader -> Continue to Library
     await page.getByRole('button', { name: 'Continue' }).click();
-    await page.waitForTimeout(500);
 
     // Renamer toggle is always visible on the Library step.
     const renamerToggle = page.getByRole('switch', { name: 'Enable Automatic Renaming' });
@@ -758,7 +774,7 @@ test.describe('Accessibility', () => {
   test('Interactive elements should be keyboard accessible', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Tab through the page
     await page.keyboard.press('Tab');
@@ -838,7 +854,7 @@ test.describe('Accessibility', () => {
 
       await page.goto('/wizard/');
       await page.waitForLoadState('networkidle');
-      await page.waitForTimeout(1000);
+      await expect(page.getByRole('heading', { name: 'Welcome to CouchPotato' })).toBeVisible();
 
       // Pin the theme really took effect, same guard the toast contrast test
       // uses, so a broken theme pipeline reds this loudly rather than
@@ -850,7 +866,6 @@ test.describe('Accessibility', () => {
       // Welcome -> Server Security, the same step-advance
       // navigateWizardToProviders/the wizard a11y test above use.
       await page.getByRole('button', { name: 'Continue' }).click();
-      await page.waitForTimeout(300);
       await assertWizardStepShowing(page, 'Server Security', '#wizard-username');
 
       const input = page.locator('#wizard-username');
@@ -992,7 +1007,8 @@ test.describe('Accessibility', () => {
   test('Images should have alt text', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
+    // Poster <img>s only exist once the grid's htmx load has swapped in.
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
 
     // Get all images
     const images = page.locator('img');
@@ -1266,8 +1282,8 @@ test.describe('Accessibility', () => {
   test('Color contrast should be sufficient', async ({ page }) => {
     await page.goto('/');
     await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
-    
+    await expect(page.locator('#movie-count')).not.toBeEmpty();
+
     // Run axe specifically for color contrast
     const results = await new AxeBuilder({ page })
       .withRules(['color-contrast'])
