@@ -69,18 +69,30 @@ class TheMovieDb(MovieProvider):
     def search(self, q, limit = 3, search_type = None):
         """ Find movie by name
 
-        `search_type` is normally derived from `limit` (a broad,
-        multi-result UI search wants fuzzy `ngram` matching; a single
-        assertive lookup wants exact `phrase` matching), but a caller that
-        needs several results back to inspect them WITHOUT relaxing what is
-        being asked -- BUG-018's scanner fallback wants extra candidates to
-        pick a year from, not a fuzzier match -- can pin it explicitly.
-        Round-one review of 0dc9e9a78 (FIX 6): raising that fallback's
-        result limit from 1 to 5 flipped `search_type` from `phrase` to
-        `ngram` as an unintended side effect of the `limit > 1` rule, and
-        `search_type` is part of the request URL and therefore the cache
-        key, so this also silently changed what a cached search was keyed
-        on and multiplied downstream per-result detail requests. """
+        `search_type` is normally derived from `limit` (`phrase` for
+        `limit == 1`, `ngram` otherwise), but a caller can pin it
+        explicitly regardless of `limit`.
+
+        Round-two review of BUG-018 (2026-09): `search_type` is a TMDB v2.1
+        parameter. Measured live against TMDB v3 with `search_type` set to
+        `phrase`, `ngram`, absent, and a garbage value, all four returned
+        byte-identical results in the same order -- v3 ignores it entirely.
+        So pinning it does NOT make a search more exact or more fuzzy here;
+        an earlier version of this docstring claimed it did, and that claim
+        was never measured against the live API.
+
+        The one thing pinning it still buys: `search_type` is part of the
+        request URL and therefore the cache key. BUG-018's scanner fallback
+        raises `limit` from 1 to 5 to inspect several candidates for a year
+        match, and without pinning `search_type` explicitly that raised
+        limit would flip the derived value from `phrase` to `ngram`,
+        keying that fallback's cache entries differently from every other
+        `limit=1` caller for no behavioural gain -- purely a cache-key
+        alignment concern, not a matching one (round-one review of
+        0dc9e9a78, FIX 6). The extra per-result detail requests that same
+        review attributed to the `search_type` flip are actually caused by
+        `limit`: `parseMovie` below issues one detail request per result
+        returned, regardless of `search_type`. """
 
         if self.isDisabled():
             return False

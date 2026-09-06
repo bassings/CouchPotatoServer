@@ -38,9 +38,21 @@ SEARCH_YEAR_DISAMBIGUATION_LIMIT = 5
 # (Mulan, Aladdin, Mean Girls, Lion King) is 20 years apart, comfortably
 # clear of any tolerance this constant could sanely hold. The real
 # constraint is the two CONSECUTIVE-YEAR SEQUEL pairs in the same catalogue
-# (Deathly Hallows Part 1/2, Mockingjay Part 1/2), a gap of 1 -- tolerance
-# 1 is already flush against that boundary, and going any higher starts
-# admitting the wrong half of a duology as a "match".
+# (Deathly Hallows Part 1/2, Mockingjay Part 1/2), a gap of 1.
+#
+# Round two tried closing that gap by scoring candidates on closest year
+# rather than taking the first in-tolerance one, and reverted it: measured
+# live, the query this fallback sends carries `year=<parsed year>`, so an
+# exact-year decoy is a near-certain second result whenever the correct
+# film differs from the parsed year by one -- closest-wins hands the win
+# to that decoy every time (Wicked, Nosferatu and Anora's 2025 reissues
+# all beat the correct 2024 film this way; see `pickSearchYearMatch` and
+# the spec's Recorded debt item 1). `pickSearchYearMatch` is back to
+# first-within-tolerance, which means the sequel pairs stay UNFIXED at
+# tolerance 1 whenever the provider lists the earlier part first -- that
+# risk is accepted, not eliminated. Raising tolerance above 1 would not
+# fix the sequel pairs either; it would only admit candidates two years
+# off, widening the same collision to non-adjacent sequels and prequels.
 SEARCH_YEAR_TOLERANCE = 1
 
 
@@ -559,13 +571,30 @@ class FolderScannerMixin:
         The provider does not rank on year, so it routinely returns a
         remake's original release ahead of the film actually named in the
         filename (measured live: Mulan 2020, Aladdin 2019, Mean Girls 2024
-        and Lion King 2019 were all in second place). Prefer whichever
-        candidate's year is CLOSEST to the parsed year, among candidates
-        within `SEARCH_YEAR_TOLERANCE`, regardless of position -- ties keep
-        whichever was listed first. Taking the first in-tolerance hit
-        (round one) rather than the closest one let an off-by-one candidate
-        listed ahead of an exact match win, which is exactly the failure
-        mode this bug is about, just one match closer.
+        and Lion King 2019 were all in second place). Return the FIRST
+        candidate whose year is within `SEARCH_YEAR_TOLERANCE` of the parsed
+        year, in list order, among candidates that carry an id.
+
+        Round two tried scoring every candidate and taking the CLOSEST one
+        within tolerance instead of the first, to close the two
+        consecutive-year sequel merges recorded as debt below -- and
+        reverted it after measuring it live. The query this fallback sends
+        carries `year=<parsed year>`, so the result set is routinely stuffed
+        with exact-parsed-year candidates. Closest-wins hands the win to
+        that exact-year candidate whenever the CORRECT film is the one an
+        honest one-year discrepancy applies to -- which is exactly the case
+        `SEARCH_YEAR_TOLERANCE` exists to absorb, not a rare edge:
+
+            search "Wicked 2025"     -> 0. Wicked (2024) CORRECT   1. Wicked: For Good (2025)
+            search "Nosferatu 2025"  -> 0. Nosferatu (2024) CORRECT 1. Nosferatu (2025)
+            search "Anora 2025"      -> 0. Anora (2024) CORRECT     1. Anora: Stripped Down (2025)
+
+        Under closest-wins the position-1 exact-year decoy beats the correct
+        film at position 0 in all three. First-within-tolerance gets all
+        three right, and is what this function does again. The consecutive-
+        year sequel merges closest-wins was meant to fix stay UNFIXED at
+        tolerance 1 whenever the provider lists the earlier part first --
+        see the spec's Recorded debt item 1.
 
         Round-one review of 0dc9e9a78 (FIX 1): having an id is part of the
         SELECTION PREDICATE, not a property checked on the result
@@ -594,34 +623,49 @@ class FolderScannerMixin:
         def _imdb(candidate):
             try:
                 return candidate.get('imdb')
-            except AttributeError:
+            except Exception:
+                # Round-two review of 0dc9e9a78 (FIX 4b): the comment above
+                # this function already justifies the guard as "the moment
+                # a second provider is registered", which is broader than
+                # AttributeError alone -- a malformed candidate could raise
+                # anything out of `.get`, not only from lacking the method.
                 return None
 
         def _year(candidate):
             try:
                 return candidate.get('year')
-            except AttributeError:
+            except Exception:
                 return None
 
-        best, best_diff = None, None
         for candidate in candidates:
             if not _imdb(candidate):
                 continue
             year = _year(candidate)
-            if year is None:
-                continue
+            # No separate `year is None` check: `int(None)` raises
+            # TypeError, already caught below, so the check would be dead
+            # code -- it can never short-circuit anything the except clause
+            # does not already handle.
             try:
                 diff = abs(int(year) - int(parsed_year))
             except (TypeError, ValueError):
                 continue
-            if diff <= SEARCH_YEAR_TOLERANCE and (best_diff is None or diff < best_diff):
-                best, best_diff = candidate, diff
-
-        if best is not None:
-            return best
+            if diff <= SEARCH_YEAR_TOLERANCE:
+                return candidate
 
         first = candidates[0]
         offered_years = [_year(c) for c in candidates]
+        try:
+            # Round-two review of 0dc9e9a78 (FIX 4a): this used to sit
+            # unguarded inside the caller's `except Exception:` (determineMedia's
+            # search try/except). A non-str/bytes/PathLike `filename` makes
+            # `os.path.basename` raise TypeError, which that outer guard then
+            # swallows -- aborting identification for this identifier
+            # entirely, exactly the data-loss shape the guard exists to
+            # prevent, just triggered from inside this warning instead of
+            # the search itself.
+            logged_filename = os.path.basename(filename) if filename else filename
+        except TypeError:
+            logged_filename = filename
         log.warning(
             'No search result for "%s" matched the parsed year %s within '
             'tolerance (years offered: %s) -- taking the first result %s. '
@@ -633,7 +677,7 @@ class FolderScannerMixin:
             # private filesystem paths in logs). The filename is still
             # enough for an operator to find the release; the download
             # folder structure around it is not needed to do that.
-            os.path.basename(filename) if filename else filename,
+            logged_filename,
             parsed_year, offered_years, _imdb(first),
         )
         return first

@@ -48,6 +48,7 @@ from couchpotato.core.plugins.renamer.replacement import (
 )
 import couchpotato.core.plugins.scanner.folder_scanner as folder_scanner_module
 from couchpotato.core.plugins.scanner.folder_scanner import FolderScannerMixin
+from tests.unit.bug018_selection_helper import pre_bug_018_selection
 
 
 @pytest.fixture(autouse=True)
@@ -240,18 +241,12 @@ class TestFolderScannerNeverReducesTheScanResult:
     code path twice for no added protection.
     """
 
-    @staticmethod
-    def _pre_bug_018_selection(candidates):
-        """The fallback's selection before BUG-018:
-        `fireEvent('movie.search', ..., limit=1)`, then `movie[0]`, nothing
-        else read from the result. Kept as a plain function of the
-        candidate list rather than imported from production, because
-        production is exactly what this guards -- importing the (now
-        fixed) selection would compare it with itself and could never
-        fail."""
-        if not candidates:
-            return None
-        return candidates[0].get('imdb')
+    # Round-two review of 0dc9e9a78 (FIX 5c): this used to be its own
+    # `_pre_bug_018_selection` copy-pasted from
+    # `test_scanner_search_year_disambiguation.py`. Shared in
+    # `bug018_selection_helper.py` instead -- two copies of one reference
+    # oracle is a drift hazard.
+    _pre_bug_018_selection = staticmethod(pre_bug_018_selection)
 
     @pytest.fixture
     def bug018_scanner(self, monkeypatch):

@@ -110,15 +110,43 @@ replaced by a guard on the invariant above rather than deleted.
 ## Recorded debt
 
 1. The two sequel merges (Deathly Hallows Part 1/2, Mockingjay Part 1/2) are
-   PARTLY explained, not fully established. Round-one review of 0dc9e9a78
-   found `pickSearchYearMatch` returned the first candidate within
-   `SEARCH_YEAR_TOLERANCE`, not the closest one -- so if a search ever
-   returned both parts of a duology (a gap of 1 year, inside tolerance)
-   with the wrong part listed first, the wrong part would win. Fixed as
-   part of this round (score by closest year diff, ties keep the
-   earlier-listed candidate). Not fully established as THE cause, because
-   the actual candidate order the provider returned for these two specific
-   folders was never captured before the merge happened.
+   PARTLY explained, not fully established, and remain UNFIXED. Round-one
+   review of 0dc9e9a78 found `pickSearchYearMatch` returned the first
+   candidate within `SEARCH_YEAR_TOLERANCE`, not the closest one -- so if a
+   search ever returned both parts of a duology (a gap of 1 year, inside
+   tolerance) with the wrong part listed first, the wrong part would win.
+   Round one tried fixing this by scoring candidates on closest year
+   rather than taking the first in-tolerance one (ties keeping the
+   earlier-listed candidate).
+
+   Round-two review of that change measured it live against the real
+   provider and reverted it: `SEARCH_YEAR_DISAMBIGUATION_LIMIT`'s query
+   sends `year=<parsed year>`, so the result set is routinely stuffed with
+   candidates carrying the EXACT parsed year. Closest-wins hands the win to
+   that exact-year candidate whenever the correct film is the one an
+   honest off-by-one applies to -- which is exactly the case
+   `SEARCH_YEAR_TOLERANCE` exists to absorb, not a rare edge. Three cases
+   measured live 2026-09-06 (a December release ripped the following
+   January carries the following year in its filename, which is common):
+
+       search "Wicked 2025"     -> 0. Wicked (2024) CORRECT   1. Wicked: For Good (2025)
+       search "Nosferatu 2025"  -> 0. Nosferatu (2024) CORRECT 1. Nosferatu (2025)
+       search "Anora 2025"      -> 0. Anora (2024) CORRECT     1. Anora: Stripped Down (2025)
+
+   Under closest-wins the exact-year decoy at position 1 beat the correct
+   film at position 0 in all three, and a review of 0dc9e9a78 found seven
+   regressions out of eleven adversarially chosen cases, first-within-
+   tolerance getting all seven right. `pickSearchYearMatch` is back to
+   first-within-tolerance. The two sequel merges this round-one attempt was
+   meant to close therefore stay UNFIXED whenever the provider lists the
+   earlier part first, and this is an accepted, recorded limitation, not an
+   oversight -- do not try closest-wins again without a way to tell "an
+   honest off-by-one on the correct film" apart from "an exact-year decoy
+   for the wrong film", which the three cases above show is not simply a
+   matter of scoring distance. Not fully established as THE cause of the
+   two merges either way, because the actual candidate order the provider
+   returned for these two specific folders was never captured before the
+   merge happened.
 2. Five films are on disk with no record; two return nothing from the provider.
 3. `manage.updateLibrary`'s "absent means deleted" inference remains a
    single-point data-loss risk, mitigated but not removed.

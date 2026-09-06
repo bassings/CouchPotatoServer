@@ -41,6 +41,7 @@ import pytest
 
 import couchpotato.core.plugins.scanner.folder_scanner as folder_scanner_module
 from couchpotato.core.plugins.scanner.folder_scanner import FolderScannerMixin
+from tests.unit.bug018_selection_helper import pre_bug_018_selection as _pre_bug_018_selection
 
 DEFAULT_FILENAME = '/dl/Some.Movie.2020.mkv'
 DEFAULT_IDENTIFIER = 'Some Movie 2020'
@@ -80,13 +81,28 @@ def _stub_search(monkeypatch, results_by_query):
     Every call is recorded so tests can assert on how many searches fired
     and with which queries -- needed for the hazard-3 fallback-to-`other`
     cases below.
+
+    Round-two review of 0dc9e9a78 (FIX 2): the real provider truncates to
+    `limit`. This stub used to ignore `limit` entirely and hand back the
+    whole configured list regardless -- which meant setting
+    `SEARCH_YEAR_DISAMBIGUATION_LIMIT` back to 1 (a full revert of the fix
+    in production, since a limit of 1 means the provider itself never
+    returns a second candidate for the year preference to choose between)
+    left the ENTIRE suite green, because no fixture here ever depended on
+    getting more than one result back. Honouring `limit` here makes every
+    case that relies on seeing a second candidate genuinely depend on the
+    limit the production code asks for.
     """
     calls = []
 
     def _fire(event, *args, **kwargs):
         if event == 'movie.search':
             calls.append(kwargs)
-            return list(results_by_query.get(kwargs.get('q'), []))
+            results = list(results_by_query.get(kwargs.get('q'), []))
+            limit = kwargs.get('limit')
+            if limit is not None:
+                results = results[:limit]
+            return results
         return None
 
     monkeypatch.setattr(folder_scanner_module, 'fireEvent', _fire)
@@ -272,63 +288,91 @@ class TestTheYearMatchWinsOverPosition:
         )
 
 
-class TestClosestYearWinsOverFirstWithinTolerance:
-    """FIX 3 (round-one review of 0dc9e9a78). Round one returned the FIRST
-    candidate within `SEARCH_YEAR_TOLERANCE`, not the CLOSEST one, so an
-    off-by-one candidate listed ahead of an exact match won. Two of the
-    seven merged records this bug is about are consecutive-year sequel
-    pairs (Deathly Hallows, Mockingjay), a gap of exactly 1 -- inside
-    tolerance -- so this is not a hypothetical: it is one plausible partial
-    cause of those two merges (see the spec's Recorded debt item 1).
+class TestFirstWithinToleranceWinsOverAnExactMatchListedSecond:
+    """FIX 1, round two of BUG-018's review (reverts round one's own FIX 3).
 
-    RED against round one: each case here has an off-by-one candidate
-    listed BEFORE the exact match, so "first within tolerance" picks the
-    off-by-one one every time.
+    Round one changed the selection from "first candidate within
+    `SEARCH_YEAR_TOLERANCE`" to "closest candidate within tolerance", to try
+    to close the two consecutive-year sequel merges recorded as debt (see
+    the spec's Recorded debt item 1: Deathly Hallows Part 1/2, Mockingjay
+    Part 1/2, a gap of exactly 1). Measured live against the real provider,
+    that traded a smaller bug for a bigger one: `SEARCH_YEAR_DISAMBIGUATION_LIMIT`'s
+    query sends `year=<parsed year>`, so the result set is routinely stuffed
+    with candidates carrying the EXACT parsed year -- and an honest
+    one-year discrepancy between a filename and its provider record is
+    exactly the case `SEARCH_YEAR_TOLERANCE` exists to absorb, not a rare
+    edge. Three cases measured live 2026-09-06 (a December release ripped
+    the following January carries the following year in its filename,
+    which is common):
+
+        search "Wicked 2025"     -> 0. Wicked (2024) CORRECT   1. Wicked: For Good (2025)
+        search "Nosferatu 2025"  -> 0. Nosferatu (2024) CORRECT 1. Nosferatu (2025)
+        search "Anora 2025"      -> 0. Anora (2024) CORRECT     1. Anora: Stripped Down (2025)
+
+    Under closest-wins the exact-year decoy at position 1 beats the correct
+    film at position 0 in all three -- the tolerance is defeated in exactly
+    the case it was added for. Reverted to first-within-tolerance, which
+    gets all three right, at the acknowledged cost that the two
+    consecutive-year sequel merges closest-wins was meant to fix stay
+    UNFIXED whenever the provider lists the earlier part first. RED against
+    round one's closest-wins: each case here has an EXACT match listed
+    SECOND, which closest-wins would prefer over the off-by-one candidate
+    listed first.
     """
 
     @pytest.mark.parametrize('site', SEARCH_SITES)
-    def test_deathly_hallows_part_2_is_not_filed_as_part_1(self, scanner, monkeypatch, site):
-        name_year = {'name': 'Harry Potter Deathly Hallows Part 2', 'year': 2011}
-        candidates = [
-            {'imdb': 'ttHP1', 'year': 2010},  # Part 1, one year off, listed first
-            {'imdb': 'ttHP2', 'year': 2011},  # Part 2, the exact match
-        ]
+    @pytest.mark.parametrize('name_year, candidates, expected_imdb', [
+        pytest.param(
+            {'name': 'Wicked', 'year': 2025},
+            [
+                {'imdb': 'ttWICKED2024', 'year': 2024},  # correct, one year off, listed first
+                {'imdb': 'ttWICKED2025', 'year': 2025},  # decoy, exact parsed year
+            ],
+            'ttWICKED2024',
+            id='wicked_2024_correct_over_2025_exact_year_decoy',
+        ),
+        pytest.param(
+            {'name': 'Nosferatu', 'year': 2025},
+            [
+                {'imdb': 'ttNOSFERATU2024', 'year': 2024},
+                {'imdb': 'ttNOSFERATU2025', 'year': 2025},
+            ],
+            'ttNOSFERATU2024',
+            id='nosferatu_2024_correct_over_2025_exact_year_decoy',
+        ),
+        pytest.param(
+            {'name': 'Anora', 'year': 2025},
+            [
+                {'imdb': 'ttANORA2024', 'year': 2024},
+                {'imdb': 'ttANORA2025', 'year': 2025},
+            ],
+            'ttANORA2024',
+            id='anora_2024_correct_over_2025_exact_year_decoy',
+        ),
+    ])
+    def test_the_correct_off_by_one_film_beats_an_exact_year_decoy_listed_second(
+        self, scanner, monkeypatch, site, name_year, candidates, expected_imdb,
+    ):
         _stub_for_site(monkeypatch, scanner, site, name_year, candidates)
 
         result = scanner.determineMedia(_group())
 
-        assert result.get('identifier') == 'ttHP2', (
-            'the file is Deathly Hallows Part 2 (2011); with Part 1 (2010, '
-            'one year off) listed first, "first within tolerance" would '
-            'pick Part 1 -- got %r at the %s call site' % (
-                result.get('identifier'), site,
-            )
+        assert result.get('identifier') == expected_imdb, (
+            'the correct film, one year off the parsed year and listed '
+            'FIRST, lost to an exact-parsed-year decoy listed second -- got '
+            '%r at the %s call site. This is closest-wins coming back: it '
+            'defeats SEARCH_YEAR_TOLERANCE in exactly the case it exists '
+            'for.' % (result.get('identifier'), site)
         )
 
     @pytest.mark.parametrize('site', SEARCH_SITES)
-    def test_mockingjay_part_2_is_not_filed_as_part_1(self, scanner, monkeypatch, site):
-        name_year = {'name': 'Hunger Games Mockingjay Part 2', 'year': 2015}
-        candidates = [
-            {'imdb': 'ttMJ1', 'year': 2014},  # Part 1, one year off, listed first
-            {'imdb': 'ttMJ2', 'year': 2015},  # Part 2, the exact match
-        ]
-        _stub_for_site(monkeypatch, scanner, site, name_year, candidates)
-
-        result = scanner.determineMedia(_group())
-
-        assert result.get('identifier') == 'ttMJ2', (
-            'the file is Mockingjay Part 2 (2015); with Part 1 (2014, one '
-            'year off) listed first, "first within tolerance" would pick '
-            'Part 1 -- got %r at the %s call site' % (result.get('identifier'), site)
-        )
-
-    @pytest.mark.parametrize('site', SEARCH_SITES)
-    def test_an_exact_match_wins_over_an_earlier_listed_off_by_one(
+    def test_an_off_by_one_candidate_wins_over_an_exact_match_listed_second(
         self, scanner, monkeypatch, site,
     ):
-        """The general case behind the two sequel-specific ones above: ANY
-        off-by-one candidate listed before an exact match must lose to the
-        exact match, not just the two named sequel pairs."""
+        """The general case behind the three measured ones above: ANY
+        off-by-one candidate listed before an exact match must win, not
+        just the three named productions -- first-within-tolerance, not
+        closest-within-tolerance."""
         name_year = {'name': 'Some Movie', 'year': 2020}
         candidates = [
             {'imdb': 'ttOFFBYONE', 'year': 2019},
@@ -338,21 +382,21 @@ class TestClosestYearWinsOverFirstWithinTolerance:
 
         result = scanner.determineMedia(_group())
 
-        assert result.get('identifier') == 'ttEXACT', (
-            'an exact year match listed SECOND lost to an off-by-one '
-            'candidate listed first -- got %r at the %s call site' % (
-                result.get('identifier'), site,
-            )
+        assert result.get('identifier') == 'ttOFFBYONE', (
+            'an off-by-one candidate listed FIRST lost to an exact year '
+            'match listed second -- got %r at the %s call site. '
+            'First-within-tolerance must take the first in-tolerance '
+            'candidate, not the closest one.' % (result.get('identifier'), site)
         )
 
     @pytest.mark.parametrize('site', SEARCH_SITES)
     def test_a_tie_in_year_distance_keeps_the_earlier_listed_candidate(
         self, scanner, monkeypatch, site,
     ):
-        """The docstring's stated tie-break: when two candidates are
-        EQUALLY close (both an exact match, or both off by the same amount),
-        the earlier-listed one wins -- this is what "closest, not first"
-        must NOT change relative to today's behaviour."""
+        """Two candidates equally close to the parsed year (here, both an
+        exact match) must resolve to the earlier-listed one -- true of
+        first-within-tolerance by construction, since it returns as soon as
+        it finds an in-tolerance candidate and never looks further."""
         name_year = {'name': 'Some Movie', 'year': 2020}
         candidates = [
             {'imdb': 'ttFIRST', 'year': 2020},
@@ -364,7 +408,43 @@ class TestClosestYearWinsOverFirstWithinTolerance:
 
         assert result.get('identifier') == 'ttFIRST', (
             'two equally-close candidates should keep the earlier-listed '
-            'one on a tie -- got %r at the %s call site' % (result.get('identifier'), site)
+            'one -- got %r at the %s call site' % (result.get('identifier'), site)
+        )
+
+
+class TestTheSequelMergesStayUnfixed:
+    """Recorded debt item 1 (spec): the two consecutive-year sequel pairs
+    (Deathly Hallows Part 1/2, Mockingjay Part 1/2) that motivated round
+    one's closest-wins attempt are NOT fixed by reverting to
+    first-within-tolerance. This test documents the known, accepted
+    limitation directly rather than leaving it undiscoverable -- if a
+    future change fixes this case, this test should be UPDATED to expect
+    the correct part, not deleted, since a passing test with the wrong
+    expectation is worse than an honest failing one.
+
+    This is expected behaviour, not a regression: AC-DATA-2's safety
+    property (never fewer identifiers than before) still holds -- the group
+    IS identified, just as the wrong half of the duology, exactly as the
+    pre-BUG-018 code would also have done had it seen Part 1 listed first.
+    """
+
+    def test_deathly_hallows_part_2_is_still_filed_as_part_1_when_listed_first(
+        self, scanner, monkeypatch,
+    ):
+        name_year = {'name': 'Harry Potter Deathly Hallows Part 2', 'year': 2011}
+        candidates = [
+            {'imdb': 'ttHP1', 'year': 2010},  # Part 1, one year off, listed first
+            {'imdb': 'ttHP2', 'year': 2011},  # Part 2, the exact match
+        ]
+        _stub_for_site(monkeypatch, scanner, 'primary', name_year, candidates)
+
+        result = scanner.determineMedia(_group())
+
+        assert result.get('identifier') == 'ttHP1', (
+            'this pins the KNOWN, ACCEPTED limitation recorded in the '
+            'spec\'s debt item 1 -- if this now returns \'ttHP2\', the '
+            'sequel-merge case has been fixed and this test should be '
+            'updated (not deleted) to say so, got %r' % result.get('identifier')
         )
 
 
@@ -492,6 +572,71 @@ class TestAMalformedSearchResultDoesNotAbortIdentification:
         )
 
 
+class TestAMalformedFilenameDuringTheWarningDoesNotStarveIdentification:
+    """FIX 4a (round-two review of 0dc9e9a78). `pickSearchYearMatch`'s
+    mismatched-guess warning calls `os.path.basename(filename)`, which
+    raises TypeError for a `filename` that is not str/bytes/os.PathLike.
+    That call sat OUTSIDE any guard of its own and INSIDE the caller's
+    `except Exception:` (determineMedia's own search try/except, added by
+    FIX 2 of round one specifically to stop a raise here from being fatal)
+    -- so a malformed filename reaching the warning aborted identification
+    for this identifier entirely: the withdrawn design's data-loss
+    behaviour, reintroduced from the one branch built to prevent it.
+    """
+
+    def test_a_non_string_filename_does_not_abort_identification(
+        self, scanner, monkeypatch,
+    ):
+        name_year = {'name': 'Some Movie', 'year': 2020}
+        # No candidate matches the parsed year, so the fallback reaches the
+        # warning branch, which is where `os.path.basename` is called.
+        candidates = [{'imdb': 'ttAAA', 'year': 1999}, {'imdb': 'ttBBB', 'year': 1950}]
+        _stub_for_site(monkeypatch, scanner, 'primary', name_year, candidates)
+
+        group = _group(filename=12345)  # not str/bytes/PathLike
+
+        result = scanner.determineMedia(group)  # must not raise
+
+        assert result.get('identifier') == 'ttAAA', (
+            'a non-string filename reaching the mismatched-guess warning '
+            'aborted identification instead of falling back to the first '
+            'candidate -- got %r' % result.get('identifier')
+        )
+
+
+class TestAHostileCandidateGetIsSkippedNotFatal:
+    """FIX 4b (round-two review of 0dc9e9a78). `_imdb`/`_year` inside
+    `pickSearchYearMatch` used to catch only `AttributeError`. The comment
+    above the function already justifies the guard as covering "the moment
+    a second provider is registered" -- a claim broader than one specific
+    exception type. A candidate whose `.get` raises something else (a
+    malformed provider payload, or any object with a broken `.get`) must
+    be skipped like any other malformed candidate, not propagate out of
+    `pickSearchYearMatch` and starve identification for a group where a
+    perfectly good candidate was sitting right next to it.
+    """
+
+    def test_a_candidate_whose_get_raises_a_non_attributeerror_is_skipped(
+        self, scanner, monkeypatch,
+    ):
+        class _HostileCandidate(dict):
+            def get(self, *args, **kwargs):
+                raise ValueError('malformed provider payload')
+
+        name_year = {'name': 'Some Movie', 'year': 2020}
+        candidates = [_HostileCandidate(imdb='ttBAD', year=2020), {'imdb': 'ttGOOD', 'year': 2020}]
+        _stub_for_site(monkeypatch, scanner, 'primary', name_year, candidates)
+
+        result = scanner.determineMedia(_group())  # must not raise
+
+        assert result.get('identifier') == 'ttGOOD', (
+            'a candidate whose .get() raised ValueError (not AttributeError) '
+            'propagated out of pickSearchYearMatch instead of being '
+            'skipped, starving identification even though a good candidate '
+            'was available -- got %r' % result.get('identifier')
+        )
+
+
 class TestUnknownParsedYearBehaviourIsUnchanged:
     """AC-DATA-3. When `getReleaseNameYear` cannot parse a year at all, the
     fallback's `if name_year.get('name') and name_year.get('year'):` guard
@@ -510,15 +655,27 @@ class TestUnknownParsedYearBehaviourIsUnchanged:
 
 
 class TestSearchTypePinnedRegardlessOfLimit:
-    """FIX 6 (round-one review of 0dc9e9a78). `TheMovieDb.search` flips
-    `search_type` from `phrase` to `ngram` purely as a side effect of
-    `limit > 1` -- and `search_type` is part of the request URL, therefore
-    the cache key, and TMDB's own `ngram` mode fans out into far more
-    per-result detail requests. Raising `SEARCH_YEAR_DISAMBIGUATION_LIMIT`
-    from 1 to 5 (BUG-018's own fix) silently asked the provider a DIFFERENT
-    question. `search_type='phrase'` must reach `fireEvent` on both call
-    sites regardless of the limit, so raising or lowering the limit later
-    can never repeat this."""
+    """FIX 6 (round-one review of 0dc9e9a78). `TheMovieDb.search` derives
+    `search_type` from `limit` unless it is pinned explicitly -- and
+    `search_type` is part of the request URL, therefore the cache key.
+    Raising `SEARCH_YEAR_DISAMBIGUATION_LIMIT` from 1 to 5 (BUG-018's own
+    fix) would otherwise silently key this fallback's cache entries
+    differently to every other `limit=1` caller (see
+    `test_providers.py::TestTheMovieDbProvider` and the round-two-corrected
+    docstring on `TheMovieDb.search` for why this is the ONLY benefit --
+    `search_type` was measured live to have no effect on which results TMDB
+    v3 returns or in what order). `search_type='phrase'` must reach
+    `fireEvent` on both call sites regardless of the limit, so raising or
+    lowering the limit later can never repeat this.
+
+    Round-two review of 0dc9e9a78 (FIX 2): also asserts `limit` itself
+    reaches `fireEvent` as something greater than 1 -- there were
+    previously two tests here asserting `search_type` arrives and NONE
+    asserting `limit` does, which is how setting
+    `SEARCH_YEAR_DISAMBIGUATION_LIMIT` back to 1 (a full revert of the
+    production fix) passed the entire suite: nothing checked that the
+    fallback actually asked the provider for more than one candidate.
+    """
 
     def test_the_primary_search_pins_search_type_to_phrase(self, scanner, monkeypatch):
         name_year = {'name': 'Some Movie', 'year': 2020}
@@ -532,8 +689,14 @@ class TestSearchTypePinnedRegardlessOfLimit:
         assert calls[0].get('search_type') == 'phrase', (
             'the primary movie.search call did not pin search_type to '
             '"phrase" -- got %r. Without this, raising '
-            'SEARCH_YEAR_DISAMBIGUATION_LIMIT above 1 silently flips TMDB '
-            'from an exact to a fuzzy search.' % calls[0].get('search_type')
+            'SEARCH_YEAR_DISAMBIGUATION_LIMIT above 1 silently changes the '
+            'cache key TMDB is queried under.' % calls[0].get('search_type')
+        )
+        assert calls[0].get('limit', 1) > 1, (
+            'the primary movie.search call asked for only %r result(s) -- '
+            'setting SEARCH_YEAR_DISAMBIGUATION_LIMIT back to 1 would make '
+            'this pass too, which is exactly how a full revert of the '
+            'production fix slipped past this suite unnoticed' % calls[0].get('limit')
         )
 
     def test_the_other_search_also_pins_search_type_to_phrase(self, scanner, monkeypatch):
@@ -561,6 +724,11 @@ class TestSearchTypePinnedRegardlessOfLimit:
         assert calls[1].get('search_type') == 'phrase', (
             'the "other" movie.search call did not pin search_type to '
             '"phrase" -- got %r' % calls[1].get('search_type')
+        )
+        assert calls[1].get('limit', 1) > 1, (
+            'the "other" movie.search call asked for only %r result(s) -- '
+            'setting SEARCH_YEAR_DISAMBIGUATION_LIMIT back to 1 would make '
+            'this pass too' % calls[1].get('limit')
         )
 
 
@@ -627,19 +795,6 @@ class TestAMismatchedGuessIsLoggedAtWarning:
             'a matching candidate was found (tt3480796, year 2020) at the '
             '%s call site yet a warning fired anyway: %r' % (site, warnings)
         )
-
-
-def _pre_bug_018_selection(candidates):
-    """Reference implementation of the fallback's selection before
-    BUG-018: `fireEvent('movie.search', ..., limit=1)`, then `movie[0]`,
-    with nothing else read from the result. Kept as a plain function of the
-    candidate list -- not imported from production -- because production is
-    exactly what AC-QA-6 is guarding: importing the (now fixed) selection
-    would compare the fix with itself and could never fail.
-    """
-    if not candidates:
-        return None
-    return candidates[0].get('imdb')
 
 
 class TestTheInvariantNeverFewerIdentifiersThanBefore:

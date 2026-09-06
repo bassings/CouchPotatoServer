@@ -150,9 +150,15 @@ class TestTMDBProvider:
                 assert len(results) >= 0  # May be empty due to mock chain
 
     def test_search_type_derives_from_limit_by_default(self):
-        """`search_type` is `phrase` for a single, assertive lookup and
-        `ngram` for a broader multi-result one, UNLESS a caller pins it
-        explicitly (see FIX 6 test below)."""
+        """`search_type` is `phrase` for `limit == 1` and `ngram`
+        otherwise, unless a caller pins it explicitly (see the test below).
+        This is purely a MECHANICAL check of what value is derived and sent
+        -- round-two review of BUG-018 (2026-09) measured live against TMDB
+        v3 that `search_type` has no effect on which results come back or
+        in what order, so neither value should be read as "exact" or
+        "fuzzy" here. What still matters is that the derived value reaches
+        the request, because it is part of the cache key (see the pinning
+        test below and `TheMovieDb.search`'s docstring)."""
         p = self._make_provider()
         with patch.object(p, 'conf', return_value='mykey'), \
              patch.object(p, 'isDisabled', return_value=False), \
@@ -166,13 +172,18 @@ class TestTMDBProvider:
             assert mock_request.call_args[0][1]['search_type'] == 'ngram'
 
     def test_search_type_can_be_pinned_regardless_of_limit(self):
-        """FIX 6 (round-one review of BUG-018, 0dc9e9a78): raising `limit`
-        so a caller sees more results to inspect (the scanner's year-
-        disambiguation fallback wants extra candidates, not a fuzzier
-        match) used to silently flip `search_type` to `ngram` as a side
-        effect. `search_type` is part of the request URL and therefore the
-        cache key, so this also changed what a cached search was keyed on.
-        An explicit `search_type` must win over the `limit`-derived
+        """FIX 6 (round-one review of BUG-018, 0dc9e9a78), corrected by
+        round-two review (2026-09): raising `limit` so a caller sees more
+        results to inspect (the scanner's year-disambiguation fallback
+        wants extra candidates) used to silently flip the derived
+        `search_type` to `ngram` as a side effect. Measured live against
+        TMDB v3, `search_type` does not change matching at all -- it is a
+        TMDB v2.1 parameter that v3 ignores -- so the ONLY thing this
+        pinning buys is a stable cache key: `search_type` is part of the
+        request URL, so without pinning it, that fallback's `limit=5`
+        calls would key their cache entries differently from every other
+        `limit=1` caller in the codebase for no behavioural gain. An
+        explicit `search_type` must win over the `limit`-derived
         default."""
         p = self._make_provider()
         with patch.object(p, 'conf', return_value='mykey'), \
