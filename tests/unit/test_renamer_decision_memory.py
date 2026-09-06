@@ -230,6 +230,14 @@ class TestFolderScannerNeverReducesTheScanResult:
     to change. Returning nothing at all, where the old code returned
     something, is what would starve `manage.updateLibrary` into believing a
     still-owned film is gone.
+
+    This class drives the PRIMARY `movie.search` call site only. The
+    `name_year['other']` call site (reached only when the primary query
+    comes back empty) is exercised against the same candidate shapes,
+    parametrized over both sites, in
+    `tests/unit/test_scanner_search_year_disambiguation.py::TestTheInvariantNeverFewerIdentifiersThanBefore`
+    -- duplicating that parametrization here would test the same production
+    code path twice for no added protection.
     """
 
     @staticmethod
@@ -268,6 +276,24 @@ class TestFolderScannerNeverReducesTheScanResult:
         pytest.param(
             [{'imdb': 'ttNOYEARFIELD'}],
             id='candidate_with_no_year_field_at_all',
+        ),
+        # Round-one review of 0dc9e9a78 (FIX 5): every fixture above carries
+        # an `imdb` key on every candidate, so none of them could ever have
+        # caught FIX 1's defect -- a YEAR-MATCHING candidate with no id at
+        # all starving `imdb_id` even though an older, id-bearing candidate
+        # sat right next to it. Three shapes for "no id": the key absent,
+        # an empty string, and an explicit `None`.
+        pytest.param(
+            [{'imdb': 'ttOLD', 'year': 1998}, {'year': 2020}],
+            id='year_match_missing_imdb_key_entirely',
+        ),
+        pytest.param(
+            [{'imdb': 'ttOLD', 'year': 1998}, {'imdb': '', 'year': 2020}],
+            id='year_match_empty_imdb',
+        ),
+        pytest.param(
+            [{'imdb': 'ttOLD', 'year': 1998}, {'imdb': None, 'year': 2020}],
+            id='year_match_imdb_explicitly_none',
         ),
     ])
     def test_a_group_the_old_code_could_identify_is_still_identified(

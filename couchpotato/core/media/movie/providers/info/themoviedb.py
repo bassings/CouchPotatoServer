@@ -66,8 +66,21 @@ class TheMovieDb(MovieProvider):
         if configuration:
             self.configuration = configuration
 
-    def search(self, q, limit = 3):
-        """ Find movie by name """
+    def search(self, q, limit = 3, search_type = None):
+        """ Find movie by name
+
+        `search_type` is normally derived from `limit` (a broad,
+        multi-result UI search wants fuzzy `ngram` matching; a single
+        assertive lookup wants exact `phrase` matching), but a caller that
+        needs several results back to inspect them WITHOUT relaxing what is
+        being asked -- BUG-018's scanner fallback wants extra candidates to
+        pick a year from, not a fuzzier match -- can pin it explicitly.
+        Round-one review of 0dc9e9a78 (FIX 6): raising that fallback's
+        result limit from 1 to 5 flipped `search_type` from `phrase` to
+        `ngram` as an unintended side effect of the `limit > 1` rule, and
+        `search_type` is part of the request URL and therefore the cache
+        key, so this also silently changed what a cached search was keyed
+        on and multiplied downstream per-result detail requests. """
 
         if self.isDisabled():
             return False
@@ -80,7 +93,7 @@ class TheMovieDb(MovieProvider):
             raw = self.request('search/movie', {
                 'query': name_year.get('name', q),
                 'year': name_year.get('year'),
-                'search_type': 'ngram' if limit > 1 else 'phrase'
+                'search_type': search_type if search_type else ('ngram' if limit > 1 else 'phrase')
             }, return_key = 'results')
         except Exception:
             log.error('Failed searching TMDB for "%s": %s', q, traceback.format_exc())

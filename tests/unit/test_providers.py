@@ -149,6 +149,43 @@ class TestTMDBProvider:
                 results = p.search('Fight Club', limit=1)
                 assert len(results) >= 0  # May be empty due to mock chain
 
+    def test_search_type_derives_from_limit_by_default(self):
+        """`search_type` is `phrase` for a single, assertive lookup and
+        `ngram` for a broader multi-result one, UNLESS a caller pins it
+        explicitly (see FIX 6 test below)."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Fight Club', 'year': 1999}), \
+             patch.object(p, 'request', return_value=None) as mock_request:
+            p.search('Fight Club', limit=1)
+            assert mock_request.call_args[0][1]['search_type'] == 'phrase'
+
+            p.search('Fight Club', limit=5)
+            assert mock_request.call_args[0][1]['search_type'] == 'ngram'
+
+    def test_search_type_can_be_pinned_regardless_of_limit(self):
+        """FIX 6 (round-one review of BUG-018, 0dc9e9a78): raising `limit`
+        so a caller sees more results to inspect (the scanner's year-
+        disambiguation fallback wants extra candidates, not a fuzzier
+        match) used to silently flip `search_type` to `ngram` as a side
+        effect. `search_type` is part of the request URL and therefore the
+        cache key, so this also changed what a cached search was keyed on.
+        An explicit `search_type` must win over the `limit`-derived
+        default."""
+        p = self._make_provider()
+        with patch.object(p, 'conf', return_value='mykey'), \
+             patch.object(p, 'isDisabled', return_value=False), \
+             patch('couchpotato.core.media.movie.providers.info.themoviedb.fireEvent',
+                   return_value={'name': 'Fight Club', 'year': 1999}), \
+             patch.object(p, 'request', return_value=None) as mock_request:
+            p.search('Fight Club', limit=5, search_type='phrase')
+            assert mock_request.call_args[0][1]['search_type'] == 'phrase', (
+                'limit=5 would normally flip search_type to "ngram", but an '
+                'explicit search_type must win'
+            )
+
 
 # ===========================================================================
 # ===========================================================================

@@ -75,7 +75,9 @@ replaced by a guard on the invariant above rather than deleted.
 - The cleanup in `manage.updateLibrary`. It is already hardened once
   (`library_fully_scanned`) and rewriting its inference is its own change.
 - Splitting the seven merged records. Deliberately after this.
-- The two sequel cases, whose cause is not established.
+- The two sequel cases. Round-one review of 0dc9e9a78 partly establishes
+  the cause (see Recorded debt item 1) but stops short of confirming it
+  against the actual production data.
 
 ## Acceptance criteria
 
@@ -107,7 +109,36 @@ replaced by a guard on the invariant above rather than deleted.
 
 ## Recorded debt
 
-1. The two sequel merges have a different, unestablished cause.
+1. The two sequel merges (Deathly Hallows Part 1/2, Mockingjay Part 1/2) are
+   PARTLY explained, not fully established. Round-one review of 0dc9e9a78
+   found `pickSearchYearMatch` returned the first candidate within
+   `SEARCH_YEAR_TOLERANCE`, not the closest one -- so if a search ever
+   returned both parts of a duology (a gap of 1 year, inside tolerance)
+   with the wrong part listed first, the wrong part would win. Fixed as
+   part of this round (score by closest year diff, ties keep the
+   earlier-listed candidate). Not fully established as THE cause, because
+   the actual candidate order the provider returned for these two specific
+   folders was never captured before the merge happened.
 2. Five films are on disk with no record; two return nothing from the provider.
 3. `manage.updateLibrary`'s "absent means deleted" inference remains a
    single-point data-loss risk, mitigated but not removed.
+4. Round-one review asked whether a NARROWED freeze -- covering `scan()`
+   and identification routes one to four, where `TestFolderScannerIsUntouched`
+   protected something and `TestFolderScannerNeverReducesTheScanResult` has
+   no reach -- was worth restoring, since BUG-018 needed no change there at
+   all. Decided NOT to add one: a hash/diff freeze over any region is the
+   same proxy AC-QA-7 retired, just drawn smaller, and it fails the same
+   way -- the day a legitimate change touches that region, whoever hits it
+   either updates the recorded hash without reading why it exists (ceremony)
+   or is genuinely blocked by something that was never actually at risk.
+   Routes one to four are assertions (an id claimed by the download, a CP
+   tag, an NFO, an id in the filename), not guesses, so what actually wants
+   protecting is "an id claimed this way is still trusted, and this loop's
+   iteration-order bugs (see the comment above the filename-in-files route)
+   don't come back" -- both already have their own targeted tests
+   (`test_identity_provenance.py` and this module's own history). A new
+   test asserting each route still resolves known-good input to its known
+   id would be more honest protection than a freeze, but building it is new
+   test infrastructure for code this bug did not touch, and is left for
+   whoever next has reason to change one of those four routes rather than
+   built speculatively here.

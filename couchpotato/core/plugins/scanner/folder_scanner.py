@@ -17,17 +17,30 @@ log = CPLog(__name__)
 
 # BUG-018: the fifth `determineMedia` fallback used to ask the search
 # provider for exactly one result and take it, so a remake sorted ahead of
-# its original (both measured cases were only two results deep) was never
-# even offered as an alternative. 5 gives enough headroom to see past a
-# remake pair without an unbounded fetch.
+# its original (all four measured cases were only two results deep) was
+# never even offered as an alternative. 5 gives enough headroom to see past
+# a remake pair without an unbounded fetch.
+#
+# This is pinned as a result COUNT only. `search_type` is pinned separately,
+# below the fallback's two `movie.search` calls, so raising this limit can
+# never silently change the query TheMovieDb is asked (see FIX 6, round-one
+# review of 0dc9e9a78).
 SEARCH_YEAR_DISAMBIGUATION_LIMIT = 5
 
 # A provider's release year can legitimately differ from the year parsed out
 # of a filename by one (region release dates, festival versus wide release).
 # 0 would treat every honest off-by-one provider year as a non-match and
-# always fall back to the first result; anything above 1 starts risking the
-# very remake collisions this bug is about -- the closest of the four
-# measured remake pairs is still 7 years apart.
+# always fall back to the first result.
+#
+# The binding constraint on raising this above 1 is not the remake pairs --
+# computed from the spec's own seven merged records, the year gaps are
+# 1, 1, 3, 36, 27, 22, 20: the closest of the four MEASURED remake pairs
+# (Mulan, Aladdin, Mean Girls, Lion King) is 20 years apart, comfortably
+# clear of any tolerance this constant could sanely hold. The real
+# constraint is the two CONSECUTIVE-YEAR SEQUEL pairs in the same catalogue
+# (Deathly Hallows Part 1/2, Mockingjay Part 1/2), a gap of 1 -- tolerance
+# 1 is already flush against that boundary, and going any higher starts
+# admitting the wrong half of a duology as a "match".
 SEARCH_YEAR_TOLERANCE = 1
 
 
@@ -467,38 +480,61 @@ class FolderScannerMixin:
             for identifier in group['identifiers']:
                 if len(identifier) > 2:
                     try:
-                        filename = list(group['files'].get('movie'))[0]
+                        try:
+                            filename = list(group['files'].get('movie'))[0]
+                        except Exception:
+                            filename = None
+
+                        name_year = self.getReleaseNameYear(identifier, file_name=filename if not group['is_dvd'] else None)
+                        if name_year.get('name') and name_year.get('year'):
+                            search_q = '%(name)s %(year)s' % name_year
+                            # `search_type` is pinned explicitly, not left to
+                            # follow `limit` -- see SEARCH_YEAR_DISAMBIGUATION_LIMIT's
+                            # comment (FIX 6, round-one review of 0dc9e9a78).
+                            movie = fireEvent('movie.search', q=search_q, merge=True,
+                                               limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
+                                               search_type='phrase')
+                            parsed_year = name_year.get('year')
+
+                            if len(movie) == 0 and name_year.get('other') and name_year['other'].get('name') and name_year['other'].get('year'):
+                                search_q2 = '%(name)s %(year)s' % name_year.get('other')
+                                if search_q2 != search_q:
+                                    movie = fireEvent('movie.search', q=search_q2, merge=True,
+                                                       limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT,
+                                                       search_type='phrase')
+                                    # The "other" query carries its own parsed
+                                    # year (a differently-parsed title can imply
+                                    # a different year) -- match against that,
+                                    # not the primary query's.
+                                    parsed_year = name_year['other'].get('year')
+
+                            if len(movie) > 0:
+                                chosen = self.pickSearchYearMatch(movie, parsed_year, filename)
+                                imdb_id = chosen.get('imdb')
+                                # A GUESS, not an assertion: the best match for a
+                                # parsed title and year. Recorded as such so the
+                                # destructive path can refuse it.
+                                group['identity_source'] = 'search'
+                                log.debug('Found movie via search: %s', identifier)
+                                if imdb_id:
+                                    break
                     except Exception:
-                        filename = None
-
-                    name_year = self.getReleaseNameYear(identifier, file_name=filename if not group['is_dvd'] else None)
-                    if name_year.get('name') and name_year.get('year'):
-                        search_q = '%(name)s %(year)s' % name_year
-                        movie = fireEvent('movie.search', q=search_q, merge=True,
-                                           limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT)
-                        parsed_year = name_year.get('year')
-
-                        if len(movie) == 0 and name_year.get('other') and name_year['other'].get('name') and name_year['other'].get('year'):
-                            search_q2 = '%(name)s %(year)s' % name_year.get('other')
-                            if search_q2 != search_q:
-                                movie = fireEvent('movie.search', q=search_q2, merge=True,
-                                                   limit=SEARCH_YEAR_DISAMBIGUATION_LIMIT)
-                                # The "other" query carries its own parsed
-                                # year (a differently-parsed title can imply
-                                # a different year) -- match against that,
-                                # not the primary query's.
-                                parsed_year = name_year['other'].get('year')
-
-                        if len(movie) > 0:
-                            chosen = self.pickSearchYearMatch(movie, parsed_year, filename)
-                            imdb_id = chosen.get('imdb')
-                            # A GUESS, not an assertion: the best match for a
-                            # parsed title and year. Recorded as such so the
-                            # destructive path can refuse it.
-                            group['identity_source'] = 'search'
-                            log.debug('Found movie via search: %s', identifier)
-                            if imdb_id:
-                                break
+                        # BUG-018 round-one review (FIX 2): this was the only
+                        # one of the five identification fallbacks with no
+                        # exception guard. `candidate.get('year')` and similar
+                        # dict access assume every search result is a dict --
+                        # true for the single shipped provider today, not
+                        # guaranteed the moment a second one is registered.
+                        # Left unguarded, that raises out of `determineMedia`,
+                        # out of `scan()`, mid-directory: `fireEvent` swallows
+                        # it, but `added_identifiers` is then left PARTIAL and
+                        # non-empty, so `manage.updateLibrary`'s cleanup runs
+                        # against a truncated scan and deletes every 'done'
+                        # movie the scan had not reached yet. Falling through
+                        # to the next identifier is always safe; letting this
+                        # propagate is not.
+                        log.debug('Search-based identification failed for %s: %s',
+                                  identifier, traceback.format_exc())
                 else:
                     log.debug('Identifier to short to use for search: %s', identifier)
 
@@ -524,35 +560,81 @@ class FolderScannerMixin:
         remake's original release ahead of the film actually named in the
         filename (measured live: Mulan 2020, Aladdin 2019, Mean Girls 2024
         and Lion King 2019 were all in second place). Prefer whichever
-        candidate's year is within `SEARCH_YEAR_TOLERANCE` of the parsed
-        year, regardless of position.
+        candidate's year is CLOSEST to the parsed year, among candidates
+        within `SEARCH_YEAR_TOLERANCE`, regardless of position -- ties keep
+        whichever was listed first. Taking the first in-tolerance hit
+        (round one) rather than the closest one let an off-by-one candidate
+        listed ahead of an exact match win, which is exactly the failure
+        mode this bug is about, just one match closer.
+
+        Round-one review of 0dc9e9a78 (FIX 1): having an id is part of the
+        SELECTION PREDICATE, not a property checked on the result
+        afterwards. A candidate is only eligible to be chosen for its year
+        at all if it also carries a non-empty `imdb`, so this function is
+        structurally unable to return a candidate with no id, an empty id,
+        or `imdb: None` -- there is no code path that returns one. Without
+        that filter, a year-matching candidate lacking an id (a live hazard:
+        TMDB's own `movie.get('imdb_id')` is `None` for some records) would
+        starve `imdb_id` in the caller even though a DIFFERENT, id-bearing
+        candidate was available in the same list.
 
         `candidates` is assumed non-empty; the caller only reaches here
-        after checking `len(movie) > 0`. When nothing matches, the FIRST
-        candidate is returned -- exactly what the pre-BUG-018 code always
-        returned. This is the safety property the withdrawn first design
-        broke: returning `None` here, where the old code returned an id,
-        makes `manage.updateLibrary` believe a still-owned film is gone and
-        delete it. A mismatched guess is logged so the operator can see it;
-        it is never refused.
+        after checking `len(movie) > 0`. When nothing both has an id AND
+        matches within tolerance, `candidates[0]` is returned UNCHANGED --
+        exactly what the pre-BUG-018 code always returned, id or no id.
+        This is the safety property the withdrawn first design broke:
+        returning `None` here, where the old code returned an id, makes
+        `manage.updateLibrary` believe a still-owned film is gone and
+        delete it. The result of this function is therefore never worse
+        than taking `candidates[0]` unconditionally; it can only ever
+        differ by choosing a BETTER identifier for the same input. A
+        mismatched guess is logged so the operator can see it; it is
+        never refused.
         """
+        def _imdb(candidate):
+            try:
+                return candidate.get('imdb')
+            except AttributeError:
+                return None
+
+        def _year(candidate):
+            try:
+                return candidate.get('year')
+            except AttributeError:
+                return None
+
+        best, best_diff = None, None
         for candidate in candidates:
-            year = candidate.get('year')
+            if not _imdb(candidate):
+                continue
+            year = _year(candidate)
             if year is None:
                 continue
             try:
-                if abs(int(year) - int(parsed_year)) <= SEARCH_YEAR_TOLERANCE:
-                    return candidate
+                diff = abs(int(year) - int(parsed_year))
             except (TypeError, ValueError):
                 continue
+            if diff <= SEARCH_YEAR_TOLERANCE and (best_diff is None or diff < best_diff):
+                best, best_diff = candidate, diff
+
+        if best is not None:
+            return best
 
         first = candidates[0]
+        offered_years = [_year(c) for c in candidates]
         log.warning(
             'No search result for "%s" matched the parsed year %s within '
             'tolerance (years offered: %s) -- taking the first result %s. '
             'This guess is not destructive on its own, but is worth '
             'checking.',
-            filename, parsed_year, [c.get('year') for c in candidates], first.get('imdb'),
+            # A basename, not the full path: matches the DEBUG-level path
+            # logging elsewhere in this module, and this is the one path in
+            # the fallback that reaches WARNING (project security floor: no
+            # private filesystem paths in logs). The filename is still
+            # enough for an operator to find the release; the download
+            # folder structure around it is not needed to do that.
+            os.path.basename(filename) if filename else filename,
+            parsed_year, offered_years, _imdb(first),
         )
         return first
 
