@@ -58,6 +58,34 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await expect(SECURITY_USERNAME(page)).toBeVisible({ timeout: 5000 });
   }
 
+  /**
+   * Settle point for the wizard's Continue/Finish Setup button after a
+   * click, used by the "walk forward N steps" loops below.
+   *
+   * The button carries `:disabled="saving"`, so waiting for it to become
+   * enabled again is normally the right signal that nextStep()'s save (or
+   * its absence) has resolved. But on the LAST step (Library), that same
+   * click also advances currentStep to 5, which hides the whole footer via
+   * `x-show="currentStep < 5"` -- and a role-based locator like
+   * `getByRole('button', ...)` excludes a `display:none` element from
+   * matching at all. `toBeEnabled()` alone therefore hangs for the full
+   * timeout on exactly that transition: not a real race in the app, but a
+   * mismatch between the assertion and a button that is SUPPOSED to
+   * disappear. Both outcomes -- re-enabled, or gone -- are the real end of
+   * the async work, so both count as settled here.
+   */
+  async function waitForWizardButtonSettled(next: any): Promise<void> {
+    await expect
+      .poll(
+        async () => {
+          if (!(await next.isVisible().catch(() => false))) return 'gone';
+          return (await next.isEnabled()) ? 'enabled' : 'disabled';
+        },
+        { timeout: 5000 },
+      )
+      .not.toBe('disabled');
+  }
+
   test('a refused password save is reported to the operator', async ({ page }) => {
     await refuseEverySave(page);
     await gotoSecurityStep(page);
@@ -84,8 +112,8 @@ test.describe('Wizard: a refused save must not read as success', () => {
      * on a NON-event, so it succeeded at its first poll, at t~0, before the
      * async advance had happened. The locator was groping at the right idea --
      * `useInnerText` to dodge hidden steps' markup -- but the missing piece
-     * was a bounded settle, which asserting that something must NOT happen
-     * always needs.
+     * was a settle point that actually corresponds to the async work
+     * finishing, which asserting that something must NOT happen always needs.
      *
      * `[x-text="steps[currentStep]"]` is unique in the template and unaffected
      * by hidden markup, so it discriminates where `body` could not.
@@ -93,6 +121,13 @@ test.describe('Wizard: a refused save must not read as success', () => {
      * This is the security-relevant half of the task: does a refused PASSWORD
      * save leave the operator on the Security step, or strand them further in
      * with no credential stored.
+     *
+     * The settle point is the failure toast, not a fixed sleep. `toast()` in
+     * `nextStep()`'s catch block is written by the exact branch that skips
+     * `this.currentStep++` -- `saveCurrentStep()` throws before that line is
+     * reached, in the same synchronous try block, so observing the toast
+     * PROVES currentStep was never incremented on this cycle, rather than
+     * hoping a guessed duration was long enough.
      */
     await refuseEverySave(page);
     await gotoSecurityStep(page);
@@ -101,9 +136,7 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /Continue/i }).click();
 
-    // Bounded settle: this asserts a non-event, so it must outlive the advance
-    // it is claiming did not happen.
-    await page.waitForTimeout(1500);
+    await expect(page.locator('[x-text="message"]')).toBeVisible({ timeout: 5000 });
 
     await expect(
       page.locator('[x-text="steps[currentStep]"]'),
@@ -201,12 +234,13 @@ test.describe('Wizard: a refused save must not read as success', () => {
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /^Skip$/i }).click();
 
-    // Walk to the summary step.
+    // Walk to the summary step. See waitForWizardButtonSettled above for why
+    // this is not a plain toBeEnabled().
     for (let i = 0; i < 4; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
       await next.click();
-      await page.waitForTimeout(300);
+      await waitForWizardButtonSettled(next);
     }
 
     // Scoped to the Authentication row itself. Asserting on `body` was too
@@ -249,16 +283,17 @@ test.describe('Wizard: a refused save must not read as success', () => {
 
     await SECURITY_PASSWORD(page).fill('hunter2');
     await page.getByRole('button', { name: /Continue/i }).click();   // really saves
-    await page.waitForTimeout(500);
+    await expect(page.getByRole('button', { name: /Continue/i })).toBeEnabled();
     await page.getByRole('button', { name: /Back/i }).click();
     await expect(SECURITY_PASSWORD(page)).toBeVisible({ timeout: 5000 });
     await page.getByRole('button', { name: /^Skip$/i }).click();
 
+    // Same settle point as the loop above.
     for (let i = 0; i < 4; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
       await next.click();
-      await page.waitForTimeout(300);
+      await waitForWizardButtonSettled(next);
     }
 
     await expect(
@@ -295,12 +330,13 @@ test.describe('Wizard: a refused save must not read as success', () => {
     });
     await gotoSecurityStep(page);
 
-    // Walk forward until the renamer save is attempted and refused.
+    // Walk forward until the renamer save is attempted and refused. Same
+    // settle point as the loops above.
     for (let i = 0; i < 5; i++) {
       const next = page.getByRole('button', { name: /Continue|Finish Setup/i });
       if (!(await next.isVisible().catch(() => false))) break;
       await next.click();
-      await page.waitForTimeout(400);
+      await waitForWizardButtonSettled(next);
       const msg = await page.locator('[x-text="message"]').textContent().catch(() => '');
       if (msg && /fail|refus|error/i.test(msg)) break;
     }
