@@ -58,6 +58,17 @@ ENV PYTHONUNBUFFERED=1 \
 #   here serves QUIC, so the practical exposure is low, but the fix is a
 #   version bump that is already published and costs nothing to take.
 #   Drop this explicit pin once the base image ships openssl >= 3.5.8-r0.
+#
+#   libuuid is pinned for the same reason, and the package name is the trap.
+#   Trivy reports CVE-2026-78408, CVE-2026-78409 and CVE-2026-78410 against
+#   "util-linux", which is the SOURCE package. util-linux is not installed
+#   here; the only artefact from that source in the runtime image is
+#   libuuid, at 2.42.1-r0. Pinning "util-linux" would have installed a
+#   package that was not previously present and left libuuid untouched, so
+#   the scan would have kept failing while the change looked correct.
+#   Measured in a python:3.14-alpine container: installed libuuid 2.42.1-r0,
+#   available 2.42.3-r1 in Alpine v3.24 main, and the pin resolves.
+#   Drop this explicit pin once the base image ships libuuid >= 2.42.3-r1.
 RUN apk add --no-cache \
         ca-certificates \
         su-exec \
@@ -66,7 +77,8 @@ RUN apk add --no-cache \
         7zip \
         "c-ares>=1.34.8-r0" \
         "libcrypto3>=3.5.8-r0" \
-        "libssl3>=3.5.8-r0"
+        "libssl3>=3.5.8-r0" \
+        "libuuid>=2.42.3-r1"
 
 # Create app user
 ARG PUID=1000
